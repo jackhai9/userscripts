@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         【自写】Binance 双击平仓
 // @namespace    binance.close.long
-// @version      1.2.5
+// @icon         https://avatars.githubusercontent.com/u/5935568?s=128
+// @version      1.2.6
 // @description  双击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
