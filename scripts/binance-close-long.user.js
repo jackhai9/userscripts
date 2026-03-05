@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         【自写】Binance 双击一键平仓
+// @name         【自写】Binance 双击平仓
 // @namespace    binance.close.long
-// @version      1.2.4
+// @version      1.2.5
 // @description  双击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
@@ -34,7 +34,7 @@
 
   let lastTs = 0;
 
-  const PREFIX = '[双击一键平仓]';
+  const PREFIX = '[双击平仓]';
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
