@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【自写】Binance Shift+单击一键平多
 // @namespace    binance.close.long
-// @version      1.0.6
+// @version      1.0.7
 // @description  Shift+单击订单簿价格 -> 填数量 -> 自动点“平多”
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
@@ -83,11 +83,14 @@
     );
   }
 
-  function isOrderbookPriceNode(node) {
+  function findOrderbookRow(node) {
     if (!node) return null;
-    return node.closest(
-      '#futuresOrderbook .ask-light.emit-price, #futuresOrderbook .bid-light.emit-price'
-    );
+    return node.closest('#futuresOrderbook .row-content');
+  }
+
+  function findPriceNodeFromRow(row) {
+    if (!row) return null;
+    return row.querySelector('.ask-light.emit-price, .bid-light.emit-price');
   }
 
   function parsePrice(node) {
@@ -144,13 +147,15 @@
   // 使用捕获阶段监听，避免页面内部在冒泡阶段 stopPropagation 导致价格点击丢失
   document.addEventListener('click', (e) => {
     try {
-      const priceNode = isOrderbookPriceNode(e.target);
+      const row = findOrderbookRow(e.target);
+      if (!row) return;
+      const priceNode = findPriceNodeFromRow(row);
       if (!priceNode) return;
       // 忽略脚本触发的程序化 click，避免日志噪音
       if (!e.isTrusted) return;
 
       if (CFG.DEBUG) {
-        log('命中订单簿价格 click', {
+        log('命中订单簿整行 click', {
           targetClass: e.target?.className || '',
           targetText: (e.target?.textContent || '').trim().slice(0, 24),
           shiftKey: e.shiftKey,
@@ -211,7 +216,8 @@
     cfg: CFG,
     findQtyInput,
     findCloseLongButton,
-    isOrderbookPriceNode,
+    findOrderbookRow,
+    findPriceNodeFromRow,
   };
 
   log('脚本加载完成', location.href);
