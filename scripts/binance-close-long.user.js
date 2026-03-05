@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Binance 双击订单簿一键平多
 // @namespace    binance.close.long
-// @version      1.0.1
+// @version      1.0.2
 // @description  双击订单簿价格 -> 填数量 -> 自动点“平多”
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
