@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         【自写】Binance Shift+单击一键平多
+// @name         【自写】Binance Shift+单击一键平仓
 // @namespace    binance.close.long
-// @version      1.0.7
-// @description  Shift+单击订单簿价格 -> 填数量 -> 自动点“平多”
+// @version      1.1.0
+// @description  Shift+单击订单簿任意列 -> 填数量 -> 自动按盘口方向点击“平多/平空”
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
@@ -25,7 +25,7 @@
     AUTO_USE_MIN_QTY: true,
     // 防误触：需按住 Shift 再单击
     REQUIRE_SHIFT: true,
-    // true=只填数量；false=填数量并自动点“平多”
+    // true=只填数量；false=填数量并自动点“平多/平空”
     SAFE_MODE: false,
     // 防连点
     COOLDOWN_MS: 600,
@@ -34,7 +34,7 @@
 
   let lastTs = 0;
 
-  const PREFIX = '[Shift+单击一键平多]';
+  const PREFIX = '[Shift+单击一键平仓]';
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
@@ -83,6 +83,16 @@
     );
   }
 
+  function findCloseShortButton() {
+    const btns = Array.from(document.querySelectorAll('button'));
+    return (
+      btns.find((b) => {
+        const t = (b.textContent || '').trim();
+        return t.includes('平空') || t.toLowerCase().includes('close short');
+      }) || null
+    );
+  }
+
   function findOrderbookRow(node) {
     if (!node) return null;
     return node.closest('#futuresOrderbook .row-content');
@@ -96,6 +106,19 @@
   function parsePrice(node) {
     const txt = (node.textContent || '').replace(/,/g, '').trim();
     return /^\d+(\.\d+)?$/.test(txt) ? txt : null;
+  }
+
+  function resolveCloseAction(priceNode) {
+    if (!priceNode) return null;
+    const cls = String(priceNode.className || '');
+    // 买盘价（bid）对应卖出平多；卖盘价（ask）对应买入平空
+    if (cls.includes('bid-light')) {
+      return { side: '平多', button: findCloseLongButton() };
+    }
+    if (cls.includes('ask-light')) {
+      return { side: '平空', button: findCloseShortButton() };
+    }
+    return null;
   }
 
   function getCurrentSymbol() {
@@ -184,9 +207,9 @@
         return;
       }
 
-      const closeLongBtn = findCloseLongButton();
-      if (!closeLongBtn) {
-        warn('未找到“平多”按钮');
+      const action = resolveCloseAction(priceNode);
+      if (!action || !action.button) {
+        warn('未找到可用平仓按钮（平多/平空）');
         return;
       }
 
@@ -200,13 +223,13 @@
 
       if (CFG.SAFE_MODE) {
         lastTs = now;
-        warn('SAFE_MODE=true，仅填数量，不点击平多');
+        warn(`SAFE_MODE=true，仅填数量，不点击${action.side}`);
         return;
       }
 
-      closeLongBtn.click();
+      action.button.click();
       lastTs = now;
-      log('已点击平多');
+      log(`已点击${action.side}`);
     } catch (e2) {
       err('click handler 异常:', e2);
     }
@@ -216,8 +239,10 @@
     cfg: CFG,
     findQtyInput,
     findCloseLongButton,
+    findCloseShortButton,
     findOrderbookRow,
     findPriceNodeFromRow,
+    resolveCloseAction,
   };
 
   log('脚本加载完成', location.href);
