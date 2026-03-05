@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         【自写】Binance Shift+单击一键平仓
+// @name         【自写】Binance 双击一键平仓
 // @namespace    binance.close.long
-// @version      1.2.2
-// @description  Shift+单击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
+// @version      1.2.3
+// @description  双击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
@@ -23,20 +23,18 @@
     },
     // 未配置 SYMBOL_QTY 时，是否自动使用该 symbol 的最小下单量
     AUTO_USE_MIN_QTY: true,
-    // 防误触：需按住 Shift 再单击
-    REQUIRE_SHIFT: true,
     // true=只填数量；false=填数量并自动点“平多/平空”
     SAFE_MODE: false,
     // 当同一币种 LONG/SHORT 同时有仓时，按此方向平仓：LONG 或 SHORT
     CLOSE_SIDE: 'LONG',
     // 防连点
-    COOLDOWN_MS: 600,
+    COOLDOWN_MS: 100,
     DEBUG: true,
   };
 
   let lastTs = 0;
 
-  const PREFIX = '[Shift+单击一键平仓]';
+  const PREFIX = '[双击一键平仓]';
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
@@ -249,8 +247,8 @@
     return { qty: minQty, source: 'AUTO_MIN_QTY', symbol };
   }
 
-  // 使用捕获阶段监听，避免页面内部在冒泡阶段 stopPropagation 导致价格点击丢失
-  document.addEventListener('click', (e) => {
+  // 使用捕获阶段监听，避免页面内部在冒泡阶段 stopPropagation 导致双击事件丢失
+  document.addEventListener('dblclick', (e) => {
     try {
       const row = findOrderbookRow(e.target);
       if (!row) return;
@@ -260,10 +258,9 @@
       if (!e.isTrusted) return;
 
       if (CFG.DEBUG) {
-        log('命中订单簿整行 click', {
+        log('命中订单簿整行 dblclick', {
           targetClass: e.target?.className || '',
           targetText: (e.target?.textContent || '').trim().slice(0, 24),
-          shiftKey: e.shiftKey,
         });
       }
 
@@ -272,11 +269,6 @@
         if (CFG.DEBUG) warn('跳过：cooldown');
         return;
       }
-      if (CFG.REQUIRE_SHIFT && !e.shiftKey) {
-        if (CFG.DEBUG) warn('跳过：需要按住 Shift');
-        return;
-      }
-
       const clickedPrice = parsePrice(priceNode);
       if (!clickedPrice) {
         if (CFG.DEBUG) warn('跳过：价格解析失败');
