@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【自写】Binance Shift+单击一键平多
 // @namespace    binance.close.long
-// @version      1.0.5
+// @version      1.0.6
 // @description  Shift+单击订单簿价格 -> 填数量 -> 自动点“平多”
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
@@ -141,6 +141,7 @@
     return { qty: minQty, source: 'AUTO_MIN_QTY', symbol };
   }
 
+  // 使用捕获阶段监听，避免页面内部在冒泡阶段 stopPropagation 导致价格点击丢失
   document.addEventListener('click', (e) => {
     try {
       const priceNode = isOrderbookPriceNode(e.target);
@@ -204,7 +205,7 @@
     } catch (e2) {
       err('click handler 异常:', e2);
     }
-  });
+  }, true);
 
   window.__TM_CLOSE_LONG_DEBUG__ = {
     cfg: CFG,
