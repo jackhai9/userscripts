@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         【自写】Binance 双击订单簿一键平多
+// @name         【自写】Binance Shift+单击一键平多
 // @namespace    binance.close.long
-// @version      1.0.3
-// @description  双击订单簿价格 -> 填数量 -> 自动点“平多”
+// @version      1.0.4
+// @description  Shift+单击订单簿价格 -> 填数量 -> 自动点“平多”
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
@@ -23,7 +23,7 @@
     },
     // 未配置 SYMBOL_QTY 时，是否自动使用该 symbol 的最小下单量
     AUTO_USE_MIN_QTY: true,
-    // 防误触：需按住 Shift 再双击
+    // 防误触：需按住 Shift 再单击
     REQUIRE_SHIFT: true,
     // true=只填数量；false=填数量并自动点“平多”
     SAFE_MODE: false,
@@ -34,7 +34,7 @@
 
   let lastTs = 0;
 
-  const PREFIX = '[双击订单簿一键平多]';
+  const PREFIX = '[Shift+单击一键平多]';
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
@@ -141,10 +141,10 @@
     return { qty: minQty, source: 'AUTO_MIN_QTY', symbol };
   }
 
-  document.addEventListener('dblclick', (e) => {
+  document.addEventListener('click', (e) => {
     try {
       if (CFG.DEBUG) {
-        log('捕获到 dblclick', {
+        log('捕获到 click', {
           targetClass: e.target?.className || '',
           targetText: (e.target?.textContent || '').trim().slice(0, 24),
           shiftKey: e.shiftKey,
@@ -203,7 +203,7 @@
       lastTs = now;
       log('已点击平多');
     } catch (e2) {
-      err('dblclick handler 异常:', e2);
+      err('click handler 异常:', e2);
     }
   });
 
