@@ -5,10 +5,10 @@
 
 ## 安装入口
 
-| 脚本 | 说明 | 源码真源 | 安装链接 |
+| 脚本 | 说明 | 源码真源 | 安装 |
 |---|---|---|---|
-| 【自写】Binance 双击一键平仓 | 双击订单簿中任意价格行后自动填量并平仓（双向持仓时需配置平仓方向） | `userscripts` 本仓库 | [`点击安装`][install-binance-close-long] |
-| 【自写】定时刷新指定页面 | 仅在指定页面按设定时间自动刷新 | `userscripts` 本仓库 | [`点击安装`][install-auto-refresh] |
+| 【自写】Binance 双击一键平仓 | 双击订单簿行自动填量并平仓（双向按配置） | `userscripts` 本仓库 | [`点击安装`][install-binance-close-long] |
+| 【自写】定时刷新指定页面 | 指定页面按设定时间自动刷新 | `userscripts` 本仓库 | [`点击安装`][install-auto-refresh] |
 | 【改写】m3u8-downloader | m3u8 下载增强脚本 | `jackhai9/m3u8-downloader` | [`点击安装`][install-m3u8] |
 
 ## 维护规则（稳定版）
