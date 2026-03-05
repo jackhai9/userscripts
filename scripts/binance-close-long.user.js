@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Binance 双击订单簿一键平多（定制版）
+// @name         Binance 双击订单簿一键平多
 // @namespace    binance.close.long
 // @version      1.0.1
 // @description  双击订单簿价格 -> 填数量 -> 自动点“平多”
