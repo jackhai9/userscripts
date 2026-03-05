@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【自写】Binance Shift+单击一键平多
 // @namespace    binance.close.long
-// @version      1.0.4
+// @version      1.0.5
 // @description  Shift+单击订单簿价格 -> 填数量 -> 自动点“平多”
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
@@ -143,8 +143,13 @@
 
   document.addEventListener('click', (e) => {
     try {
+      const priceNode = isOrderbookPriceNode(e.target);
+      if (!priceNode) return;
+      // 忽略脚本触发的程序化 click，避免日志噪音
+      if (!e.isTrusted) return;
+
       if (CFG.DEBUG) {
-        log('捕获到 click', {
+        log('命中订单簿价格 click', {
           targetClass: e.target?.className || '',
           targetText: (e.target?.textContent || '').trim().slice(0, 24),
           shiftKey: e.shiftKey,
@@ -158,12 +163,6 @@
       }
       if (CFG.REQUIRE_SHIFT && !e.shiftKey) {
         if (CFG.DEBUG) warn('跳过：需要按住 Shift');
-        return;
-      }
-
-      const priceNode = isOrderbookPriceNode(e.target);
-      if (!priceNode) {
-        if (CFG.DEBUG) warn('跳过：不是订单簿价格节点');
         return;
       }
 
