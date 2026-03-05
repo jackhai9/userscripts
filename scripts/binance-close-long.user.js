@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         【自写】Binance Shift+单击一键平仓
 // @namespace    binance.close.long
-// @version      1.1.0
-// @description  Shift+单击订单簿任意列 -> 填数量 -> 自动按盘口方向点击“平多/平空”
+// @version      1.2.0
+// @description  Shift+单击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
@@ -27,6 +27,8 @@
     REQUIRE_SHIFT: true,
     // true=只填数量；false=填数量并自动点“平多/平空”
     SAFE_MODE: false,
+    // 当同一币种 LONG/SHORT 同时有仓时，按此方向平仓：LONG 或 SHORT
+    CLOSE_SIDE: 'LONG',
     // 防连点
     COOLDOWN_MS: 600,
     DEBUG: true,
@@ -108,15 +110,74 @@
     return /^\d+(\.\d+)?$/.test(txt) ? txt : null;
   }
 
+  function parseNumber(text) {
+    if (text == null) return null;
+    const n = Number(String(text).replace(/,/g, '').trim());
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function readCloseableQtyNearButton(button) {
+    if (!button) return null;
+    const btnRect = button.getBoundingClientRect();
+    const root = button.closest('[class*="order"], [data-testid*="order"]') || document.body;
+    let best = null;
+    let bestScore = Infinity;
+    const nodes = root.querySelectorAll('div, span, p, small');
+    for (const node of nodes) {
+      const text = (node.textContent || '').trim();
+      if (!text.includes('可平')) continue;
+      const m = text.match(/可平\s*([\d,]*\.?\d+)/);
+      if (!m) continue;
+      const qty = parseNumber(m[1]);
+      if (!(qty >= 0)) continue;
+      const r = node.getBoundingClientRect();
+      if (!r || !Number.isFinite(r.left)) continue;
+      const nodeX = (r.left + r.right) / 2;
+      const btnX = (btnRect.left + btnRect.right) / 2;
+      const dy = r.top - btnRect.bottom;
+      if (dy < -16 || dy > 200) continue;
+      const dx = Math.abs(nodeX - btnX);
+      const score = dx + Math.abs(dy) * 2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = qty;
+      }
+    }
+    return best;
+  }
+
+  function normalizeCloseSide(value) {
+    return String(value || 'LONG').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  }
+
   function resolveCloseAction(priceNode) {
-    if (!priceNode) return null;
-    const cls = String(priceNode.className || '');
-    // 买盘价（bid）对应卖出平多；卖盘价（ask）对应买入平空
+    const closeLongBtn = findCloseLongButton();
+    const closeShortBtn = findCloseShortButton();
+    const longQty = readCloseableQtyNearButton(closeLongBtn);
+    const shortQty = readCloseableQtyNearButton(closeShortBtn);
+    const hasLong = longQty > 0;
+    const hasShort = shortQty > 0;
+
+    // 双向持仓时按配置侧执行
+    if (hasLong && hasShort) {
+      const sideCfg = normalizeCloseSide(CFG.CLOSE_SIDE);
+      if (sideCfg === 'SHORT') {
+        return { side: '平空', button: closeShortBtn, by: 'dual_cfg', longQty, shortQty };
+      }
+      return { side: '平多', button: closeLongBtn, by: 'dual_cfg', longQty, shortQty };
+    }
+
+    // 单向持仓时按当前有仓侧执行
+    if (hasLong) return { side: '平多', button: closeLongBtn, by: 'single_long', longQty, shortQty };
+    if (hasShort) return { side: '平空', button: closeShortBtn, by: 'single_short', longQty, shortQty };
+
+    // 兜底：仓位信息读取失败时按盘口方向
+    const cls = String(priceNode?.className || '');
     if (cls.includes('bid-light')) {
-      return { side: '平多', button: findCloseLongButton() };
+      return { side: '平多', button: closeLongBtn, by: 'fallback_row', longQty, shortQty };
     }
     if (cls.includes('ask-light')) {
-      return { side: '平空', button: findCloseShortButton() };
+      return { side: '平空', button: closeShortBtn, by: 'fallback_row', longQty, shortQty };
     }
     return null;
   }
@@ -219,7 +280,24 @@
         return;
       }
       setInputValueReact(qtyInput, qtyPlan.qty);
-      log('已填数量', qtyPlan.qty, '来源', qtyPlan.source, 'symbol', qtyPlan.symbol, '触发价格', clickedPrice);
+      log(
+        '已填数量',
+        qtyPlan.qty,
+        '来源',
+        qtyPlan.source,
+        'symbol',
+        qtyPlan.symbol,
+        '触发价格',
+        clickedPrice,
+        'action',
+        action.side,
+        'by',
+        action.by,
+        'longQty',
+        action.longQty,
+        'shortQty',
+        action.shortQty
+      );
 
       if (CFG.SAFE_MODE) {
         lastTs = now;
