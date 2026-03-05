@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【自写】Binance Shift+单击一键平仓
 // @namespace    binance.close.long
-// @version      1.2.0
+// @version      1.2.2
 // @description  Shift+单击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
@@ -116,6 +116,25 @@
     return Number.isFinite(n) ? n : null;
   }
 
+  function readQtyByDataTestId(testId) {
+    const el = document.querySelector(`[data-testid="${testId}"]`);
+    if (!el) return null;
+    const txt = (el.textContent || '').replace(/,/g, '');
+    const m = txt.match(/(\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    return parseNumber(m[1]);
+  }
+
+  function readCloseableQtyByTestIds() {
+    // Binance UI:
+    // max-sell-amount => 卖出可平(平多)
+    // max-buy-amount  => 买入可平(平空)
+    const longQty = readQtyByDataTestId('max-sell-amount');
+    const shortQty = readQtyByDataTestId('max-buy-amount');
+    if (longQty == null && shortQty == null) return null;
+    return { longQty, shortQty, qtySource: 'testid' };
+  }
+
   function readCloseableQtyNearButton(button) {
     if (!button) return null;
     const btnRect = button.getBoundingClientRect();
@@ -146,15 +165,24 @@
     return best;
   }
 
+  function readCloseableQty(closeLongBtn, closeShortBtn) {
+    const fromTestId = readCloseableQtyByTestIds();
+    if (fromTestId) return fromTestId;
+    return {
+      longQty: readCloseableQtyNearButton(closeLongBtn),
+      shortQty: readCloseableQtyNearButton(closeShortBtn),
+      qtySource: 'near_button',
+    };
+  }
+
   function normalizeCloseSide(value) {
     return String(value || 'LONG').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
   }
 
-  function resolveCloseAction(priceNode) {
+  function resolveCloseAction() {
     const closeLongBtn = findCloseLongButton();
     const closeShortBtn = findCloseShortButton();
-    const longQty = readCloseableQtyNearButton(closeLongBtn);
-    const shortQty = readCloseableQtyNearButton(closeShortBtn);
+    const { longQty, shortQty, qtySource } = readCloseableQty(closeLongBtn, closeShortBtn);
     const hasLong = longQty > 0;
     const hasShort = shortQty > 0;
 
@@ -162,23 +190,16 @@
     if (hasLong && hasShort) {
       const sideCfg = normalizeCloseSide(CFG.CLOSE_SIDE);
       if (sideCfg === 'SHORT') {
-        return { side: '平空', button: closeShortBtn, by: 'dual_cfg', longQty, shortQty };
+        return { side: '平空', button: closeShortBtn, by: 'dual_cfg', longQty, shortQty, qtySource };
       }
-      return { side: '平多', button: closeLongBtn, by: 'dual_cfg', longQty, shortQty };
+      return { side: '平多', button: closeLongBtn, by: 'dual_cfg', longQty, shortQty, qtySource };
     }
 
     // 单向持仓时按当前有仓侧执行
-    if (hasLong) return { side: '平多', button: closeLongBtn, by: 'single_long', longQty, shortQty };
-    if (hasShort) return { side: '平空', button: closeShortBtn, by: 'single_short', longQty, shortQty };
+    if (hasLong) return { side: '平多', button: closeLongBtn, by: 'single_long', longQty, shortQty, qtySource };
+    if (hasShort) return { side: '平空', button: closeShortBtn, by: 'single_short', longQty, shortQty, qtySource };
 
-    // 兜底：仓位信息读取失败时按盘口方向
-    const cls = String(priceNode?.className || '');
-    if (cls.includes('bid-light')) {
-      return { side: '平多', button: closeLongBtn, by: 'fallback_row', longQty, shortQty };
-    }
-    if (cls.includes('ask-light')) {
-      return { side: '平空', button: closeShortBtn, by: 'fallback_row', longQty, shortQty };
-    }
+    // 仓位信息读取失败时不执行，避免误平错误方向
     return null;
   }
 
@@ -268,9 +289,9 @@
         return;
       }
 
-      const action = resolveCloseAction(priceNode);
+      const action = resolveCloseAction();
       if (!action || !action.button) {
-        warn('未找到可用平仓按钮（平多/平空）');
+        warn('未找到可用平仓动作（无法识别当前可平方向）');
         return;
       }
 
@@ -293,6 +314,8 @@
         action.side,
         'by',
         action.by,
+        'qtySource',
+        action.qtySource,
         'longQty',
         action.longQty,
         'shortQty',
