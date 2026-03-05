@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         每天 08:05 自动刷新指定页面
+// @name         【自写】每天 08:05 自动刷新指定页面
 // @namespace    daily-0805-refresh
-// @version      1.0.1
+// @version      1.0.2
 // @description  每天在本地时区 08:05 触发一次刷新。手动刷新不会影响下一次触发时间。
 // @match        https://anyrouter.top/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/auto_refresh.user.js

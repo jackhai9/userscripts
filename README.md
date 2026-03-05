@@ -7,8 +7,8 @@
 
 | 脚本 | 说明 | 源码真源 | 安装链接 |
 |---|---|---|---|
-| Binance 双击订单簿一键平多 | 双击订单簿价格后自动填量并点击“平多” | `userscripts` 本仓库 | [`点击安装`][install-binance-close-long] |
-| 每天定时自动刷新页面 | 仅在指定页面按设定时间自动刷新 | `userscripts` 本仓库 | [`点击安装`][install-auto-refresh] |
+| 【自写】Binance 双击订单簿一键平多 | 双击订单簿价格后自动填量并点击“平多” | `userscripts` 本仓库 | [`点击安装`][install-binance-close-long] |
+| 【自写】每天定时自动刷新页面 | 仅在指定页面按设定时间自动刷新 | `userscripts` 本仓库 | [`点击安装`][install-auto-refresh] |
 | m3u8-downloader | m3u8 下载增强脚本 | `jackhai9/m3u8-downloader` | [`点击安装`][install-m3u8] |
 
 ## 维护规则（稳定版）
