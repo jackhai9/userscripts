@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击平仓
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.2.7
+// @version      1.2.8
 // @author       jackhai9
 // @description  双击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
 // @match        https://www.binance.com/*/futures/*
@@ -19,7 +19,7 @@
   const CFG = {
     // 按 symbol 覆盖默认数量（优先级最高）
     SYMBOL_QTY: {
-      DASHUSDT: '0.002',
+      DASHUSDT: '0.003',
       // BTCUSDT: '0.001',
       // ETHUSDT: '0.01',
     },
