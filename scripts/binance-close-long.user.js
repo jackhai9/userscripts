@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.9
+// @version      2.3.10
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -40,19 +40,12 @@
   const INPUT_ERROR_COLOR = 'var(--color-Error)';
   const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
   const INPUT_DEFAULT_BG = 'transparent';
-  const TRACKING_NOISE_HOSTS = [
-    'google-analytics.com',
-    'googleadservices.com',
-    'doubleclick.net',
-    'pixel.mathtag.com',
-  ];
 
   let lastTs = 0;
   let isEditingMultiplier = false;
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
-  const TRACKING_FILTER_SCRIPT_ID = 'jh-binance-tracking-noise-filter';
   const PREFIX = '[双击下单]';
 
   function emit(level, ...args) {
@@ -73,73 +66,6 @@
 
   function err(...args) {
     emit('ERR', ...args);
-  }
-
-  function isTrackingNoiseUrl(value) {
-    if (!value) return false;
-    try {
-      const url = new URL(String(value), location.href);
-      return TRACKING_NOISE_HOSTS.some(
-        (host) => url.hostname === host || url.hostname.endsWith(`.${host}`)
-      );
-    } catch (_e) {
-      return false;
-    }
-  }
-
-  function installTrackingNoiseFilter() {
-    if (document.getElementById(TRACKING_FILTER_SCRIPT_ID)) return;
-    const script = document.createElement('script');
-    script.id = TRACKING_FILTER_SCRIPT_ID;
-    script.textContent = `(() => {
-      const hosts = ${JSON.stringify(TRACKING_NOISE_HOSTS)};
-      const isNoise = (value) => {
-        if (!value) return false;
-        try {
-          const url = new URL(String(value), location.href);
-          return hosts.some((host) => url.hostname === host || url.hostname.endsWith('.' + host));
-        } catch (_e) {
-          return false;
-        }
-      };
-
-      const originalFetch = window.fetch;
-      if (typeof originalFetch === 'function') {
-        window.fetch = function(input, init) {
-          const url = typeof input === 'string' ? input : input && input.url;
-          if (isNoise(url)) {
-            return Promise.resolve(new Response('', { status: 204, statusText: 'No Content' }));
-          }
-          return originalFetch.call(this, input, init);
-        };
-      }
-
-      if (typeof navigator.sendBeacon === 'function') {
-        const originalSendBeacon = navigator.sendBeacon.bind(navigator);
-        navigator.sendBeacon = function(url, data) {
-          if (isNoise(url)) return true;
-          return originalSendBeacon(url, data);
-        };
-      }
-
-      const imageSrcDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
-      if (imageSrcDesc && imageSrcDesc.set) {
-        Object.defineProperty(HTMLImageElement.prototype, 'src', {
-          configurable: true,
-          enumerable: imageSrcDesc.enumerable ?? true,
-          get: imageSrcDesc.get,
-          set(value) {
-            if (isNoise(value)) {
-              imageSrcDesc.set.call(this, 'data:image/gif;base64,R0lGODlhAQABAAAAACw=');
-              return;
-            }
-            imageSrcDesc.set.call(this, value);
-          },
-        });
-      }
-    })();`;
-    (document.documentElement || document.head || document.body).appendChild(script);
-    script.remove();
   }
 
   function setInputValueReact(input, value) {
@@ -1121,7 +1047,6 @@
     ) renderPanel();
   });
 
-  installTrackingNoiseFilter();
   setInterval(renderPanel, 1000);
 
   if (document.readyState === 'loading') {
