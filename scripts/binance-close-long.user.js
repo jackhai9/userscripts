@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.21
+// @version      2.3.22
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1136,7 +1136,13 @@
       return;
     }
 
+    let applyingCachedState = false;
+
     tradeUiMutationObserver = new MutationObserver((mutations) => {
+      // 重入保护：applyCachedNativeCloseButtonState 会修改 disabled/aria-disabled，
+      // 这些属性变化会再次触发本回调，必须跳过以避免死循环。
+      if (applyingCachedState) return;
+
       let matched = false;
       for (const mutation of mutations) {
         if (mutationTouchesTradeUi(mutation)) { matched = true; break; }
@@ -1145,7 +1151,8 @@
 
       // 每次匹配到 trade UI 变化时立即应用缓存状态，
       // 确保 data 属性在下一帧绘制前就位。
-      applyCachedNativeCloseButtonState();
+      applyingCachedState = true;
+      try { applyCachedNativeCloseButtonState(); } finally { applyingCachedState = false; }
 
       // 防抖：React 可能短时间内触发多批 mutation，
       // 合并为一次 scheduleRenderPanel 调用。
