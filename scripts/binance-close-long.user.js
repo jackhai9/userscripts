@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.14
+// @version      2.3.15
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -46,6 +46,8 @@
 
   let lastTs = 0;
   let isEditingMultiplier = false;
+  let renderPanelQueued = false;
+  let renderPanelFollowUpTimer = 0;
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
@@ -148,6 +150,19 @@
       document.querySelector('[role="tab"].bn-tab__buySell[aria-selected="true"]') ||
       null
     );
+  }
+
+  function isTradeModeTab(node) {
+    if (!(node instanceof Element)) return false;
+    if (!node.matches('[role="tab"]')) return false;
+    if (node.closest(`#${PANEL_ID}`)) return false;
+    if (
+      !node.matches('#position-direction [role="tab"], .bn-tabs__buySell [role="tab"], [role="tab"].bn-tab__buySell')
+    ) {
+      return false;
+    }
+    const text = (node.textContent || '').trim();
+    return text.includes('开仓') || text.includes('平仓');
   }
 
   function isVisibleElement(el) {
@@ -416,7 +431,7 @@
 
   function updateCloseSide(value) {
     saveCloseSide(value);
-    renderPanel();
+    scheduleRenderPanel();
   }
 
   function loadOpenSide() {
@@ -429,7 +444,7 @@
 
   function updateOpenSide(value) {
     saveOpenSide(value);
-    renderPanel();
+    scheduleRenderPanel();
   }
 
   function readCloseContext() {
@@ -949,6 +964,56 @@
     }
   }
 
+  function scheduleRenderPanel(options = {}) {
+    const followUpMs = Number(options.followUpMs) > 0 ? Number(options.followUpMs) : 0;
+    if (!renderPanelQueued) {
+      renderPanelQueued = true;
+      window.requestAnimationFrame(() => {
+        renderPanelQueued = false;
+        renderPanel();
+      });
+    }
+    if (followUpMs > 0) {
+      window.clearTimeout(renderPanelFollowUpTimer);
+      renderPanelFollowUpTimer = window.setTimeout(() => {
+        renderPanel();
+      }, followUpMs);
+    }
+  }
+
+  function installUiSyncObservers() {
+    document.addEventListener('click', (event) => {
+      const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
+      if (!isTradeModeTab(tab)) return;
+      scheduleRenderPanel({ followUpMs: 80 });
+    }, true);
+
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type !== 'attributes') continue;
+        if (mutation.attributeName !== 'aria-selected') continue;
+        if (!isTradeModeTab(mutation.target)) continue;
+        scheduleRenderPanel({ followUpMs: 80 });
+        return;
+      }
+    });
+
+    const startObserve = () => {
+      if (!document.body) return;
+      observer.observe(document.body, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['aria-selected'],
+      });
+    };
+
+    if (document.body) {
+      startObserve();
+    } else {
+      window.addEventListener('DOMContentLoaded', startObserve, { once: true });
+    }
+  }
+
   function resolveTargetQty(tradeMode, priceOverride) {
     const symbol = getCurrentSymbol();
     const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
@@ -1045,6 +1110,7 @@
       }
 
       action.button.click();
+      scheduleRenderPanel({ followUpMs: 120 });
       lastTs = now;
       log(`已点击${action.side}`);
     } catch (e2) {
@@ -1057,9 +1123,10 @@
       event.key === LOCAL_QTY_MULTIPLIER_KEY ||
       event.key === LOCAL_CLOSE_SIDE_KEY ||
       event.key === LOCAL_OPEN_SIDE_KEY
-    ) renderPanel();
+    ) scheduleRenderPanel();
   });
 
+  installUiSyncObservers();
   setInterval(renderPanel, 1000);
 
   if (document.readyState === 'loading') {
