@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.9
+// @version      2.4.10
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -186,11 +186,8 @@
     panel.style.zIndex = '999999';
 
     if (!anchorRect || !anchorRect.width || !anchorRect.height) {
-      panel.style.left = '';
-      panel.style.top = '';
-      panel.style.right = '16px';
-      panel.style.bottom = '88px';
-      panel.style.border = '1px solid #eaecef';
+      panel.style.visibility = 'hidden';
+      panel.style.pointerEvents = 'none';
       return;
     }
 
@@ -211,6 +208,8 @@
     panel.style.top = `${Math.round(top)}px`;
     panel.style.right = '';
     panel.style.bottom = '';
+    panel.style.visibility = 'visible';
+    panel.style.pointerEvents = 'auto';
   }
 
   function positionPanel(panel) {
@@ -261,6 +260,7 @@
     panel.style.lineHeight = '16px';
     panel.style.fontFamily = 'BinancePlex, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
     panel.style.boxShadow = 'none';
+    panel.style.visibility = 'hidden';
     panel.innerHTML = [
       '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:6px;flex-wrap:wrap;">',
       '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">平仓倍率</span>',
