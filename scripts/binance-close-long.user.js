@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.15
+// @version      2.3.16
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -48,6 +48,8 @@
   let isEditingMultiplier = false;
   let renderPanelQueued = false;
   let renderPanelFollowUpTimer = 0;
+  let tradeUiMutationObserver = null;
+  let tradeUiMutationTimeout = 0;
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
@@ -175,6 +177,53 @@
   function buttonTextMatches(button, patterns) {
     const text = (button?.textContent || '').trim().toLowerCase();
     return patterns.some((pattern) => text.includes(pattern));
+  }
+
+  function isTradeActionButton(node) {
+    if (!(node instanceof Element)) return false;
+    const button = node.matches('button') ? node : node.closest('button');
+    if (!button || isOwnPanelButton(button)) return false;
+    return buttonTextMatches(button, [
+      '开多',
+      'open long',
+      '开空',
+      'open short',
+      '平多',
+      'close long',
+      '平空',
+      'close short',
+    ]);
+  }
+
+  function isTradeUiNode(node) {
+    if (!(node instanceof Element)) return false;
+    if (node.closest(`#${PANEL_ID}`) || node.closest(`#${SPACER_ID}`)) return false;
+    if (isTradeModeTab(node) || isTradeActionButton(node)) return true;
+    return !!node.closest(
+      '#position-direction, .bn-tabs__buySell, [data-testid="max-sell-amount"], [data-testid="max-buy-amount"], input[id^="unitAmount-"], input[id^="limitPrice-"]'
+    );
+  }
+
+  function mutationTouchesTradeUi(mutation) {
+    if (!mutation) return false;
+    if (mutation.type === 'attributes') {
+      return isTradeUiNode(mutation.target);
+    }
+    if (mutation.type === 'characterData') {
+      return isTradeUiNode(mutation.target?.parentElement || null);
+    }
+    if (mutation.type === 'childList') {
+      if (isTradeUiNode(mutation.target)) return true;
+      for (const node of mutation.addedNodes || []) {
+        if (isTradeUiNode(node)) return true;
+        if (node instanceof Element && node.querySelector?.(
+          '#position-direction [role="tab"], .bn-tabs__buySell [role="tab"], [data-testid="max-sell-amount"], [data-testid="max-buy-amount"], input[id^="unitAmount-"], input[id^="limitPrice-"], button'
+        )) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   function getTradeSearchScopes(mode) {
@@ -981,11 +1030,54 @@
     }
   }
 
+  function clearTradeUiMutationWait() {
+    if (tradeUiMutationObserver) {
+      tradeUiMutationObserver.disconnect();
+      tradeUiMutationObserver = null;
+    }
+    if (tradeUiMutationTimeout) {
+      window.clearTimeout(tradeUiMutationTimeout);
+      tradeUiMutationTimeout = 0;
+    }
+  }
+
+  function waitForTradeUiMutation(options = {}) {
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 300;
+    clearTradeUiMutationWait();
+    if (!document.body) {
+      scheduleRenderPanel({ followUpMs: timeoutMs });
+      return;
+    }
+
+    tradeUiMutationObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (!mutationTouchesTradeUi(mutation)) continue;
+        clearTradeUiMutationWait();
+        scheduleRenderPanel();
+        return;
+      }
+    });
+
+    tradeUiMutationObserver.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['aria-selected', 'disabled', 'aria-disabled', 'class', 'value'],
+    });
+
+    tradeUiMutationTimeout = window.setTimeout(() => {
+      clearTradeUiMutationWait();
+      scheduleRenderPanel();
+    }, timeoutMs);
+  }
+
   function installUiSyncObservers() {
     document.addEventListener('click', (event) => {
       const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
       if (!isTradeModeTab(tab)) return;
-      scheduleRenderPanel({ followUpMs: 80 });
+      scheduleRenderPanel();
+      waitForTradeUiMutation();
     }, true);
 
     const observer = new MutationObserver((mutations) => {
@@ -993,7 +1085,8 @@
         if (mutation.type !== 'attributes') continue;
         if (mutation.attributeName !== 'aria-selected') continue;
         if (!isTradeModeTab(mutation.target)) continue;
-        scheduleRenderPanel({ followUpMs: 80 });
+        scheduleRenderPanel();
+        waitForTradeUiMutation();
         return;
       }
     });
@@ -1110,7 +1203,8 @@
       }
 
       action.button.click();
-      scheduleRenderPanel({ followUpMs: 120 });
+      scheduleRenderPanel();
+      waitForTradeUiMutation({ timeoutMs: 400 });
       lastTs = now;
       log(`已点击${action.side}`);
     } catch (e2) {
