@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.10
+// @version      2.3.11
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -612,23 +612,27 @@
     button.style.pointerEvents = '';
   }
 
-  function restoreNativeActionButtons() {
-    const buttons = document.querySelectorAll(`button[${NATIVE_ACTION_DISABLED_ATTR}="true"]`);
-    for (const button of buttons) {
-      setNativeActionButtonDisabled(button, false);
-    }
-  }
-
   function syncNativeCloseButtons(tradeMode, closeContext) {
     const { closeLongBtn, closeShortBtn, hasLong, hasShort } = closeContext;
-    restoreNativeActionButtons();
-
-    if (tradeMode !== 'CLOSE') {
-      return;
+    const desiredStates = new Map();
+    if (tradeMode === 'CLOSE') {
+      desiredStates.set(closeLongBtn, hasShort);
+      desiredStates.set(closeShortBtn, hasLong);
     }
 
-    setNativeActionButtonDisabled(closeLongBtn, hasShort);
-    setNativeActionButtonDisabled(closeShortBtn, hasLong);
+    const controlledButtons = document.querySelectorAll(`button[${NATIVE_ACTION_DISABLED_ATTR}="true"]`);
+    for (const button of controlledButtons) {
+      if (desiredStates.get(button) !== true) {
+        setNativeActionButtonDisabled(button, false);
+      }
+    }
+
+    for (const [button, shouldDisable] of desiredStates.entries()) {
+      if (!button) continue;
+      const isDisabledByUs = button.getAttribute(NATIVE_ACTION_DISABLED_ATTR) === 'true';
+      if (shouldDisable === isDisabledByUs) continue;
+      setNativeActionButtonDisabled(button, shouldDisable);
+    }
   }
 
   function refreshComputedInfo(panel, multiplier, qtyRuleContext) {
