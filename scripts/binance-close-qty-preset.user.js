@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.2
+// @version      2.4.6
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -23,7 +23,33 @@
   const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
   const INC_ID = 'jh-binance-close-qty-multiplier-inc';
   const DEFAULT_MULTIPLIER = '1';
+  const INPUT_BORDER_COLOR = '#d5d9e2';
+  const INPUT_ERROR_COLOR = '#f6465d';
+  const INPUT_FOCUS_COLOR = '#f0b90b';
+  const INPUT_DEFAULT_BG = '#ffffff';
   let isEditingMultiplier = false;
+
+  function isValidMultiplier(value) {
+    return /^\d+$/.test(String(value || '').trim()) && Number(value) > 0;
+  }
+
+  function applyInputVisualState(input, multiplier) {
+    if (!input) return;
+
+    const isFocused = document.activeElement === input;
+    const isValid = isValidMultiplier(multiplier);
+
+    if (!isValid) {
+      input.style.borderColor = INPUT_ERROR_COLOR;
+      input.style.background = INPUT_DEFAULT_BG;
+      input.style.boxShadow = 'none';
+      return;
+    }
+
+    input.style.borderColor = isFocused ? INPUT_FOCUS_COLOR : INPUT_BORDER_COLOR;
+    input.style.background = INPUT_DEFAULT_BG;
+    input.style.boxShadow = 'none';
+  }
 
   function getCurrentSymbol() {
     const m = location.pathname.match(/\/futures\/([A-Z0-9_]+)/i);
@@ -240,7 +266,7 @@
       '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">平仓倍率</span>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
         `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
-        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;outline:none;font-size:14px;line-height:28px;">` +
+        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:#1e2329;caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:14px;line-height:28px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">` +
         `<button id="${INC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">+</button>` +
       '</label>',
       '</div>',
@@ -258,6 +284,7 @@
       input.value = loadMultiplier();
       input.addEventListener('focus', () => {
         isEditingMultiplier = true;
+        applyInputVisualState(input, input.value);
         input.select();
       });
       input.addEventListener('input', () => {
@@ -269,6 +296,7 @@
         const symbol = getCurrentSymbol() || '-';
         const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
         refreshComputedInfo(panel, value, minQty);
+        applyInputVisualState(input, value);
       });
       input.addEventListener('blur', () => {
         const value = String(input.value || '').trim();
@@ -276,8 +304,10 @@
         isEditingMultiplier = false;
         saveMultiplier(normalized);
         input.value = normalized;
+        applyInputVisualState(input, normalized);
         renderPanel();
       });
+      applyInputVisualState(input, input.value);
     }
     if (decBtn) {
       decBtn.addEventListener('click', () => {
@@ -310,10 +340,7 @@
     const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
     refreshComputedInfo(panel, multiplier, minQty);
     if (input) {
-      input.style.borderColor =
-        /^\d+$/.test(multiplier) && Number(multiplier) > 0
-          ? '#d5d9e2'
-          : '#f6465d';
+      applyInputVisualState(input, multiplier);
     }
   }
 
