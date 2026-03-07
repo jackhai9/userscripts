@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.7
+// @version      2.4.8
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -165,13 +165,13 @@
     }
     spacer.style.width = '100%';
     spacer.style.height = `${panelHeight}px`;
-    spacer.style.margin = '0 0 8px 0';
+    spacer.style.margin = '8px 0 0 0';
     spacer.style.pointerEvents = 'none';
 
     if (spacer.parentElement !== host.parentElement) {
-      host.parentElement.insertBefore(spacer, host);
-    } else if (spacer.nextElementSibling !== host) {
-      host.parentElement.insertBefore(spacer, host);
+      host.parentElement.insertBefore(spacer, host.nextSibling);
+    } else if (spacer.previousElementSibling !== host) {
+      host.parentElement.insertBefore(spacer, host.nextSibling);
     }
     return spacer;
   }
