@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.6
+// @version      2.3.7
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -40,6 +40,12 @@
   const INPUT_ERROR_COLOR = 'var(--color-Error)';
   const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
   const INPUT_DEFAULT_BG = 'transparent';
+  const TRACKING_NOISE_HOSTS = [
+    'google-analytics.com',
+    'googleadservices.com',
+    'doubleclick.net',
+    'pixel.mathtag.com',
+  ];
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -50,8 +56,15 @@
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
-    // 在部分扩展/页面 hook 场景下，console.log/warn 可能被吞；统一走 error 通道确保可见
-    console.error(PREFIX, `[${level}]`, ...args);
+    if (level === 'ERR') {
+      console.error(PREFIX, `[${level}]`, ...args);
+      return;
+    }
+    if (level === 'WARN') {
+      console.warn(PREFIX, `[${level}]`, ...args);
+      return;
+    }
+    console.log(PREFIX, `[${level}]`, ...args);
   }
 
   function log(...args) {
@@ -64,6 +77,55 @@
 
   function err(...args) {
     emit('ERR', ...args);
+  }
+
+  function isTrackingNoiseUrl(value) {
+    if (!value) return false;
+    try {
+      const url = new URL(String(value), location.href);
+      return TRACKING_NOISE_HOSTS.some(
+        (host) => url.hostname === host || url.hostname.endsWith(`.${host}`)
+      );
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function installTrackingNoiseFilter() {
+    const originalFetch = window.fetch;
+    if (typeof originalFetch === 'function') {
+      window.fetch = function patchedFetch(input, init) {
+        const url = typeof input === 'string' ? input : input?.url;
+        if (isTrackingNoiseUrl(url)) {
+          return Promise.resolve(new Response('', { status: 204, statusText: 'No Content' }));
+        }
+        return originalFetch.call(this, input, init);
+      };
+    }
+
+    if (typeof navigator.sendBeacon === 'function') {
+      const originalSendBeacon = navigator.sendBeacon.bind(navigator);
+      navigator.sendBeacon = function patchedSendBeacon(url, data) {
+        if (isTrackingNoiseUrl(url)) return true;
+        return originalSendBeacon(url, data);
+      };
+    }
+
+    const imageSrcDesc = Object.getOwnPropertyDescriptor(window.HTMLImageElement.prototype, 'src');
+    if (imageSrcDesc?.set) {
+      Object.defineProperty(window.HTMLImageElement.prototype, 'src', {
+        configurable: true,
+        enumerable: imageSrcDesc.enumerable ?? true,
+        get: imageSrcDesc.get,
+        set(value) {
+          if (isTrackingNoiseUrl(value)) {
+            imageSrcDesc.set.call(this, 'data:image/gif;base64,R0lGODlhAQABAAAAACw=');
+            return;
+          }
+          imageSrcDesc.set.call(this, value);
+        },
+      });
+    }
   }
 
   function setInputValueReact(input, value) {
@@ -1045,6 +1107,7 @@
     ) renderPanel();
   });
 
+  installTrackingNoiseFilter();
   setInterval(renderPanel, 1000);
 
   if (document.readyState === 'loading') {
