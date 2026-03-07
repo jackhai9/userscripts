@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.17
+// @version      2.3.18
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -522,10 +522,14 @@
     const isPending = !rawCloseContext.knowsLong && !rawCloseContext.knowsShort;
 
     if (symbol && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
+      const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
       lastResolvedCloseState = {
         symbol,
         longQty: rawCloseContext.longQty ?? cache?.longQty ?? null,
         shortQty: rawCloseContext.shortQty ?? cache?.shortQty ?? null,
+        closeMode,
+        longDisabled: !hasLong,
+        shortDisabled: !hasShort,
       };
     }
 
@@ -540,6 +544,28 @@
       isUsingCache,
       isPending,
     };
+  }
+
+  function getCachedCloseState(symbol) {
+    return symbol && lastResolvedCloseState?.symbol === symbol ? lastResolvedCloseState : null;
+  }
+
+  function applyCachedNativeCloseButtonState() {
+    if (getActiveTradeMode() !== 'CLOSE') return false;
+    const cache = getCachedCloseState(getCurrentSymbol());
+    if (!cache) return false;
+
+    const closeLongBtn = findCloseLongButton();
+    const closeShortBtn = findCloseShortButton();
+    if (!closeLongBtn && !closeShortBtn) return false;
+
+    if (closeLongBtn) {
+      setNativeActionButtonDisabled(closeLongBtn, !!cache.longDisabled);
+    }
+    if (closeShortBtn) {
+      setNativeActionButtonDisabled(closeShortBtn, !!cache.shortDisabled);
+    }
+    return true;
   }
 
   function resolveCloseAction() {
@@ -1093,6 +1119,7 @@
     tradeUiMutationObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (!mutationTouchesTradeUi(mutation)) continue;
+        applyCachedNativeCloseButtonState();
         clearTradeUiMutationWait();
         scheduleRenderPanel();
         return;
