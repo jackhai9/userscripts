@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.16
+// @version      2.3.17
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -50,6 +50,7 @@
   let renderPanelFollowUpTimer = 0;
   let tradeUiMutationObserver = null;
   let tradeUiMutationTimeout = 0;
+  let lastResolvedCloseState = null;
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
@@ -500,9 +501,45 @@
     const closeLongBtn = findCloseLongButton();
     const closeShortBtn = findCloseShortButton();
     const { longQty, shortQty, qtySource } = readCloseableQty(closeLongBtn, closeShortBtn);
+    const knowsLong = longQty != null;
+    const knowsShort = shortQty != null;
     const hasLong = longQty > 0;
     const hasShort = shortQty > 0;
-    return { closeLongBtn, closeShortBtn, longQty, shortQty, qtySource, hasLong, hasShort };
+    return { closeLongBtn, closeShortBtn, longQty, shortQty, qtySource, knowsLong, knowsShort, hasLong, hasShort };
+  }
+
+  function mergeCloseState(rawCloseContext, symbol) {
+    const cache = symbol && lastResolvedCloseState?.symbol === symbol ? lastResolvedCloseState : null;
+    const longQty = rawCloseContext.longQty ?? cache?.longQty ?? null;
+    const shortQty = rawCloseContext.shortQty ?? cache?.shortQty ?? null;
+    const knowsLong = longQty != null;
+    const knowsShort = shortQty != null;
+    const hasLong = longQty > 0;
+    const hasShort = shortQty > 0;
+    const usedCachedLong = rawCloseContext.longQty == null && cache?.longQty != null;
+    const usedCachedShort = rawCloseContext.shortQty == null && cache?.shortQty != null;
+    const isUsingCache = usedCachedLong || usedCachedShort;
+    const isPending = !rawCloseContext.knowsLong && !rawCloseContext.knowsShort;
+
+    if (symbol && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
+      lastResolvedCloseState = {
+        symbol,
+        longQty: rawCloseContext.longQty ?? cache?.longQty ?? null,
+        shortQty: rawCloseContext.shortQty ?? cache?.shortQty ?? null,
+      };
+    }
+
+    return {
+      ...rawCloseContext,
+      longQty,
+      shortQty,
+      knowsLong,
+      knowsShort,
+      hasLong,
+      hasShort,
+      isUsingCache,
+      isPending,
+    };
   }
 
   function resolveCloseAction() {
@@ -686,11 +723,11 @@
   }
 
   function syncNativeCloseButtons(tradeMode, closeContext) {
-    const { closeLongBtn, closeShortBtn, hasLong, hasShort } = closeContext;
+    const { closeLongBtn, closeShortBtn, knowsLong, knowsShort, hasLong, hasShort } = closeContext;
     const desiredStates = new Map();
     if (tradeMode === 'CLOSE') {
-      desiredStates.set(closeLongBtn, hasShort);
-      desiredStates.set(closeShortBtn, hasLong);
+      if (knowsLong) desiredStates.set(closeLongBtn, !hasLong);
+      if (knowsShort) desiredStates.set(closeShortBtn, !hasShort);
     }
 
     const controlledButtons = document.querySelectorAll(`button[${NATIVE_ACTION_DISABLED_ATTR}="true"]`);
@@ -721,8 +758,8 @@
     const finalQty = effectiveMinQty ? multiplyDecimalByInt(effectiveMinQty, multiplier) : null;
     const closeSide = loadCloseSide();
     const openSide = loadOpenSide();
-    const closeContext = readCloseContext();
-    const { hasLong, hasShort } = closeContext;
+    const closeContext = mergeCloseState(readCloseContext(), getCurrentSymbol());
+    const { knowsLong, knowsShort, hasLong, hasShort, isPending, isUsingCache } = closeContext;
     const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
 
     if (minEl) {
@@ -744,6 +781,10 @@
     if (hintEl) {
       if (tradeMode === 'OPEN') {
         hintEl.textContent = `开仓模式：双击订单簿后将按面板所选侧${CFG.SAFE_MODE ? '填数量' : '开仓'}`;
+      } else if (isPending && !isUsingCache) {
+        hintEl.textContent = '平仓模式：正在读取可平仓位';
+      } else if (isPending && isUsingCache) {
+        hintEl.textContent = '平仓模式：正在刷新可平仓位，暂沿用上次识别结果';
       } else if (closeMode === 'single_long') {
         hintEl.textContent = `平仓模式：当前仅有多仓，双击订单簿后将${CFG.SAFE_MODE ? '填数量' : '平多'}`;
       } else if (closeMode === 'single_short') {
@@ -765,7 +806,7 @@
     }
     if (sideLongBtn) {
       const isOpenMode = tradeMode === 'OPEN';
-      const isDisabled = isOpenMode ? false : closeMode === 'single_short';
+      const isDisabled = isOpenMode ? false : knowsLong ? !hasLong : false;
       const isActive = isOpenMode
         ? openSide === 'LONG'
         : closeMode === 'single_long' || (closeMode !== 'single_short' && closeSide === 'LONG');
@@ -786,7 +827,7 @@
     }
     if (sideShortBtn) {
       const isOpenMode = tradeMode === 'OPEN';
-      const isDisabled = isOpenMode ? false : closeMode === 'single_long';
+      const isDisabled = isOpenMode ? false : knowsShort ? !hasShort : false;
       const isActive = isOpenMode
         ? openSide === 'SHORT'
         : closeMode === 'single_short' || (closeMode !== 'single_long' && closeSide === 'SHORT');
