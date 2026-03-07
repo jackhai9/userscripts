@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.27
+// @version      2.3.28
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -544,26 +544,32 @@
       && Date.now() < closeGuard.expiresAt ? closeGuard : null;
 
     if (guard && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
-      const ZERO_CONFIRM_THRESHOLD = 2;
+      // 指纹去重：同一份原始读数不重复推进 streak
+      const rawLong = rawCloseContext.longQty;
+      const rawShort = rawCloseContext.shortQty;
+      const isNewSnapshot = rawLong !== guard.lastRawLong || rawShort !== guard.lastRawShort;
+      guard.lastRawLong = rawLong;
+      guard.lastRawShort = rawShort;
 
-      // long 边
-      if (rawCloseContext.longQty === 0) {
-        guard.longZeroStreak++;
-        if (cache?.longQty > 0 && guard.longZeroStreak < ZERO_CONFIRM_THRESHOLD) {
-          longQty = cache.longQty; // 抑制瞬态 0
+      if (isNewSnapshot) {
+        if (rawLong === 0) {
+          guard.longZeroStreak++;
+        } else if (rawLong > 0) {
+          guard.longZeroStreak = 0;
         }
-      } else if (rawCloseContext.longQty > 0) {
-        guard.longZeroStreak = 0;
+        if (rawShort === 0) {
+          guard.shortZeroStreak++;
+        } else if (rawShort > 0) {
+          guard.shortZeroStreak = 0;
+        }
       }
 
-      // short 边
-      if (rawCloseContext.shortQty === 0) {
-        guard.shortZeroStreak++;
-        if (cache?.shortQty > 0 && guard.shortZeroStreak < ZERO_CONFIRM_THRESHOLD) {
-          shortQty = cache.shortQty; // 抑制瞬态 0
-        }
-      } else if (rawCloseContext.shortQty > 0) {
-        guard.shortZeroStreak = 0;
+      const ZERO_CONFIRM_THRESHOLD = 2;
+      if (rawLong === 0 && cache?.longQty > 0 && guard.longZeroStreak < ZERO_CONFIRM_THRESHOLD) {
+        longQty = cache.longQty;
+      }
+      if (rawShort === 0 && cache?.shortQty > 0 && guard.shortZeroStreak < ZERO_CONFIRM_THRESHOLD) {
+        shortQty = cache.shortQty;
       }
     }
 
@@ -615,10 +621,11 @@
     const closeShortBtn = findCloseShortButton();
     if (!closeLongBtn && !closeShortBtn) return false;
 
+    const activeGuard = closeGuard && Date.now() < closeGuard.expiresAt ? closeGuard : null;
     log('应用缓存按钮状态', cache.closeMode,
       'long=', cache.longQty, cache.longDisabled ? '(禁)' : '(启)',
       'short=', cache.shortQty, cache.shortDisabled ? '(禁)' : '(启)',
-      closeGuard ? `guard:${closeGuard.expiresAt - Date.now()}ms L0x${closeGuard.longZeroStreak} S0x${closeGuard.shortZeroStreak}` : 'no-guard');
+      activeGuard ? `guard:${activeGuard.expiresAt - Date.now()}ms L0x${activeGuard.longZeroStreak} S0x${activeGuard.shortZeroStreak} raw=${activeGuard.lastRawLong}/${activeGuard.lastRawShort}` : 'no-guard');
 
     if (closeLongBtn) {
       setNativeActionButtonDisabled(closeLongBtn, !!cache.longDisabled);
@@ -1238,6 +1245,8 @@
           expiresAt: Date.now() + 500,
           longZeroStreak: 0,
           shortZeroStreak: 0,
+          lastRawLong: undefined,
+          lastRawShort: undefined,
         };
       }
       window.requestAnimationFrame(() => {
@@ -1261,6 +1270,8 @@
             expiresAt: Date.now() + 500,
             longZeroStreak: 0,
             shortZeroStreak: 0,
+            lastRawLong: undefined,
+            lastRawShort: undefined,
           };
         }
         applyCachedCloseUiState();
