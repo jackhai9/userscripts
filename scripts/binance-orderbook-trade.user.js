@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.28
+// @version      2.3.29
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -578,8 +578,9 @@
     const hasLong = longQty > 0;
     const hasShort = shortQty > 0;
 
-    // 第三层：提交稳定缓存
-    if (symbol && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
+    // 第三层：提交稳定缓存——仅在 CLOSE 模式下写入，避免 OPEN 模式瞬态 0/0 污染
+    if (symbol && getActiveTradeMode() === 'CLOSE'
+      && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
       const closeMode = hasLong && hasShort ? 'dual'
         : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
       lastConfirmedCloseState = {
