@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.6
+// @version      2.4.7
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -23,10 +23,10 @@
   const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
   const INC_ID = 'jh-binance-close-qty-multiplier-inc';
   const DEFAULT_MULTIPLIER = '1';
-  const INPUT_BORDER_COLOR = '#d5d9e2';
-  const INPUT_ERROR_COLOR = '#f6465d';
-  const INPUT_FOCUS_COLOR = '#f0b90b';
-  const INPUT_DEFAULT_BG = '#ffffff';
+  const INPUT_BORDER_COLOR = 'var(--color-InputLine)';
+  const INPUT_ERROR_COLOR = 'var(--color-Error)';
+  const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
+  const INPUT_DEFAULT_BG = 'transparent';
   let isEditingMultiplier = false;
 
   function isValidMultiplier(value) {
