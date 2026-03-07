@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.1
+// @version      2.3.2
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -17,8 +17,6 @@
   'use strict';
 
   const CFG = {
-    // 是否自动使用交易所规则计算出的有效最小量
-    AUTO_USE_MIN_QTY: true,
     // true=只填数量；false=填数量并自动点“开多/开空/平多/平空”
     SAFE_MODE: false,
     // 防连点
@@ -920,12 +918,10 @@
       }
     }
 
-    if (!CFG.AUTO_USE_MIN_QTY) return null;
-
     if (!minQty) return null;
     return {
       qty: minQty,
-      source: qtyRuleContext?.minNotionalQty ? 'AUTO_EFFECTIVE_MIN_QTY' : 'AUTO_MIN_QTY',
+      source: 'EFFECTIVE_MIN_QTY',
       symbol,
       rule: qtyRuleContext,
     };
