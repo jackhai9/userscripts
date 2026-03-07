@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.18
+// @version      2.3.19
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -565,6 +565,15 @@
     if (closeShortBtn) {
       setNativeActionButtonDisabled(closeShortBtn, !!cache.shortDisabled);
     }
+    return true;
+  }
+
+  function applyCachedCloseUiState() {
+    if (getActiveTradeMode() !== 'CLOSE') return false;
+    const cache = getCachedCloseState(getCurrentSymbol());
+    if (!cache) return false;
+    applyCachedNativeCloseButtonState();
+    renderPanel();
     return true;
   }
 
@@ -1144,6 +1153,9 @@
     document.addEventListener('click', (event) => {
       const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
       if (!isTradeModeTab(tab)) return;
+      window.requestAnimationFrame(() => {
+        applyCachedCloseUiState();
+      });
       scheduleRenderPanel();
       waitForTradeUiMutation();
     }, true);
@@ -1153,6 +1165,7 @@
         if (mutation.type !== 'attributes') continue;
         if (mutation.attributeName !== 'aria-selected') continue;
         if (!isTradeModeTab(mutation.target)) continue;
+        applyCachedCloseUiState();
         scheduleRenderPanel();
         waitForTradeUiMutation();
         return;
