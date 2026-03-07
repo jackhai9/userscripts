@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.4
+// @version      2.3.5
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -610,12 +610,18 @@
     button.style.pointerEvents = '';
   }
 
+  function restoreNativeActionButtons() {
+    const buttons = document.querySelectorAll(`button[${NATIVE_ACTION_DISABLED_ATTR}="true"]`);
+    for (const button of buttons) {
+      setNativeActionButtonDisabled(button, false);
+    }
+  }
+
   function syncNativeCloseButtons(tradeMode, closeContext) {
     const { closeLongBtn, closeShortBtn, hasLong, hasShort } = closeContext;
+    restoreNativeActionButtons();
 
     if (tradeMode !== 'CLOSE') {
-      setNativeActionButtonDisabled(closeLongBtn, false);
-      setNativeActionButtonDisabled(closeShortBtn, false);
       return;
     }
 
