@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击平仓
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.2.9
+// @version      1.3.0
 // @author       jackhai9
 // @description  双击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
 // @match        https://www.binance.com/*/futures/*
@@ -33,7 +33,7 @@
     COOLDOWN_MS: 100,
     DEBUG: true,
   };
-  const LOCAL_QTY_KEY = 'jh_binance_close_qty_preset';
+  const LOCAL_QTY_MULTIPLIER_KEY = 'jh_binance_close_qty_multiplier';
 
   let lastTs = 0;
 
@@ -117,14 +117,36 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  function readQtyPresetFromLocal() {
+  function readQtyMultiplierFromLocal() {
     try {
-      const value = localStorage.getItem(LOCAL_QTY_KEY);
-      if (!value || !/^\d+(\.\d+)?$/.test(value)) return null;
+      const value = localStorage.getItem(LOCAL_QTY_MULTIPLIER_KEY);
+      if (!value || !/^\d+$/.test(value) || Number(value) <= 0) return null;
       return value;
     } catch (_e) {
       return null;
     }
+  }
+
+  function multiplyDecimalByInt(decimalValue, intValue) {
+    const raw = String(decimalValue || '').trim();
+    const multiplier = String(intValue || '').trim();
+    if (!/^\d+(\.\d+)?$/.test(raw)) return null;
+    if (!/^\d+$/.test(multiplier) || Number(multiplier) <= 0) return null;
+
+    const parts = raw.split('.');
+    const intPart = parts[0];
+    const fracPart = parts[1] || '';
+    const scale = fracPart.length;
+    const base = BigInt(intPart + fracPart);
+    const multi = BigInt(multiplier);
+    const product = (base * multi).toString();
+
+    if (scale === 0) return product;
+
+    const padded = product.padStart(scale + 1, '0');
+    const head = padded.slice(0, -scale) || '0';
+    const tail = padded.slice(-scale).replace(/0+$/, '');
+    return tail ? `${head}.${tail}` : head;
   }
 
   function readQtyByDataTestId(testId) {
@@ -249,9 +271,13 @@
 
   function resolveTargetQty() {
     const symbol = getCurrentSymbol();
-    const localPreset = readQtyPresetFromLocal();
-    if (localPreset) {
-      return { qty: localPreset, source: 'LOCAL_PRESET', symbol };
+    const minQty = (symbol && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
+    const localMultiplier = readQtyMultiplierFromLocal();
+    if (localMultiplier && minQty) {
+      const multipliedQty = multiplyDecimalByInt(minQty, localMultiplier);
+      if (multipliedQty) {
+        return { qty: multipliedQty, source: `LOCAL_MULTIPLIER(${localMultiplier}x)`, symbol };
+      }
     }
     if (symbol && CFG.SYMBOL_QTY[symbol]) {
       return { qty: String(CFG.SYMBOL_QTY[symbol]), source: `SYMBOL_QTY(${symbol})`, symbol };
@@ -259,7 +285,6 @@
 
     if (!CFG.AUTO_USE_MIN_QTY) return null;
 
-    const minQty = (symbol && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
     if (!minQty) return null;
     return { qty: minQty, source: 'AUTO_MIN_QTY', symbol };
   }

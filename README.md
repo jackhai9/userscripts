@@ -9,7 +9,7 @@
 | 脚本 | 说明 | 源码真源 | 安装 |
 |---|---|---|---|
 | 【自写】Binance 双击平仓 | 双击订单簿行自动填量并平仓（双向按配置） | 本仓库 | [`点击安装`][install-binance-close-long] |
-| 【自写】Binance 平仓数量档位切换 | 用 [ 和 ] 快捷键切换平仓数量档位 | 本仓库 | [`点击安装`][install-binance-close-qty-preset] |
+| 【自写】Binance 平仓数量倍率 | 自动读取最小量，并允许手输倍数生成平仓数量 | 本仓库 | [`点击安装`][install-binance-close-qty-preset] |
 | 【自写】定时刷新指定页面 | 指定页面按设定时间自动刷新 | 本仓库 | [`点击安装`][install-auto-refresh] |
 | 【改写】m3u8-downloader | m3u8 下载增强脚本 | jackhai9/m3u8-downloader | [`点击安装`][install-m3u8] |
 
