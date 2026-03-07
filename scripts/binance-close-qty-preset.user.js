@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.2
+// @version      2.3.3
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -101,11 +101,24 @@
   }
 
   function placePanelInline(panel, host) {
-    if (!host || !host.parentElement) return false;
-    if (panel.parentElement !== host.parentElement) {
-      host.parentElement.insertBefore(panel, host.nextSibling);
-    } else if (panel.previousElementSibling !== host) {
-      host.parentElement.insertBefore(panel, host.nextSibling);
+    if (!host) return false;
+    const label = host.querySelector('.bn-formItem-label');
+    const fieldWrap = Array.from(host.children).find((child) => child !== label);
+
+    if (label && fieldWrap) {
+      if (panel.parentElement !== host) {
+        host.insertBefore(panel, fieldWrap);
+      } else if (panel.nextElementSibling !== fieldWrap) {
+        host.insertBefore(panel, fieldWrap);
+      }
+    } else if (host.parentElement) {
+      if (panel.parentElement !== host.parentElement) {
+        host.parentElement.insertBefore(panel, host);
+      } else if (panel.nextElementSibling !== host) {
+        host.parentElement.insertBefore(panel, host);
+      }
+    } else {
+      return false;
     }
 
     panel.style.position = 'relative';
@@ -115,7 +128,7 @@
     panel.style.bottom = '';
     panel.style.width = '100%';
     panel.style.maxWidth = 'none';
-    panel.style.margin = '6px 0 0 0';
+    panel.style.margin = '0 0 6px 0';
     panel.style.minWidth = '0';
     panel.style.zIndex = '1';
     return true;
@@ -229,7 +242,7 @@
     panel.style.fontFamily = 'BinancePlex, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
     panel.style.boxShadow = 'none';
     panel.innerHTML = [
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">',
+      '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:6px;flex-wrap:wrap;">',
       '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">平仓倍率</span>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
         `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
