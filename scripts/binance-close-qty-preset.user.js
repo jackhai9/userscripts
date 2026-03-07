@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.0.2
+// @version      2.0.3
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -20,6 +20,7 @@
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
   const INPUT_ID = 'jh-binance-close-qty-multiplier-input';
   const DEFAULT_MULTIPLIER = '1';
+  let cachedInlineHost = null;
 
   function getCurrentSymbol() {
     const m = location.pathname.match(/\/futures\/([A-Z0-9_]+)/i);
@@ -155,7 +156,15 @@
 
   function positionPanel(panel) {
     const qtyInput = findQtyInput();
-    const host = findInlineHost(qtyInput);
+    const host =
+      cachedInlineHost && cachedInlineHost.isConnected
+        ? cachedInlineHost
+        : findInlineHost(qtyInput);
+    if (host && host.isConnected) {
+      cachedInlineHost = host;
+    } else {
+      cachedInlineHost = null;
+    }
     if (placePanelInline(panel, host)) return;
     placePanelFloating(panel, qtyInput);
   }
