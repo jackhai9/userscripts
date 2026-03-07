@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击平仓
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.2.8
+// @version      1.2.9
 // @author       jackhai9
 // @description  双击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
 // @match        https://www.binance.com/*/futures/*
@@ -33,6 +33,7 @@
     COOLDOWN_MS: 100,
     DEBUG: true,
   };
+  const LOCAL_QTY_KEY = 'jh_binance_close_qty_preset';
 
   let lastTs = 0;
 
@@ -114,6 +115,16 @@
     if (text == null) return null;
     const n = Number(String(text).replace(/,/g, '').trim());
     return Number.isFinite(n) ? n : null;
+  }
+
+  function readQtyPresetFromLocal() {
+    try {
+      const value = localStorage.getItem(LOCAL_QTY_KEY);
+      if (!value || !/^\d+(\.\d+)?$/.test(value)) return null;
+      return value;
+    } catch (_e) {
+      return null;
+    }
   }
 
   function readQtyByDataTestId(testId) {
@@ -238,6 +249,10 @@
 
   function resolveTargetQty() {
     const symbol = getCurrentSymbol();
+    const localPreset = readQtyPresetFromLocal();
+    if (localPreset) {
+      return { qty: localPreset, source: 'LOCAL_PRESET', symbol };
+    }
     if (symbol && CFG.SYMBOL_QTY[symbol]) {
       return { qty: String(CFG.SYMBOL_QTY[symbol]), source: `SYMBOL_QTY(${symbol})`, symbol };
     }
