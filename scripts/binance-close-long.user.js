@@ -260,12 +260,18 @@
     renderPanel();
   }
 
-  function resolveCloseAction() {
+  function readCloseContext() {
     const closeLongBtn = findCloseLongButton();
     const closeShortBtn = findCloseShortButton();
     const { longQty, shortQty, qtySource } = readCloseableQty(closeLongBtn, closeShortBtn);
     const hasLong = longQty > 0;
     const hasShort = shortQty > 0;
+    return { closeLongBtn, closeShortBtn, longQty, shortQty, qtySource, hasLong, hasShort };
+  }
+
+  function resolveCloseAction() {
+    const { closeLongBtn, closeShortBtn, longQty, shortQty, qtySource, hasLong, hasShort } =
+      readCloseContext();
 
     // 双向持仓时按面板当前选择执行
     if (hasLong && hasShort) {
@@ -348,6 +354,8 @@
     const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
     const finalQty = minQty ? multiplyDecimalByInt(minQty, multiplier) : null;
     const closeSide = loadCloseSide();
+    const { hasLong, hasShort } = readCloseContext();
+    const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
 
     if (minEl) minEl.textContent = minQty ? `最小 ${minQty}` : '最小量读取中';
     if (finalEl) {
@@ -367,16 +375,24 @@
       incBtn.style.cursor = 'pointer';
     }
     if (sideLongBtn) {
-      const isActive = closeSide === 'LONG';
+      const isDisabled = closeMode === 'single_short';
+      const isActive = closeMode === 'single_long' || (closeMode !== 'single_short' && closeSide === 'LONG');
+      sideLongBtn.disabled = isDisabled;
       sideLongBtn.style.borderColor = isActive ? 'var(--color-Sell)' : 'var(--color-InputLine)';
       sideLongBtn.style.background = isActive ? 'var(--color-RedAlpha01)' : '#ffffff';
       sideLongBtn.style.color = isActive ? 'var(--color-Sell)' : '#5e6673';
+      sideLongBtn.style.opacity = isDisabled ? '0.45' : '1';
+      sideLongBtn.style.cursor = isDisabled ? 'not-allowed' : 'pointer';
     }
     if (sideShortBtn) {
-      const isActive = closeSide === 'SHORT';
+      const isDisabled = closeMode === 'single_long';
+      const isActive = closeMode === 'single_short' || (closeMode !== 'single_long' && closeSide === 'SHORT');
+      sideShortBtn.disabled = isDisabled;
       sideShortBtn.style.borderColor = isActive ? 'var(--color-Buy)' : 'var(--color-InputLine)';
       sideShortBtn.style.background = isActive ? 'var(--color-GreenAlpha01)' : '#ffffff';
       sideShortBtn.style.color = isActive ? 'var(--color-Buy)' : '#5e6673';
+      sideShortBtn.style.opacity = isDisabled ? '0.45' : '1';
+      sideShortBtn.style.cursor = isDisabled ? 'not-allowed' : 'pointer';
     }
   }
 
@@ -480,8 +496,8 @@
       '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:6px;flex-wrap:wrap;">',
       '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">数量倍率</span>',
       `<div style="display:flex;align-items:center;gap:4px;margin-right:2px;">` +
-        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平多</button>` +
         `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平空</button>` +
+        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平多</button>` +
       '</div>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
         `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
