@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         【自写】Binance 订单簿双击下单
-// @namespace    binance.close.long
+// @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.25
+// @version      2.3.26
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
-// @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
-// @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
+// @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
+// @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -48,7 +48,9 @@
   let tradeUiMutationObserver = null;
   let tradeUiMutationTimeout = 0;
   let tradeUiMutationDebounceTimer = 0;
-  let lastResolvedCloseState = null;
+  let lastConfirmedCloseState = null;  // 已确认的稳定缓存
+  let lastDisplayCloseState = null;   // 最近一次渲染路径产出的显示态
+  let closeGuard = null;              // 切 tab 保护状态机
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
@@ -527,21 +529,54 @@
     return { closeLongBtn, closeShortBtn, longQty, shortQty, qtySource, knowsLong, knowsShort, hasLong, hasShort };
   }
 
-  function mergeCloseState(rawCloseContext, symbol) {
-    const cache = symbol && lastResolvedCloseState?.symbol === symbol ? lastResolvedCloseState : null;
-    const longQty = rawCloseContext.longQty ?? cache?.longQty ?? null;
-    const shortQty = rawCloseContext.shortQty ?? cache?.shortQty ?? null;
+  function resolveDisplayCloseState(rawCloseContext, symbol) {
+    const cache = symbol && lastConfirmedCloseState?.symbol === symbol ? lastConfirmedCloseState : null;
+    const isPending = !rawCloseContext.knowsLong && !rawCloseContext.knowsShort;
+    const isUsingCache = (rawCloseContext.longQty == null && cache?.longQty != null)
+      || (rawCloseContext.shortQty == null && cache?.shortQty != null);
+
+    // 第一层：null 回退到缓存
+    let longQty = rawCloseContext.longQty ?? cache?.longQty ?? null;
+    let shortQty = rawCloseContext.shortQty ?? cache?.shortQty ?? null;
+
+    // 第二层：guard 保护——仅在 CLOSE tab 切换保护窗口内抑制瞬态 0
+    const guard = closeGuard && closeGuard.symbol === symbol
+      && Date.now() < closeGuard.expiresAt ? closeGuard : null;
+
+    if (guard && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
+      const ZERO_CONFIRM_THRESHOLD = 2;
+
+      // long 边
+      if (rawCloseContext.longQty === 0) {
+        guard.longZeroStreak++;
+        if (cache?.longQty > 0 && guard.longZeroStreak < ZERO_CONFIRM_THRESHOLD) {
+          longQty = cache.longQty; // 抑制瞬态 0
+        }
+      } else if (rawCloseContext.longQty > 0) {
+        guard.longZeroStreak = 0;
+      }
+
+      // short 边
+      if (rawCloseContext.shortQty === 0) {
+        guard.shortZeroStreak++;
+        if (cache?.shortQty > 0 && guard.shortZeroStreak < ZERO_CONFIRM_THRESHOLD) {
+          shortQty = cache.shortQty; // 抑制瞬态 0
+        }
+      } else if (rawCloseContext.shortQty > 0) {
+        guard.shortZeroStreak = 0;
+      }
+    }
+
     const knowsLong = longQty != null;
     const knowsShort = shortQty != null;
     const hasLong = longQty > 0;
     const hasShort = shortQty > 0;
-    const isUsingCache = (rawCloseContext.longQty == null && cache?.longQty != null)
-      || (rawCloseContext.shortQty == null && cache?.shortQty != null);
-    const isPending = !rawCloseContext.knowsLong && !rawCloseContext.knowsShort;
 
+    // 第三层：提交稳定缓存
     if (symbol && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
-      const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
-      lastResolvedCloseState = {
+      const closeMode = hasLong && hasShort ? 'dual'
+        : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
+      lastConfirmedCloseState = {
         symbol,
         longQty,
         shortQty,
@@ -551,8 +586,9 @@
       };
     }
 
-    return {
+    const result = {
       ...rawCloseContext,
+      symbol,
       longQty,
       shortQty,
       knowsLong,
@@ -562,10 +598,12 @@
       isUsingCache,
       isPending,
     };
+    lastDisplayCloseState = result;
+    return result;
   }
 
   function getCachedCloseState(symbol) {
-    return symbol && lastResolvedCloseState?.symbol === symbol ? lastResolvedCloseState : null;
+    return symbol && lastConfirmedCloseState?.symbol === symbol ? lastConfirmedCloseState : null;
   }
 
   function applyCachedNativeCloseButtonState() {
@@ -576,9 +614,6 @@
     const closeLongBtn = findCloseLongButton();
     const closeShortBtn = findCloseShortButton();
     if (!closeLongBtn && !closeShortBtn) return false;
-
-    log('应用缓存按钮状态', cache.closeMode,
-      'longDisabled=', cache.longDisabled, 'shortDisabled=', cache.shortDisabled);
 
     if (closeLongBtn) {
       setNativeActionButtonDisabled(closeLongBtn, !!cache.longDisabled);
@@ -599,8 +634,15 @@
   }
 
   function resolveCloseAction() {
-    const { closeLongBtn, closeShortBtn, longQty, shortQty, qtySource, hasLong, hasShort } =
-      readCloseContext();
+    // 消费渲染路径已产出的 display state，不重新调用 resolver（避免重复推进 guard streak）
+    const display = lastDisplayCloseState;
+    const currentSymbol = getCurrentSymbol();
+    if (!display || display.symbol !== currentSymbol) return null;
+    const { longQty, shortQty, qtySource, hasLong, hasShort } = display;
+
+    // 取新鲜的按钮引用（DOM 元素可能被 React 重建）
+    const closeLongBtn = findCloseLongButton();
+    const closeShortBtn = findCloseShortButton();
 
     // 双向持仓时按面板当前选择执行
     if (hasLong && hasShort) {
@@ -806,7 +848,7 @@
     const finalQty = effectiveMinQty ? multiplyDecimalByInt(effectiveMinQty, multiplier) : null;
     const closeSide = loadCloseSide();
     const openSide = loadOpenSide();
-    const closeContext = mergeCloseState(readCloseContext(), getCurrentSymbol());
+    const closeContext = resolveDisplayCloseState(readCloseContext(), getCurrentSymbol());
     const { knowsLong, knowsShort, hasLong, hasShort, isPending, isUsingCache } = closeContext;
     const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
 
@@ -1182,6 +1224,17 @@
     document.addEventListener('click', (event) => {
       const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
       if (!isTradeModeTab(tab)) return;
+      // 仅在从非 CLOSE 状态切入平仓 tab 时开启 guard（重复点击已选中的平仓 tab 不触发）
+      const isEnteringClose = (tab.textContent || '').includes('平仓')
+        && tab.getAttribute('aria-selected') !== 'true';
+      if (isEnteringClose) {
+        closeGuard = {
+          symbol: getCurrentSymbol(),
+          expiresAt: Date.now() + 500,
+          longZeroStreak: 0,
+          shortZeroStreak: 0,
+        };
+      }
       window.requestAnimationFrame(() => {
         applyCachedCloseUiState();
       });
@@ -1194,6 +1247,17 @@
         if (mutation.type !== 'attributes') continue;
         if (mutation.attributeName !== 'aria-selected') continue;
         if (!isTradeModeTab(mutation.target)) continue;
+        // 仅在平仓 tab 变为 selected 时开启 guard（排除离开平仓的 deselect）
+        const isEnteringClose = (mutation.target.textContent || '').includes('平仓')
+          && mutation.target.getAttribute('aria-selected') === 'true';
+        if (isEnteringClose) {
+          closeGuard = {
+            symbol: getCurrentSymbol(),
+            expiresAt: Date.now() + 500,
+            longZeroStreak: 0,
+            shortZeroStreak: 0,
+          };
+        }
         applyCachedCloseUiState();
         scheduleRenderPanel();
         waitForTradeUiMutation();
@@ -1342,6 +1406,8 @@
   window.__TM_CLOSE_LONG_DEBUG__ = {
     cfg: CFG,
     get cachedCloseState() { return getCachedCloseState(getCurrentSymbol()); },
+    get displayCloseState() { return lastDisplayCloseState; },
+    get closeGuard() { return closeGuard; },
     findQtyInput,
     findPriceInput,
     findCloseLongButton,
