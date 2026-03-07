@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         【自写】Binance 双击下单
+// @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.19
+// @version      2.3.20
 // @author       jackhai9
-// @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
+// @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
