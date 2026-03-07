@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.2.1
+// @version      2.3.0
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -91,11 +91,13 @@
 
   function findInlineHost(input) {
     if (!input) return null;
+    const inputRect = input.getBoundingClientRect();
+    const minWidth = Math.max(420, Math.round(inputRect.width * 1.6));
     let node = input.parentElement;
     for (let i = 0; node && i < 6; i += 1, node = node.parentElement) {
       const rect = node.getBoundingClientRect();
       if (!rect.width || !rect.height) continue;
-      if (rect.width < 360 || rect.height > 220) continue;
+      if (rect.width < minWidth || rect.height > 220) continue;
       if (node.parentElement && node.parentElement.children.length > 1) return node;
     }
     return input.parentElement || null;
