@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.2.0
+// @version      2.2.1
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -118,50 +118,6 @@
     return !!button?.closest?.(`#${PANEL_ID}`);
   }
 
-  function findCloseLongButton() {
-    const btns = Array.from(document.querySelectorAll('button'));
-    return (
-      btns.find((b) => {
-        if (isOwnPanelButton(b)) return false;
-        const t = (b.textContent || '').trim();
-        return t.includes('平多') || t.toLowerCase().includes('close long');
-      }) || null
-    );
-  }
-
-  function findCloseShortButton() {
-    const btns = Array.from(document.querySelectorAll('button'));
-    return (
-      btns.find((b) => {
-        if (isOwnPanelButton(b)) return false;
-        const t = (b.textContent || '').trim();
-        return t.includes('平空') || t.toLowerCase().includes('close short');
-      }) || null
-    );
-  }
-
-  function findOpenLongButton() {
-    const btns = Array.from(document.querySelectorAll('button'));
-    return (
-      btns.find((b) => {
-        if (isOwnPanelButton(b)) return false;
-        const t = (b.textContent || '').trim();
-        return t.includes('开多') || t.toLowerCase().includes('open long');
-      }) || null
-    );
-  }
-
-  function findOpenShortButton() {
-    const btns = Array.from(document.querySelectorAll('button'));
-    return (
-      btns.find((b) => {
-        if (isOwnPanelButton(b)) return false;
-        const t = (b.textContent || '').trim();
-        return t.includes('开空') || t.toLowerCase().includes('open short');
-      }) || null
-    );
-  }
-
   function getActiveTradeMode() {
     const activeTab =
       document.querySelector('#position-direction [role="tab"][aria-selected="true"]') ||
@@ -171,6 +127,95 @@
     if (text.includes('开仓')) return 'OPEN';
     if (text.includes('平仓')) return 'CLOSE';
     return 'UNKNOWN';
+  }
+
+  function getActiveTradeTab() {
+    return (
+      document.querySelector('#position-direction [role="tab"][aria-selected="true"]') ||
+      document.querySelector('.bn-tabs__buySell [role="tab"][aria-selected="true"]') ||
+      document.querySelector('[role="tab"].bn-tab__buySell[aria-selected="true"]') ||
+      null
+    );
+  }
+
+  function isVisibleElement(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    return !!(el.getClientRects().length && (el.offsetWidth || el.offsetHeight));
+  }
+
+  function buttonTextMatches(button, patterns) {
+    const text = (button?.textContent || '').trim().toLowerCase();
+    return patterns.some((pattern) => text.includes(pattern));
+  }
+
+  function getTradeSearchScopes(mode) {
+    const activeTab = getActiveTradeTab();
+    const scopes = [];
+    const seen = new Set();
+    const pushScope = (node) => {
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      scopes.push(node);
+    };
+
+    const paneId = activeTab?.getAttribute('aria-controls');
+    if (paneId) pushScope(document.getElementById(paneId));
+
+    const tabRoot =
+      activeTab?.closest('#position-direction') ||
+      activeTab?.closest('.bn-tabs__buySell') ||
+      activeTab?.parentElement ||
+      null;
+    if (tabRoot) {
+      let node = tabRoot.parentElement;
+      let depth = 0;
+      while (node && node !== document.body && depth < 6) {
+        pushScope(node);
+        node = node.parentElement;
+        depth += 1;
+      }
+    }
+
+    pushScope(document.body);
+    return scopes.filter((scope) => {
+      const buttons = Array.from(scope.querySelectorAll('button')).filter((button) => {
+        if (isOwnPanelButton(button) || !isVisibleElement(button)) return false;
+        return mode === 'OPEN'
+          ? buttonTextMatches(button, ['开多', 'open long', '开空', 'open short'])
+          : buttonTextMatches(button, ['平多', 'close long', '平空', 'close short']);
+      });
+      return buttons.length > 0;
+    });
+  }
+
+  function findTradeButton(patterns, mode) {
+    const scopes = getTradeSearchScopes(mode);
+    for (const scope of scopes) {
+      const button = Array.from(scope.querySelectorAll('button')).find((candidate) => {
+        if (isOwnPanelButton(candidate) || !isVisibleElement(candidate)) return false;
+        return buttonTextMatches(candidate, patterns);
+      });
+      if (button) return button;
+    }
+    return null;
+  }
+
+  function findCloseLongButton() {
+    return findTradeButton(['平多', 'close long'], 'CLOSE');
+  }
+
+  function findCloseShortButton() {
+    return findTradeButton(['平空', 'close short'], 'CLOSE');
+  }
+
+  function findOpenLongButton() {
+    return findTradeButton(['开多', 'open long'], 'OPEN');
+  }
+
+  function findOpenShortButton() {
+    return findTradeButton(['开空', 'open short'], 'OPEN');
   }
 
   function findOrderbookRow(node) {
