@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.0.1
+// @version      2.0.2
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -66,13 +66,57 @@
     localStorage.setItem(STORAGE_KEY, value);
   }
 
-  function positionPanel(panel) {
-    const qtyInput =
+  function findQtyInput() {
+    return (
       document.querySelector('input[id^="unitAmount-"]') ||
       document.querySelector('input[aria-label="数量"]') ||
-      document.querySelector('input[placeholder="数量"]');
+      document.querySelector('input[placeholder="数量"]')
+    );
+  }
 
-    if (!qtyInput) {
+  function findInlineHost(input) {
+    if (!input) return null;
+    let node = input.parentElement;
+    for (let i = 0; node && i < 6; i += 1, node = node.parentElement) {
+      const rect = node.getBoundingClientRect();
+      if (!rect.width || !rect.height) continue;
+      if (rect.width < 220 || rect.height > 220) continue;
+      if (node.parentElement && node.parentElement.children.length > 1) return node;
+    }
+    return input.parentElement || null;
+  }
+
+  function placePanelInline(panel, host) {
+    if (!host || !host.parentElement) return false;
+    if (panel.parentElement !== host.parentElement) {
+      host.parentElement.insertBefore(panel, host.nextSibling);
+    } else if (panel.previousElementSibling !== host) {
+      host.parentElement.insertBefore(panel, host.nextSibling);
+    }
+
+    panel.style.position = 'relative';
+    panel.style.left = '';
+    panel.style.top = '';
+    panel.style.right = '';
+    panel.style.bottom = '';
+    panel.style.width = '100%';
+    panel.style.maxWidth = 'none';
+    panel.style.margin = '6px 0 0 0';
+    panel.style.zIndex = '1';
+    return true;
+  }
+
+  function placePanelFloating(panel, input) {
+    if (panel.parentElement !== document.body) {
+      document.body.appendChild(panel);
+    }
+    panel.style.position = 'fixed';
+    panel.style.width = '192px';
+    panel.style.maxWidth = '192px';
+    panel.style.margin = '0';
+    panel.style.zIndex = '999999';
+
+    if (!input) {
       panel.style.left = '';
       panel.style.top = '';
       panel.style.right = '16px';
@@ -80,7 +124,7 @@
       return;
     }
 
-    const rect = qtyInput.getBoundingClientRect();
+    const rect = input.getBoundingClientRect();
     if (!rect.width || !rect.height) {
       panel.style.left = '';
       panel.style.top = '';
@@ -107,6 +151,13 @@
     panel.style.top = `${Math.round(top)}px`;
     panel.style.right = '';
     panel.style.bottom = '';
+  }
+
+  function positionPanel(panel) {
+    const qtyInput = findQtyInput();
+    const host = findInlineHost(qtyInput);
+    if (placePanelInline(panel, host)) return;
+    placePanelFloating(panel, qtyInput);
   }
 
   function multiplyDecimalByInt(decimalValue, intValue) {
