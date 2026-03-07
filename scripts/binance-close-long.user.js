@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.20
+// @version      2.3.21
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -40,9 +40,6 @@
   const INPUT_ERROR_COLOR = 'var(--color-Error)';
   const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
   const INPUT_DEFAULT_BG = 'transparent';
-  const NATIVE_DISABLED_BG_COLOR = 'var(--color-DisableBtn)';
-  const NATIVE_DISABLED_TEXT_COLOR = 'var(--color-DisableText)';
-  const NATIVE_DISABLED_BORDER_COLOR = 'var(--color-DisableBtn)';
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -50,11 +47,33 @@
   let renderPanelFollowUpTimer = 0;
   let tradeUiMutationObserver = null;
   let tradeUiMutationTimeout = 0;
+  let tradeUiMutationDebounceTimer = 0;
   let lastResolvedCloseState = null;
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
   const PREFIX = '[双击下单]';
+
+  // 注入原生禁用按钮的 CSS 规则。使用 data 属性选择器 + !important，
+  // 确保样式不会被 React re-render 的 inline style 覆盖。
+  // React 不会清除它不认识的 data 属性。
+  (function injectNativeDisabledStyle() {
+    const styleId = 'jh-native-action-disabled-style';
+    if (document.getElementById(styleId)) return;
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      button[${NATIVE_ACTION_DISABLED_ATTR}="true"] {
+        background: var(--color-DisableBtn) !important;
+        color: var(--color-DisableText) !important;
+        border-color: var(--color-DisableBtn) !important;
+        opacity: 1 !important;
+        cursor: not-allowed !important;
+        pointer-events: none !important;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  })();
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
@@ -737,24 +756,12 @@
       button.setAttribute(NATIVE_ACTION_DISABLED_ATTR, 'true');
       button.disabled = true;
       button.setAttribute('aria-disabled', 'true');
-      button.style.background = NATIVE_DISABLED_BG_COLOR;
-      button.style.color = NATIVE_DISABLED_TEXT_COLOR;
-      button.style.borderColor = NATIVE_DISABLED_BORDER_COLOR;
-      button.style.opacity = '1';
-      button.style.cursor = 'not-allowed';
-      button.style.pointerEvents = 'none';
       return;
     }
 
     button.removeAttribute(NATIVE_ACTION_DISABLED_ATTR);
     button.disabled = false;
     button.setAttribute('aria-disabled', 'false');
-    button.style.background = '';
-    button.style.color = '';
-    button.style.borderColor = '';
-    button.style.opacity = '';
-    button.style.cursor = '';
-    button.style.pointerEvents = '';
   }
 
   function syncNativeCloseButtons(tradeMode, closeContext) {
@@ -1115,10 +1122,14 @@
       window.clearTimeout(tradeUiMutationTimeout);
       tradeUiMutationTimeout = 0;
     }
+    if (tradeUiMutationDebounceTimer) {
+      window.clearTimeout(tradeUiMutationDebounceTimer);
+      tradeUiMutationDebounceTimer = 0;
+    }
   }
 
   function waitForTradeUiMutation(options = {}) {
-    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 300;
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 500;
     clearTradeUiMutationWait();
     if (!document.body) {
       scheduleRenderPanel({ followUpMs: timeoutMs });
@@ -1126,13 +1137,23 @@
     }
 
     tradeUiMutationObserver = new MutationObserver((mutations) => {
+      let matched = false;
       for (const mutation of mutations) {
-        if (!mutationTouchesTradeUi(mutation)) continue;
-        applyCachedNativeCloseButtonState();
-        clearTradeUiMutationWait();
-        scheduleRenderPanel();
-        return;
+        if (mutationTouchesTradeUi(mutation)) { matched = true; break; }
       }
+      if (!matched) return;
+
+      // 每次匹配到 trade UI 变化时立即应用缓存状态，
+      // 确保 data 属性在下一帧绘制前就位。
+      applyCachedNativeCloseButtonState();
+
+      // 防抖：React 可能短时间内触发多批 mutation，
+      // 合并为一次 scheduleRenderPanel 调用。
+      window.clearTimeout(tradeUiMutationDebounceTimer);
+      tradeUiMutationDebounceTimer = window.setTimeout(() => {
+        tradeUiMutationDebounceTimer = 0;
+        scheduleRenderPanel();
+      }, 50);
     });
 
     tradeUiMutationObserver.observe(document.body, {
@@ -1143,6 +1164,7 @@
       attributeFilter: ['aria-selected', 'disabled', 'aria-disabled', 'class', 'value'],
     });
 
+    // 窗口期结束后断开 observer。
     tradeUiMutationTimeout = window.setTimeout(() => {
       clearTradeUiMutationWait();
       scheduleRenderPanel();
