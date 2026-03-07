@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.3
+// @version      2.3.4
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -252,7 +252,6 @@
       '</label>',
       '</div>',
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">',
-      '<span id="jh-binance-close-qty-symbol" style="color:#76808f;"></span>',
       '<span id="jh-binance-close-qty-min" style="color:#76808f;"></span>',
       '<span id="jh-binance-close-qty-final" style="font-weight:600;color:#1e2329;"></span>',
       '</div>',
@@ -303,7 +302,6 @@
   function renderPanel() {
     const panel = ensurePanel();
     positionPanel(panel);
-    const symbolEl = panel.querySelector('#jh-binance-close-qty-symbol');
     const minEl = panel.querySelector('#jh-binance-close-qty-min');
     const finalEl = panel.querySelector('#jh-binance-close-qty-final');
     const input = panel.querySelector(`#${INPUT_ID}`);
@@ -314,7 +312,6 @@
     const decBtn = panel.querySelector(`#${DEC_ID}`);
     const incBtn = panel.querySelector(`#${INC_ID}`);
 
-    if (symbolEl) symbolEl.textContent = symbol !== '-' ? symbol : '识别中';
     if (minEl) minEl.textContent = minQty ? `最小 ${minQty}` : '最小量读取中';
     if (finalEl) {
       if (/^\d+$/.test(multiplier) && Number(multiplier) > 0 && finalQty) {
