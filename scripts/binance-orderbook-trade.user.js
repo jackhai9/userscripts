@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.29
+// @version      2.3.30
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -48,9 +48,10 @@
   let tradeUiMutationObserver = null;
   let tradeUiMutationTimeout = 0;
   let tradeUiMutationDebounceTimer = 0;
-  let lastConfirmedCloseState = null;  // 已确认的稳定缓存
-  let lastDisplayCloseState = null;   // 最近一次渲染路径产出的显示态
-  let closeGuard = null;              // 切 tab 保护状态机
+  let lastConfirmedCloseState = null;  // 第三层：已确认的稳定缓存（仅 CLOSE 模式下写入）
+  let lastDisplayCloseState = null;   // 第二层：渲染路径产出的显示态（UI 和执行共用）
+  let closeGuard = null;              // 切 tab 保护状态机（OPEN→CLOSE 时创建，500ms 后过期）
+  let lastAppliedCacheSnapshot = '';  // applyCachedNativeCloseButtonState 去重用
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
@@ -518,6 +519,12 @@
     scheduleRenderPanel();
   }
 
+  // ── 平仓状态三层架构 ──
+  // 第一层 rawCloseContext：readCloseContext() 直接从 DOM 读取的原始值
+  // 第二层 displayCloseState：resolveDisplayCloseState() 经 guard 保护后的显示态
+  // 第三层 lastConfirmedCloseState：仅在 CLOSE 模式下提交的稳定缓存
+  // UI 渲染和执行路径统一消费第二层，不直接使用第一层。
+
   function readCloseContext() {
     const closeLongBtn = findCloseLongButton();
     const closeShortBtn = findCloseShortButton();
@@ -622,11 +629,16 @@
     const closeShortBtn = findCloseShortButton();
     if (!closeLongBtn && !closeShortBtn) return false;
 
-    const activeGuard = closeGuard && Date.now() < closeGuard.expiresAt ? closeGuard : null;
-    log('应用缓存按钮状态', cache.closeMode,
-      'long=', cache.longQty, cache.longDisabled ? '(禁)' : '(启)',
-      'short=', cache.shortQty, cache.shortDisabled ? '(禁)' : '(启)',
-      activeGuard ? `guard:${activeGuard.expiresAt - Date.now()}ms L0x${activeGuard.longZeroStreak} S0x${activeGuard.shortZeroStreak} raw=${activeGuard.lastRawLong}/${activeGuard.lastRawShort}` : 'no-guard');
+    // 仅在状态实际变化时打印日志，避免热路径刷屏
+    const snapshot = `${cache.closeMode}|${cache.longQty}|${cache.shortQty}`;
+    if (snapshot !== lastAppliedCacheSnapshot) {
+      lastAppliedCacheSnapshot = snapshot;
+      const activeGuard = closeGuard && Date.now() < closeGuard.expiresAt ? closeGuard : null;
+      log('应用缓存按钮状态', cache.closeMode,
+        'long=', cache.longQty, cache.longDisabled ? '(禁)' : '(启)',
+        'short=', cache.shortQty, cache.shortDisabled ? '(禁)' : '(启)',
+        activeGuard ? `guard:${activeGuard.expiresAt - Date.now()}ms L0x${activeGuard.longZeroStreak} S0x${activeGuard.shortZeroStreak} raw=${activeGuard.lastRawLong}/${activeGuard.lastRawShort}` : 'no-guard');
+    }
 
     if (closeLongBtn) {
       setNativeActionButtonDisabled(closeLongBtn, !!cache.longDisabled);
@@ -702,11 +714,21 @@
     return t && t[1] ? t[1].toUpperCase() : null;
   }
 
+  let appDataCache = { text: '', parsed: null }; // #__APP_DATA 解析缓存
+
   function readTradeRulesFromAppData(symbol) {
     try {
       const el = document.querySelector('#__APP_DATA');
       if (!el || !el.textContent) return null;
-      const data = JSON.parse(el.textContent);
+      // textContent 没变则复用上次 JSON.parse 结果
+      let data;
+      if (el.textContent === appDataCache.text) {
+        data = appDataCache.parsed;
+      } else {
+        data = JSON.parse(el.textContent);
+        appDataCache = { text: el.textContent, parsed: data };
+      }
+      if (!data) return null;
       const reactQueryData = data?.appState?.loader?.dataByRouteId?.bd56?.reactQueryData;
       const perpetual = reactQueryData?.productFutureService?.perpetual;
       const sInfo = perpetual?.[symbol];
