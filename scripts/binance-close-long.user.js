@@ -2,9 +2,9 @@
 // @name         【自写】Binance 双击平仓
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.0.0
+// @version      2.1.0
 // @author       jackhai9
-// @description  双击订单簿任意列自动平仓，内置数量倍率面板
+// @description  双击订单簿任意行 -> binance默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动平仓（双向持仓时按配置侧，单向持仓时按已有持仓侧）
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
@@ -27,19 +27,21 @@
     AUTO_USE_MIN_QTY: true,
     // true=只填数量；false=填数量并自动点“平多/平空”
     SAFE_MODE: false,
-    // 当同一币种 LONG/SHORT 同时有仓时(双向持仓时)，按此方向平仓：LONG 或 SHORT
-    CLOSE_SIDE: 'LONG',
     // 防连点
     COOLDOWN_MS: 100,
     DEBUG: true,
   };
   const LOCAL_QTY_MULTIPLIER_KEY = 'jh_binance_close_qty_multiplier';
+  const LOCAL_CLOSE_SIDE_KEY = 'jh_binance_close_side';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
   const SPACER_ID = 'jh-binance-close-qty-multiplier-spacer';
   const INPUT_ID = 'jh-binance-close-qty-multiplier-input';
   const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
   const INC_ID = 'jh-binance-close-qty-multiplier-inc';
+  const SIDE_LONG_ID = 'jh-binance-close-side-long';
+  const SIDE_SHORT_ID = 'jh-binance-close-side-short';
   const DEFAULT_MULTIPLIER = '1';
+  const DEFAULT_CLOSE_SIDE = 'LONG';
   const INPUT_BORDER_COLOR = 'var(--color-InputLine)';
   const INPUT_ERROR_COLOR = 'var(--color-Error)';
   const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
@@ -49,7 +51,6 @@
   let isEditingMultiplier = false;
 
   const PREFIX = '[双击平仓]';
-  window.__JH_BINANCE_CLOSE_HELPER__ = { version: '2.0.0' };
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
@@ -246,6 +247,19 @@
     return String(value || 'LONG').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
   }
 
+  function loadCloseSide() {
+    return normalizeCloseSide(localStorage.getItem(LOCAL_CLOSE_SIDE_KEY) || DEFAULT_CLOSE_SIDE);
+  }
+
+  function saveCloseSide(value) {
+    localStorage.setItem(LOCAL_CLOSE_SIDE_KEY, normalizeCloseSide(value));
+  }
+
+  function updateCloseSide(value) {
+    saveCloseSide(value);
+    renderPanel();
+  }
+
   function resolveCloseAction() {
     const closeLongBtn = findCloseLongButton();
     const closeShortBtn = findCloseShortButton();
@@ -253,13 +267,13 @@
     const hasLong = longQty > 0;
     const hasShort = shortQty > 0;
 
-    // 双向持仓时按配置侧执行
+    // 双向持仓时按面板当前选择执行
     if (hasLong && hasShort) {
-      const sideCfg = normalizeCloseSide(CFG.CLOSE_SIDE);
+      const sideCfg = loadCloseSide();
       if (sideCfg === 'SHORT') {
-        return { side: '平空', button: closeShortBtn, by: 'dual_cfg', longQty, shortQty, qtySource };
+        return { side: '平空', button: closeShortBtn, by: 'dual_panel', longQty, shortQty, qtySource };
       }
-      return { side: '平多', button: closeLongBtn, by: 'dual_cfg', longQty, shortQty, qtySource };
+      return { side: '平多', button: closeLongBtn, by: 'dual_panel', longQty, shortQty, qtySource };
     }
 
     // 单向持仓时按当前有仓侧执行
@@ -330,7 +344,10 @@
     const finalEl = panel.querySelector('#jh-binance-close-qty-final');
     const decBtn = panel.querySelector(`#${DEC_ID}`);
     const incBtn = panel.querySelector(`#${INC_ID}`);
+    const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
+    const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
     const finalQty = minQty ? multiplyDecimalByInt(minQty, multiplier) : null;
+    const closeSide = loadCloseSide();
 
     if (minEl) minEl.textContent = minQty ? `最小 ${minQty}` : '最小量读取中';
     if (finalEl) {
@@ -348,6 +365,18 @@
     if (incBtn) {
       incBtn.style.opacity = '1';
       incBtn.style.cursor = 'pointer';
+    }
+    if (sideLongBtn) {
+      const isActive = closeSide === 'LONG';
+      sideLongBtn.style.borderColor = isActive ? 'var(--color-Sell)' : 'var(--color-InputLine)';
+      sideLongBtn.style.background = isActive ? 'var(--color-RedAlpha01)' : '#ffffff';
+      sideLongBtn.style.color = isActive ? 'var(--color-Sell)' : '#5e6673';
+    }
+    if (sideShortBtn) {
+      const isActive = closeSide === 'SHORT';
+      sideShortBtn.style.borderColor = isActive ? 'var(--color-Buy)' : 'var(--color-InputLine)';
+      sideShortBtn.style.background = isActive ? 'var(--color-GreenAlpha01)' : '#ffffff';
+      sideShortBtn.style.color = isActive ? 'var(--color-Buy)' : '#5e6673';
     }
   }
 
@@ -450,6 +479,10 @@
     panel.innerHTML = [
       '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:6px;flex-wrap:wrap;">',
       '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">数量倍率</span>',
+      `<div style="display:flex;align-items:center;gap:4px;margin-right:2px;">` +
+        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平多</button>` +
+        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平空</button>` +
+      '</div>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
         `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
         `<button id="${INC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">+</button>` +
@@ -466,6 +499,8 @@
     const input = panel.querySelector(`#${INPUT_ID}`);
     const decBtn = panel.querySelector(`#${DEC_ID}`);
     const incBtn = panel.querySelector(`#${INC_ID}`);
+    const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
+    const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
     if (input) {
       input.value = loadMultiplier();
       input.addEventListener('focus', () => {
@@ -505,6 +540,16 @@
       incBtn.addEventListener('click', () => {
         const current = Number(loadMultiplier());
         updateMultiplier(String(current + 1));
+      });
+    }
+    if (sideLongBtn) {
+      sideLongBtn.addEventListener('click', () => {
+        updateCloseSide('LONG');
+      });
+    }
+    if (sideShortBtn) {
+      sideShortBtn.addEventListener('click', () => {
+        updateCloseSide('SHORT');
       });
     }
 
@@ -632,7 +677,7 @@
   }, true);
 
   window.addEventListener('storage', (event) => {
-    if (event.key === LOCAL_QTY_MULTIPLIER_KEY) renderPanel();
+    if (event.key === LOCAL_QTY_MULTIPLIER_KEY || event.key === LOCAL_CLOSE_SIDE_KEY) renderPanel();
   });
 
   setInterval(renderPanel, 1000);
