@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.6
+// @version      2.3.7
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -81,6 +81,32 @@
     saveMultiplier(normalized);
     if (input) input.value = normalized;
     renderPanel();
+  }
+
+  function refreshComputedInfo(panel, multiplier, minQty) {
+    const minEl = panel.querySelector('#jh-binance-close-qty-min');
+    const finalEl = panel.querySelector('#jh-binance-close-qty-final');
+    const decBtn = panel.querySelector(`#${DEC_ID}`);
+    const incBtn = panel.querySelector(`#${INC_ID}`);
+    const finalQty = minQty ? multiplyDecimalByInt(minQty, multiplier) : null;
+
+    if (minEl) minEl.textContent = minQty ? `最小 ${minQty}` : '最小量读取中';
+    if (finalEl) {
+      if (/^\d+$/.test(multiplier) && Number(multiplier) > 0 && finalQty) {
+        finalEl.textContent = `${minQty} x ${multiplier} = ${finalQty}`;
+      } else {
+        finalEl.textContent = '请输入正整数倍数';
+      }
+    }
+    if (decBtn) decBtn.disabled = Number(multiplier) <= 1;
+    if (decBtn) {
+      decBtn.style.opacity = decBtn.disabled ? '0.45' : '1';
+      decBtn.style.cursor = decBtn.disabled ? 'not-allowed' : 'pointer';
+    }
+    if (incBtn) {
+      incBtn.style.opacity = '1';
+      incBtn.style.cursor = 'pointer';
+    }
   }
 
   function findQtyInput() {
@@ -248,7 +274,7 @@
       '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">平仓倍率</span>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
         `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
-        `<input id="${INPUT_ID}" type="number" min="1" step="1" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;outline:none;font-size:14px;line-height:28px;">` +
+        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;outline:none;font-size:14px;line-height:28px;">` +
         `<button id="${INC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">+</button>` +
         '<span style="font-size:12px;color:#5e6673;">x</span>' +
       '</label>',
@@ -269,15 +295,15 @@
         isEditingMultiplier = true;
         input.select();
       });
-      input.addEventListener('mouseup', (event) => {
-        event.preventDefault();
-      });
       input.addEventListener('input', () => {
-        const value = String(input.value || '').trim();
+        const value = String(input.value || '').replace(/[^\d]/g, '');
+        if (input.value !== value) input.value = value;
         if (/^\d+$/.test(value) && Number(value) > 0) {
           saveMultiplier(value);
         }
-        renderPanel();
+        const symbol = getCurrentSymbol() || '-';
+        const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
+        refreshComputedInfo(panel, value, minQty);
       });
       input.addEventListener('blur', () => {
         const value = String(input.value || '').trim();
@@ -307,8 +333,6 @@
   function renderPanel() {
     const panel = ensurePanel();
     positionPanel(panel);
-    const minEl = panel.querySelector('#jh-binance-close-qty-min');
-    const finalEl = panel.querySelector('#jh-binance-close-qty-final');
     const input = panel.querySelector(`#${INPUT_ID}`);
     const symbol = getCurrentSymbol() || '-';
     const storedMultiplier = loadMultiplier();
@@ -319,32 +343,12 @@
       ? String((isEditingMultiplier ? input.value : storedMultiplier) || '').trim()
       : storedMultiplier;
     const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
-    const finalQty = minQty ? multiplyDecimalByInt(minQty, multiplier) : null;
-    const decBtn = panel.querySelector(`#${DEC_ID}`);
-    const incBtn = panel.querySelector(`#${INC_ID}`);
-
-    if (minEl) minEl.textContent = minQty ? `最小 ${minQty}` : '最小量读取中';
-    if (finalEl) {
-      if (/^\d+$/.test(multiplier) && Number(multiplier) > 0 && finalQty) {
-        finalEl.textContent = `${minQty} x ${multiplier} = ${finalQty}`;
-      } else {
-        finalEl.textContent = '请输入正整数倍数';
-      }
-    }
+    refreshComputedInfo(panel, multiplier, minQty);
     if (input) {
       input.style.borderColor =
         /^\d+$/.test(multiplier) && Number(multiplier) > 0
           ? '#d5d9e2'
           : '#f6465d';
-    }
-    if (decBtn) decBtn.disabled = Number(multiplier) <= 1;
-    if (decBtn) {
-      decBtn.style.opacity = decBtn.disabled ? '0.45' : '1';
-      decBtn.style.cursor = decBtn.disabled ? 'not-allowed' : 'pointer';
-    }
-    if (incBtn) {
-      incBtn.style.opacity = '1';
-      incBtn.style.cursor = 'pointer';
     }
   }
 
