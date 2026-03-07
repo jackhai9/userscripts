@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.2.0
+// @version      2.2.1
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -95,7 +95,7 @@
     for (let i = 0; node && i < 6; i += 1, node = node.parentElement) {
       const rect = node.getBoundingClientRect();
       if (!rect.width || !rect.height) continue;
-      if (rect.width < 220 || rect.height > 220) continue;
+      if (rect.width < 360 || rect.height > 220) continue;
       if (node.parentElement && node.parentElement.children.length > 1) return node;
     }
     return input.parentElement || null;
@@ -153,16 +153,19 @@
 
     const margin = 8;
     const panelWidth = 220;
+    const estimatedHeight = 116;
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
 
-    let left = rect.right - panelWidth;
+    let left = rect.left - panelWidth - margin;
+    if (left < margin) {
+      left = rect.right + margin;
+    }
     left = Math.max(margin, Math.min(left, viewportWidth - panelWidth - margin));
 
-    let top = rect.bottom + margin;
-    const estimatedHeight = 116;
+    let top = rect.top;
     if (top + estimatedHeight > viewportHeight - margin) {
-      top = Math.max(margin, rect.top - estimatedHeight - margin);
+      top = Math.max(margin, viewportHeight - estimatedHeight - margin);
     }
 
     panel.style.left = `${Math.round(left)}px`;
@@ -228,7 +231,7 @@
     panel.style.boxShadow = 'none';
     panel.innerHTML = [
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">',
-      '<span style="font-size:12px;font-weight:500;color:#5e6673;">平仓倍率</span>',
+      '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">平仓倍率</span>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
         `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
         `<input id="${INPUT_ID}" type="number" min="1" step="1" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;outline:none;font-size:14px;line-height:28px;">` +
