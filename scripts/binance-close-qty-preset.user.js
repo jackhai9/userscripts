@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.7
+// @version      2.4.0
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -22,7 +22,6 @@
   const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
   const INC_ID = 'jh-binance-close-qty-multiplier-inc';
   const DEFAULT_MULTIPLIER = '1';
-  let cachedInlineHost = null;
   let isEditingMultiplier = false;
 
   function getCurrentSymbol() {
@@ -117,58 +116,12 @@
     );
   }
 
-  function findInlineHost(input) {
-    if (!input) return null;
-    return (
-      input.closest('div[target^="unitAmount-"]') ||
-      input.closest('.bn-formItem') ||
-      input.closest('.css-1fymml5') ||
-      input.parentElement ||
-      null
-    );
-  }
-
-  function placePanelInline(panel, host) {
-    if (!host) return false;
-    const label = host.querySelector('.bn-formItem-label');
-    const fieldWrap = Array.from(host.children).find((child) => child !== label);
-
-    if (label && fieldWrap) {
-      if (panel.parentElement !== host) {
-        host.insertBefore(panel, fieldWrap);
-      } else if (panel.nextElementSibling !== fieldWrap) {
-        host.insertBefore(panel, fieldWrap);
-      }
-    } else if (host.parentElement) {
-      if (panel.parentElement !== host.parentElement) {
-        host.parentElement.insertBefore(panel, host);
-      } else if (panel.nextElementSibling !== host) {
-        host.parentElement.insertBefore(panel, host);
-      }
-    } else {
-      return false;
-    }
-
-    panel.style.position = 'relative';
-    panel.style.left = '';
-    panel.style.top = '';
-    panel.style.right = '';
-    panel.style.bottom = '';
-    panel.style.width = '100%';
-    panel.style.maxWidth = 'none';
-    panel.style.margin = '0 0 6px 0';
-    panel.style.minWidth = '0';
-    panel.style.zIndex = '1';
-    return true;
-  }
-
   function placePanelFloating(panel, input) {
     if (panel.parentElement !== document.body) {
       document.body.appendChild(panel);
     }
     panel.style.position = 'fixed';
-    panel.style.width = '220px';
-    panel.style.maxWidth = '220px';
+    panel.style.maxWidth = 'none';
     panel.style.margin = '0';
     panel.style.zIndex = '999999';
 
@@ -192,22 +145,21 @@
     }
 
     const margin = 8;
-    const panelWidth = 220;
-    const estimatedHeight = 116;
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const panelWidth = Math.min(Math.max(rect.width, 280), viewportWidth - margin * 2);
+    const estimatedHeight = 76;
 
-    let left = rect.left - panelWidth - margin;
-    if (left < margin) {
-      left = rect.right + margin;
-    }
+    let left = rect.left;
     left = Math.max(margin, Math.min(left, viewportWidth - panelWidth - margin));
 
-    let top = rect.top;
-    if (top + estimatedHeight > viewportHeight - margin) {
-      top = Math.max(margin, viewportHeight - estimatedHeight - margin);
+    let top = rect.top - estimatedHeight - margin;
+    if (top < margin) {
+      top = rect.bottom + margin;
     }
+    top = Math.max(margin, Math.min(top, viewportHeight - estimatedHeight - margin));
 
+    panel.style.width = `${Math.round(panelWidth)}px`;
     panel.style.left = `${Math.round(left)}px`;
     panel.style.top = `${Math.round(top)}px`;
     panel.style.right = '';
@@ -216,16 +168,6 @@
 
   function positionPanel(panel) {
     const qtyInput = findQtyInput();
-    const host =
-      cachedInlineHost && cachedInlineHost.isConnected
-        ? cachedInlineHost
-        : findInlineHost(qtyInput);
-    if (host && host.isConnected) {
-      cachedInlineHost = host;
-    } else {
-      cachedInlineHost = null;
-    }
-    if (placePanelInline(panel, host)) return;
     placePanelFloating(panel, qtyInput);
   }
 
@@ -259,7 +201,7 @@
     panel.id = PANEL_ID;
     panel.style.position = 'fixed';
     panel.style.zIndex = '999999';
-    panel.style.width = '192px';
+    panel.style.width = '320px';
     panel.style.padding = '8px 10px';
     panel.style.borderRadius = '10px';
     panel.style.background = '#ffffff';
