@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.1.0
+// @version      2.2.0
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -19,6 +19,8 @@
   const STORAGE_KEY = 'jh_binance_close_qty_multiplier';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
   const INPUT_ID = 'jh-binance-close-qty-multiplier-input';
+  const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
+  const INC_ID = 'jh-binance-close-qty-multiplier-inc';
   const DEFAULT_MULTIPLIER = '1';
   let cachedInlineHost = null;
 
@@ -65,6 +67,18 @@
 
   function saveMultiplier(value) {
     localStorage.setItem(STORAGE_KEY, value);
+  }
+
+  function sanitizeMultiplier(value) {
+    return /^\d+$/.test(String(value || '')) && Number(value) > 0 ? String(value) : DEFAULT_MULTIPLIER;
+  }
+
+  function updateMultiplier(nextValue) {
+    const input = document.getElementById(INPUT_ID);
+    const normalized = sanitizeMultiplier(nextValue);
+    saveMultiplier(normalized);
+    if (input) input.value = normalized;
+    renderPanel();
   }
 
   function findQtyInput() {
@@ -216,7 +230,9 @@
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">',
       '<span style="font-size:12px;font-weight:500;color:#5e6673;">平仓倍率</span>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
+        `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
         `<input id="${INPUT_ID}" type="number" min="1" step="1" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;outline:none;font-size:14px;line-height:28px;">` +
+        `<button id="${INC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">+</button>` +
         '<span style="font-size:12px;color:#5e6673;">x</span>' +
       '</label>',
       '</div>',
@@ -229,6 +245,8 @@
     document.body.appendChild(panel);
 
     const input = panel.querySelector(`#${INPUT_ID}`);
+    const decBtn = panel.querySelector(`#${DEC_ID}`);
+    const incBtn = panel.querySelector(`#${INC_ID}`);
     if (input) {
       input.value = loadMultiplier();
       input.addEventListener('input', () => {
@@ -251,6 +269,18 @@
         renderPanel();
       });
     }
+    if (decBtn) {
+      decBtn.addEventListener('click', () => {
+        const current = Number(loadMultiplier());
+        updateMultiplier(String(Math.max(1, current - 1)));
+      });
+    }
+    if (incBtn) {
+      incBtn.addEventListener('click', () => {
+        const current = Number(loadMultiplier());
+        updateMultiplier(String(current + 1));
+      });
+    }
 
     return panel;
   }
@@ -266,6 +296,8 @@
     const multiplier = input ? String(input.value || '').trim() : loadMultiplier();
     const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
     const finalQty = minQty ? multiplyDecimalByInt(minQty, multiplier) : null;
+    const decBtn = panel.querySelector(`#${DEC_ID}`);
+    const incBtn = panel.querySelector(`#${INC_ID}`);
 
     if (symbolEl) symbolEl.textContent = symbol !== '-' ? symbol : '识别中';
     if (minEl) minEl.textContent = minQty ? `最小 ${minQty}` : '最小量读取中';
@@ -281,6 +313,15 @@
         /^\d+$/.test(multiplier) && Number(multiplier) > 0
           ? '#d5d9e2'
           : '#f6465d';
+    }
+    if (decBtn) decBtn.disabled = Number(multiplier) <= 1;
+    if (decBtn) {
+      decBtn.style.opacity = decBtn.disabled ? '0.45' : '1';
+      decBtn.style.cursor = decBtn.disabled ? 'not-allowed' : 'pointer';
+    }
+    if (incBtn) {
+      incBtn.style.opacity = '1';
+      incBtn.style.cursor = 'pointer';
     }
   }
 
