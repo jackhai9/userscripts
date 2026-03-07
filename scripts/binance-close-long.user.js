@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.3
+// @version      2.3.4
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -45,6 +45,7 @@
   let isEditingMultiplier = false;
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
+  const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
   const PREFIX = '[双击下单]';
 
   function emit(level, ...args) {
@@ -589,6 +590,39 @@
     renderPanel();
   }
 
+  function setNativeActionButtonDisabled(button, disabled) {
+    if (!button) return;
+    if (disabled) {
+      button.setAttribute(NATIVE_ACTION_DISABLED_ATTR, 'true');
+      button.disabled = true;
+      button.style.opacity = '0.45';
+      button.style.filter = 'grayscale(1)';
+      button.style.cursor = 'not-allowed';
+      button.style.pointerEvents = 'none';
+      return;
+    }
+
+    button.removeAttribute(NATIVE_ACTION_DISABLED_ATTR);
+    button.disabled = false;
+    button.style.opacity = '';
+    button.style.filter = '';
+    button.style.cursor = '';
+    button.style.pointerEvents = '';
+  }
+
+  function syncNativeCloseButtons(tradeMode, closeContext) {
+    const { closeLongBtn, closeShortBtn, hasLong, hasShort } = closeContext;
+
+    if (tradeMode !== 'CLOSE') {
+      setNativeActionButtonDisabled(closeLongBtn, false);
+      setNativeActionButtonDisabled(closeShortBtn, false);
+      return;
+    }
+
+    setNativeActionButtonDisabled(closeLongBtn, hasShort);
+    setNativeActionButtonDisabled(closeShortBtn, hasLong);
+  }
+
   function refreshComputedInfo(panel, multiplier, qtyRuleContext) {
     const minEl = panel.querySelector('#jh-binance-close-qty-min');
     const finalEl = panel.querySelector('#jh-binance-close-qty-final');
@@ -602,7 +636,8 @@
     const finalQty = effectiveMinQty ? multiplyDecimalByInt(effectiveMinQty, multiplier) : null;
     const closeSide = loadCloseSide();
     const openSide = loadOpenSide();
-    const { hasLong, hasShort } = readCloseContext();
+    const closeContext = readCloseContext();
+    const { hasLong, hasShort } = closeContext;
     const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
 
     if (minEl) {
@@ -685,6 +720,8 @@
       sideShortBtn.style.opacity = isDisabled ? '0.45' : '1';
       sideShortBtn.style.cursor = isDisabled ? 'not-allowed' : 'pointer';
     }
+
+    syncNativeCloseButtons(tradeMode, closeContext);
   }
 
   function findQtyFormItem(input) {
