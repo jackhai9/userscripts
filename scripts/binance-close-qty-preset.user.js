@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.8
+// @version      2.4.9
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -266,8 +266,8 @@
       '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">平仓倍率</span>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
         `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
-        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:#1e2329;caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:14px;line-height:28px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">` +
         `<button id="${INC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">+</button>` +
+        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:#1e2329;caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:14px;line-height:28px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">` +
       '</label>',
       '</div>',
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">',
