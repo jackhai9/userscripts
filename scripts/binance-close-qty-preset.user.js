@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.5
+// @version      2.3.6
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -23,6 +23,7 @@
   const INC_ID = 'jh-binance-close-qty-multiplier-inc';
   const DEFAULT_MULTIPLIER = '1';
   let cachedInlineHost = null;
+  let isEditingMultiplier = false;
 
   function getCurrentSymbol() {
     const m = location.pathname.match(/\/futures\/([A-Z0-9_]+)/i);
@@ -76,6 +77,7 @@
   function updateMultiplier(nextValue) {
     const input = document.getElementById(INPUT_ID);
     const normalized = sanitizeMultiplier(nextValue);
+    isEditingMultiplier = false;
     saveMultiplier(normalized);
     if (input) input.value = normalized;
     renderPanel();
@@ -264,6 +266,7 @@
     if (input) {
       input.value = loadMultiplier();
       input.addEventListener('focus', () => {
+        isEditingMultiplier = true;
         input.select();
       });
       input.addEventListener('mouseup', (event) => {
@@ -273,19 +276,15 @@
         const value = String(input.value || '').trim();
         if (/^\d+$/.test(value) && Number(value) > 0) {
           saveMultiplier(value);
-          renderPanel();
-          return;
         }
         renderPanel();
       });
       input.addEventListener('blur', () => {
         const value = String(input.value || '').trim();
-        if (/^\d+$/.test(value) && Number(value) > 0) {
-          saveMultiplier(value);
-          renderPanel();
-          return;
-        }
-        input.value = loadMultiplier();
+        const normalized = sanitizeMultiplier(value);
+        isEditingMultiplier = false;
+        saveMultiplier(normalized);
+        input.value = normalized;
         renderPanel();
       });
     }
@@ -312,7 +311,13 @@
     const finalEl = panel.querySelector('#jh-binance-close-qty-final');
     const input = panel.querySelector(`#${INPUT_ID}`);
     const symbol = getCurrentSymbol() || '-';
-    const multiplier = input ? String(input.value || '').trim() : loadMultiplier();
+    const storedMultiplier = loadMultiplier();
+    if (input && !isEditingMultiplier && input.value !== storedMultiplier) {
+      input.value = storedMultiplier;
+    }
+    const multiplier = input
+      ? String((isEditingMultiplier ? input.value : storedMultiplier) || '').trim()
+      : storedMultiplier;
     const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
     const finalQty = minQty ? multiplyDecimalByInt(minQty, multiplier) : null;
     const decBtn = panel.querySelector(`#${DEC_ID}`);
