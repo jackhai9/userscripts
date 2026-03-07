@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.24
+// @version      2.3.25
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -576,6 +576,9 @@
     const closeLongBtn = findCloseLongButton();
     const closeShortBtn = findCloseShortButton();
     if (!closeLongBtn && !closeShortBtn) return false;
+
+    log('应用缓存按钮状态', cache.closeMode,
+      'longDisabled=', cache.longDisabled, 'shortDisabled=', cache.shortDisabled);
 
     if (closeLongBtn) {
       setNativeActionButtonDisabled(closeLongBtn, !!cache.longDisabled);
@@ -1338,6 +1341,7 @@
 
   window.__TM_CLOSE_LONG_DEBUG__ = {
     cfg: CFG,
+    get cachedCloseState() { return getCachedCloseState(getCurrentSymbol()); },
     findQtyInput,
     findPriceInput,
     findCloseLongButton,
