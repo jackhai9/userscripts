@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.26
+// @version      2.3.27
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -614,6 +614,11 @@
     const closeLongBtn = findCloseLongButton();
     const closeShortBtn = findCloseShortButton();
     if (!closeLongBtn && !closeShortBtn) return false;
+
+    log('应用缓存按钮状态', cache.closeMode,
+      'long=', cache.longQty, cache.longDisabled ? '(禁)' : '(启)',
+      'short=', cache.shortQty, cache.shortDisabled ? '(禁)' : '(启)',
+      closeGuard ? `guard:${closeGuard.expiresAt - Date.now()}ms L0x${closeGuard.longZeroStreak} S0x${closeGuard.shortZeroStreak}` : 'no-guard');
 
     if (closeLongBtn) {
       setNativeActionButtonDisabled(closeLongBtn, !!cache.longDisabled);
