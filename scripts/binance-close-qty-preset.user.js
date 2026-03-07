@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.0.0
+// @version      2.0.1
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -66,6 +66,49 @@
     localStorage.setItem(STORAGE_KEY, value);
   }
 
+  function positionPanel(panel) {
+    const qtyInput =
+      document.querySelector('input[id^="unitAmount-"]') ||
+      document.querySelector('input[aria-label="数量"]') ||
+      document.querySelector('input[placeholder="数量"]');
+
+    if (!qtyInput) {
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.right = '16px';
+      panel.style.bottom = '88px';
+      return;
+    }
+
+    const rect = qtyInput.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.right = '16px';
+      panel.style.bottom = '88px';
+      return;
+    }
+
+    const margin = 8;
+    const panelWidth = 192;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+
+    let left = rect.right - panelWidth;
+    left = Math.max(margin, Math.min(left, viewportWidth - panelWidth - margin));
+
+    let top = rect.bottom + margin;
+    const estimatedHeight = 116;
+    if (top + estimatedHeight > viewportHeight - margin) {
+      top = Math.max(margin, rect.top - estimatedHeight - margin);
+    }
+
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
+    panel.style.right = '';
+    panel.style.bottom = '';
+  }
+
   function multiplyDecimalByInt(decimalValue, intValue) {
     const raw = String(decimalValue || '').trim();
     const multiplier = String(intValue || '').trim();
@@ -95,8 +138,6 @@
     panel = document.createElement('div');
     panel.id = PANEL_ID;
     panel.style.position = 'fixed';
-    panel.style.right = '16px';
-    panel.style.bottom = '88px';
     panel.style.zIndex = '999999';
     panel.style.width = '192px';
     panel.style.padding = '10px 12px';
@@ -149,6 +190,7 @@
 
   function renderPanel() {
     const panel = ensurePanel();
+    positionPanel(panel);
     const symbolEl = panel.querySelector('#jh-binance-close-qty-symbol');
     const minEl = panel.querySelector('#jh-binance-close-qty-min');
     const finalEl = panel.querySelector('#jh-binance-close-qty-final');
