@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.1
+// @version      2.3.2
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -91,22 +91,13 @@
 
   function findInlineHost(input) {
     if (!input) return null;
-    const inputRect = input.getBoundingClientRect();
-    let candidate = null;
-    let node = input.parentElement;
-    for (let i = 0; node && i < 8; i += 1, node = node.parentElement) {
-      const rect = node.getBoundingClientRect();
-      if (!rect.width || !rect.height) continue;
-      if (rect.height > 140) continue;
-      const almostSameLeft = Math.abs(rect.left - inputRect.left) <= 24;
-      const almostSameRight = Math.abs(rect.right - inputRect.right) <= 24;
-      const containsInputVertically = rect.top <= inputRect.top + 4 && rect.bottom >= inputRect.bottom - 4;
-      if (!containsInputVertically) continue;
-      if (almostSameLeft && almostSameRight) {
-        candidate = node;
-      }
-    }
-    return candidate || input.parentElement || null;
+    return (
+      input.closest('div[target^="unitAmount-"]') ||
+      input.closest('.bn-formItem') ||
+      input.closest('.css-1fymml5') ||
+      input.parentElement ||
+      null
+    );
   }
 
   function placePanelInline(panel, host) {
