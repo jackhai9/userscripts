@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.2
+// @version      2.3.3
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -313,16 +313,6 @@
 
     const steps = (numerator + denominator - 1n) / denominator;
     return formatDecimalParts(steps * s.digits, s.scale);
-  }
-
-  function readQtyMultiplierFromLocal() {
-    try {
-      const value = localStorage.getItem(LOCAL_QTY_MULTIPLIER_KEY);
-      if (!value || !/^\d+$/.test(value) || Number(value) <= 0) return null;
-      return value;
-    } catch (_e) {
-      return null;
-    }
   }
 
   function multiplyDecimalByInt(decimalValue, intValue) {
@@ -905,23 +895,13 @@
     const symbol = getCurrentSymbol();
     const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
     const minQty = qtyRuleContext?.effectiveMinQty || null;
-    const localMultiplier = readQtyMultiplierFromLocal();
-    if (localMultiplier && minQty) {
-      const multipliedQty = multiplyDecimalByInt(minQty, localMultiplier);
-      if (multipliedQty) {
-        return {
-          qty: multipliedQty,
-          source: `LOCAL_MULTIPLIER(${localMultiplier}x @ ${minQty})`,
-          symbol,
-          rule: qtyRuleContext,
-        };
-      }
-    }
-
     if (!minQty) return null;
+    const multiplier = loadMultiplier();
+    const qty = multiplyDecimalByInt(minQty, multiplier);
+    if (!qty) return null;
     return {
-      qty: minQty,
-      source: 'EFFECTIVE_MIN_QTY',
+      qty,
+      source: `MULTIPLIER(${multiplier}x @ ${minQty})`,
       symbol,
       rule: qtyRuleContext,
     };
