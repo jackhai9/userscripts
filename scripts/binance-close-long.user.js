@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.13
+// @version      2.3.14
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -40,6 +40,9 @@
   const INPUT_ERROR_COLOR = 'var(--color-Error)';
   const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
   const INPUT_DEFAULT_BG = 'transparent';
+  const NATIVE_DISABLED_BG_COLOR = 'var(--color-DisableBtn)';
+  const NATIVE_DISABLED_TEXT_COLOR = 'var(--color-DisableText)';
+  const NATIVE_DISABLED_BORDER_COLOR = 'var(--color-DisableBtn)';
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -598,7 +601,10 @@
       button.setAttribute(NATIVE_ACTION_DISABLED_ATTR, 'true');
       button.disabled = true;
       button.setAttribute('aria-disabled', 'true');
-      button.style.opacity = '0.45';
+      button.style.background = NATIVE_DISABLED_BG_COLOR;
+      button.style.color = NATIVE_DISABLED_TEXT_COLOR;
+      button.style.borderColor = NATIVE_DISABLED_BORDER_COLOR;
+      button.style.opacity = '1';
       button.style.cursor = 'not-allowed';
       button.style.pointerEvents = 'none';
       return;
@@ -607,6 +613,9 @@
     button.removeAttribute(NATIVE_ACTION_DISABLED_ATTR);
     button.disabled = false;
     button.setAttribute('aria-disabled', 'false');
+    button.style.background = '';
+    button.style.color = '';
+    button.style.borderColor = '';
     button.style.opacity = '';
     button.style.cursor = '';
     button.style.pointerEvents = '';
