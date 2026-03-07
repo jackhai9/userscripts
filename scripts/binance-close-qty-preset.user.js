@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.2
+// @version      2.4.3
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -23,7 +23,97 @@
   const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
   const INC_ID = 'jh-binance-close-qty-multiplier-inc';
   const DEFAULT_MULTIPLIER = '1';
+  const STORE_SCAN_INTERVAL_MS = 3000;
+  const SHOW_PLUS_MINUS_RETRY_MS = 800;
   let isEditingMultiplier = false;
+  let preferenceStore = null;
+  let lastStoreScanAt = 0;
+  let lastShowPlusMinusAttemptAt = 0;
+
+  function isObject(value) {
+    return !!value && typeof value === 'object';
+  }
+
+  function isPreferenceStore(value) {
+    if (!value || typeof value.getState !== 'function' || typeof value.dispatch !== 'function') {
+      return false;
+    }
+    try {
+      const state = value.getState();
+      return isObject(state) && isObject(state.preference) && 'showPlusMinusButton' in state.preference;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function getPreferenceStore() {
+    if (isPreferenceStore(preferenceStore)) return preferenceStore;
+
+    const now = Date.now();
+    if (now - lastStoreScanAt < STORE_SCAN_INTERVAL_MS) return null;
+    lastStoreScanAt = now;
+
+    const names = Object.getOwnPropertyNames(window);
+    for (const name of names) {
+      let value;
+      try {
+        value = window[name];
+      } catch (_e) {
+        continue;
+      }
+
+      if (isPreferenceStore(value)) {
+        preferenceStore = value;
+        return value;
+      }
+
+      const nested =
+        (isObject(value) && (value._store || value.store || value.reduxStore)) ||
+        (isObject(value?.props) && value.props.store) ||
+        null;
+      if (isPreferenceStore(nested)) {
+        preferenceStore = nested;
+        return nested;
+      }
+    }
+
+    return null;
+  }
+
+  function isShowPlusMinusEnabled(store) {
+    try {
+      return !!store?.getState?.()?.preference?.showPlusMinusButton;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function enableShowPlusMinusButton() {
+    const store = getPreferenceStore();
+    if (!store) return false;
+    if (isShowPlusMinusEnabled(store)) return true;
+
+    const now = Date.now();
+    if (now - lastShowPlusMinusAttemptAt < SHOW_PLUS_MINUS_RETRY_MS) return false;
+    lastShowPlusMinusAttemptAt = now;
+
+    const actions = [
+      { type: 'preference/updateShowPlusMinusButton', payload: true },
+      { type: 'preference/updateShowPlusMinusButton', payload: { showPlusMinusButton: true } },
+      { type: 'preference/save', payload: { showPlusMinusButton: true } },
+    ];
+
+    for (const action of actions) {
+      try {
+        store.dispatch(action);
+      } catch (_e) {
+        // Ignore incompatible action signatures and keep trying other variants.
+      }
+      if (isShowPlusMinusEnabled(store)) return true;
+    }
+
+    return isShowPlusMinusEnabled(store);
+  }
 
   function getCurrentSymbol() {
     const m = location.pathname.match(/\/futures\/([A-Z0-9_]+)/i);
@@ -296,6 +386,7 @@
   }
 
   function renderPanel() {
+    enableShowPlusMinusButton();
     const panel = ensurePanel();
     positionPanel(panel);
     const input = panel.querySelector(`#${INPUT_ID}`);
