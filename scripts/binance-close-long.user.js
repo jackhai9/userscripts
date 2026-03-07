@@ -2,9 +2,9 @@
 // @name         【自写】Binance 双击平仓
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.3.0
+// @version      2.0.0
 // @author       jackhai9
-// @description  双击订单簿任意列 -> 填数量 -> 自动平仓（双向持仓按配置侧，单向持仓按当前有仓侧）
+// @description  双击订单簿任意列自动平仓，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-close-long.user.js
@@ -34,10 +34,22 @@
     DEBUG: true,
   };
   const LOCAL_QTY_MULTIPLIER_KEY = 'jh_binance_close_qty_multiplier';
+  const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
+  const SPACER_ID = 'jh-binance-close-qty-multiplier-spacer';
+  const INPUT_ID = 'jh-binance-close-qty-multiplier-input';
+  const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
+  const INC_ID = 'jh-binance-close-qty-multiplier-inc';
+  const DEFAULT_MULTIPLIER = '1';
+  const INPUT_BORDER_COLOR = 'var(--color-InputLine)';
+  const INPUT_ERROR_COLOR = 'var(--color-Error)';
+  const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
+  const INPUT_DEFAULT_BG = 'transparent';
 
   let lastTs = 0;
+  let isEditingMultiplier = false;
 
   const PREFIX = '[双击平仓]';
+  window.__JH_BINANCE_CLOSE_HELPER__ = { version: '2.0.0' };
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
@@ -66,6 +78,28 @@
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
     input.dispatchEvent(new Event('blur', { bubbles: true }));
+  }
+
+  function isValidMultiplier(value) {
+    return /^\d+$/.test(String(value || '').trim()) && Number(value) > 0;
+  }
+
+  function applyInputVisualState(input, multiplier) {
+    if (!input) return;
+
+    const isFocused = document.activeElement === input;
+    const isValid = isValidMultiplier(multiplier);
+
+    if (!isValid) {
+      input.style.borderColor = INPUT_ERROR_COLOR;
+      input.style.background = INPUT_DEFAULT_BG;
+      input.style.boxShadow = 'none';
+      return;
+    }
+
+    input.style.borderColor = isFocused ? INPUT_FOCUS_COLOR : INPUT_BORDER_COLOR;
+    input.style.background = INPUT_DEFAULT_BG;
+    input.style.boxShadow = 'none';
   }
 
   function findQtyInput() {
@@ -269,6 +303,233 @@
     return step && /^\d+(\.\d+)?$/.test(step) ? step : null;
   }
 
+  function loadMultiplier() {
+    const value = localStorage.getItem(LOCAL_QTY_MULTIPLIER_KEY);
+    return isValidMultiplier(value) ? String(value) : DEFAULT_MULTIPLIER;
+  }
+
+  function saveMultiplier(value) {
+    localStorage.setItem(LOCAL_QTY_MULTIPLIER_KEY, value);
+  }
+
+  function sanitizeMultiplier(value) {
+    return isValidMultiplier(value) ? String(value).trim() : DEFAULT_MULTIPLIER;
+  }
+
+  function updateMultiplier(nextValue) {
+    const input = document.getElementById(INPUT_ID);
+    const normalized = sanitizeMultiplier(nextValue);
+    isEditingMultiplier = false;
+    saveMultiplier(normalized);
+    if (input) input.value = normalized;
+    renderPanel();
+  }
+
+  function refreshComputedInfo(panel, multiplier, minQty) {
+    const minEl = panel.querySelector('#jh-binance-close-qty-min');
+    const finalEl = panel.querySelector('#jh-binance-close-qty-final');
+    const decBtn = panel.querySelector(`#${DEC_ID}`);
+    const incBtn = panel.querySelector(`#${INC_ID}`);
+    const finalQty = minQty ? multiplyDecimalByInt(minQty, multiplier) : null;
+
+    if (minEl) minEl.textContent = minQty ? `最小 ${minQty}` : '最小量读取中';
+    if (finalEl) {
+      if (isValidMultiplier(multiplier) && finalQty) {
+        finalEl.textContent = `${minQty} x ${multiplier} = ${finalQty}`;
+      } else {
+        finalEl.textContent = '请输入正整数倍数';
+      }
+    }
+    if (decBtn) decBtn.disabled = Number(multiplier) <= 1;
+    if (decBtn) {
+      decBtn.style.opacity = decBtn.disabled ? '0.45' : '1';
+      decBtn.style.cursor = decBtn.disabled ? 'not-allowed' : 'pointer';
+    }
+    if (incBtn) {
+      incBtn.style.opacity = '1';
+      incBtn.style.cursor = 'pointer';
+    }
+  }
+
+  function findQtyFormItem(input) {
+    if (!input) return null;
+    return (
+      input.closest('div[target^="unitAmount-"]') ||
+      input.closest('.bn-formItem') ||
+      input.parentElement ||
+      null
+    );
+  }
+
+  function ensureSpacer(host, panelHeight) {
+    let spacer = document.getElementById(SPACER_ID);
+    if (!host || !host.parentElement) {
+      if (spacer) spacer.remove();
+      return null;
+    }
+    if (!spacer) {
+      spacer = document.createElement('div');
+      spacer.id = SPACER_ID;
+    }
+    spacer.style.width = '100%';
+    spacer.style.height = `${panelHeight}px`;
+    spacer.style.margin = '8px 0 0 0';
+    spacer.style.pointerEvents = 'none';
+
+    if (spacer.parentElement !== host.parentElement) {
+      host.parentElement.insertBefore(spacer, host.nextSibling);
+    } else if (spacer.previousElementSibling !== host) {
+      host.parentElement.insertBefore(spacer, host.nextSibling);
+    }
+    return spacer;
+  }
+
+  function placePanelFloating(panel, anchorRect) {
+    if (panel.parentElement !== document.body) {
+      document.body.appendChild(panel);
+    }
+    panel.style.position = 'fixed';
+    panel.style.maxWidth = 'none';
+    panel.style.margin = '0';
+    panel.style.zIndex = '999999';
+
+    if (!anchorRect || !anchorRect.width || !anchorRect.height) {
+      panel.style.visibility = 'hidden';
+      panel.style.pointerEvents = 'none';
+      return;
+    }
+
+    const margin = 8;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const panelWidth = Math.min(Math.max(anchorRect.width, 280), viewportWidth - margin * 2);
+    const estimatedHeight = Math.max(panel.offsetHeight || 0, 76);
+
+    let left = anchorRect.left;
+    left = Math.max(margin, Math.min(left, viewportWidth - panelWidth - margin));
+
+    let top = anchorRect.top;
+    top = Math.max(margin, Math.min(top, viewportHeight - estimatedHeight - margin));
+
+    panel.style.width = `${Math.round(panelWidth)}px`;
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
+    panel.style.right = '';
+    panel.style.bottom = '';
+    panel.style.visibility = 'visible';
+    panel.style.pointerEvents = 'auto';
+  }
+
+  function positionPanel(panel) {
+    const qtyInput = findQtyInput();
+    const host = findQtyFormItem(qtyInput);
+    const spacer = ensureSpacer(host, Math.max(panel.offsetHeight || 0, 76));
+    const anchorRect = spacer?.getBoundingClientRect() || qtyInput?.getBoundingClientRect() || null;
+    placePanelFloating(panel, anchorRect);
+  }
+
+  function ensurePanel() {
+    let panel = document.getElementById(PANEL_ID);
+    if (panel) return panel;
+
+    panel = document.createElement('div');
+    panel.id = PANEL_ID;
+    panel.style.position = 'fixed';
+    panel.style.zIndex = '999999';
+    panel.style.width = '320px';
+    panel.style.padding = '8px 10px';
+    panel.style.borderRadius = '10px';
+    panel.style.background = '#ffffff';
+    panel.style.border = '1px solid #eaecef';
+    panel.style.color = '#1e2329';
+    panel.style.fontSize = '12px';
+    panel.style.lineHeight = '16px';
+    panel.style.fontFamily = 'BinancePlex, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
+    panel.style.boxShadow = 'none';
+    panel.style.visibility = 'hidden';
+    panel.innerHTML = [
+      '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:6px;flex-wrap:wrap;">',
+      '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">数量倍率</span>',
+      `<label style="display:flex;align-items:center;gap:6px;">` +
+        `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
+        `<button id="${INC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">+</button>` +
+        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:#1e2329;caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:14px;line-height:28px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">` +
+      '</label>',
+      '</div>',
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">',
+      '<span id="jh-binance-close-qty-min" style="color:#76808f;"></span>',
+      '<span id="jh-binance-close-qty-final" style="font-weight:600;color:#1e2329;"></span>',
+      '</div>',
+    ].join('');
+    document.body.appendChild(panel);
+
+    const input = panel.querySelector(`#${INPUT_ID}`);
+    const decBtn = panel.querySelector(`#${DEC_ID}`);
+    const incBtn = panel.querySelector(`#${INC_ID}`);
+    if (input) {
+      input.value = loadMultiplier();
+      input.addEventListener('focus', () => {
+        isEditingMultiplier = true;
+        applyInputVisualState(input, input.value);
+        input.select();
+      });
+      input.addEventListener('input', () => {
+        const value = String(input.value || '').replace(/[^\d]/g, '');
+        if (input.value !== value) input.value = value;
+        if (isValidMultiplier(value)) {
+          saveMultiplier(value);
+        }
+        const symbol = getCurrentSymbol() || '-';
+        const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
+        refreshComputedInfo(panel, value, minQty);
+        applyInputVisualState(input, value);
+      });
+      input.addEventListener('blur', () => {
+        const value = String(input.value || '').trim();
+        const normalized = sanitizeMultiplier(value);
+        isEditingMultiplier = false;
+        saveMultiplier(normalized);
+        input.value = normalized;
+        applyInputVisualState(input, normalized);
+        renderPanel();
+      });
+      applyInputVisualState(input, input.value);
+    }
+    if (decBtn) {
+      decBtn.addEventListener('click', () => {
+        const current = Number(loadMultiplier());
+        updateMultiplier(String(Math.max(1, current - 1)));
+      });
+    }
+    if (incBtn) {
+      incBtn.addEventListener('click', () => {
+        const current = Number(loadMultiplier());
+        updateMultiplier(String(current + 1));
+      });
+    }
+
+    return panel;
+  }
+
+  function renderPanel() {
+    const panel = ensurePanel();
+    positionPanel(panel);
+    const input = panel.querySelector(`#${INPUT_ID}`);
+    const symbol = getCurrentSymbol() || '-';
+    const storedMultiplier = loadMultiplier();
+    if (input && !isEditingMultiplier && input.value !== storedMultiplier) {
+      input.value = storedMultiplier;
+    }
+    const multiplier = input
+      ? String((isEditingMultiplier ? input.value : storedMultiplier) || '').trim()
+      : storedMultiplier;
+    const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
+    refreshComputedInfo(panel, multiplier, minQty);
+    if (input) {
+      applyInputVisualState(input, multiplier);
+    }
+  }
+
   function resolveTargetQty() {
     const symbol = getCurrentSymbol();
     const minQty = (symbol && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
@@ -370,6 +631,18 @@
     }
   }, true);
 
+  window.addEventListener('storage', (event) => {
+    if (event.key === LOCAL_QTY_MULTIPLIER_KEY) renderPanel();
+  });
+
+  setInterval(renderPanel, 1000);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', renderPanel, { once: true });
+  } else {
+    renderPanel();
+  }
+
   window.__TM_CLOSE_LONG_DEBUG__ = {
     cfg: CFG,
     findQtyInput,
@@ -378,6 +651,7 @@
     findOrderbookRow,
     findPriceNodeFromRow,
     resolveCloseAction,
+    renderPanel,
   };
 
   log('脚本加载完成', location.href);
