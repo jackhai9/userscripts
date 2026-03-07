@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.0
+// @version      2.3.1
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -17,13 +17,7 @@
   'use strict';
 
   const CFG = {
-    // 按 symbol 覆盖默认数量（优先于自动最小量）
-    SYMBOL_QTY: {
-      DASHUSDT: '0.003',
-      // BTCUSDT: '0.001',
-      // ETHUSDT: '0.01',
-    },
-    // 未配置 SYMBOL_QTY 时，是否自动使用该 symbol 的最小下单量
+    // 是否自动使用交易所规则计算出的有效最小量
     AUTO_USE_MIN_QTY: true,
     // true=只填数量；false=填数量并自动点“开多/开空/平多/平空”
     SAFE_MODE: false,
@@ -925,14 +919,6 @@
         };
       }
     }
-    if (symbol && CFG.SYMBOL_QTY[symbol]) {
-      return {
-        qty: String(CFG.SYMBOL_QTY[symbol]),
-        source: `SYMBOL_QTY(${symbol})`,
-        symbol,
-        rule: qtyRuleContext,
-      };
-    }
 
     if (!CFG.AUTO_USE_MIN_QTY) return null;
 
@@ -987,7 +973,7 @@
 
       const qtyPlan = resolveTargetQty(action.mode, clickedPrice);
       if (!qtyPlan || !qtyPlan.qty) {
-        warn('未找到可用数量来源（数量倍率/SYMBOL_QTY/有效最小量）');
+        warn('未找到可用数量来源（数量倍率/有效最小量）');
         return;
       }
       setInputValueReact(qtyInput, qtyPlan.qty);
