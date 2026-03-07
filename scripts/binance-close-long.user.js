@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.23
+// @version      2.3.24
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -535,17 +535,16 @@
     const knowsShort = shortQty != null;
     const hasLong = longQty > 0;
     const hasShort = shortQty > 0;
-    const usedCachedLong = rawCloseContext.longQty == null && cache?.longQty != null;
-    const usedCachedShort = rawCloseContext.shortQty == null && cache?.shortQty != null;
-    const isUsingCache = usedCachedLong || usedCachedShort;
+    const isUsingCache = (rawCloseContext.longQty == null && cache?.longQty != null)
+      || (rawCloseContext.shortQty == null && cache?.shortQty != null);
     const isPending = !rawCloseContext.knowsLong && !rawCloseContext.knowsShort;
 
     if (symbol && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
       const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
       lastResolvedCloseState = {
         symbol,
-        longQty: rawCloseContext.longQty ?? cache?.longQty ?? null,
-        shortQty: rawCloseContext.shortQty ?? cache?.shortQty ?? null,
+        longQty,
+        shortQty,
         closeMode,
         longDisabled: !hasLong,
         shortDisabled: !hasShort,
@@ -841,8 +840,8 @@
         hintEl.textContent = '平仓模式：暂未识别到可平仓位';
       }
     }
-    if (decBtn) decBtn.disabled = Number(multiplier) <= 1;
     if (decBtn) {
+      decBtn.disabled = Number(multiplier) <= 1;
       decBtn.style.opacity = decBtn.disabled ? '0.45' : '1';
       decBtn.style.cursor = decBtn.disabled ? 'not-allowed' : 'pointer';
     }
