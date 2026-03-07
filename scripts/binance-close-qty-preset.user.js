@@ -2,7 +2,7 @@
 // @name         【自写】Binance 平仓数量倍率
 // @namespace    binance.close.qty.preset
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.0
+// @version      2.4.1
 // @author       jackhai9
 // @description  自动读取当前币种最小下单量，并用倍率输入框生成平仓数量
 // @match        https://www.binance.com/*/futures/*
@@ -18,6 +18,7 @@
 
   const STORAGE_KEY = 'jh_binance_close_qty_multiplier';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
+  const SPACER_ID = 'jh-binance-close-qty-multiplier-spacer';
   const INPUT_ID = 'jh-binance-close-qty-multiplier-input';
   const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
   const INC_ID = 'jh-binance-close-qty-multiplier-inc';
@@ -116,7 +117,40 @@
     );
   }
 
-  function placePanelFloating(panel, input) {
+  function findQtyFormItem(input) {
+    if (!input) return null;
+    return (
+      input.closest('div[target^="unitAmount-"]') ||
+      input.closest('.bn-formItem') ||
+      input.parentElement ||
+      null
+    );
+  }
+
+  function ensureSpacer(host, panelHeight) {
+    let spacer = document.getElementById(SPACER_ID);
+    if (!host || !host.parentElement) {
+      if (spacer) spacer.remove();
+      return null;
+    }
+    if (!spacer) {
+      spacer = document.createElement('div');
+      spacer.id = SPACER_ID;
+    }
+    spacer.style.width = '100%';
+    spacer.style.height = `${panelHeight}px`;
+    spacer.style.margin = '0 0 8px 0';
+    spacer.style.pointerEvents = 'none';
+
+    if (spacer.parentElement !== host.parentElement) {
+      host.parentElement.insertBefore(spacer, host);
+    } else if (spacer.nextElementSibling !== host) {
+      host.parentElement.insertBefore(spacer, host);
+    }
+    return spacer;
+  }
+
+  function placePanelFloating(panel, anchorRect) {
     if (panel.parentElement !== document.body) {
       document.body.appendChild(panel);
     }
@@ -125,17 +159,7 @@
     panel.style.margin = '0';
     panel.style.zIndex = '999999';
 
-    if (!input) {
-      panel.style.left = '';
-      panel.style.top = '';
-      panel.style.right = '16px';
-      panel.style.bottom = '88px';
-      panel.style.border = '1px solid #eaecef';
-      return;
-    }
-
-    const rect = input.getBoundingClientRect();
-    if (!rect.width || !rect.height) {
+    if (!anchorRect || !anchorRect.width || !anchorRect.height) {
       panel.style.left = '';
       panel.style.top = '';
       panel.style.right = '16px';
@@ -147,16 +171,13 @@
     const margin = 8;
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const panelWidth = Math.min(Math.max(rect.width, 280), viewportWidth - margin * 2);
-    const estimatedHeight = 76;
+    const panelWidth = Math.min(Math.max(anchorRect.width, 280), viewportWidth - margin * 2);
+    const estimatedHeight = Math.max(panel.offsetHeight || 0, 76);
 
-    let left = rect.left;
+    let left = anchorRect.left;
     left = Math.max(margin, Math.min(left, viewportWidth - panelWidth - margin));
 
-    let top = rect.top - estimatedHeight - margin;
-    if (top < margin) {
-      top = rect.bottom + margin;
-    }
+    let top = anchorRect.top;
     top = Math.max(margin, Math.min(top, viewportHeight - estimatedHeight - margin));
 
     panel.style.width = `${Math.round(panelWidth)}px`;
@@ -168,7 +189,10 @@
 
   function positionPanel(panel) {
     const qtyInput = findQtyInput();
-    placePanelFloating(panel, qtyInput);
+    const host = findQtyFormItem(qtyInput);
+    const spacer = ensureSpacer(host, Math.max(panel.offsetHeight || 0, 76));
+    const anchorRect = spacer?.getBoundingClientRect() || qtyInput?.getBoundingClientRect() || null;
+    placePanelFloating(panel, anchorRect);
   }
 
   function multiplyDecimalByInt(decimalValue, intValue) {
