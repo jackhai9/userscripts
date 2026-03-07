@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.2.2
+// @version      2.3.0
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -17,7 +17,7 @@
   'use strict';
 
   const CFG = {
-    // 按 symbol 覆盖默认数量（优先级最高）
+    // 按 symbol 覆盖默认数量（优先于自动最小量）
     SYMBOL_QTY: {
       DASHUSDT: '0.003',
       // BTCUSDT: '0.001',
@@ -114,6 +114,15 @@
     );
   }
 
+  function findPriceInput() {
+    return (
+      document.querySelector('input[id^="limitPrice-"]') ||
+      document.querySelector('input[aria-label="委托价格"]') ||
+      document.querySelector('input[placeholder="委托价格"]') ||
+      null
+    );
+  }
+
   function isOwnPanelButton(button) {
     return !!button?.closest?.(`#${PANEL_ID}`);
   }
@@ -127,6 +136,11 @@
     if (text.includes('开仓')) return 'OPEN';
     if (text.includes('平仓')) return 'CLOSE';
     return 'UNKNOWN';
+  }
+
+  function getCurrentOrderType() {
+    const activeTab = document.querySelector('[role="tab"][aria-selected="true"][data-tab-key]');
+    return String(activeTab?.getAttribute('data-tab-key') || 'LIMIT').toUpperCase();
   }
 
   function getActiveTradeTab() {
@@ -237,6 +251,76 @@
     if (text == null) return null;
     const n = Number(String(text).replace(/,/g, '').trim());
     return Number.isFinite(n) ? n : null;
+  }
+
+  function pow10(exp) {
+    let result = 1n;
+    for (let i = 0; i < exp; i += 1) result *= 10n;
+    return result;
+  }
+
+  function parseDecimalString(value) {
+    const raw = String(value || '').replace(/,/g, '').trim();
+    if (!/^\d+(\.\d+)?$/.test(raw)) return null;
+    const [intPart, fracPart = ''] = raw.split('.');
+    return {
+      digits: BigInt(intPart + fracPart),
+      scale: fracPart.length,
+    };
+  }
+
+  function formatDecimalParts(digits, scale) {
+    const negative = digits < 0n;
+    const absDigits = negative ? -digits : digits;
+    const raw = absDigits.toString();
+    if (scale === 0) return `${negative ? '-' : ''}${raw}`;
+    const padded = raw.padStart(scale + 1, '0');
+    const head = padded.slice(0, -scale) || '0';
+    const tail = padded.slice(-scale).replace(/0+$/, '');
+    return `${negative ? '-' : ''}${tail ? `${head}.${tail}` : head}`;
+  }
+
+  function normalizeDecimalString(value) {
+    const parsed = parseDecimalString(value);
+    return parsed ? formatDecimalParts(parsed.digits, parsed.scale) : null;
+  }
+
+  function compareDecimalStrings(a, b) {
+    const left = parseDecimalString(a);
+    const right = parseDecimalString(b);
+    if (!left || !right) return null;
+    const scale = Math.max(left.scale, right.scale);
+    const leftDigits = left.digits * pow10(scale - left.scale);
+    const rightDigits = right.digits * pow10(scale - right.scale);
+    if (leftDigits === rightDigits) return 0;
+    return leftDigits > rightDigits ? 1 : -1;
+  }
+
+  function maxDecimalString(a, b) {
+    if (!a) return normalizeDecimalString(b);
+    if (!b) return normalizeDecimalString(a);
+    const cmp = compareDecimalStrings(a, b);
+    if (cmp == null) return normalizeDecimalString(a) || normalizeDecimalString(b);
+    return cmp >= 0 ? normalizeDecimalString(a) : normalizeDecimalString(b);
+  }
+
+  function ceilQtyByNotional(notional, price, stepSize) {
+    const n = parseDecimalString(notional);
+    const p = parseDecimalString(price);
+    const s = parseDecimalString(stepSize);
+    if (!n || !p || !s || p.digits <= 0n || s.digits <= 0n) return null;
+
+    let numerator = n.digits;
+    let denominator = p.digits * s.digits;
+    const exp = p.scale + s.scale - n.scale;
+    if (exp >= 0) {
+      numerator *= pow10(exp);
+    } else {
+      denominator *= pow10(-exp);
+    }
+
+    const steps = (numerator + denominator - 1n) / denominator;
+    return formatDecimalParts(steps * s.digits, s.scale);
   }
 
   function readQtyMultiplierFromLocal() {
@@ -418,28 +502,87 @@
     return t && t[1] ? t[1].toUpperCase() : null;
   }
 
-  function readMinQtyFromAppData(symbol) {
+  function readTradeRulesFromAppData(symbol) {
     try {
       const el = document.querySelector('#__APP_DATA');
       if (!el || !el.textContent) return null;
       const data = JSON.parse(el.textContent);
-      const perpetual =
-        data?.appState?.loader?.dataByRouteId?.bd56?.reactQueryData?.productFutureService?.perpetual;
+      const reactQueryData = data?.appState?.loader?.dataByRouteId?.bd56?.reactQueryData;
+      const perpetual = reactQueryData?.productFutureService?.perpetual;
       const sInfo = perpetual?.[symbol];
       if (!sInfo) return null;
       const filters = Array.isArray(sInfo.f) ? sInfo.f : [];
       const lot = filters.find((x) => x && x.filterType === 'LOT_SIZE') || {};
-      return typeof lot.minQty === 'string' && lot.minQty ? lot.minQty : null;
+      const marketLot = filters.find((x) => x && x.filterType === 'MARKET_LOT_SIZE') || {};
+      const minNotional = filters.find((x) => x && x.filterType === 'MIN_NOTIONAL') || {};
+      const markPrice = reactQueryData?.[`queryMarkPrice,${symbol}`]?.markPrice || null;
+      return {
+        limitMinQty: typeof lot.minQty === 'string' && lot.minQty ? lot.minQty : null,
+        limitStepSize: typeof lot.stepSize === 'string' && lot.stepSize ? lot.stepSize : null,
+        marketMinQty:
+          typeof marketLot.minQty === 'string' && marketLot.minQty ? marketLot.minQty : null,
+        marketStepSize:
+          typeof marketLot.stepSize === 'string' && marketLot.stepSize ? marketLot.stepSize : null,
+        minNotional:
+          typeof minNotional.notional === 'string' && minNotional.notional ? minNotional.notional : null,
+        markPrice: typeof markPrice === 'string' && markPrice ? markPrice : null,
+      };
     } catch (_e) {
       return null;
     }
   }
 
-  function readMinQtyFromQtyInput() {
+  function readStepSizeFromQtyInput() {
     const input = findQtyInput();
     if (!input) return null;
     const step = input.getAttribute('step');
     return step && /^\d+(\.\d+)?$/.test(step) ? step : null;
+  }
+
+  function getReferencePrice(symbol, priceOverride) {
+    const fromOverride = normalizeDecimalString(priceOverride);
+    if (fromOverride) return fromOverride;
+
+    const priceInput = findPriceInput();
+    const fromInput = normalizeDecimalString(priceInput?.value || '');
+    if (fromInput) return fromInput;
+
+    const fromAppData = readTradeRulesFromAppData(symbol)?.markPrice;
+    return normalizeDecimalString(fromAppData);
+  }
+
+  function getQtyRuleContext(symbol, tradeMode, priceOverride) {
+    const rules = symbol ? readTradeRulesFromAppData(symbol) : null;
+    const orderType = getCurrentOrderType();
+    const isMarketOrder = orderType.includes('MARKET');
+    const fallbackStep = readStepSizeFromQtyInput();
+    const baseMinQty = normalizeDecimalString(
+      (isMarketOrder ? rules?.marketMinQty : rules?.limitMinQty) ||
+      rules?.limitMinQty ||
+      fallbackStep
+    );
+    const stepSize = normalizeDecimalString(
+      (isMarketOrder ? rules?.marketStepSize : rules?.limitStepSize) ||
+      rules?.limitStepSize ||
+      fallbackStep ||
+      baseMinQty
+    );
+    const referencePrice = getReferencePrice(symbol, priceOverride);
+    const minNotionalQty =
+      tradeMode === 'OPEN' && rules?.minNotional && referencePrice && stepSize
+        ? ceilQtyByNotional(rules.minNotional, referencePrice, stepSize)
+        : null;
+    const effectiveMinQty = maxDecimalString(baseMinQty, minNotionalQty);
+
+    return {
+      orderType,
+      baseMinQty,
+      stepSize,
+      minNotional: normalizeDecimalString(rules?.minNotional),
+      referencePrice,
+      minNotionalQty,
+      effectiveMinQty,
+    };
   }
 
   function loadMultiplier() {
@@ -464,7 +607,7 @@
     renderPanel();
   }
 
-  function refreshComputedInfo(panel, multiplier, minQty) {
+  function refreshComputedInfo(panel, multiplier, qtyRuleContext) {
     const minEl = panel.querySelector('#jh-binance-close-qty-min');
     const finalEl = panel.querySelector('#jh-binance-close-qty-final');
     const hintEl = panel.querySelector(`#${MODE_HINT_ID}`);
@@ -472,17 +615,26 @@
     const incBtn = panel.querySelector(`#${INC_ID}`);
     const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
     const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
-    const finalQty = minQty ? multiplyDecimalByInt(minQty, multiplier) : null;
     const tradeMode = getActiveTradeMode();
+    const effectiveMinQty = qtyRuleContext?.effectiveMinQty || null;
+    const finalQty = effectiveMinQty ? multiplyDecimalByInt(effectiveMinQty, multiplier) : null;
     const closeSide = loadCloseSide();
     const openSide = loadOpenSide();
     const { hasLong, hasShort } = readCloseContext();
     const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
 
-    if (minEl) minEl.textContent = minQty ? `最小 ${minQty}` : '最小量读取中';
+    if (minEl) {
+      if (tradeMode === 'OPEN' && qtyRuleContext?.minNotionalQty && qtyRuleContext?.referencePrice) {
+        minEl.textContent = `有效最小 ${effectiveMinQty} (>=${qtyRuleContext.minNotional}U @ ${qtyRuleContext.referencePrice})`;
+      } else if (effectiveMinQty) {
+        minEl.textContent = `最小 ${effectiveMinQty}`;
+      } else {
+        minEl.textContent = '最小量读取中';
+      }
+    }
     if (finalEl) {
-      if (isValidMultiplier(multiplier) && finalQty) {
-        finalEl.textContent = `${minQty} x ${multiplier} = ${finalQty}`;
+      if (isValidMultiplier(multiplier) && finalQty && effectiveMinQty) {
+        finalEl.textContent = `${effectiveMinQty} x ${multiplier} = ${finalQty}`;
       } else {
         finalEl.textContent = '请输入正整数倍数';
       }
@@ -689,8 +841,8 @@
           saveMultiplier(value);
         }
         const symbol = getCurrentSymbol() || '-';
-        const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
-        refreshComputedInfo(panel, value, minQty);
+        const qtyRuleContext = getQtyRuleContext(symbol !== '-' ? symbol : null, getActiveTradeMode());
+        refreshComputedInfo(panel, value, qtyRuleContext);
         applyInputVisualState(input, value);
       });
       input.addEventListener('blur', () => {
@@ -750,31 +902,47 @@
     const multiplier = input
       ? String((isEditingMultiplier ? input.value : storedMultiplier) || '').trim()
       : storedMultiplier;
-    const minQty = (symbol !== '-' && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
-    refreshComputedInfo(panel, multiplier, minQty);
+    const qtyRuleContext = getQtyRuleContext(symbol !== '-' ? symbol : null, getActiveTradeMode());
+    refreshComputedInfo(panel, multiplier, qtyRuleContext);
     if (input) {
       applyInputVisualState(input, multiplier);
     }
   }
 
-  function resolveTargetQty() {
+  function resolveTargetQty(tradeMode, priceOverride) {
     const symbol = getCurrentSymbol();
-    const minQty = (symbol && readMinQtyFromAppData(symbol)) || readMinQtyFromQtyInput();
+    const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
+    const minQty = qtyRuleContext?.effectiveMinQty || null;
     const localMultiplier = readQtyMultiplierFromLocal();
     if (localMultiplier && minQty) {
       const multipliedQty = multiplyDecimalByInt(minQty, localMultiplier);
       if (multipliedQty) {
-        return { qty: multipliedQty, source: `LOCAL_MULTIPLIER(${localMultiplier}x)`, symbol };
+        return {
+          qty: multipliedQty,
+          source: `LOCAL_MULTIPLIER(${localMultiplier}x @ ${minQty})`,
+          symbol,
+          rule: qtyRuleContext,
+        };
       }
     }
     if (symbol && CFG.SYMBOL_QTY[symbol]) {
-      return { qty: String(CFG.SYMBOL_QTY[symbol]), source: `SYMBOL_QTY(${symbol})`, symbol };
+      return {
+        qty: String(CFG.SYMBOL_QTY[symbol]),
+        source: `SYMBOL_QTY(${symbol})`,
+        symbol,
+        rule: qtyRuleContext,
+      };
     }
 
     if (!CFG.AUTO_USE_MIN_QTY) return null;
 
     if (!minQty) return null;
-    return { qty: minQty, source: 'AUTO_MIN_QTY', symbol };
+    return {
+      qty: minQty,
+      source: qtyRuleContext?.minNotionalQty ? 'AUTO_EFFECTIVE_MIN_QTY' : 'AUTO_MIN_QTY',
+      symbol,
+      rule: qtyRuleContext,
+    };
   }
 
   // 使用捕获阶段监听，避免页面内部在冒泡阶段 stopPropagation 导致双击事件丢失
@@ -817,9 +985,9 @@
         return;
       }
 
-      const qtyPlan = resolveTargetQty();
+      const qtyPlan = resolveTargetQty(action.mode, clickedPrice);
       if (!qtyPlan || !qtyPlan.qty) {
-        warn('未找到可用数量来源（SYMBOL_QTY/AUTO_MIN_QTY）');
+        warn('未找到可用数量来源（数量倍率/SYMBOL_QTY/有效最小量）');
         return;
       }
       setInputValueReact(qtyInput, qtyPlan.qty);
@@ -830,6 +998,10 @@
         qtyPlan.source,
         'symbol',
         qtyPlan.symbol,
+        'effectiveMinQty',
+        qtyPlan.rule?.effectiveMinQty,
+        'referencePrice',
+        qtyPlan.rule?.referencePrice,
         '触发价格',
         clickedPrice,
         'mode',
@@ -879,6 +1051,7 @@
   window.__TM_CLOSE_LONG_DEBUG__ = {
     cfg: CFG,
     findQtyInput,
+    findPriceInput,
     findCloseLongButton,
     findCloseShortButton,
     findOpenLongButton,
@@ -887,6 +1060,7 @@
     findPriceNodeFromRow,
     resolveCloseAction,
     resolveTradeAction,
+    resolveTargetQty,
     renderPanel,
   };
 
