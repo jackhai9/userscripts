@@ -2,7 +2,7 @@
 // @name         【自写】Binance 双击下单
 // @namespace    binance.close.long
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.8
+// @version      2.3.9
 // @author       jackhai9
 // @description  双击订单簿任意行 -> Binance 默认单击订单簿即填价格 -> 自动填数量(通过数量倍率) -> 自动执行开仓或平仓（按当前 tab 与面板所选侧）
 // @match        https://www.binance.com/*/futures/*
@@ -57,6 +57,9 @@
 
   function emit(level, ...args) {
     if (!CFG.DEBUG && level !== 'ERR') return;
+    // Do not switch this back to console.log/warn/info/debug.
+    // Binance page code mutes those methods to noop when enableLog is absent,
+    // so our own logs would disappear from DevTools again.
     console.error(PREFIX, `[${level}]`, ...args);
   }
 
