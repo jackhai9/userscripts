@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.38
+// @version      2.3.39
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1075,18 +1075,18 @@
     panel.style.background = '#ffffff';
     panel.style.border = '1px solid #eaecef';
     panel.style.color = '#1e2329';
-    panel.style.fontSize = '12px';
-    panel.style.lineHeight = '16px';
+    panel.style.fontSize = '13px';
+    panel.style.lineHeight = '18px';
     panel.style.fontFamily = 'BinancePlex, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
     panel.style.boxShadow = 'none';
     panel.style.visibility = 'hidden';
     panel.innerHTML = [
       '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:6px;flex-wrap:wrap;">',
-      '<span style="font-size:12px;font-weight:500;color:#5e6673;white-space:nowrap;">数量倍率</span>',
+      '<span style="font-size:13px;font-weight:500;color:#5e6673;white-space:nowrap;">数量倍率</span>',
       `<label style="display:flex;align-items:center;gap:6px;">` +
-        `<button id="${INC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">+</button>` +
-        `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
-        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:#1e2329;caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:14px;line-height:28px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">` +
+        `<button id="${INC_ID}" type="button" style="width:28px;height:28px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:16px;line-height:26px;cursor:pointer;">+</button>` +
+        `<button id="${DEC_ID}" type="button" style="width:28px;height:28px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:16px;line-height:26px;cursor:pointer;">-</button>` +
+        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:#1e2329;caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:15px;line-height:32px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">` +
       '</label>',
       '</div>',
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">',
@@ -1094,8 +1094,8 @@
       '<span id="jh-binance-close-qty-final" style="font-weight:600;color:#1e2329;"></span>',
       '</div>',
       `<div style="display:flex;align-items:center;gap:4px;margin-top:6px;">` +
-        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平空</button>` +
-        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平多</button>` +
+        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:48px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:13px;line-height:26px;cursor:pointer;">平空</button>` +
+        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:48px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:13px;line-height:26px;cursor:pointer;">平多</button>` +
       '</div>',
       `<div id="${MODE_HINT_ID}" style="margin-top:6px;color:#76808f;"></div>`,
     ].join('');
