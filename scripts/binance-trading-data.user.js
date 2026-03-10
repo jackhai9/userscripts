@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.1
+// @version      1.0.2
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -66,9 +66,20 @@
   async function fetchJson(path, params) {
     const url = new URL(path, API_BASE);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-    const resp = await fetch(url.toString());
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return resp.json();
+    const href = url.toString();
+    try {
+      const resp = await fetch(href);
+      if (!resp.ok) throw Object.assign(new Error(`HTTP ${resp.status}`), { status: resp.status });
+      return resp.json();
+    } catch (e1) {
+      // 4xx 是确定性失败（参数错误、限流），不重试
+      if (e1.status && e1.status >= 400 && e1.status < 500) throw e1;
+      // 网络错误或 5xx，重试一次
+      log('重试:', path);
+      const resp = await fetch(href);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} (retry)`);
+      return resp.json();
+    }
   }
 
   function fetchOpenInterest(symbol) {
@@ -93,6 +104,8 @@
     return fetchJson(API_PATHS.fundingRate, { symbol, limit: 1 });
   }
 
+  let dataCache = {}; // symbol -> { key: data }
+
   async function fetchAllData(symbol) {
     const keys = ['openInterest', 'topAccountRatio', 'topPositionRatio', 'globalAccountRatio', 'takerRatio', 'basis', 'fundingRate'];
     const fetchers = [
@@ -105,16 +118,26 @@
       fetchFundingRate(symbol),
     ];
     const results = await Promise.allSettled(fetchers);
+    if (!dataCache[symbol]) dataCache[symbol] = {};
+    const cache = dataCache[symbol];
     const data = {};
+    let cachedCount = 0;
     keys.forEach((key, i) => {
       if (results[i].status === 'fulfilled') {
         data[key] = results[i].value;
+        cache[key] = results[i].value;
       } else {
-        data[key] = null;
         err(`${key} 请求失败:`, results[i].reason?.message || results[i].reason);
+        if (cache[key]) {
+          data[key] = cache[key];
+          cachedCount++;
+          log(`${key} 使用缓存数据`);
+        } else {
+          data[key] = null;
+        }
       }
     });
-    return data;
+    return { data, cachedCount };
   }
 
   /* ========== 数据处理 ========== */
@@ -247,9 +270,9 @@
     style.textContent = [
       '@keyframes jh-td-flash {',
       '  0%, 100% { background: transparent; }',
-      '  50% { background: rgba(254, 220, 86, 0.25); }',
+      '  50% { background: rgba(240, 160, 0, 0.45); }',
       '}',
-      '.jh-td-flash { animation: jh-td-flash 1s ease-in-out 3; }',
+      '.jh-td-flash { animation: jh-td-flash 1s ease-in-out 5; }',
     ].join('\n');
     (document.head || document.documentElement).appendChild(style);
   }
@@ -344,7 +367,7 @@
     return panel;
   }
 
-  function renderPanel(result) {
+  function renderPanel(result, cachedCount) {
     const panel = ensurePanel();
     const { indicators, longCount, shortCount, total } = result;
     const symbol = getCurrentSymbol();
@@ -411,6 +434,7 @@
     const footerEl = panel.querySelector('#' + PANEL_ID + '-footer');
     if (footerEl) {
       lastUpdateTs = Date.now();
+      lastCachedCount = cachedCount || 0;
       updateFooter(footerEl);
       if (!agoTimer) {
         agoTimer = setInterval(function () {
@@ -427,7 +451,9 @@
     const mm = String(d.getMinutes()).padStart(2, '0');
     const ss = String(d.getSeconds()).padStart(2, '0');
     const ago = Math.floor((Date.now() - lastUpdateTs) / 1000);
-    el.textContent = '更新于 ' + hh + ':' + mm + ':' + ss + '  ' + ago + '秒前';
+    let text = '更新于 ' + hh + ':' + mm + ':' + ss + '  ' + ago + '秒前';
+    if (lastCachedCount > 0) text += '  (' + lastCachedCount + '项缓存)';
+    el.textContent = text;
   }
 
   /* ========== 拖拽 ========== */
@@ -519,6 +545,7 @@
   let pathTimer = null;
   let agoTimer = null;
   let lastUpdateTs = 0;
+  let lastCachedCount = 0;
   let fetching = false;
 
   async function tick() {
@@ -536,9 +563,9 @@
 
     fetching = true;
     try {
-      const data = await fetchAllData(symbol);
+      const { data, cachedCount } = await fetchAllData(symbol);
       const result = computeSignals(data);
-      renderPanel(result);
+      renderPanel(result, cachedCount);
       log('数据更新完成');
     } catch (e) {
       err('数据拉取失败:', e);
