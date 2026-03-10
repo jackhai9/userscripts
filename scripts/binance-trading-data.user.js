@@ -237,6 +237,27 @@
     return '— 持平';
   }
 
+  /* ========== 闪烁样式注入 ========== */
+
+  const FLASH_STYLE_ID = 'jh-trading-data-flash-style';
+  function injectFlashStyle() {
+    if (document.getElementById(FLASH_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = FLASH_STYLE_ID;
+    style.textContent = [
+      '@keyframes jh-td-flash {',
+      '  0%, 100% { background: transparent; }',
+      '  50% { background: rgba(254, 220, 86, 0.25); }',
+      '}',
+      '.jh-td-flash { animation: jh-td-flash 1s ease-in-out 3; }',
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  /* ========== 数据变化追踪 ========== */
+
+  let prevDisplayValues = {}; // name -> display string
+
   /* ========== 颜色 ========== */
 
   const C = {
@@ -258,6 +279,8 @@
   function ensurePanel() {
     let panel = document.getElementById(PANEL_ID);
     if (panel) return panel;
+
+    injectFlashStyle();
 
     panel = document.createElement('div');
     panel.id = PANEL_ID;
@@ -326,6 +349,18 @@
     const { indicators, longCount, shortCount, total } = result;
     const symbol = getCurrentSymbol();
 
+    // 检测哪些指标的值发生了变化
+    const changed = {};
+    for (const ind of indicators) {
+      if (prevDisplayValues[ind.name] !== undefined && prevDisplayValues[ind.name] !== ind.display) {
+        changed[ind.name] = true;
+      }
+    }
+    // 更新缓存
+    for (const ind of indicators) {
+      prevDisplayValues[ind.name] = ind.display;
+    }
+
     // symbol
     const symbolEl = panel.querySelector('#' + PANEL_ID + '-symbol');
     if (symbolEl) symbolEl.textContent = symbol || '';
@@ -336,8 +371,9 @@
       rowsEl.innerHTML = indicators.map(function (ind) {
         const valColor = ind.signal === 'long' ? C.long : ind.signal === 'short' ? C.short : C.text;
         const dotColor = signalColor(ind.signal);
+        const flashClass = changed[ind.name] ? ' jh-td-flash' : '';
         return [
-          '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">',
+          '<div class="', flashClass, '" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-radius:4px;">',
             '<span style="color:', C.sub, ';min-width:90px;">', ind.name, '</span>',
             '<span style="font-weight:500;font-variant-numeric:tabular-nums;flex:1;text-align:right;margin-right:8px;color:', valColor, ';">', ind.display, '</span>',
             '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:', dotColor, ';"></span>',
@@ -374,12 +410,24 @@
     // footer
     const footerEl = panel.querySelector('#' + PANEL_ID + '-footer');
     if (footerEl) {
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
-      const ss = String(now.getSeconds()).padStart(2, '0');
-      footerEl.textContent = '更新于 ' + hh + ':' + mm + ':' + ss;
+      lastUpdateTs = Date.now();
+      updateFooter(footerEl);
+      if (!agoTimer) {
+        agoTimer = setInterval(function () {
+          const el = document.querySelector('#' + PANEL_ID + '-footer');
+          if (el && lastUpdateTs) updateFooter(el);
+        }, 1000);
+      }
     }
+  }
+
+  function updateFooter(el) {
+    const d = new Date(lastUpdateTs);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const ago = Math.floor((Date.now() - lastUpdateTs) / 1000);
+    el.textContent = '更新于 ' + hh + ':' + mm + ':' + ss + '  ' + ago + '秒前';
   }
 
   /* ========== 拖拽 ========== */
@@ -469,6 +517,8 @@
 
   let tickTimer = null;
   let pathTimer = null;
+  let agoTimer = null;
+  let lastUpdateTs = 0;
   let fetching = false;
 
   async function tick() {
@@ -480,6 +530,7 @@
 
     if (symbol !== lastSymbol) {
       lastSymbol = symbol;
+      prevDisplayValues = {};
       log('交易对:', symbol);
     }
 
@@ -499,6 +550,7 @@
   function stopLoop() {
     if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
     if (pathTimer) { clearInterval(pathTimer); pathTimer = null; }
+    if (agoTimer)  { clearInterval(agoTimer);  agoTimer = null; }
   }
 
   function start() {
