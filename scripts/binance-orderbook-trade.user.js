@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.34
+// @version      2.3.38
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -23,7 +23,8 @@
     COOLDOWN_MS: 100,
     DEBUG: true,
   };
-  const LOCAL_QTY_MULTIPLIER_KEY = 'jh_binance_close_qty_multiplier';
+  const LOCAL_CLOSE_QTY_MULTIPLIER_KEY = 'jh_binance_close_qty_multiplier';
+  const LOCAL_OPEN_QTY_MULTIPLIER_KEY = 'jh_binance_open_qty_multiplier';
   const LOCAL_CLOSE_SIDE_KEY = 'jh_binance_close_side';
   const LOCAL_OPEN_SIDE_KEY = 'jh_binance_open_side';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
@@ -807,13 +808,19 @@
     };
   }
 
-  function loadMultiplier() {
-    const value = localStorage.getItem(LOCAL_QTY_MULTIPLIER_KEY);
+  function multiplierKey(mode) {
+    return mode === 'OPEN' ? LOCAL_OPEN_QTY_MULTIPLIER_KEY : LOCAL_CLOSE_QTY_MULTIPLIER_KEY;
+  }
+
+  function loadMultiplier(mode) {
+    const key = multiplierKey(mode || getActiveTradeMode());
+    const value = localStorage.getItem(key);
     return isValidMultiplier(value) ? String(value) : DEFAULT_MULTIPLIER;
   }
 
-  function saveMultiplier(value) {
-    localStorage.setItem(LOCAL_QTY_MULTIPLIER_KEY, value);
+  function saveMultiplier(value, mode) {
+    const key = multiplierKey(mode || getActiveTradeMode());
+    localStorage.setItem(key, value);
   }
 
   function sanitizeMultiplier(value) {
@@ -889,7 +896,7 @@
 
     if (minEl) {
       if (tradeMode === 'OPEN' && qtyRuleContext?.minNotionalQty && qtyRuleContext?.referencePrice) {
-        minEl.textContent = `有效最小 ${effectiveMinQty} (>=${qtyRuleContext.minNotional}U @ ${qtyRuleContext.referencePrice})`;
+        minEl.textContent = `最小 ${effectiveMinQty} (>=${qtyRuleContext.minNotional}U @ ${qtyRuleContext.referencePrice})`;
       } else if (effectiveMinQty) {
         minEl.textContent = `最小 ${effectiveMinQty}`;
       } else {
@@ -905,7 +912,8 @@
     }
     if (hintEl) {
       if (tradeMode === 'OPEN') {
-        hintEl.textContent = `开仓模式：双击订单簿后将按面板所选侧${CFG.SAFE_MODE ? '填数量' : '开仓'}`;
+        const action = openSide === 'LONG' ? '开多' : '开空';
+        hintEl.textContent = `开仓模式：双击订单簿后将${CFG.SAFE_MODE ? '填数量' : action}`;
       } else if (isPending && !isUsingCache) {
         hintEl.textContent = '平仓模式：正在读取可平仓位';
       } else if (isPending && isUsingCache) {
@@ -915,7 +923,8 @@
       } else if (closeMode === 'single_short') {
         hintEl.textContent = `平仓模式：当前仅有空仓，双击订单簿后将${CFG.SAFE_MODE ? '填数量' : '平空'}`;
       } else if (closeMode === 'dual') {
-        hintEl.textContent = `平仓模式：双向持仓时按面板所选侧${CFG.SAFE_MODE ? '填数量' : '平仓'}`;
+        const action = closeSide === 'LONG' ? '平多' : '平空';
+        hintEl.textContent = `平仓模式：双向持仓时双击订单簿后将${CFG.SAFE_MODE ? '填数量' : action}`;
       } else {
         hintEl.textContent = '平仓模式：暂未识别到可平仓位';
       }
@@ -1079,14 +1088,14 @@
         `<button id="${DEC_ID}" type="button" style="width:24px;height:24px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:14px;line-height:22px;cursor:pointer;">-</button>` +
         `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:56px;height:28px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:#1e2329;caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:14px;line-height:28px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">` +
       '</label>',
-      `<div style="display:flex;align-items:center;gap:4px;margin-right:2px;">` +
-        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平空</button>` +
-        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平多</button>` +
-      '</div>',
       '</div>',
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">',
       '<span id="jh-binance-close-qty-min" style="color:#76808f;"></span>',
       '<span id="jh-binance-close-qty-final" style="font-weight:600;color:#1e2329;"></span>',
+      '</div>',
+      `<div style="display:flex;align-items:center;gap:4px;margin-top:6px;">` +
+        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平空</button>` +
+        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:42px;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">平多</button>` +
       '</div>',
       `<div id="${MODE_HINT_ID}" style="margin-top:6px;color:#76808f;"></div>`,
     ].join('');
@@ -1325,7 +1334,7 @@
     const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
     const minQty = qtyRuleContext?.effectiveMinQty || null;
     if (!minQty) return null;
-    const multiplier = loadMultiplier();
+    const multiplier = loadMultiplier(tradeMode);
     const qty = multiplyDecimalByInt(minQty, multiplier);
     if (!qty) return null;
     return {
@@ -1427,7 +1436,8 @@
 
   window.addEventListener('storage', (event) => {
     if (
-      event.key === LOCAL_QTY_MULTIPLIER_KEY ||
+      event.key === LOCAL_CLOSE_QTY_MULTIPLIER_KEY ||
+      event.key === LOCAL_OPEN_QTY_MULTIPLIER_KEY ||
       event.key === LOCAL_CLOSE_SIDE_KEY ||
       event.key === LOCAL_OPEN_SIDE_KEY
     ) scheduleRenderPanel();
