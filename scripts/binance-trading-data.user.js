@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.0
+// @version      1.0.1
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
