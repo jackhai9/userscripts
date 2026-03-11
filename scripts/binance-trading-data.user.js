@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.1.0
+// @version      1.1.1
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -606,6 +606,7 @@
     if (closeBtn) {
       closeBtn.addEventListener('click', function () {
         panel.style.display = 'none';
+        panelClosed = true;
         stopLoop();
       });
     }
@@ -641,6 +642,7 @@
   let retryTimer = null;
   let pathTimer = null;
   let agoTimer = null;
+  let panelClosed = false;
   let lastUpdateTs = 0;
   let fetching = 0; // 0=空闲, 非零=正在拉取的 epoch
   let epoch = 0; // 递增计数器，用于作废过期的异步回调
@@ -811,6 +813,7 @@
     var lastPath = location.pathname;
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) {
+        if (panelClosed) return; // 面板已被用户关闭，不恢复
         syncServerTime();
         var sym = getCurrentSymbol();
         if (sym) {
@@ -845,16 +848,18 @@
     // 每小时重同步服务器时间，防止长驻页面时钟漂移
     setInterval(syncServerTime, 60 * 60 * 1000);
 
-    // SPA 切换交易对检测
-    pathTimer = setInterval(function () {
-      if (location.pathname !== lastPath) {
-        lastPath = location.pathname;
-        var sym = getCurrentSymbol();
-        if (sym && sym !== lastSymbol) {
-          initialFetch(sym).then(function () { scheduleCycle(); });
+    // SPA 切换交易对检测（初始就在后台时延迟到前台再启动）
+    if (!document.hidden) {
+      pathTimer = setInterval(function () {
+        if (location.pathname !== lastPath) {
+          lastPath = location.pathname;
+          var sym = getCurrentSymbol();
+          if (sym && sym !== lastSymbol) {
+            initialFetch(sym).then(function () { scheduleCycle(); });
+          }
         }
-      }
-    }, 1000);
+      }, 1000);
+    }
   }
 
   // 等待 DOM
