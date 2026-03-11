@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.0
+// @version      2.4.1
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -21,7 +21,7 @@
     SAFE_MODE: false,
     // 防连点
     COOLDOWN_MS: 100,
-    DEBUG: true,
+    DEBUG: false,
   };
   const LOCAL_CLOSE_QTY_MULTIPLIER_KEY = 'jh_binance_close_qty_multiplier';
   const LOCAL_OPEN_QTY_MULTIPLIER_KEY = 'jh_binance_open_qty_multiplier';
