@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.6
+// @version      1.0.7
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -419,7 +419,7 @@
       borderRadius: '8px',
       boxShadow:    '0 2px 8px rgba(0,0,0,0.08)',
       fontFamily:   'BinancePlex, system-ui, -apple-system, sans-serif',
-      fontSize:     '12px',
+      fontSize:     '13px',
       color:        C.text,
       userSelect:   'none',
       overflow:     'hidden',
@@ -433,17 +433,17 @@
         'background:#fafafa;border-bottom:1px solid ', C.border, ';',
       '">',
         '<div style="display:flex;align-items:center;gap:6px;">',
-          '<span style="font-size:14px;cursor:move;">&#9776;</span>',
-          '<span style="font-weight:600;font-size:13px;">交易数据</span>',
-          '<span id="', PANEL_ID, '-symbol" style="color:', C.sub, ';font-size:12px;"></span>',
+          '<span style="font-size:15px;cursor:move;">&#9776;</span>',
+          '<span style="font-weight:600;font-size:14px;">交易数据</span>',
+          '<span id="', PANEL_ID, '-symbol" style="color:', C.sub, ';font-size:13px;"></span>',
         '</div>',
         '<div style="display:flex;gap:4px;">',
           '<button id="', PANEL_ID, '-collapse" title="折叠/展开" style="',
-            'background:none;border:none;cursor:pointer;font-size:14px;',
+            'background:none;border:none;cursor:pointer;font-size:15px;',
             'color:', C.sub, ';padding:0 4px;line-height:1;',
           '">', collapsed ? '&#9633;' : '&#95;', '</button>',
           '<button id="', PANEL_ID, '-close" title="关闭" style="',
-            'background:none;border:none;cursor:pointer;font-size:14px;',
+            'background:none;border:none;cursor:pointer;font-size:15px;',
             'color:', C.sub, ';padding:0 4px;line-height:1;',
           '">&times;</button>',
         '</div>',
@@ -452,7 +452,7 @@
       '<div id="', PANEL_ID, '-body" style="display:', collapsed ? 'none' : 'block', ';">',
         '<div id="', PANEL_ID, '-rows" style="padding:8px 12px;"></div>',
         '<div id="', PANEL_ID, '-composite" style="padding:8px 12px;border-top:1px solid ', C.border, ';"></div>',
-        '<div id="', PANEL_ID, '-footer" style="padding:6px 12px;color:', C.sub, ';font-size:11px;border-top:1px solid ', C.border, ';"></div>',
+        '<div id="', PANEL_ID, '-footer" style="padding:6px 12px;color:', C.sub, ';font-size:12px;border-top:1px solid ', C.border, ';"></div>',
       '</div>',
     ].join('');
 
@@ -524,7 +524,7 @@
           '<div style="flex:1;"></div>',
           '<div style="height:100%;width:', shortPct, '%;border-radius:0 3px 3px 0;background:', C.short, ';"></div>',
         '</div>',
-        '<div style="display:flex;justify-content:space-between;margin-top:3px;font-size:11px;color:', C.sub, ';">',
+        '<div style="display:flex;justify-content:space-between;margin-top:3px;font-size:12px;color:', C.sub, ';">',
           '<span style="color:', C.long, ';">多 ', longCount, '</span>',
           '<span style="color:', C.short, ';">空 ', shortCount, '</span>',
         '</div>',
