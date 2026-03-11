@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.7
+// @version      1.0.8
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -77,7 +77,7 @@
     try {
       const resp = await fetch(href);
       if (!resp.ok) throw Object.assign(new Error(`HTTP ${resp.status}`), { status: resp.status });
-      return resp.json();
+      return await resp.json();
     } catch (e1) {
       // 4xx 是确定性失败（参数错误、限流），不重试
       if (e1.status && e1.status >= 400 && e1.status < 500) throw e1;
@@ -85,7 +85,7 @@
       log('重试:', path);
       const resp = await fetch(href);
       if (!resp.ok) throw new Error(`HTTP ${resp.status} (retry)`);
-      return resp.json();
+      return await resp.json();
     }
   }
 
@@ -551,7 +551,9 @@
     const mm = String(d.getMinutes()).padStart(2, '0');
     const ss = String(d.getSeconds()).padStart(2, '0');
     const ago = Math.floor((Date.now() - lastUpdateTs) / 1000);
-    el.textContent = '更新于 ' + hh + ':' + mm + ':' + ss + '  ' + ago + '秒前';
+    el.innerHTML = '<div style="display:flex;justify-content:space-between;">' +
+      '<span>更新于 ' + hh + ':' + mm + ':' + ss + '</span>' +
+      '<span>' + ago + '秒前</span></div>';
   }
 
   /* ========== 拖拽 ========== */
@@ -808,15 +810,19 @@
     if (symbol) await initialFetch(symbol);
     scheduleCycle();
 
-    // tab 恢复时：立即拉取 + 补抓当前周期
+    // tab 恢复时：重同步服务器时间 + 立即拉取 + 补抓当前周期
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) {
+        syncServerTime();
         var sym = getCurrentSymbol();
         if (sym) {
           initialFetch(sym).then(function () { scheduleCycle(); });
         }
       }
     });
+
+    // 每小时重同步服务器时间，防止长驻页面时钟漂移
+    setInterval(syncServerTime, 60 * 60 * 1000);
 
     // SPA 切换交易对检测
     var lastPath = location.pathname;
