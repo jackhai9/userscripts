@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.42
+// @version      2.3.43
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -716,6 +716,28 @@
   }
 
   let appDataCache = { text: '', parsed: null }; // #__APP_DATA 解析缓存
+  let apiRulesCache = {}; // symbol -> { minNotional, limitMinQty, limitStepSize }
+
+  // 从公开 API 获取交易规则（#__APP_DATA 的 fallback）
+  async function prefetchExchangeInfo(symbol) {
+    if (!symbol || apiRulesCache[symbol]) return;
+    try {
+      const resp = await fetch(`https://fapi.binance.com/fapi/v1/exchangeInfo?symbol=${symbol}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const sInfo = data.symbols?.find((s) => s.symbol === symbol);
+      if (!sInfo) return;
+      const filters = sInfo.filters || [];
+      const lot = filters.find((f) => f.filterType === 'LOT_SIZE') || {};
+      const minN = filters.find((f) => f.filterType === 'MIN_NOTIONAL') || {};
+      apiRulesCache[symbol] = {
+        minNotional: minN.notional ? String(minN.notional) : null,
+        limitMinQty: lot.minQty ? String(lot.minQty) : null,
+        limitStepSize: lot.stepSize ? String(lot.stepSize) : null,
+      };
+      log('exchangeInfo 缓存:', symbol, apiRulesCache[symbol]);
+    } catch (_e) { /* ignore */ }
+  }
 
   function readTradeRulesFromAppData(symbol) {
     try {
@@ -744,12 +766,18 @@
         if (typeof v === 'number' && Number.isFinite(v)) return String(v);
         return null;
       };
+      const notionalValue = toStr(minNotional.notional);
+      if (!notionalValue && filters.length > 0) {
+        log('MIN_NOTIONAL 未读取到，filters 中的 filterType:', filters.map((f) => f?.filterType).join(', '));
+        const minNotionalRaw = filters.find((x) => x && x.filterType === 'MIN_NOTIONAL');
+        if (minNotionalRaw) log('MIN_NOTIONAL filter 原始内容:', JSON.stringify(minNotionalRaw));
+      }
       return {
         limitMinQty: toStr(lot.minQty),
         limitStepSize: toStr(lot.stepSize),
         marketMinQty: toStr(marketLot.minQty),
         marketStepSize: toStr(marketLot.stepSize),
-        minNotional: toStr(minNotional.notional),
+        minNotional: notionalValue,
         markPrice: toStr(markPrice),
       };
     } catch (_e) {
@@ -778,24 +806,28 @@
 
   function getQtyRuleContext(symbol, tradeMode, priceOverride) {
     const rules = symbol ? readTradeRulesFromAppData(symbol) : null;
+    const apiCache = symbol ? apiRulesCache[symbol] : null;
     const orderType = getCurrentOrderType();
     const isMarketOrder = orderType.includes('MARKET');
     const fallbackStep = readStepSizeFromQtyInput();
     const baseMinQty = normalizeDecimalString(
       (isMarketOrder ? rules?.marketMinQty : rules?.limitMinQty) ||
       rules?.limitMinQty ||
+      apiCache?.limitMinQty ||
       fallbackStep
     );
     const stepSize = normalizeDecimalString(
       (isMarketOrder ? rules?.marketStepSize : rules?.limitStepSize) ||
       rules?.limitStepSize ||
+      apiCache?.limitStepSize ||
       fallbackStep ||
       baseMinQty
     );
+    const minNotional = rules?.minNotional || apiCache?.minNotional || null;
     const referencePrice = getReferencePrice(symbol, priceOverride);
     const minNotionalQty =
-      tradeMode === 'OPEN' && rules?.minNotional && referencePrice && stepSize
-        ? ceilQtyByNotional(rules.minNotional, referencePrice, stepSize)
+      tradeMode === 'OPEN' && minNotional && referencePrice && stepSize
+        ? ceilQtyByNotional(minNotional, referencePrice, stepSize)
         : null;
     const effectiveMinQty = maxDecimalString(baseMinQty, minNotionalQty);
 
@@ -803,7 +835,7 @@
       orderType,
       baseMinQty,
       stepSize,
-      minNotional: normalizeDecimalString(rules?.minNotional),
+      minNotional: normalizeDecimalString(minNotional),
       referencePrice,
       minNotionalQty,
       effectiveMinQty,
@@ -1176,6 +1208,7 @@
     positionPanel(panel);
     const input = panel.querySelector(`#${INPUT_ID}`);
     const symbol = getCurrentSymbol() || '-';
+    if (symbol !== '-') prefetchExchangeInfo(symbol); // 预拉取交易规则（如果尚未缓存）
     const storedMultiplier = loadMultiplier();
     if (input && !isEditingMultiplier && input.value !== storedMultiplier) {
       input.value = storedMultiplier;
