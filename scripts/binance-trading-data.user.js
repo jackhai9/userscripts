@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.5
+// @version      1.0.6
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -510,17 +510,19 @@
       const neutral = longCount === shortCount;
       const biasLong = longCount > shortCount;
       const biasLabel = neutral ? '中性' : biasLong ? '偏多' : '偏空';
-      const biasCount = neutral ? longCount : biasLong ? longCount : shortCount;
       const biasColor = neutral ? C.neutral : biasLong ? C.long : C.short;
-      const pct = Math.round((neutral ? 50 : biasLong ? longCount : shortCount) / (neutral ? 1 : total) * 100);
+      const longPct = total > 0 ? Math.round(longCount / total * 100) : 0;
+      const shortPct = total > 0 ? Math.round(shortCount / total * 100) : 0;
 
       compositeEl.innerHTML = [
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">',
           '<span style="font-weight:600;">复合信号</span>',
-          '<span style="color:', biasColor, ';font-weight:600;">', biasLabel, ' ', neutral ? longCount + ':' + shortCount : biasCount + '/' + total, '</span>',
+          '<span style="color:', biasColor, ';font-weight:600;">', biasLabel, ' ', longCount, ':', shortCount, '</span>',
         '</div>',
-        '<div style="height:6px;background:', C.border, ';border-radius:3px;overflow:hidden;">',
-          '<div style="height:100%;width:', pct, '%;border-radius:3px;background:', biasColor, ';"></div>',
+        '<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:', C.border, ';">',
+          '<div style="height:100%;width:', longPct, '%;border-radius:3px 0 0 3px;background:', C.long, ';"></div>',
+          '<div style="flex:1;"></div>',
+          '<div style="height:100%;width:', shortPct, '%;border-radius:0 3px 3px 0;background:', C.short, ';"></div>',
         '</div>',
         '<div style="display:flex;justify-content:space-between;margin-top:3px;font-size:11px;color:', C.sub, ';">',
           '<span style="color:', C.long, ';">多 ', longCount, '</span>',
