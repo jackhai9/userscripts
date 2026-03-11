@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.43
+// @version      2.4.0
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -715,35 +715,58 @@
     return t && t[1] ? t[1].toUpperCase() : null;
   }
 
-  let appDataCache = { text: '', parsed: null }; // #__APP_DATA 解析缓存
-  let apiRulesCache = {}; // symbol -> { minNotional, limitMinQty, limitStepSize }
+  let appDataCache = { text: '', parsed: null }; // #__APP_DATA 解析缓存（仅用于 markPrice）
+  let rulesCache = {}; // symbol -> { limitMinQty, limitStepSize, marketMinQty, marketStepSize, minNotional }
+  let rulesInflight = {}; // symbol -> Promise（inflight 去重）
+  let rulesFailedUntil = {}; // symbol -> timestamp（失败冷却，防止高频重试）
+  const RULES_RETRY_COOLDOWN_MS = 5000;
 
-  // 从公开 API 获取交易规则（#__APP_DATA 的 fallback）
-  async function prefetchExchangeInfo(symbol) {
-    if (!symbol || apiRulesCache[symbol]) return;
-    try {
-      const resp = await fetch(`https://fapi.binance.com/fapi/v1/exchangeInfo?symbol=${symbol}`);
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const sInfo = data.symbols?.find((s) => s.symbol === symbol);
-      if (!sInfo) return;
-      const filters = sInfo.filters || [];
-      const lot = filters.find((f) => f.filterType === 'LOT_SIZE') || {};
-      const minN = filters.find((f) => f.filterType === 'MIN_NOTIONAL') || {};
-      apiRulesCache[symbol] = {
-        minNotional: minN.notional ? String(minN.notional) : null,
-        limitMinQty: lot.minQty ? String(lot.minQty) : null,
-        limitStepSize: lot.stepSize ? String(lot.stepSize) : null,
-      };
-      log('exchangeInfo 缓存:', symbol, apiRulesCache[symbol]);
-    } catch (_e) { /* ignore */ }
+  async function ensureRules(symbol) {
+    if (!symbol || rulesCache[symbol]) return rulesCache[symbol];
+    if (rulesInflight[symbol]) return rulesInflight[symbol];
+    if (rulesFailedUntil[symbol] > Date.now()) return null;
+    const promise = (async () => {
+      try {
+        const resp = await fetch(`https://fapi.binance.com/fapi/v1/exchangeInfo?symbol=${symbol}`);
+        if (!resp.ok) {
+          rulesFailedUntil[symbol] = Date.now() + RULES_RETRY_COOLDOWN_MS;
+          return null;
+        }
+        const data = await resp.json();
+        const sInfo = data.symbols?.find((s) => s.symbol === symbol);
+        if (!sInfo) {
+          rulesFailedUntil[symbol] = Date.now() + RULES_RETRY_COOLDOWN_MS;
+          return null;
+        }
+        const filters = sInfo.filters || [];
+        const lot = filters.find((f) => f.filterType === 'LOT_SIZE') || {};
+        const marketLot = filters.find((f) => f.filterType === 'MARKET_LOT_SIZE') || {};
+        const minN = filters.find((f) => f.filterType === 'MIN_NOTIONAL') || {};
+        const entry = {
+          limitMinQty: lot.minQty ? String(lot.minQty) : null,
+          limitStepSize: lot.stepSize ? String(lot.stepSize) : null,
+          marketMinQty: marketLot.minQty ? String(marketLot.minQty) : null,
+          marketStepSize: marketLot.stepSize ? String(marketLot.stepSize) : null,
+          minNotional: minN.notional ? String(minN.notional) : null,
+        };
+        rulesCache[symbol] = entry;
+        delete rulesFailedUntil[symbol];
+        log('exchangeInfo:', symbol, entry);
+        return entry;
+      } catch (_e) {
+        rulesFailedUntil[symbol] = Date.now() + RULES_RETRY_COOLDOWN_MS;
+        return null;
+      }
+      finally { delete rulesInflight[symbol]; }
+    })();
+    rulesInflight[symbol] = promise;
+    return promise;
   }
 
-  function readTradeRulesFromAppData(symbol) {
+  function readMarkPriceFromAppData(symbol) {
     try {
       const el = document.querySelector('#__APP_DATA');
       if (!el || !el.textContent) return null;
-      // textContent 没变则复用上次 JSON.parse 结果
       let data;
       if (el.textContent === appDataCache.text) {
         data = appDataCache.parsed;
@@ -753,43 +776,16 @@
       }
       if (!data) return null;
       const reactQueryData = data?.appState?.loader?.dataByRouteId?.bd56?.reactQueryData;
-      const perpetual = reactQueryData?.productFutureService?.perpetual;
-      const sInfo = perpetual?.[symbol];
-      if (!sInfo) return null;
-      const filters = Array.isArray(sInfo.f) ? sInfo.f : [];
-      const lot = filters.find((x) => x && x.filterType === 'LOT_SIZE') || {};
-      const marketLot = filters.find((x) => x && x.filterType === 'MARKET_LOT_SIZE') || {};
-      const minNotional = filters.find((x) => x && x.filterType === 'MIN_NOTIONAL') || {};
       const markPrice = reactQueryData?.[`queryMarkPrice,${symbol}`]?.markPrice || null;
       const toStr = (v) => {
         if (typeof v === 'string' && v) return v;
         if (typeof v === 'number' && Number.isFinite(v)) return String(v);
         return null;
       };
-      const notionalValue = toStr(minNotional.notional);
-      if (!notionalValue && filters.length > 0) {
-        log('MIN_NOTIONAL 未读取到，filters 中的 filterType:', filters.map((f) => f?.filterType).join(', '));
-        const minNotionalRaw = filters.find((x) => x && x.filterType === 'MIN_NOTIONAL');
-        if (minNotionalRaw) log('MIN_NOTIONAL filter 原始内容:', JSON.stringify(minNotionalRaw));
-      }
-      return {
-        limitMinQty: toStr(lot.minQty),
-        limitStepSize: toStr(lot.stepSize),
-        marketMinQty: toStr(marketLot.minQty),
-        marketStepSize: toStr(marketLot.stepSize),
-        minNotional: notionalValue,
-        markPrice: toStr(markPrice),
-      };
+      return toStr(markPrice);
     } catch (_e) {
       return null;
     }
-  }
-
-  function readStepSizeFromQtyInput() {
-    const input = findQtyInput();
-    if (!input) return null;
-    const step = input.getAttribute('step');
-    return step && /^\d+(\.\d+)?$/.test(step) ? step : null;
   }
 
   function getReferencePrice(symbol, priceOverride) {
@@ -800,42 +796,38 @@
     const fromInput = normalizeDecimalString(priceInput?.value || '');
     if (fromInput) return fromInput;
 
-    const fromAppData = readTradeRulesFromAppData(symbol)?.markPrice;
+    // markPrice 仍从 #__APP_DATA 读（实时数据，不适合 API 一次性缓存）
+    const fromAppData = readMarkPriceFromAppData(symbol);
     return normalizeDecimalString(fromAppData);
   }
 
   function getQtyRuleContext(symbol, tradeMode, priceOverride) {
-    const rules = symbol ? readTradeRulesFromAppData(symbol) : null;
-    const apiCache = symbol ? apiRulesCache[symbol] : null;
+    const rules = symbol ? rulesCache[symbol] : null;
+    if (!rules) return { status: 'pending' };
+
     const orderType = getCurrentOrderType();
     const isMarketOrder = orderType.includes('MARKET');
-    const fallbackStep = readStepSizeFromQtyInput();
     const baseMinQty = normalizeDecimalString(
-      (isMarketOrder ? rules?.marketMinQty : rules?.limitMinQty) ||
-      rules?.limitMinQty ||
-      apiCache?.limitMinQty ||
-      fallbackStep
+      (isMarketOrder ? rules.marketMinQty : rules.limitMinQty) || rules.limitMinQty
     );
     const stepSize = normalizeDecimalString(
-      (isMarketOrder ? rules?.marketStepSize : rules?.limitStepSize) ||
-      rules?.limitStepSize ||
-      apiCache?.limitStepSize ||
-      fallbackStep ||
-      baseMinQty
+      (isMarketOrder ? rules.marketStepSize : rules.limitStepSize) || rules.limitStepSize
     );
-    const minNotional = rules?.minNotional || apiCache?.minNotional || null;
+    if (!baseMinQty || !stepSize) return { status: 'pending' };
+
     const referencePrice = getReferencePrice(symbol, priceOverride);
     const minNotionalQty =
-      tradeMode === 'OPEN' && minNotional && referencePrice && stepSize
-        ? ceilQtyByNotional(minNotional, referencePrice, stepSize)
+      tradeMode === 'OPEN' && rules.minNotional && referencePrice && stepSize
+        ? ceilQtyByNotional(rules.minNotional, referencePrice, stepSize)
         : null;
     const effectiveMinQty = maxDecimalString(baseMinQty, minNotionalQty);
 
     return {
+      status: 'ready',
       orderType,
       baseMinQty,
       stepSize,
-      minNotional: normalizeDecimalString(minNotional),
+      minNotional: normalizeDecimalString(rules.minNotional),
       referencePrice,
       minNotionalQty,
       effectiveMinQty,
@@ -920,7 +912,8 @@
     const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
     const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
     const tradeMode = getActiveTradeMode();
-    const effectiveMinQty = qtyRuleContext?.effectiveMinQty || null;
+    const rulesPending = qtyRuleContext?.status !== 'ready';
+    const effectiveMinQty = rulesPending ? null : (qtyRuleContext?.effectiveMinQty || null);
     const finalQty = effectiveMinQty ? multiplyDecimalByInt(effectiveMinQty, multiplier) : null;
     const closeSide = loadCloseSide();
     const openSide = loadOpenSide();
@@ -929,7 +922,9 @@
     const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
 
     if (minEl) {
-      if (tradeMode === 'OPEN' && qtyRuleContext?.minNotionalQty && qtyRuleContext?.referencePrice) {
+      if (rulesPending) {
+        minEl.textContent = '最小量读取中';
+      } else if (tradeMode === 'OPEN' && qtyRuleContext?.minNotionalQty && qtyRuleContext?.referencePrice) {
         minEl.textContent = `最小 ${effectiveMinQty} (>=${qtyRuleContext.minNotional}U @ ${qtyRuleContext.referencePrice})`;
       } else if (effectiveMinQty) {
         minEl.textContent = `最小 ${effectiveMinQty}`;
@@ -938,7 +933,9 @@
       }
     }
     if (finalEl) {
-      if (isValidMultiplier(multiplier) && finalQty && effectiveMinQty) {
+      if (rulesPending) {
+        finalEl.textContent = '--';
+      } else if (isValidMultiplier(multiplier) && finalQty && effectiveMinQty) {
         finalEl.textContent = `${effectiveMinQty} x ${multiplier} = ${finalQty}`;
       } else {
         finalEl.textContent = '请输入正整数倍数';
@@ -1208,7 +1205,9 @@
     positionPanel(panel);
     const input = panel.querySelector(`#${INPUT_ID}`);
     const symbol = getCurrentSymbol() || '-';
-    if (symbol !== '-') prefetchExchangeInfo(symbol); // 预拉取交易规则（如果尚未缓存）
+    if (symbol !== '-' && !rulesCache[symbol]) {
+      ensureRules(symbol).then((rules) => { if (rules) scheduleRenderPanel(); });
+    }
     const storedMultiplier = loadMultiplier();
     if (input && !isEditingMultiplier && input.value !== storedMultiplier) {
       input.value = storedMultiplier;
@@ -1367,14 +1366,17 @@
   function resolveTargetQty(tradeMode, priceOverride) {
     const symbol = getCurrentSymbol();
     const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
-    const minQty = qtyRuleContext?.effectiveMinQty || null;
-    if (!minQty) return null;
+    if (qtyRuleContext.status !== 'ready' || !qtyRuleContext.effectiveMinQty) {
+      // 规则未就绪时触发加载，下次双击即可命中缓存
+      if (symbol && !rulesCache[symbol]) ensureRules(symbol);
+      return null;
+    }
     const multiplier = loadMultiplier(tradeMode);
-    const qty = multiplyDecimalByInt(minQty, multiplier);
+    const qty = multiplyDecimalByInt(qtyRuleContext.effectiveMinQty, multiplier);
     if (!qty) return null;
     return {
       qty,
-      source: `MULTIPLIER(${multiplier}x @ ${minQty})`,
+      source: `MULTIPLIER(${multiplier}x @ ${qtyRuleContext.effectiveMinQty})`,
       symbol,
       rule: qtyRuleContext,
     };
