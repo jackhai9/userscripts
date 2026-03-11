@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.1.1
+// @version      1.1.2
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -532,7 +532,7 @@
     if (footerEl) {
       lastUpdateTs = Date.now();
       updateFooter(footerEl);
-      if (!agoTimer) {
+      if (!agoTimer && !document.hidden) {
         agoTimer = setInterval(function () {
           const el = document.querySelector('#' + PANEL_ID + '-footer');
           if (el && lastUpdateTs) updateFooter(el);
@@ -804,9 +804,11 @@
     await syncServerTime();
     ensurePanel();
 
-    var symbol = getCurrentSymbol();
-    if (symbol) await initialFetch(symbol);
-    scheduleCycle();
+    if (!document.hidden) {
+      var symbol = getCurrentSymbol();
+      if (symbol) await initialFetch(symbol);
+      scheduleCycle();
+    }
 
     // tab 恢复时：重同步服务器时间 + 立即拉取 + 补抓当前周期 + 恢复定时器
     // tab 隐藏时：暂停 agoTimer 和 pathTimer，减少后台开销
