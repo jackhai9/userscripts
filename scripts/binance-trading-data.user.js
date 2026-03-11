@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.3
+// @version      1.0.4
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -23,7 +23,10 @@
   const STORAGE_POS_KEY = 'jh_binance_trading_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_trading_data_collapsed';
 
-  const REFRESH_INTERVAL = 60_000;
+  const PERIOD_MS = 5 * 60 * 1000;  // 数据周期 5 分钟
+  const FIRST_DELAY = 5_000;         // 周期边界后首次等待 5s
+  const RETRY_DELAYS = [10_000, 15_000, 20_000]; // 后续重试间隔，用完后按 30s 循环
+  const RETRY_FALLBACK = 30_000;
   const DEFAULT_PERIOD = '5m';
   const DATA_LIMIT = 30;
   const OI_TREND_PERIODS = 6;
@@ -38,7 +41,11 @@
     takerRatio:         '/futures/data/takerlongshortRatio',
     basis:              '/futures/data/basis',
     fundingRate:        '/fapi/v1/fundingRate',
+    serverTime:         '/fapi/v1/time',
   };
+
+  // 参与 5 分钟周期重试的接口（不含 fundingRate）
+  const PERIOD_KEYS = ['openInterest', 'topAccountRatio', 'topPositionRatio', 'globalAccountRatio', 'takerRatio', 'basis'];
 
   /* ========== 日志 ========== */
 
@@ -104,40 +111,120 @@
     return fetchJson(API_PATHS.fundingRate, { symbol, limit: 1 });
   }
 
-  let dataCache = {}; // symbol -> { key: data }
+  // key -> fetcher 映射
+  const FETCHER_MAP = {
+    openInterest:       fetchOpenInterest,
+    topAccountRatio:    fetchTopAccountRatio,
+    topPositionRatio:   fetchTopPositionRatio,
+    globalAccountRatio: fetchGlobalAccountRatio,
+    takerRatio:         fetchTakerRatio,
+    basis:              fetchBasis,
+  };
 
-  async function fetchAllData(symbol) {
-    const keys = ['openInterest', 'topAccountRatio', 'topPositionRatio', 'globalAccountRatio', 'takerRatio', 'basis', 'fundingRate'];
-    const fetchers = [
-      fetchOpenInterest(symbol),
-      fetchTopAccountRatio(symbol),
-      fetchTopPositionRatio(symbol),
-      fetchGlobalAccountRatio(symbol),
-      fetchTakerRatio(symbol),
-      fetchBasis(symbol),
-      fetchFundingRate(symbol),
-    ];
-    const results = await Promise.allSettled(fetchers);
-    if (!dataCache[symbol]) dataCache[symbol] = {};
-    const cache = dataCache[symbol];
-    const data = {};
-    const cachedKeys = new Set();
-    keys.forEach((key, i) => {
+  /* ========== 服务器时间 ========== */
+
+  let serverOffset = 0; // serverTime - localTime
+
+  async function syncServerTime() {
+    try {
+      const resp = await fetch(API_BASE + API_PATHS.serverTime);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const json = await resp.json();
+      serverOffset = json.serverTime - Date.now();
+      log('服务器时间偏移:', serverOffset + 'ms');
+    } catch (e) {
+      err('获取服务器时间失败，使用本地时间');
+      serverOffset = 0;
+    }
+  }
+
+  function serverNow() {
+    return Date.now() + serverOffset;
+  }
+
+  /* ========== 数据存储 ========== */
+
+  let dataStore = {};   // symbol -> { key: responseData } 当前展示用
+  let dataCache = {};   // symbol -> { key: responseData } 失败回退用
+  let failedKeys = new Set(); // 当前使用回退缓存的 key
+
+  // 提取接口返回的最新数据点时间戳
+  function extractEndpointTs(data) {
+    if (!Array.isArray(data) || data.length === 0) return 0;
+    return Number(data[data.length - 1].timestamp) || 0;
+  }
+
+  // 纯函数：拉取指定 5m 接口，返回结果但不写全局状态
+  async function fetchPeriodData(symbol, keys) {
+    if (!keys || keys.length === 0) return {};
+    var fetchers = keys.map(function (k) { return FETCHER_MAP[k](symbol); });
+    var results = await Promise.allSettled(fetchers);
+    var backup = dataCache[symbol] || {};
+    var entries = {};
+
+    keys.forEach(function (key, i) {
       if (results[i].status === 'fulfilled') {
-        data[key] = results[i].value;
-        cache[key] = results[i].value;
+        entries[key] = { data: results[i].value, cached: false };
       } else {
-        err(`${key} 请求失败:`, results[i].reason?.message || results[i].reason);
-        if (cache[key]) {
-          data[key] = cache[key];
-          cachedKeys.add(key);
-          log(`${key} 使用缓存数据`);
+        err(key + ' 请求失败:', results[i].reason?.message || results[i].reason);
+        if (backup[key]) {
+          entries[key] = { data: backup[key], cached: true };
+          log(key + ' 使用缓存数据');
         } else {
-          data[key] = null;
+          entries[key] = { data: null, cached: true };
         }
       }
     });
-    return { data, cachedKeys };
+    return entries;
+  }
+
+  // 纯函数：拉取 fundingRate
+  async function fetchFundingRateData(symbol) {
+    var backup = dataCache[symbol] || {};
+    try {
+      var data = await fetchFundingRate(symbol);
+      return { data: data, cached: false };
+    } catch (e) {
+      err('fundingRate 请求失败:', e);
+      return { data: backup.fundingRate || null, cached: true };
+    }
+  }
+
+  // 将 fetch 结果写入全局状态（仅在 epoch 校验通过后调用）
+  function applyResults(symbol, periodEntries, fundingEntry) {
+    if (!dataStore[symbol]) dataStore[symbol] = {};
+    if (!dataCache[symbol]) dataCache[symbol] = {};
+
+    if (periodEntries) {
+      for (var key in periodEntries) {
+        var e = periodEntries[key];
+        dataStore[symbol][key] = e.data;
+        if (!e.cached) {
+          dataCache[symbol][key] = e.data;
+          failedKeys.delete(key);
+        } else {
+          failedKeys.add(key);
+        }
+      }
+    }
+
+    if (fundingEntry) {
+      dataStore[symbol].fundingRate = fundingEntry.data;
+      if (!fundingEntry.cached) {
+        dataCache[symbol].fundingRate = fundingEntry.data;
+        failedKeys.delete('fundingRate');
+      } else {
+        failedKeys.add('fundingRate');
+      }
+    }
+  }
+
+  // 哪些 5m 接口的最新数据时间戳还没到 targetTs
+  function getPendingKeys(symbol, targetTs) {
+    var store = dataStore[symbol] || {};
+    return PERIOD_KEYS.filter(function (key) {
+      return extractEndpointTs(store[key]) < targetTs;
+    });
   }
 
   /* ========== 数据处理 ========== */
@@ -542,61 +629,194 @@
 
   /* ========== 主循环 ========== */
 
-  let tickTimer = null;
+  let cycleTimer = null;
+  let retryTimer = null;
   let pathTimer = null;
   let agoTimer = null;
   let lastUpdateTs = 0;
-  let fetching = false;
+  let fetching = 0; // 0=空闲, 非零=正在拉取的 epoch
+  let epoch = 0; // 递增计数器，用于作废过期的异步回调
 
-  async function tick() {
-    if (document.hidden) return;
-    if (fetching) return;
+  function renderAll(symbol) {
+    var data = dataStore[symbol] || {};
+    var result = computeSignals(data, failedKeys);
+    renderPanel(result);
+  }
 
-    const symbol = getCurrentSymbol();
-    if (!symbol) return;
+  // 首次全量拉取（启动 / 切交易对 / tab 恢复）
+  async function initialFetch(symbol) {
+    // 作废所有正在进行的异步操作
+    epoch++;
+    var myEpoch = epoch;
+    clearTimeout(cycleTimer);
+    clearTimeout(retryTimer);
 
     if (symbol !== lastSymbol) {
       lastSymbol = symbol;
+      failedKeys = new Set();
+      prevDisplayValues = {};
+      log('交易对:', symbol);
+    }
+    fetching = myEpoch;
+    try {
+      var [periodEntries, fundingEntry] = await Promise.all([
+        fetchPeriodData(symbol, PERIOD_KEYS),
+        fetchFundingRateData(symbol),
+      ]);
+      if (epoch !== myEpoch) return; // 已被更新的调用取代
+      applyResults(symbol, periodEntries, fundingEntry);
+      renderAll(symbol);
+    } catch (e) { err('拉取失败:', e); }
+    finally { if (fetching === myEpoch) fetching = 0; }
+  }
+
+  // boundary = 刚过去的 5 分钟边界（floor）
+  // targetTs = boundary = Binance 数据 timestamp 推进到关闭边界
+  // 重试窗口 = boundary ~ boundary + PERIOD_MS
+
+  function scheduleCycle(forceNext) {
+    clearTimeout(cycleTimer);
+    clearTimeout(retryTimer);
+
+    var now = serverNow();
+    var boundary = Math.floor(now / PERIOD_MS) * PERIOD_MS;
+
+    if (!forceNext) {
+      var targetTs = boundary;
+      var symbol = getCurrentSymbol();
+      var pending = symbol ? getPendingKeys(symbol, targetTs) : [];
+
+      if (pending.length > 0 && now < boundary + PERIOD_MS) {
+        // 当前周期还有数据没拿到，异步进入重试
+        var delay = Math.max(0, boundary + FIRST_DELAY - now);
+        cycleTimer = setTimeout(function () {
+          runCycleAttempt(boundary, 0);
+        }, delay);
+        return;
+      }
+    }
+
+    // 当前周期已完成 / 被强制跳过，调度下一个周期
+    var nextBound = boundary + PERIOD_MS;
+    var delay = Math.max(0, nextBound - now + FIRST_DELAY);
+    log('下次拉取:', new Date(nextBound + FIRST_DELAY - serverOffset).toLocaleTimeString());
+
+    cycleTimer = setTimeout(function () {
+      runCycleAttempt(nextBound, 0);
+    }, delay);
+  }
+
+  async function runCycleAttempt(boundary, attempt) {
+    if (document.hidden) {
+      scheduleCycle(true);
+      return;
+    }
+    if (fetching) return;
+
+    var symbol = getCurrentSymbol();
+    if (!symbol) { scheduleCycle(true); return; }
+
+    if (symbol !== lastSymbol) {
+      lastSymbol = symbol;
+      failedKeys = new Set();
       prevDisplayValues = {};
       log('交易对:', symbol);
     }
 
-    fetching = true;
+    var targetTs = boundary;
+    var myEpoch = epoch;
+
+    fetching = myEpoch;
     try {
-      const { data, cachedKeys } = await fetchAllData(symbol);
-      const result = computeSignals(data, cachedKeys);
-      renderPanel(result);
-      log('数据更新完成');
+      var periodEntries, fundingEntry;
+      if (attempt === 0) {
+        [periodEntries, fundingEntry] = await Promise.all([
+          fetchPeriodData(symbol, PERIOD_KEYS),
+          fetchFundingRateData(symbol),
+        ]);
+      } else {
+        var pending = getPendingKeys(symbol, targetTs);
+        if (pending.length === 0) {
+          log('所有 5m 接口已更新');
+          renderAll(symbol);
+          scheduleCycle();
+          return;
+        }
+        periodEntries = await fetchPeriodData(symbol, pending);
+      }
+
+      // await 返回后检查：是否已被 initialFetch 取代
+      if (epoch !== myEpoch) return;
+
+      applyResults(symbol, periodEntries, fundingEntry || null);
+      renderAll(symbol);
+
+      var stillPending = getPendingKeys(symbol, targetTs);
+
+      if (stillPending.length === 0) {
+        log('所有 5m 接口已更新');
+        scheduleCycle();
+        return;
+      }
+
+      // 计算重试间隔
+      var retryDelay = attempt < RETRY_DELAYS.length ? RETRY_DELAYS[attempt] : RETRY_FALLBACK;
+      var retryTime = serverNow() + retryDelay;
+      var cycleEnd = boundary + PERIOD_MS;
+
+      if (retryTime >= cycleEnd) {
+        log('本周期时间用完，待更新:', stillPending.join(', '));
+        scheduleCycle(true);
+        return;
+      }
+
+      log(stillPending.length + ' 个接口未更新，' + (retryDelay / 1000) + '秒后重试:', stillPending.join(', '));
+      retryTimer = setTimeout(function () {
+        runCycleAttempt(boundary, attempt + 1);
+      }, retryDelay);
     } catch (e) {
       err('数据拉取失败:', e);
+      scheduleCycle();
     } finally {
-      fetching = false;
+      if (fetching === myEpoch) fetching = 0;
     }
   }
 
   function stopLoop() {
-    if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+    clearTimeout(cycleTimer);  cycleTimer = null;
+    clearTimeout(retryTimer);  retryTimer = null;
     if (pathTimer) { clearInterval(pathTimer); pathTimer = null; }
     if (agoTimer)  { clearInterval(agoTimer);  agoTimer = null; }
   }
 
-  function start() {
+  async function start() {
     log('脚本启动');
+    await syncServerTime();
     ensurePanel();
-    tick();
-    tickTimer = setInterval(tick, REFRESH_INTERVAL);
 
-    // tab 隐藏时暂停，恢复时立即刷新
+    var symbol = getCurrentSymbol();
+    if (symbol) await initialFetch(symbol);
+    scheduleCycle();
+
+    // tab 恢复时：立即拉取 + 补抓当前周期
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden && tickTimer) tick();
+      if (!document.hidden) {
+        var sym = getCurrentSymbol();
+        if (sym) {
+          initialFetch(sym).then(function () { scheduleCycle(); });
+        }
+      }
     });
 
     // SPA 切换交易对检测
-    let lastPath = location.pathname;
+    var lastPath = location.pathname;
     pathTimer = setInterval(function () {
       if (location.pathname !== lastPath) {
         lastPath = location.pathname;
-        tick();
+        var sym = getCurrentSymbol();
+        if (sym && sym !== lastSymbol) {
+          initialFetch(sym).then(function () { scheduleCycle(); });
+        }
       }
     }, 1000);
   }
