@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.3.41
+// @version      2.3.42
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -739,16 +739,18 @@
       const marketLot = filters.find((x) => x && x.filterType === 'MARKET_LOT_SIZE') || {};
       const minNotional = filters.find((x) => x && x.filterType === 'MIN_NOTIONAL') || {};
       const markPrice = reactQueryData?.[`queryMarkPrice,${symbol}`]?.markPrice || null;
+      const toStr = (v) => {
+        if (typeof v === 'string' && v) return v;
+        if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+        return null;
+      };
       return {
-        limitMinQty: typeof lot.minQty === 'string' && lot.minQty ? lot.minQty : null,
-        limitStepSize: typeof lot.stepSize === 'string' && lot.stepSize ? lot.stepSize : null,
-        marketMinQty:
-          typeof marketLot.minQty === 'string' && marketLot.minQty ? marketLot.minQty : null,
-        marketStepSize:
-          typeof marketLot.stepSize === 'string' && marketLot.stepSize ? marketLot.stepSize : null,
-        minNotional:
-          typeof minNotional.notional === 'string' && minNotional.notional ? minNotional.notional : null,
-        markPrice: typeof markPrice === 'string' && markPrice ? markPrice : null,
+        limitMinQty: toStr(lot.minQty),
+        limitStepSize: toStr(lot.stepSize),
+        marketMinQty: toStr(marketLot.minQty),
+        marketStepSize: toStr(marketLot.stepSize),
+        minNotional: toStr(minNotional.notional),
+        markPrice: toStr(markPrice),
       };
     } catch (_e) {
       return null;
