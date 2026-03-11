@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.2
+// @version      1.0.3
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -121,7 +121,7 @@
     if (!dataCache[symbol]) dataCache[symbol] = {};
     const cache = dataCache[symbol];
     const data = {};
-    let cachedCount = 0;
+    const cachedKeys = new Set();
     keys.forEach((key, i) => {
       if (results[i].status === 'fulfilled') {
         data[key] = results[i].value;
@@ -130,14 +130,14 @@
         err(`${key} 请求失败:`, results[i].reason?.message || results[i].reason);
         if (cache[key]) {
           data[key] = cache[key];
-          cachedCount++;
+          cachedKeys.add(key);
           log(`${key} 使用缓存数据`);
         } else {
           data[key] = null;
         }
       }
     });
-    return { data, cachedCount };
+    return { data, cachedKeys };
   }
 
   /* ========== 数据处理 ========== */
@@ -197,7 +197,7 @@
     return 'neutral';
   }
 
-  function computeSignals(data) {
+  function computeSignals(data, cachedKeys) {
     const oi = parseOpenInterest(data.openInterest);
     const topAccount = parseRatio(data.topAccountRatio, 'longShortRatio');
     const topPosition = parseRatio(data.topPositionRatio, 'longShortRatio');
@@ -205,19 +205,20 @@
     const taker = parseRatio(data.takerRatio, 'buySellRatio');
     const basis = parseBasis(data.basis);
     const funding = parseFundingRate(data.fundingRate);
+    const c = cachedKeys || new Set();
 
     const indicators = [
-      { name: '合约持仓量',     signal: signalOpenInterest(oi),     display: fmtOI(oi),            vote: true },
-      { name: '大户账户多空比', signal: signalRatio(topAccount),     display: fmtRatio(topAccount),  vote: true },
-      { name: '大户持仓多空比', signal: signalRatio(topPosition),    display: fmtRatio(topPosition), vote: true },
-      { name: '多空账户数比',   signal: signalRatio(globalAccount),  display: fmtRatio(globalAccount),vote: true },
-      { name: '主动买卖比',     signal: signalRatio(taker),          display: fmtRatio(taker),       vote: true },
-      { name: '基差',           signal: signalBasis(basis),          display: fmtBasis(basis),       vote: true },
-      { name: '资金费率',       signal: signalFundingRate(funding),  display: fmtFunding(funding),   vote: true },
-      { name: '持仓量趋势',     signal: signalOpenInterest(oi),      display: fmtTrend(oi),          vote: false },
+      { name: '合约持仓量',     signal: signalOpenInterest(oi),     display: fmtOI(oi),             vote: true,  cached: c.has('openInterest') },
+      { name: '大户账户多空比', signal: signalRatio(topAccount),     display: fmtRatio(topAccount),   vote: true,  cached: c.has('topAccountRatio') },
+      { name: '大户持仓多空比', signal: signalRatio(topPosition),    display: fmtRatio(topPosition),  vote: true,  cached: c.has('topPositionRatio') },
+      { name: '多空账户数比',   signal: signalRatio(globalAccount),  display: fmtRatio(globalAccount), vote: true, cached: c.has('globalAccountRatio') },
+      { name: '主动买卖比',     signal: signalRatio(taker),          display: fmtRatio(taker),        vote: true,  cached: c.has('takerRatio') },
+      { name: '基差',           signal: signalBasis(basis),          display: fmtBasis(basis),        vote: true,  cached: c.has('basis') },
+      { name: '资金费率',       signal: signalFundingRate(funding),  display: fmtFunding(funding),    vote: true,  cached: c.has('fundingRate') },
+      { name: '持仓量趋势',     signal: signalOpenInterest(oi),      display: fmtTrend(oi),           vote: false, cached: c.has('openInterest') },
     ];
 
-    const voters = indicators.filter(i => i.vote);
+    const voters = indicators.filter(i => i.vote && !i.cached);
     const total = voters.length;
     const longCount = voters.filter(i => i.signal === 'long').length;
     const shortCount = voters.filter(i => i.signal === 'short').length;
@@ -367,7 +368,7 @@
     return panel;
   }
 
-  function renderPanel(result, cachedCount) {
+  function renderPanel(result) {
     const panel = ensurePanel();
     const { indicators, longCount, shortCount, total } = result;
     const symbol = getCurrentSymbol();
@@ -394,12 +395,15 @@
       rowsEl.innerHTML = indicators.map(function (ind) {
         const valColor = ind.signal === 'long' ? C.long : ind.signal === 'short' ? C.short : C.text;
         const dotColor = signalColor(ind.signal);
+        const dotStyle = ind.cached
+          ? 'display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid ' + dotColor + ';background:transparent;'
+          : 'display:inline-block;width:10px;height:10px;border-radius:50%;background:' + dotColor + ';';
         const flashClass = changed[ind.name] ? ' jh-td-flash' : '';
         return [
           '<div class="', flashClass, '" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-radius:4px;">',
             '<span style="color:', C.sub, ';min-width:90px;">', ind.name, '</span>',
             '<span style="font-weight:500;font-variant-numeric:tabular-nums;flex:1;text-align:right;margin-right:8px;color:', valColor, ';">', ind.display, '</span>',
-            '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:', dotColor, ';"></span>',
+            '<span style="', dotStyle, '"></span>',
           '</div>',
         ].join('');
       }).join('');
@@ -434,7 +438,6 @@
     const footerEl = panel.querySelector('#' + PANEL_ID + '-footer');
     if (footerEl) {
       lastUpdateTs = Date.now();
-      lastCachedCount = cachedCount || 0;
       updateFooter(footerEl);
       if (!agoTimer) {
         agoTimer = setInterval(function () {
@@ -451,9 +454,7 @@
     const mm = String(d.getMinutes()).padStart(2, '0');
     const ss = String(d.getSeconds()).padStart(2, '0');
     const ago = Math.floor((Date.now() - lastUpdateTs) / 1000);
-    let text = '更新于 ' + hh + ':' + mm + ':' + ss + '  ' + ago + '秒前';
-    if (lastCachedCount > 0) text += '  (' + lastCachedCount + '项缓存)';
-    el.textContent = text;
+    el.textContent = '更新于 ' + hh + ':' + mm + ':' + ss + '  ' + ago + '秒前';
   }
 
   /* ========== 拖拽 ========== */
@@ -545,7 +546,6 @@
   let pathTimer = null;
   let agoTimer = null;
   let lastUpdateTs = 0;
-  let lastCachedCount = 0;
   let fetching = false;
 
   async function tick() {
@@ -563,9 +563,9 @@
 
     fetching = true;
     try {
-      const { data, cachedCount } = await fetchAllData(symbol);
-      const result = computeSignals(data);
-      renderPanel(result, cachedCount);
+      const { data, cachedKeys } = await fetchAllData(symbol);
+      const result = computeSignals(data, cachedKeys);
+      renderPanel(result);
       log('数据更新完成');
     } catch (e) {
       err('数据拉取失败:', e);
