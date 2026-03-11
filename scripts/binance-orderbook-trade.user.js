@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.1
+// @version      2.4.2
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1481,7 +1481,16 @@
   });
 
   installUiSyncObservers();
-  setInterval(renderPanel, 1000);
+  let renderPanelTimer = setInterval(renderPanel, 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearInterval(renderPanelTimer);
+      renderPanelTimer = null;
+    } else if (!renderPanelTimer) {
+      renderPanel();
+      renderPanelTimer = setInterval(renderPanel, 1000);
+    }
+  });
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', renderPanel, { once: true });

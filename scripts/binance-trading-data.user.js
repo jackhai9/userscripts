@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.9
+// @version      1.1.0
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -806,7 +806,9 @@
     if (symbol) await initialFetch(symbol);
     scheduleCycle();
 
-    // tab 恢复时：重同步服务器时间 + 立即拉取 + 补抓当前周期
+    // tab 恢复时：重同步服务器时间 + 立即拉取 + 补抓当前周期 + 恢复定时器
+    // tab 隐藏时：暂停 agoTimer 和 pathTimer，减少后台开销
+    var lastPath = location.pathname;
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) {
         syncServerTime();
@@ -814,6 +816,29 @@
         if (sym) {
           initialFetch(sym).then(function () { scheduleCycle(); });
         }
+        if (!agoTimer) {
+          var el = document.querySelector('#' + PANEL_ID + '-footer');
+          if (el && lastUpdateTs) updateFooter(el);
+          agoTimer = setInterval(function () {
+            var el2 = document.querySelector('#' + PANEL_ID + '-footer');
+            if (el2 && lastUpdateTs) updateFooter(el2);
+          }, 1000);
+        }
+        if (!pathTimer) {
+          lastPath = location.pathname;
+          pathTimer = setInterval(function () {
+            if (location.pathname !== lastPath) {
+              lastPath = location.pathname;
+              var s = getCurrentSymbol();
+              if (s && s !== lastSymbol) {
+                initialFetch(s).then(function () { scheduleCycle(); });
+              }
+            }
+          }, 1000);
+        }
+      } else {
+        if (agoTimer)  { clearInterval(agoTimer);  agoTimer = null; }
+        if (pathTimer) { clearInterval(pathTimer); pathTimer = null; }
       }
     });
 
@@ -821,7 +846,6 @@
     setInterval(syncServerTime, 60 * 60 * 1000);
 
     // SPA 切换交易对检测
-    var lastPath = location.pathname;
     pathTimer = setInterval(function () {
       if (location.pathname !== lastPath) {
         lastPath = location.pathname;
