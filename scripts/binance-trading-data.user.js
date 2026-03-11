@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.4
+// @version      1.0.5
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -242,6 +242,15 @@
     return { value, valueUsd, trend };
   }
 
+  function parseOIMarketCapRatio(data) {
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const latest = data[data.length - 1];
+    const oi = parseFloat(latest.sumOpenInterest);
+    const supply = parseFloat(latest.CMCCirculatingSupply);
+    if (!supply || supply === 0) return null;
+    return { value: oi / supply };
+  }
+
   function parseRatio(data, field) {
     if (!Array.isArray(data) || data.length === 0) return null;
     const latest = data[data.length - 1];
@@ -286,6 +295,7 @@
 
   function computeSignals(data, cachedKeys) {
     const oi = parseOpenInterest(data.openInterest);
+    const oiMcRatio = parseOIMarketCapRatio(data.openInterest);
     const topAccount = parseRatio(data.topAccountRatio, 'longShortRatio');
     const topPosition = parseRatio(data.topPositionRatio, 'longShortRatio');
     const globalAccount = parseRatio(data.globalAccountRatio, 'longShortRatio');
@@ -302,7 +312,7 @@
       { name: '主动买卖比',     signal: signalRatio(taker),          display: fmtRatio(taker),        vote: true,  cached: c.has('takerRatio') },
       { name: '基差',           signal: signalBasis(basis),          display: fmtBasis(basis),        vote: true,  cached: c.has('basis') },
       { name: '资金费率',       signal: signalFundingRate(funding),  display: fmtFunding(funding),    vote: true,  cached: c.has('fundingRate') },
-      { name: '持仓量趋势',     signal: signalOpenInterest(oi),      display: fmtTrend(oi),           vote: false, cached: c.has('openInterest') },
+      { name: '未平仓量/市值',  signal: 'neutral',                   display: fmtOIMarketCap(oiMcRatio), vote: false, cached: c.has('openInterest') },
     ];
 
     const voters = indicators.filter(i => i.vote && !i.cached);
@@ -341,11 +351,9 @@
     return (parsed.value * 100).toFixed(4) + '%';
   }
 
-  function fmtTrend(parsed) {
-    if (!parsed || !parsed.trend) return '--';
-    if (parsed.trend === 'up') return '▲ 上升';
-    if (parsed.trend === 'down') return '▼ 下降';
-    return '— 持平';
+  function fmtOIMarketCap(parsed) {
+    if (!parsed) return '--';
+    return (parsed.value * 100).toFixed(2) + '%';
   }
 
   /* ========== 闪烁样式注入 ========== */
