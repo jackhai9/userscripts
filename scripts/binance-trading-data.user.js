@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.1.2
+// @version      1.1.3
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -22,6 +22,7 @@
   const PANEL_ID = 'jh-binance-trading-data-panel';
   const STORAGE_POS_KEY = 'jh_binance_trading_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_trading_data_collapsed';
+  const DEBUG = false;
 
   const PERIOD_MS = 5 * 60 * 1000;  // 数据周期 5 分钟
   const FIRST_DELAY = 5_000;         // 周期边界后首次等待 5s
@@ -51,6 +52,7 @@
 
   // Binance 屏蔽了 console.log/warn/info/debug，只能用 console.error
   function emit(level, ...args) {
+    if (!DEBUG && level !== 'ERR') return;
     console.error(PREFIX, `[${level}]`, ...args);
   }
   function log(...args) { emit('LOG', ...args); }
@@ -687,6 +689,10 @@
   function scheduleCycle(forceNext) {
     clearTimeout(cycleTimer);
     clearTimeout(retryTimer);
+    cycleTimer = null;
+    retryTimer = null;
+
+    if (panelClosed || document.hidden) return;
 
     var now = serverNow();
     var boundary = Math.floor(now / PERIOD_MS) * PERIOD_MS;
@@ -717,10 +723,7 @@
   }
 
   async function runCycleAttempt(boundary, attempt) {
-    if (document.hidden) {
-      scheduleCycle(true);
-      return;
-    }
+    if (document.hidden || panelClosed) return;
     if (fetching) return;
 
     var symbol = getCurrentSymbol();
@@ -842,8 +845,7 @@
           }, 1000);
         }
       } else {
-        if (agoTimer)  { clearInterval(agoTimer);  agoTimer = null; }
-        if (pathTimer) { clearInterval(pathTimer); pathTimer = null; }
+        stopLoop();
       }
     });
 
