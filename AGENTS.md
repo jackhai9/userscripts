@@ -54,6 +54,8 @@ Out of scope:
 
 纯文案、样式、小注释、版本号 bump 可以跳过。
 
+若用户提供了覆盖 Plan Gate 触发条件的完整计划，视同已满足 Plan Gate，直接执行。
+
 ## Manual Test Matrix
 
 ### `binance-orderbook-trade.user.js`

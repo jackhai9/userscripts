@@ -1,6 +1,7 @@
 ---
 name: userscript-release
-description: Prepare and verify a release for this userscripts repo by bumping script versions, running syntax checks, checking distribution metadata, and preparing a clean commit summary.
+version: 1.0.0
+description: Bump versions, run checks, prepare release commit.
 ---
 
 # userscript-release

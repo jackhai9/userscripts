@@ -1,6 +1,7 @@
 ---
 name: userscript-review
-description: Review changes in this userscripts repo, especially Binance userscripts, focusing on functional regressions, race conditions, scheduler semantics, stale cache behavior, symbol-switch issues, and missing validation.
+version: 1.0.0
+description: Review userscript changes for regressions and race conditions.
 ---
 
 # userscript-review
