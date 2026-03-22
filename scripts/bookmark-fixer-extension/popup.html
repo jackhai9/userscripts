@@ -34,7 +34,13 @@
   </div>
 
   <div class="section">
-    <h3>2. Import check results</h3>
+    <h3>2. Scan bookmarks</h3>
+    <button id="btn-scan" class="primary">Scan all bookmarks for dead links &amp; HTTPS upgrades</button>
+    <div id="scan-status" class="status">Checks all URLs directly from the browser — no external tools needed.</div>
+  </div>
+
+  <div class="section">
+    <h3>3. Import check results (optional)</h3>
     <button id="btn-import">Select bookmark_check_result.tsv</button>
     <input type="file" id="file-input" accept=".tsv">
     <div id="import-status" class="status"></div>

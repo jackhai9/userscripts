@@ -15,13 +15,18 @@ let currentTab = '';
 let executing = false;
 let batchId = '';
 
+let dataSource = '';  // 'scan' or 'tsv'
+
 // ── Init ──
 
 (async () => {
   const params = new URLSearchParams(location.search);
   batchId = params.get('batch') || '';
+  dataSource = params.get('source') || 'tsv';
   if (params.get('mode') === 'restore') {
     await initRestore();
+  } else if (dataSource === 'scan') {
+    await initReviewFromScan();
   } else {
     await initReview();
   }
@@ -95,6 +100,58 @@ async function initReview() {
   }
 
   $('h1').textContent = `Matched ${allItems.length} bookmarks (${unmatched.length} unmatched)`;
+  buildTabs();
+  const firstAvailableTab = TAB_ORDER.find((key) => allItems.some((i) => i.recommendation === key));
+  if (firstAvailableTab) switchTab(firstAvailableTab);
+  bindControls();
+}
+
+// ── Review from scan results (skip URL rematch) ──
+
+async function initReviewFromScan() {
+  if (!batchId) {
+    $('h1').textContent = 'No batch ID. Please scan from popup.';
+    return;
+  }
+  const storageKey = `scan_data_${batchId}`;
+  const stored = await chrome.storage.local.get(storageKey);
+  const scanResults = stored[storageKey];
+  if (!scanResults || scanResults.length === 0) {
+    $('h1').textContent = 'No scan data. Please scan from popup.';
+    return;
+  }
+
+  await chrome.storage.local.remove(storageKey).catch(() => {});
+
+  $('h1').textContent = `Loading ${scanResults.length} scan results…`;
+
+  for (const item of scanResults) {
+    // Skip non-actionable items
+    if (item.classification === 'skipped') continue;
+    const rec = item.recommendation || 'keep';
+    const isManaged = item.unmodifiable === 'managed';
+    const isSyncing = item.syncing === true;
+    const defaultSelected = !isManaged && isSyncing && (rec === 'delete' || rec === 'upgrade_https');
+    allItems.push({
+      bookmark: {
+        id: item.bookmarkId,
+        parentId: item.parentId,
+        index: item.index,
+        title: item.title,
+        url: item.url,
+        syncing: item.syncing,
+        unmodifiable: item.unmodifiable,
+      },
+      tsv: item, // reuse same structure for compatibility
+      folderPath: item.folderPath || '',
+      recommendation: rec,
+      selected: defaultSelected,
+      managed: isManaged,
+      syncing: item.syncing,
+    });
+  }
+
+  $('h1').textContent = `${allItems.length} bookmarks to review`;
   buildTabs();
   const firstAvailableTab = TAB_ORDER.find((key) => allItems.some((i) => i.recommendation === key));
   if (firstAvailableTab) switchTab(firstAvailableTab);
@@ -439,6 +496,8 @@ function bindControls() {
     for (const item of allItems) {
       if (item.recommendation !== currentTab || item.managed) continue;
       if (checked && item.syncing !== true) continue;
+      // Review tab items require individual manual selection, not bulk select
+      if (checked && item.recommendation === 'review') continue;
       if (filter) {
         const hay = `${item.bookmark.title} ${item.bookmark.url} ${item.folderPath}`.toLowerCase();
         if (!hay.includes(filter)) continue;
@@ -473,10 +532,23 @@ async function executeSelected() {
   }
 
   const upgradeCount = selected.filter((i) => i.recommendation === 'upgrade_https').length;
-  const deleteCount = selected.filter((i) => i.recommendation === 'delete' || i.recommendation === 'review').length;
+  const deleteCount = selected.filter((i) => i.recommendation === 'delete').length;
+  const reviewCount = selected.filter((i) => i.recommendation === 'review').length;
 
-  if (!confirm(`Execute ${selected.length} operations?\n\nUpgrade HTTPS: ${upgradeCount}\nDelete: ${deleteCount}\n\nA change log will be saved for undo.`)) {
+  let confirmMsg = `Execute ${selected.length} operations?\n\nUpgrade HTTPS: ${upgradeCount}\nDelete (dead links): ${deleteCount}`;
+  if (reviewCount > 0) {
+    confirmMsg += `\nDelete (uncertain/review): ${reviewCount}`;
+  }
+  confirmMsg += '\n\nA change log will be saved for undo.';
+  if (!confirm(confirmMsg)) {
     return;
+  }
+
+  // Review items require explicit second confirmation regardless of data source
+  if (reviewCount > 0) {
+    if (!confirm(`WARNING: You are about to DELETE ${reviewCount} bookmarks that were marked "review" (uncertain status — timeout, auth wall, redirect, etc.).\n\nThese may be FALSE POSITIVES. Are you sure you want to delete them?`)) {
+      return;
+    }
   }
 
   // Global lock: refuse to start if any execution/restore journal or active batch exists

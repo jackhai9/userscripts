@@ -60,6 +60,12 @@ function escapeHTML(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ── Scan bookmarks ──
+
+$('#btn-scan').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('scan.html') });
+});
+
 // ── Import TSV → open review page ──
 
 $('#btn-import').addEventListener('click', () => $('#file-input').click());
