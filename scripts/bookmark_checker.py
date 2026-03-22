@@ -129,7 +129,7 @@ async def check_url(
 ) -> tuple[int | str, str, str, str]:
     """Return (status_code_or_error, final_url, body_snippet, content_type)."""
     try:
-        ssl_ctx = None if verify_ssl else False
+        ssl_ctx: bool = True if verify_ssl else False
         async with session.get(
             url,
             allow_redirects=True,
