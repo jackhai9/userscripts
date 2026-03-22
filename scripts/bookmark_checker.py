@@ -31,7 +31,7 @@ USER_AGENT = (
 )
 
 # Status codes that indicate anti-bot / auth wall, not truly dead (#5)
-UNCERTAIN_STATUS_CODES = {401, 403, 405, 429, 503, 999}
+UNCERTAIN_STATUS_CODES = {401, 402, 403, 405, 429, 503, 999}
 
 # Known domain parking / expired domain hosting services (#4, #12: cleaned up)
 PARKING_DOMAINS = {
