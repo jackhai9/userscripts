@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Bookmark Batch Fixer",
+  "version": "1.0",
+  "description": "Batch fix bookmarks: delete dead links, upgrade HTTP to HTTPS",
+  "permissions": ["bookmarks", "downloads", "storage"],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

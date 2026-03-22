@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 320px; padding: 16px; font: 13px/1.5 -apple-system, sans-serif; margin: 0; }
+    h2 { margin: 0 0 12px; font-size: 15px; }
+    .section { margin-bottom: 16px; }
+    .section h3 { margin: 0 0 6px; font-size: 13px; color: #555; }
+    button { display: block; width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; text-align: left; }
+    button:hover { background: #f5f5f5; }
+    button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; text-align: center; }
+    button.primary:hover { background: #1557b0; }
+    input[type="file"] { display: none; }
+    .status { font-size: 12px; color: #666; margin-top: 4px; }
+    .status.error { color: #d93025; }
+    .status.success { color: #188038; }
+  </style>
+</head>
+<body>
+  <h2>Bookmark Batch Fixer</h2>
+
+  <div id="pending-section" class="section" style="display:none">
+    <h3>⚠ Interrupted execution detected</h3>
+    <button id="btn-download-pending" class="primary">Download pending change log</button>
+    <button id="btn-discard-pending">Discard pending log</button>
+    <div id="pending-status" class="status"></div>
+  </div>
+
+  <div class="section">
+    <h3>1. Backup</h3>
+    <button id="btn-backup">Export bookmarks as HTML (disaster recovery)</button>
+    <div id="backup-status" class="status"></div>
+  </div>
+
+  <div class="section">
+    <h3>2. Import check results</h3>
+    <button id="btn-import">Select bookmark_check_result.tsv</button>
+    <input type="file" id="file-input" accept=".tsv">
+    <div id="import-status" class="status"></div>
+  </div>
+
+  <div class="section">
+    <h3>3. Restore from log</h3>
+    <button id="btn-restore">Select change log JSON to restore</button>
+    <input type="file" id="restore-input" accept=".json">
+    <div id="restore-status" class="status"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

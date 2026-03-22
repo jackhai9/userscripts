@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Bookmark Batch Fixer — Review</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font: 13px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; background: #fafafa; color: #333; }
+    h1 { font-size: 18px; margin-bottom: 12px; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 2px solid #e0e0e0; }
+    .tab { padding: 8px 16px; cursor: pointer; border: none; background: none; font-size: 13px; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+    .tab:hover { color: #333; }
+    .tab.active { color: #1a73e8; border-bottom-color: #1a73e8; font-weight: 600; }
+    .tab .badge { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px; border-radius: 9px; background: #e0e0e0; font-size: 11px; font-weight: 600; text-align: center; }
+    .tab.active .badge { background: #d2e3fc; color: #1a73e8; }
+
+    /* Toolbar */
+    .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .toolbar label { font-size: 12px; color: #666; cursor: pointer; }
+    .toolbar input[type="text"] { flex: 1; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+
+    /* Table */
+    .table-wrap { max-height: calc(100vh - 240px); overflow: auto; border: 1px solid #e0e0e0; border-radius: 4px; background: #fff; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    thead { position: sticky; top: 0; background: #f5f5f5; z-index: 1; }
+    th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+    td.url-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; }
+    td.folder-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: #888; }
+    tr:hover { background: #f8f9fa; }
+    tr.managed { opacity: 0.5; }
+    tr.managed td:first-child::after { content: ' 🔒'; }
+    .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+    .tag-delete { background: #fce8e6; color: #c5221f; }
+    .tag-upgrade { background: #e6f4ea; color: #188038; }
+    .tag-review { background: #fef7e0; color: #b06000; }
+    .tag-keep { background: #e8eaed; color: #5f6368; }
+
+    /* Footer */
+    .footer { position: sticky; bottom: 0; background: #fafafa; padding: 12px 0; border-top: 1px solid #e0e0e0; margin-top: 8px; }
+    .footer-row { display: flex; align-items: center; gap: 12px; }
+    button.exec { padding: 8px 24px; border: none; border-radius: 4px; background: #1a73e8; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+    button.exec:hover { background: #1557b0; }
+    button.exec:disabled { background: #ccc; cursor: not-allowed; }
+    .progress { flex: 1; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
+    .progress-bar { height: 100%; width: 0%; background: #1a73e8; transition: width 0.2s; }
+    .summary { font-size: 12px; color: #666; margin-top: 8px; }
+    .summary.error { color: #d93025; }
+
+    /* Restore mode */
+    .restore-info { padding: 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; margin-bottom: 12px; font-size: 13px; }
+
+    /* Unmatched */
+    .unmatched-info { padding: 8px 12px; background: #fce8e6; border-radius: 4px; margin-bottom: 8px; font-size: 12px; color: #c5221f; cursor: pointer; }
+    .unmatched-list { display: none; margin-top: 6px; max-height: 200px; overflow: auto; font-size: 11px; color: #666; }
+    .unmatched-info.expanded .unmatched-list { display: block; }
+  </style>
+</head>
+<body>
+  <h1 id="title">Bookmark Batch Fixer — Review</h1>
+
+  <div id="unmatched-box" class="unmatched-info" style="display:none">
+    <span id="unmatched-count"></span> bookmarks not found in Chrome (click to expand)
+    <div class="unmatched-list" id="unmatched-list"></div>
+  </div>
+
+  <div id="restore-box" class="restore-info" style="display:none"></div>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="toolbar" id="toolbar">
+    <label><input type="checkbox" id="select-all"> Select all</label>
+    <input type="text" id="filter" placeholder="Filter by URL or title…">
+    <span id="selected-count" style="font-size:12px;color:#666;"></span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:30px"></th>
+          <th>Title</th>
+          <th>URL</th>
+          <th>Folder</th>
+          <th>Status</th>
+          <th>Recommendation</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <div class="footer-row">
+      <button class="exec" id="btn-exec">Execute Selected</button>
+      <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+    </div>
+    <div class="summary" id="summary"></div>
+  </div>
+
+  <script src="review.js"></script>
+</body>
+</html>
