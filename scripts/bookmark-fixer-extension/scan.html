@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html>
+<html data-i18n-title="scan.page_title">
 <head>
   <meta charset="utf-8">
   <title>Bookmark Batch Fixer — Scan</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, sans-serif; padding: 24px; background: #fafafa; color: #333; max-width: 900px; margin: 0 auto; }
-    h1 { font-size: 20px; margin-bottom: 16px; }
+    h1 { font-size: 20px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+    h1 span { flex: 1; }
     .stats { display: flex; gap: 24px; margin-bottom: 16px; font-size: 13px; color: #666; }
     .stats .num { font-size: 18px; font-weight: 600; color: #333; display: block; }
     .progress-wrap { margin-bottom: 16px; }
@@ -29,17 +30,18 @@
     .log-entry.skipped { color: #999; }
     .summary { margin-top: 16px; padding: 12px; background: #e8f5e9; border-radius: 4px; font-size: 14px; }
     .summary.partial { background: #fff3cd; }
+    #lang-toggle { padding: 4px 12px; font-size: 12px; border-radius: 3px; flex-shrink: 0; }
   </style>
 </head>
 <body>
-  <h1>Scanning Bookmarks…</h1>
+  <h1><span data-i18n="scan.heading">Scanning Bookmarks…</span> <button id="lang-toggle">中文</button></h1>
 
   <div class="stats">
-    <div><span class="num" id="stat-total">-</span> Total bookmarks</div>
-    <div><span class="num" id="stat-alive">0</span> Alive</div>
-    <div><span class="num" id="stat-dead">0</span> Dead</div>
-    <div><span class="num" id="stat-uncertain">0</span> Uncertain</div>
-    <div><span class="num" id="stat-skipped">0</span> Skipped</div>
+    <div><span class="num" id="stat-total">-</span> <span data-i18n="scan.total">Total bookmarks</span></div>
+    <div><span class="num" id="stat-alive">0</span> <span data-i18n="scan.alive">Alive</span></div>
+    <div><span class="num" id="stat-dead">0</span> <span data-i18n="scan.dead">Dead</span></div>
+    <div><span class="num" id="stat-uncertain">0</span> <span data-i18n="scan.uncertain">Uncertain</span></div>
+    <div><span class="num" id="stat-skipped">0</span> <span data-i18n="scan.skipped">Skipped</span></div>
   </div>
 
   <div class="progress-wrap">
@@ -47,18 +49,19 @@
     <div class="progress-text">
       <span id="progress-count">0 / 0</span>
       <span id="progress-elapsed">0s elapsed</span>
-      <span id="progress-eta">Estimating…</span>
+      <span id="progress-eta" data-i18n="scan.estimating">Estimating…</span>
     </div>
   </div>
 
   <div class="actions">
-    <button class="danger" id="btn-cancel">Cancel</button>
-    <button class="primary" id="btn-review" style="display:none">Open Review</button>
+    <button class="danger" id="btn-cancel" data-i18n="common.cancel">Cancel</button>
+    <button class="primary" id="btn-review" style="display:none" data-i18n="scan.open_review">Open Review</button>
   </div>
 
   <div class="log-wrap" id="log"></div>
   <div class="summary" id="summary" style="display:none"></div>
 
+  <script src="i18n.js"></script>
   <script src="checker.js"></script>
   <script src="scan.js"></script>
 </body>

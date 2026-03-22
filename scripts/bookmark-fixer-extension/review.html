@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html>
+<html data-i18n-title="review.page_title">
 <head>
   <meta charset="utf-8">
   <title>Bookmark Batch Fixer — Review</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font: 13px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; background: #fafafa; color: #333; }
-    h1 { font-size: 18px; margin-bottom: 12px; }
+    h1 { font-size: 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    h1 span { flex: 1; }
 
     /* Tabs */
     .tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 2px solid #e0e0e0; }
@@ -55,13 +56,16 @@
     .unmatched-info { padding: 8px 12px; background: #fce8e6; border-radius: 4px; margin-bottom: 8px; font-size: 12px; color: #c5221f; cursor: pointer; }
     .unmatched-list { display: none; margin-top: 6px; max-height: 200px; overflow: auto; font-size: 11px; color: #666; }
     .unmatched-info.expanded .unmatched-list { display: block; }
+
+    #lang-toggle { padding: 4px 12px; font-size: 12px; border: 1px solid #ccc; border-radius: 3px; background: #fff; cursor: pointer; flex-shrink: 0; }
+    #lang-toggle:hover { background: #f5f5f5; }
   </style>
 </head>
 <body>
-  <h1 id="title">Bookmark Batch Fixer — Review</h1>
+  <h1><span id="title" data-i18n="review.page_title">Bookmark Batch Fixer — Review</span> <button id="lang-toggle">中文</button></h1>
 
   <div id="unmatched-box" class="unmatched-info" style="display:none">
-    <span id="unmatched-count"></span> bookmarks not found in Chrome (click to expand)
+    <span id="unmatched-count"></span> <span data-i18n="review.unmatched_suffix">bookmarks not found in Chrome (click to expand)</span>
     <div class="unmatched-list" id="unmatched-list"></div>
   </div>
 
@@ -70,8 +74,8 @@
   <div class="tabs" id="tabs"></div>
 
   <div class="toolbar" id="toolbar">
-    <label><input type="checkbox" id="select-all"> Select all</label>
-    <input type="text" id="filter" placeholder="Filter by URL or title…">
+    <label><input type="checkbox" id="select-all"> <span data-i18n="review.select_all">Select all</span></label>
+    <input type="text" id="filter" data-i18n-placeholder="review.filter_placeholder" placeholder="Filter by URL or title…">
     <span id="selected-count" style="font-size:12px;color:#666;"></span>
   </div>
 
@@ -80,11 +84,11 @@
       <thead>
         <tr>
           <th style="width:30px"></th>
-          <th>Title</th>
-          <th>URL</th>
-          <th>Folder</th>
-          <th>Status</th>
-          <th>Recommendation</th>
+          <th data-i18n="review.th_title">Title</th>
+          <th data-i18n="review.th_url">URL</th>
+          <th data-i18n="review.th_folder">Folder</th>
+          <th data-i18n="review.th_status">Status</th>
+          <th data-i18n="review.th_recommendation">Recommendation</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -93,12 +97,13 @@
 
   <div class="footer">
     <div class="footer-row">
-      <button class="exec" id="btn-exec">Execute Selected</button>
+      <button class="exec" id="btn-exec" data-i18n="review.execute">Execute Selected</button>
       <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
     </div>
     <div class="summary" id="summary"></div>
   </div>
 
+  <script src="i18n.js"></script>
   <script src="review.js"></script>
 </body>
 </html>

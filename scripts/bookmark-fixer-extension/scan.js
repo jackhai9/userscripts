@@ -7,17 +7,19 @@ let scanStartTime = 0;
 let cancelled = false;
 
 (async () => {
+  await initI18n();
+
   // 1. Read all bookmarks
-  $('h1').textContent = 'Reading bookmarks…';
+  $('h1 span').textContent = t('scan.reading');
   const tree = await chrome.bookmarks.getTree();
   const folderPaths = buildFolderPaths(tree);
   const nodes = flattenToCheckable(tree, folderPaths);
 
   $('#stat-total').textContent = nodes.length;
-  $('h1').textContent = `Scanning ${nodes.length} bookmarks…`;
+  $('h1 span').textContent = t('scan.scanning', { count: nodes.length });
 
   if (nodes.length === 0) {
-    $('h1').textContent = 'No bookmarks to scan.';
+    $('h1 span').textContent = t('scan.no_bookmarks');
     return;
   }
 
@@ -27,7 +29,7 @@ let cancelled = false;
     cancelled = true;
     abortController.abort();
     $('#btn-cancel').disabled = true;
-    $('#btn-cancel').textContent = 'Cancelling…';
+    $('#btn-cancel').textContent = t('common.cancelling');
   });
 
   // 3. Run scan
@@ -38,56 +40,57 @@ let cancelled = false;
   $('#btn-cancel').style.display = 'none';
   const summaryEl = $('#summary');
   summaryEl.style.display = '';
+  const elapsed = formatTime(Date.now() - scanStartTime);
 
   if (cancelled) {
-    $('h1').textContent = 'Scan cancelled';
+    $('h1 span').textContent = t('scan.cancelled');
     const actualResults = results.filter((r) => r.classification !== 'skipped' || !r.reason || r.reason !== 'cancelled');
     if (actualResults.length > 0) {
       summaryEl.className = 'summary partial';
-      summaryEl.textContent = `Partial scan: ${actualResults.length} of ${nodes.length} checked in ${formatTime(Date.now() - scanStartTime)}.`;
+      summaryEl.textContent = t('scan.partial', { done: actualResults.length, total: nodes.length, time: elapsed });
       showReviewButton(actualResults);
     } else {
-      summaryEl.textContent = `Scan cancelled after ${formatTime(Date.now() - scanStartTime)} — no results.`;
+      summaryEl.textContent = t('scan.cancelled_no_results', { time: elapsed });
     }
   } else {
-    $('h1').textContent = 'Scan complete';
+    $('h1 span').textContent = t('scan.complete');
     const actionable = results.filter((r) => r.recommendation !== 'keep');
-    summaryEl.textContent = `Scanned ${results.length} bookmarks in ${formatTime(Date.now() - scanStartTime)}. ${actionable.length} need attention (${stats.dead} dead, ${stats.uncertain} uncertain, ${results.filter((r) => r.recommendation === 'upgrade_https').length} upgradable).`;
+    const upgradable = results.filter((r) => r.recommendation === 'upgrade_https').length;
+    summaryEl.textContent = t('scan.summary', {
+      total: results.length, time: elapsed, actionable: actionable.length,
+      dead: stats.dead, uncertain: stats.uncertain, upgradable,
+    });
     showReviewButton(results);
   }
 })();
 
 function onProgress(completed, total, result) {
-  // Update stats
   if (result.classification in stats) stats[result.classification]++;
   $('#stat-alive').textContent = stats.alive;
   $('#stat-dead').textContent = stats.dead;
   $('#stat-uncertain').textContent = stats.uncertain;
   $('#stat-skipped').textContent = stats.skipped;
 
-  // Update progress bar
   const pct = ((completed / total) * 100).toFixed(1);
   $('#progress-bar').style.width = `${pct}%`;
   $('#progress-count').textContent = `${completed} / ${total}`;
 
-  // Elapsed / ETA
   const elapsed = Date.now() - scanStartTime;
-  $('#progress-elapsed').textContent = `${formatTime(elapsed)} elapsed`;
+  $('#progress-elapsed').textContent = t('scan.elapsed', { time: formatTime(elapsed) });
   if (completed > 10) {
     const rate = elapsed / completed;
     const remaining = (total - completed) * rate;
-    $('#progress-eta').textContent = `~${formatTime(remaining)} remaining`;
+    $('#progress-eta').textContent = t('scan.remaining', { time: formatTime(remaining) });
   } else {
-    $('#progress-eta').textContent = 'Estimating…';
+    $('#progress-eta').textContent = t('scan.estimating');
   }
 
-  // Log entry
   const logEl = $('#log');
   const entry = document.createElement('div');
   entry.className = `log-entry ${result.classification}`;
-  entry.textContent = `[${result.classification}] ${result.url} → ${result.reason}${result.recommendation === 'upgrade_https' ? ' (HTTPS upgradable)' : ''}`;
+  const suffix = result.recommendation === 'upgrade_https' ? ' ' + t('scan.https_upgradable') : '';
+  entry.textContent = `[${result.classification}] ${result.url} → ${result.reason}${suffix}`;
   logEl.appendChild(entry);
-  // Auto-scroll, keep last 200 entries
   if (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
   logEl.scrollTop = logEl.scrollHeight;
 }
@@ -100,23 +103,22 @@ async function showReviewButton(results) {
     const summaryEl = $('#summary');
     summaryEl.style.display = '';
     summaryEl.className = 'summary partial';
-    summaryEl.textContent = `Failed to save scan results: ${e.message}. Try scanning fewer bookmarks or clear extension storage.`;
+    summaryEl.textContent = t('scan.save_failed', { message: e.message });
     return;
   }
 
   const reviewUrl = chrome.runtime.getURL(`review.html?source=scan&batch=${bid}`);
 
   if (!cancelled) {
-    // Auto-open review on full scan completion; no button needed
     chrome.tabs.create({ url: reviewUrl });
   } else {
-    // Cancelled: show button for partial review (don't auto-open)
     const btn = $('#btn-review');
     btn.style.display = '';
+    btn.textContent = t('scan.open_review');
     btn.addEventListener('click', () => {
       chrome.tabs.create({ url: reviewUrl });
       btn.disabled = true;
-      btn.textContent = 'Opened';
+      btn.textContent = t('scan.opened');
     });
   }
 }
@@ -128,7 +130,6 @@ function flattenToCheckable(tree, folderPaths) {
   const seen = new Set();
   function walk(node) {
     if (node.url) {
-      // Deduplicate by bookmark ID
       if (!seen.has(node.id)) {
         seen.add(node.id);
         nodes.push({

@@ -6,8 +6,8 @@ const MAX_PER_HOST = 3;
 const RETRY_DELAY = 2000;
 const RETRY_TIMEOUTS = false;
 const HOST_TIMEOUT_BREAKER_THRESHOLD = 2;
-// Status codes that indicate anti-bot/auth/temporary issues, not truly dead
-const UNCERTAIN_STATUS_CODES = new Set([401, 402, 403, 405, 429, 500, 502, 503, 504]);
+// Only these status codes are confirmed dead — everything else goes to review
+const CONFIRMED_DEAD_CODES = new Set([404, 410]);
 
 /**
  * Check a single bookmark URL.
@@ -190,12 +190,14 @@ function classify(url, result) {
     return { ...base, classification: 'alive', reason: 'ok', recommendation: 'keep' };
   }
 
-  if (UNCERTAIN_STATUS_CODES.has(status)) {
-    return { ...base, classification: 'uncertain', reason: `http_${status}`, recommendation: 'review' };
+  // White-list approach: only 404/410 are confirmed dead
+  // But if the response has substantial HTML body, it's likely a soft 404 (SPA) — downgrade to review
+  if (CONFIRMED_DEAD_CODES.has(status)) {
+    return { ...base, classification: 'dead', reason: `http_${status}`, recommendation: 'delete' };
   }
 
-  // Other 4xx (404, 410, etc.) → dead
-  return { ...base, classification: 'dead', reason: `http_${status}`, recommendation: 'delete' };
+  // All other non-2xx/3xx → uncertain, needs human review
+  return { ...base, classification: 'uncertain', reason: `http_${status}`, recommendation: 'review' };
 }
 
 /**

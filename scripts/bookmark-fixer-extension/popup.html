@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <style>
     body { width: 320px; padding: 16px; font: 13px/1.5 -apple-system, sans-serif; margin: 0; }
-    h2 { margin: 0 0 12px; font-size: 15px; }
+    h2 { margin: 0 0 12px; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
     .section { margin-bottom: 16px; }
     .section h3 { margin: 0 0 6px; font-size: 13px; color: #555; }
     button { display: block; width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; text-align: left; }
@@ -15,44 +15,46 @@
     .status { font-size: 12px; color: #666; margin-top: 4px; }
     .status.error { color: #d93025; }
     .status.success { color: #188038; }
+    #lang-toggle { width: auto; display: inline; padding: 2px 8px; margin: 0; font-size: 11px; border-radius: 3px; }
   </style>
 </head>
 <body>
-  <h2>Bookmark Batch Fixer</h2>
+  <h2><span data-i18n="popup.title">Bookmark Batch Fixer</span> <button id="lang-toggle">中文</button></h2>
 
   <div id="pending-section" class="section" style="display:none">
-    <h3>⚠ Interrupted execution detected</h3>
-    <button id="btn-download-pending" class="primary">Download pending change log</button>
-    <button id="btn-discard-pending">Discard pending log</button>
+    <h3 data-i18n="popup.interrupted">⚠ Interrupted execution detected</h3>
+    <button id="btn-download-pending" class="primary" data-i18n="popup.download_pending">Download pending change log</button>
+    <button id="btn-discard-pending" data-i18n="popup.discard_pending">Discard pending log</button>
     <div id="pending-status" class="status"></div>
   </div>
 
   <div class="section">
-    <h3>1. Backup</h3>
-    <button id="btn-backup">Export bookmarks as HTML (disaster recovery)</button>
+    <h3 data-i18n="popup.backup_title">1. Backup</h3>
+    <button id="btn-backup" data-i18n="popup.backup_btn">Export bookmarks as HTML (disaster recovery)</button>
     <div id="backup-status" class="status"></div>
   </div>
 
   <div class="section">
-    <h3>2. Scan bookmarks</h3>
-    <button id="btn-scan" class="primary">Scan all bookmarks for dead links &amp; HTTPS upgrades</button>
-    <div id="scan-status" class="status">Checks all URLs directly from the browser — no external tools needed.</div>
+    <h3 data-i18n="popup.scan_title">2. Scan bookmarks</h3>
+    <button id="btn-scan" class="primary" data-i18n="popup.scan_btn">Scan all bookmarks for dead links &amp; HTTPS upgrades</button>
+    <div id="scan-status" class="status" data-i18n="popup.scan_desc">Checks all URLs directly from the browser — no external tools needed.</div>
   </div>
 
   <div class="section">
-    <h3>3. Import check results (optional)</h3>
-    <button id="btn-import">Select bookmark_check_result.tsv</button>
+    <h3 data-i18n="popup.import_title">3. Import check results (optional)</h3>
+    <button id="btn-import" data-i18n="popup.import_btn">Select bookmark_check_result.tsv</button>
     <input type="file" id="file-input" accept=".tsv">
     <div id="import-status" class="status"></div>
   </div>
 
   <div class="section">
-    <h3>3. Restore from log</h3>
-    <button id="btn-restore">Select change log JSON to restore</button>
+    <h3 data-i18n="popup.restore_title">4. Restore from log</h3>
+    <button id="btn-restore" data-i18n="popup.restore_btn">Select change log JSON to restore</button>
     <input type="file" id="restore-input" accept=".json">
     <div id="restore-status" class="status"></div>
   </div>
 
+  <script src="i18n.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
