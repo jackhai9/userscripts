@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.4
+// @version      2.4.5
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -329,12 +329,57 @@
     return findTradeButton(['开空', 'open short'], 'OPEN');
   }
 
-  function getCsrfToken() {
-    const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/);
-    return match ? decodeURIComponent(match[1]) : '';
+  // ── bapi header 缓存 ──
+  // Binance 前端通过内部模块在调用 fetch 时注入鉴权 header（csrftoken、bnc-uuid 等），
+  // 这些值不在 cookie/localStorage 里，JS 无法直接读取。
+  // 策略：拦截 window.fetch，从 Binance 自身发出的 bapi 请求里缓存 header，
+  // 后续 adjustLeverageApi 复用这些 header。
+  let cachedBncHeaders = null;
+  const HEADER_KEYS_TO_CACHE = [
+    'csrftoken', 'bnc-uuid', 'device-info', 'fvideo-id',
+    'clienttype', 'x-passthrough-token',
+  ];
+
+  (function installFetchInterceptor() {
+    const originalFetch = window.fetch;
+    window.fetch = function (...args) {
+      try {
+        const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+        const headers = args[1]?.headers;
+        if (url.includes('/bapi/') && headers && typeof headers === 'object') {
+          const snapshot = {};
+          for (const key of HEADER_KEYS_TO_CACHE) {
+            // headers 可能是普通对象（key 大小写不定）
+            const val = headers[key]
+              || headers[key.toUpperCase()]
+              || headers[key.toLowerCase()]
+              || (key === 'bnc-uuid' ? headers['BNC-UUID'] : null)
+              || (key === 'fvideo-id' ? headers['FVIDEO-ID'] : null);
+            if (val != null && val !== '') snapshot[key] = val;
+          }
+          if (snapshot.csrftoken) {
+            cachedBncHeaders = snapshot;
+          }
+        }
+      } catch (_e) { /* 不干扰原始请求 */ }
+      return originalFetch.apply(this, args);
+    };
+  })();
+
+  function getBncHeaders() {
+    const base = cachedBncHeaders || {};
+    return {
+      'content-type': 'application/json',
+      ...base,
+      'x-trace-id': crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      'x-ui-request-trace': crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    };
   }
 
   async function adjustLeverageApi(symbol, leverage) {
+    if (!cachedBncHeaders) {
+      throw new Error('bapi header 尚未缓存（页面未发出过 bapi 请求）');
+    }
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 5000);
     try {
@@ -342,10 +387,7 @@
         'https://www.binance.com/bapi/futures/v1/private/future/user-data/adjustLeverage',
         {
           method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'csrftoken': getCsrfToken(),
-          },
+          headers: getBncHeaders(),
           body: JSON.stringify({ symbol, leverage }),
           credentials: 'include',
           signal: controller.signal,
