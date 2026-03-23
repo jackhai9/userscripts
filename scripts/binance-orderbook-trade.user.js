@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.7
+// @version      2.4.8
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -834,7 +834,10 @@
     if (!symbol) return;
 
     const positionState = getCachedPositionState(symbol);
-    if (positionState.status !== 'flat') return;
+    // unknown（无缓存）：DOM 持仓列表未找到 symbol 时视为无仓，允许重置
+    // has_position：确认有仓，跳过
+    if (positionState.status === 'has_position') return;
+    if (positionState.status !== 'flat' && positionState.status !== 'unknown') return;
     if (!isStableOpenContext(symbol) && triggerSource === 'mutation') return;
 
     const now = Date.now();
