@@ -9,6 +9,18 @@ const HOST_TIMEOUT_BREAKER_THRESHOLD = 2;
 // Only these status codes are confirmed dead — everything else goes to review
 const CONFIRMED_DEAD_CODES = new Set([404, 410]);
 
+// Parking detection — known domain parking services
+const PARKING_DOMAINS = new Set([
+  'hugedomains.com', 'sedoparking.com', 'afternic.com', 'bodis.com',
+  'above.com', 'parkingcrew.net', 'domainmarket.com', 'dan.com',
+  'undeveloped.com', 'epik.com',
+]);
+
+// Parking content patterns — regex for parked/expired domain pages
+const PARKING_CONTENT_RE = /domain\s+(?:has\s+)?expir(?:ed|es|y)|this\s+domain\s+is\s+for\s+sale|buy\s+this\s+domain|domain\s+(?:is\s+)?parked|is\s+this\s+your\s+domain\?\s*renew|domain\s+name\s+(?:is\s+)?for\s+sale|this\s+(?:web\s*)?page\s+is\s+parked|parked\s+(?:domain|page|free)|the\s+owner\s+of\s+this\s+domain\s+has\s+not/i;
+
+const PARKING_BODY_LIMIT = 10240; // read first 10KB for parking detection
+
 /**
  * Check a single bookmark URL.
  * @param {string} url
@@ -125,12 +137,40 @@ async function fetchWithRetry(url, signal, attempt = 0) {
       signal: controller.signal,
     });
     clearTimeout(timeout);
+    // Keep signal listener active during body reading — only remove after body is done
+
+    // Read body snippet for 2xx HTML responses (parking detection)
+    // Separate timeout to prevent slow streams from stalling the scan
+    let bodySnippet = '';
+    if (resp.status >= 200 && resp.status < 300) {
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('text/html') || ct.includes('application/xhtml')) {
+        try {
+          const bodyTimeout = setTimeout(() => controller.abort(), 3000);
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let collected = '';
+          let done = false;
+          while (!done && collected.length < PARKING_BODY_LIMIT) {
+            const chunk = await reader.read();
+            done = chunk.done;
+            if (chunk.value) collected += decoder.decode(chunk.value, { stream: !done });
+          }
+          clearTimeout(bodyTimeout);
+          reader.cancel();
+          bodySnippet = collected.slice(0, PARKING_BODY_LIMIT);
+        } catch { /* best-effort: timeout or read error → skip parking detection */ }
+      }
+    }
+
+    // Now safe to remove signal listener — body reading is done
     if (signal) signal.removeEventListener('abort', onAbort);
 
     return {
       ok: true,
       status: resp.status,
       finalUrl: resp.url,
+      bodySnippet,
     };
   } catch (e) {
     clearTimeout(timeout);
@@ -184,6 +224,19 @@ function classify(url, result) {
   const status = result.status;
 
   if (status >= 200 && status < 400) {
+    // Parking domain check (finalUrl landed on a known parking service)
+    if (result.finalUrl && isParkedDomain(result.finalUrl)) {
+      return { ...base, classification: 'uncertain', reason: 'parked_domain', recommendation: 'review' };
+    }
+    // Redirect to different host + parking content
+    if (result.redirectDomain && result.bodySnippet && PARKING_CONTENT_RE.test(result.bodySnippet)) {
+      return { ...base, classification: 'uncertain', reason: 'parked_redirect', recommendation: 'review' };
+    }
+    // Same host but parking content detected
+    if (!result.redirectDomain && result.bodySnippet && PARKING_CONTENT_RE.test(result.bodySnippet)) {
+      return { ...base, classification: 'uncertain', reason: 'parked_content', recommendation: 'review' };
+    }
+    // Redirect to different host (no parking content)
     if (result.redirectDomain) {
       return { ...base, classification: 'alive', reason: 'redirect_domain', recommendation: 'review' };
     }
@@ -198,6 +251,19 @@ function classify(url, result) {
 
   // All other non-2xx/3xx → uncertain, needs human review
   return { ...base, classification: 'uncertain', reason: `http_${status}`, recommendation: 'review' };
+}
+
+/**
+ * Check if a URL's host is a known parking service.
+ */
+function isParkedDomain(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    for (const pd of PARKING_DOMAINS) {
+      if (host === pd || host.endsWith('.' + pd)) return true;
+    }
+  } catch { /* ignore */ }
+  return false;
 }
 
 /**
