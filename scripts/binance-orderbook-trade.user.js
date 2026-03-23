@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.3
+// @version      2.4.4
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -37,6 +37,9 @@
   const DEFAULT_MULTIPLIER = '1';
   const DEFAULT_CLOSE_SIDE = 'LONG';
   const DEFAULT_OPEN_SIDE = 'LONG';
+  const DEFAULT_OPEN_LEVERAGE = 3;
+  const AUTO_OPEN_LEVERAGE_DELAY_MS = 120;
+  const AUTO_OPEN_LEVERAGE_DEDUPE_MS = 1200;
   const INPUT_BORDER_COLOR = 'var(--color-InputLine)';
   const INPUT_ERROR_COLOR = 'var(--color-Error)';
   const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
@@ -53,6 +56,8 @@
   let lastDisplayCloseState = null;   // 第二层：渲染路径产出的显示态（UI 和执行共用）
   let closeGuard = null;              // 切 tab 保护状态机（OPEN→CLOSE 时创建，500ms 后过期）
   let lastAppliedCacheSnapshot = '';  // applyCachedNativeCloseButtonState 去重用
+  let autoOpenLeverageTask = null;
+  let lastAutoOpenLeverage = { symbol: null, at: 0 };
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
@@ -108,6 +113,12 @@
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
     input.dispatchEvent(new Event('blur', { bubbles: true }));
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
   }
 
   function isValidMultiplier(value) {
@@ -316,6 +327,37 @@
 
   function findOpenShortButton() {
     return findTradeButton(['开空', 'open short'], 'OPEN');
+  }
+
+  function getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+
+  async function adjustLeverageApi(symbol, leverage) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const resp = await fetch(
+        'https://www.binance.com/bapi/futures/v1/private/future/user-data/adjustLeverage',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'csrftoken': getCsrfToken(),
+          },
+          body: JSON.stringify({ symbol, leverage }),
+          credentials: 'include',
+          signal: controller.signal,
+        }
+      );
+      if (!resp.ok) throw new Error(`adjustLeverage HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (!data.success) throw new Error(data.message || `code=${data.code}`);
+      return data;
+    } finally {
+      window.clearTimeout(timer);
+    }
   }
 
   function findOrderbookRow(node) {
@@ -619,6 +661,126 @@
 
   function getCachedCloseState(symbol) {
     return symbol && lastConfirmedCloseState?.symbol === symbol ? lastConfirmedCloseState : null;
+  }
+
+  function hasPositionInDom(symbol) {
+    // 页面底部持仓列表：每行包含 symbol 文本，有仓时行可见
+    const rows = document.querySelectorAll(
+      '[class*="position"] tr, [class*="position"] [role="row"], ' +
+      '[data-testid*="position"] tr, [data-testid*="position"] [role="row"]'
+    );
+    for (const row of rows) {
+      if (!isVisibleElement(row)) continue;
+      const text = (row.textContent || '').toUpperCase();
+      if (text.includes(symbol)) return true;
+    }
+    return false;
+  }
+
+  function readCurrentLeverageFromDom() {
+    // 杠杆按钮通常显示 "全仓 20x" 或 "逐仓 5x"
+    const candidates = document.querySelectorAll(
+      'button, [role="button"]'
+    );
+    for (const el of candidates) {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) continue;
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text.length > 48) continue;
+      const match = text.match(/(?:全仓|逐仓|cross|isolated)\s*(\d{1,3})\s*[xX]/i);
+      if (match) return Number(match[1]);
+    }
+    return null;
+  }
+
+  function getCachedPositionState(symbol) {
+    // DOM 持仓列表是最新真相源，优先检查
+    if (hasPositionInDom(symbol)) {
+      return { status: 'has_position', source: 'dom' };
+    }
+
+    const cache = getCachedCloseState(symbol);
+    if (!cache) return { status: 'unknown', source: 'close_cache_miss' };
+
+    const longQty = typeof cache.longQty === 'number' ? cache.longQty : null;
+    const shortQty = typeof cache.shortQty === 'number' ? cache.shortQty : null;
+    if (!(longQty >= 0) || !(shortQty >= 0)) {
+      return { status: 'unknown', source: 'close_cache_partial' };
+    }
+
+    const hasPosition = longQty > 0 || shortQty > 0;
+    return {
+      status: hasPosition ? 'has_position' : 'flat',
+      source: 'close_cache',
+      longQty,
+      shortQty,
+      closeMode: cache.closeMode,
+    };
+  }
+
+  function isStableOpenContext(symbol) {
+    return getActiveTradeMode() === 'OPEN' && getCurrentSymbol() === symbol;
+  }
+
+  async function autoResetOpenLeverageToDefault(symbol, positionState, triggerSource) {
+    await delay(AUTO_OPEN_LEVERAGE_DELAY_MS);
+    if (!isStableOpenContext(symbol)) return false;
+
+    // 延迟后再次确认无仓（防止 delay 期间仓位变化）
+    if (hasPositionInDom(symbol)) {
+      log('延迟后发现持仓，跳过杠杆重置', symbol);
+      return false;
+    }
+
+    // 已经是目标杠杆则短路
+    const currentLeverage = readCurrentLeverageFromDom();
+    if (currentLeverage === DEFAULT_OPEN_LEVERAGE) {
+      log('开仓杠杆已是默认值', symbol, `${DEFAULT_OPEN_LEVERAGE}x`, triggerSource);
+      return true;
+    }
+
+    try {
+      await adjustLeverageApi(symbol, DEFAULT_OPEN_LEVERAGE);
+    } catch (e) {
+      err('自动重置杠杆失败', symbol, `${DEFAULT_OPEN_LEVERAGE}x`, e.message || e);
+      return false;
+    }
+
+    log(
+      '无仓切回开仓，已自动重置杠杆',
+      symbol,
+      `${DEFAULT_OPEN_LEVERAGE}x`,
+      triggerSource,
+      positionState.source
+    );
+    return true;
+  }
+
+  function queueAutoOpenLeverageReset(triggerSource) {
+    const symbol = getCurrentSymbol();
+    if (!symbol) return;
+
+    const positionState = getCachedPositionState(symbol);
+    if (positionState.status !== 'flat') return;
+    if (!isStableOpenContext(symbol) && triggerSource === 'mutation') return;
+
+    const now = Date.now();
+    if (autoOpenLeverageTask) return;
+    if (
+      lastAutoOpenLeverage.symbol === symbol
+      && now - lastAutoOpenLeverage.at < AUTO_OPEN_LEVERAGE_DEDUPE_MS
+    ) {
+      return;
+    }
+
+    lastAutoOpenLeverage = { symbol, at: now };
+    autoOpenLeverageTask = autoResetOpenLeverageToDefault(symbol, positionState, triggerSource)
+      .catch((e) => {
+        err('自动重置开仓杠杆失败:', e);
+        return false;
+      })
+      .finally(() => {
+        autoOpenLeverageTask = null;
+      });
   }
 
   function applyCachedNativeCloseButtonState() {
@@ -1305,6 +1467,8 @@
       // 仅在从非 CLOSE 状态切入平仓 tab 时开启 guard（重复点击已选中的平仓 tab 不触发）
       const isEnteringClose = (tab.textContent || '').includes('平仓')
         && tab.getAttribute('aria-selected') !== 'true';
+      const isEnteringOpen = (tab.textContent || '').includes('开仓')
+        && tab.getAttribute('aria-selected') !== 'true';
       if (isEnteringClose) {
         closeGuard = {
           symbol: getCurrentSymbol(),
@@ -1314,6 +1478,11 @@
           lastRawLong: undefined,
           lastRawShort: undefined,
         };
+      }
+      if (isEnteringOpen) {
+        window.requestAnimationFrame(() => {
+          queueAutoOpenLeverageReset('click');
+        });
       }
       window.requestAnimationFrame(() => {
         applyCachedCloseUiState();
@@ -1330,6 +1499,8 @@
         // 仅在平仓 tab 变为 selected 时开启 guard（排除离开平仓的 deselect）
         const isEnteringClose = (mutation.target.textContent || '').includes('平仓')
           && mutation.target.getAttribute('aria-selected') === 'true';
+        const isEnteringOpen = (mutation.target.textContent || '').includes('开仓')
+          && mutation.target.getAttribute('aria-selected') === 'true';
         if (isEnteringClose) {
           closeGuard = {
             symbol: getCurrentSymbol(),
@@ -1339,6 +1510,9 @@
             lastRawLong: undefined,
             lastRawShort: undefined,
           };
+        }
+        if (isEnteringOpen) {
+          queueAutoOpenLeverageReset('mutation');
         }
         applyCachedCloseUiState();
         scheduleRenderPanel();
@@ -1511,9 +1685,11 @@
     findOpenShortButton,
     findOrderbookRow,
     findPriceNodeFromRow,
+    getCachedPositionState,
     resolveCloseAction,
     resolveTradeAction,
     resolveTargetQty,
+    queueAutoOpenLeverageReset,
     renderPanel,
   };
 
