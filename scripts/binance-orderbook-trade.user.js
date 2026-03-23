@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.5
+// @version      2.4.6
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -340,27 +340,46 @@
     'clienttype', 'x-passthrough-token',
   ];
 
+  function readHeaderValue(headers, key) {
+    if (!headers) return null;
+    // Headers 实例：只能用 .get()
+    if (typeof headers.get === 'function') {
+      return headers.get(key) || headers.get(key.toUpperCase()) || null;
+    }
+    // 普通对象：直接读属性
+    return headers[key]
+      || headers[key.toUpperCase()]
+      || headers[key.toLowerCase()]
+      || null;
+  }
+
+  function extractHeadersFromFetchArgs(args) {
+    // fetch(url, { headers }) 或 fetch(Request, { headers })
+    const url = typeof args[0] === 'string' ? args[0]
+      : (args[0] instanceof Request ? args[0].url : args[0]?.url || '');
+    if (!url.includes('/bapi/')) return null;
+
+    // headers 可能在 args[1] 或 args[0]（Request 对象）上
+    let headers = args[1]?.headers;
+    if (!headers && args[0] instanceof Request) {
+      headers = args[0].headers;
+    }
+    if (!headers) return null;
+
+    const snapshot = {};
+    for (const key of HEADER_KEYS_TO_CACHE) {
+      const val = readHeaderValue(headers, key);
+      if (val != null && val !== '') snapshot[key] = val;
+    }
+    return snapshot.csrftoken ? snapshot : null;
+  }
+
   (function installFetchInterceptor() {
     const originalFetch = window.fetch;
     window.fetch = function (...args) {
       try {
-        const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-        const headers = args[1]?.headers;
-        if (url.includes('/bapi/') && headers && typeof headers === 'object') {
-          const snapshot = {};
-          for (const key of HEADER_KEYS_TO_CACHE) {
-            // headers 可能是普通对象（key 大小写不定）
-            const val = headers[key]
-              || headers[key.toUpperCase()]
-              || headers[key.toLowerCase()]
-              || (key === 'bnc-uuid' ? headers['BNC-UUID'] : null)
-              || (key === 'fvideo-id' ? headers['FVIDEO-ID'] : null);
-            if (val != null && val !== '') snapshot[key] = val;
-          }
-          if (snapshot.csrftoken) {
-            cachedBncHeaders = snapshot;
-          }
-        }
+        const snapshot = extractHeadersFromFetchArgs(args);
+        if (snapshot) cachedBncHeaders = snapshot;
       } catch (_e) { /* 不干扰原始请求 */ }
       return originalFetch.apply(this, args);
     };
@@ -378,7 +397,7 @@
 
   async function adjustLeverageApi(symbol, leverage) {
     if (!cachedBncHeaders) {
-      throw new Error('bapi header 尚未缓存（页面未发出过 bapi 请求）');
+      throw new Error('bapi header 尚未缓存');
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 5000);
@@ -765,6 +784,19 @@
 
   async function autoResetOpenLeverageToDefault(symbol, positionState, triggerSource) {
     await delay(AUTO_OPEN_LEVERAGE_DELAY_MS);
+    if (!isStableOpenContext(symbol)) return false;
+
+    // 等待 header 缓存就绪（Binance 页面会持续发 bapi 请求）
+    if (!cachedBncHeaders) {
+      for (let i = 0; i < 10; i++) {
+        await delay(500);
+        if (cachedBncHeaders || !isStableOpenContext(symbol)) break;
+      }
+    }
+    if (!cachedBncHeaders) {
+      log('bapi header 尚未缓存，跳过杠杆重置', symbol);
+      return false;
+    }
     if (!isStableOpenContext(symbol)) return false;
 
     // 延迟后再次确认无仓（防止 delay 期间仓位变化）
