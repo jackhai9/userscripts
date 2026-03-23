@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.6
+// @version      2.4.7
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1729,6 +1729,26 @@
   });
 
   installUiSyncObservers();
+
+  // ── 切换币种 / 首次进入时触发杠杆重置 ──
+  let lastObservedSymbol = getCurrentSymbol();
+  function checkSymbolChangeForLeverage() {
+    const symbol = getCurrentSymbol();
+    if (!symbol || symbol === lastObservedSymbol) return;
+    lastObservedSymbol = symbol;
+    if (getActiveTradeMode() === 'OPEN') {
+      queueAutoOpenLeverageReset('symbol_change');
+    }
+  }
+
+  // Binance SPA 切换币种时 URL 变化但不触发 popstate，用轮询检测
+  setInterval(checkSymbolChangeForLeverage, 500);
+
+  // 首次进入：如果当前已在开仓 tab，延迟触发一次
+  if (getActiveTradeMode() === 'OPEN') {
+    window.setTimeout(() => queueAutoOpenLeverageReset('init'), 1500);
+  }
+
   let renderPanelTimer = document.hidden ? null : setInterval(renderPanel, 1000);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
