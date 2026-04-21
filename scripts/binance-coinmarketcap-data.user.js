@@ -2,7 +2,7 @@
 // @name         【自写】Binance CoinMarketCap 数据面板
 // @namespace    binance.coinmarketcap.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.1.0
+// @version      0.1.1
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -20,7 +20,7 @@
   const PANEL_ID = 'jh-binance-cmc-data-panel';
   const STORAGE_POS_KEY = 'jh_binance_cmc_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_cmc_data_collapsed';
-  const REFRESH_MS = 5 * 60 * 1000;
+  const REFRESH_MS = 30 * 1000;
   const SYMBOL_CHECK_MS = 1_500;
   const CMC_BASE = 'https://coinmarketcap.com/zh/currencies/';
 
@@ -56,6 +56,7 @@
   let refreshTimer = null;
   let symbolTimer = null;
   let inFlightSymbol = null;
+  let lastRowsHtml = '';
 
   function getCurrentSymbol() {
     const match = location.pathname.match(/\/futures\/([A-Z0-9_]+)/i);
@@ -353,10 +354,11 @@
     const footerEl = panel.querySelector('#' + PANEL_ID + '-footer');
     if (symbolEl) symbolEl.textContent = symbol || '';
     if (rowsEl) {
-      rowsEl.innerHTML = [
+      lastRowsHtml = [
         '<div style="color:', C.short, ';font-weight:600;padding:4px 0;">读取失败</div>',
         '<div style="color:', C.sub, ';font-size:12px;line-height:1.4;">', escapeHtml(message), '</div>',
       ].join('');
+      rowsEl.innerHTML = lastRowsHtml;
     }
     if (footerEl) footerEl.textContent = '来源：CoinMarketCap 中文页';
   }
@@ -371,7 +373,7 @@
       symbolEl.textContent = (data.symbol || symbol || '') + rank;
     }
     if (rowsEl) {
-      rowsEl.innerHTML = data.rows.map(function (row) {
+      lastRowsHtml = data.rows.map(function (row) {
         const change = row.change && row.change !== '--'
           ? '<span style="margin-left:6px;color:' + (row.change.startsWith('-') ? C.short : C.long) + ';">' + escapeHtml(row.change) + '</span>'
           : '';
@@ -387,6 +389,7 @@
           '</div>',
         ].join('');
       }).join('');
+      rowsEl.innerHTML = lastRowsHtml;
     }
     if (footerEl) {
       lastUpdateTs = Date.now();
@@ -399,14 +402,14 @@
     }
   }
 
-  async function refreshForCurrentSymbol(force) {
+  async function refreshForCurrentSymbol(force, silent) {
     if (panelClosed || document.hidden) return;
     const symbol = getCurrentSymbol();
     if (!symbol) return;
     if (!force && symbol === inFlightSymbol) return;
 
     inFlightSymbol = symbol;
-    renderLoading(symbol);
+    if (!silent || !lastRowsHtml) renderLoading(symbol);
     try {
       const data = await fetchCmcData(symbol);
       if (getCurrentSymbol() !== symbol || panelClosed) return;
@@ -422,14 +425,15 @@
 
   function startLoop() {
     ensurePanel();
-    refreshForCurrentSymbol(true);
+    refreshForCurrentSymbol(true, false);
     refreshTimer = setInterval(function () {
-      refreshForCurrentSymbol(false);
+      refreshForCurrentSymbol(false, true);
     }, REFRESH_MS);
     symbolTimer = setInterval(function () {
       const symbol = getCurrentSymbol();
       if (symbol && symbol !== lastSymbol && symbol !== inFlightSymbol) {
-        refreshForCurrentSymbol(true);
+        lastRowsHtml = '';
+        refreshForCurrentSymbol(true, false);
       }
     }, SYMBOL_CHECK_MS);
   }
@@ -487,7 +491,7 @@
 
     if (refreshBtn) {
       refreshBtn.addEventListener('click', function () {
-        refreshForCurrentSymbol(true);
+        refreshForCurrentSymbol(true, false);
       });
     }
     if (collapseBtn && body) {
