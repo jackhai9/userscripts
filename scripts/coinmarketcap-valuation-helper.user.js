@@ -2,7 +2,7 @@
 // @name         【自写】CoinMarketCap 估值口径命名
 // @namespace    coinmarketcap.valuation.helper
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.2.4
+// @version      0.2.5
 // @author       jackhai9
 // @description  在 CoinMarketCap 中文币种页面左上角统计区标注并高亮流通市值和FDV/总估值
 // @match        https://coinmarketcap.com/zh/currencies/*
@@ -107,10 +107,10 @@
     style.id = STYLE_ID;
     style.textContent = `
       .${HIGHLIGHT_CLASS} {
-        outline: 2px solid rgba(56, 97, 251, 0.72) !important;
-        outline-offset: 0 !important;
-        box-shadow: 0 0 0 3px rgba(56, 97, 251, 0.12), 0 8px 20px rgba(56, 97, 251, 0.10) !important;
-        background: linear-gradient(180deg, rgba(56, 97, 251, 0.08), rgba(22, 199, 132, 0.06)) !important;
+        position: relative !important;
+        border-radius: 8px !important;
+        background: linear-gradient(180deg, rgba(56, 97, 251, 0.055), rgba(22, 199, 132, 0.045)) !important;
+        box-shadow: inset 0 0 0 1.5px rgba(56, 97, 251, 0.62), 0 4px 14px rgba(56, 97, 251, 0.08) !important;
       }
     `;
     document.head.appendChild(style);
