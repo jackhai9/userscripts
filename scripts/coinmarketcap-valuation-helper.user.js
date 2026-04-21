@@ -2,7 +2,7 @@
 // @name         【自写】CoinMarketCap 估值口径命名
 // @namespace    coinmarketcap.valuation.helper
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.2.1
+// @version      0.2.2
 // @author       jackhai9
 // @description  在 CoinMarketCap 中文币种页面左上角统计区把“市值”标注为“流通市值”，把“FDV”标注为“FDV/总估值”
 // @match        https://coinmarketcap.com/zh/currencies/*
@@ -66,17 +66,32 @@
     return false;
   }
 
+  function getDirectText(element) {
+    return Array.from(element.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent || '')
+      .join('');
+  }
+
+  function replaceDirectText(element, replacement) {
+    for (const node of element.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE && normalizeText(node.textContent || '')) {
+        node.textContent = replacement;
+        return;
+      }
+    }
+  }
+
   function renameLabels() {
     if (!isChineseCurrencyPage()) return;
 
     for (const element of document.querySelectorAll(TEXT_SELECTOR)) {
-      if (element.children.length > 0) continue;
       if (!isVisible(element)) continue;
       if (!isInTopLeftStatsArea(element)) continue;
       if (!hasMetricValueNearby(element)) continue;
 
-      const replacement = RENAMES.get(normalizeText(element.textContent || ''));
-      if (replacement) element.textContent = replacement;
+      const replacement = RENAMES.get(normalizeText(getDirectText(element)));
+      if (replacement) replaceDirectText(element, replacement);
     }
   }
 
