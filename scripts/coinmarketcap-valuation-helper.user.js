@@ -2,9 +2,9 @@
 // @name         【自写】CoinMarketCap 估值口径命名
 // @namespace    coinmarketcap.valuation.helper
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.2.3
+// @version      0.2.4
 // @author       jackhai9
-// @description  在 CoinMarketCap 中文币种页面左上角统计区把“市值”标注为“流通市值”，把“FDV”标注为“FDV/总估值”
+// @description  在 CoinMarketCap 中文币种页面左上角统计区标注并高亮流通市值和FDV/总估值
 // @match        https://coinmarketcap.com/zh/currencies/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/coinmarketcap-valuation-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/coinmarketcap-valuation-helper.user.js
@@ -31,6 +31,8 @@
   const CURRENCY_PATH_PATTERN = /^\/zh\/currencies\/[^/]+(?:\/.*)?$/;
   const MAX_LABEL_PAGE_TOP = 720;
   const MAX_LABEL_PAGE_LEFT = 430;
+  const HIGHLIGHT_CLASS = 'jh-cmc-valuation-highlight';
+  const STYLE_ID = 'jh-cmc-valuation-helper-style';
 
   const TEXT_SELECTOR = [
     'span',
@@ -98,6 +100,29 @@
     return null;
   }
 
+  function installStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      .${HIGHLIGHT_CLASS} {
+        outline: 2px solid rgba(56, 97, 251, 0.72) !important;
+        outline-offset: 0 !important;
+        box-shadow: 0 0 0 3px rgba(56, 97, 251, 0.12), 0 8px 20px rgba(56, 97, 251, 0.10) !important;
+        background: linear-gradient(180deg, rgba(56, 97, 251, 0.08), rgba(22, 199, 132, 0.06)) !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function highlightMetricCard(element) {
+    const card = element.closest('[data-role="group-item"]');
+    if (!card || !isVisible(card) || !isInTopLeftStatsArea(card)) return;
+
+    card.classList.add(HIGHLIGHT_CLASS);
+  }
+
   function renameLabelsByExplainers() {
     for (const metric of METRICS) {
       for (const explainer of document.querySelectorAll(metric.explainerSelector)) {
@@ -107,10 +132,14 @@
         const candidates = [scope, ...scope.querySelectorAll(TEXT_SELECTOR)];
         for (const element of candidates) {
           if (element === explainer || explainer.contains(element)) continue;
-          if (normalizeText(getDirectText(element)) === metric.replacement) break;
+          if (normalizeText(getDirectText(element)) === metric.replacement) {
+            highlightMetricCard(element);
+            break;
+          }
           if (!metric.labels.includes(normalizeText(getDirectText(element)))) continue;
 
           replaceDirectText(element, metric.replacement);
+          highlightMetricCard(element);
           break;
         }
       }
@@ -124,13 +153,17 @@
       if (!hasMetricValueNearby(element)) continue;
 
       const replacement = findReplacement(normalizeText(getDirectText(element)));
-      if (replacement) replaceDirectText(element, replacement);
+      if (!replacement) continue;
+
+      replaceDirectText(element, replacement);
+      highlightMetricCard(element);
     }
   }
 
   function renameLabels() {
     if (!isChineseCurrencyPage()) return;
 
+    installStyles();
     renameLabelsByExplainers();
     renameLabelsByText();
   }
