@@ -2,7 +2,7 @@
 // @name         【自写】Binance CoinMarketCap 数据面板
 // @namespace    binance.coinmarketcap.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.1.3
+// @version      0.1.4
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -22,6 +22,7 @@
   const PANEL_ID = 'jh-binance-cmc-data-panel';
   const STORAGE_POS_KEY = 'jh_binance_cmc_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_cmc_data_collapsed';
+  const PANEL_WIDTH = 320;
   const REFRESH_MS = 30 * 1000;
   const SYMBOL_CHECK_MS = 1_500;
   const CMC_BASE = 'https://coinmarketcap.com/zh/currencies/';
@@ -424,7 +425,7 @@
     panel = document.createElement('div');
     panel.id = PANEL_ID;
 
-    const savedPos = loadPosition();
+    const savedPos = normalizeSavedPosition(loadPosition(), PANEL_WIDTH);
     const collapsed = loadCollapsed();
 
     Object.assign(panel.style, {
@@ -432,7 +433,7 @@
       top: savedPos ? savedPos.top + 'px' : '360px',
       left: savedPos ? savedPos.left + 'px' : 'auto',
       right: savedPos ? 'auto' : '16px',
-      width: '320px',
+      width: PANEL_WIDTH + 'px',
       zIndex: '999997',
       background: C.bg,
       border: '1px solid ' + C.border,
@@ -474,6 +475,7 @@
     ].join('');
 
     document.body.appendChild(panel);
+    keepPanelInViewport(panel);
     setupDrag(panel);
     setupControls(panel);
     return panel;
@@ -655,6 +657,30 @@
     }
   }
 
+  function clampNumber(value, min, max) {
+    return Math.max(min, Math.min(value, max));
+  }
+
+  function normalizeSavedPosition(pos, panelWidth) {
+    if (!pos || !Number.isFinite(pos.left) || !Number.isFinite(pos.top)) return null;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || panelWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 80;
+    return {
+      left: clampNumber(pos.left, 0, Math.max(0, viewportWidth - panelWidth)),
+      top: clampNumber(pos.top, 0, Math.max(0, viewportHeight - 48)),
+    };
+  }
+
+  function keepPanelInViewport(panel) {
+    const rect = panel.getBoundingClientRect();
+    const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
+    if (!normalized) return;
+    panel.style.left = normalized.left + 'px';
+    panel.style.top = normalized.top + 'px';
+    panel.style.right = 'auto';
+    savePosition(normalized.left, normalized.top);
+  }
+
   function loadPosition() {
     try {
       const raw = localStorage.getItem(STORAGE_POS_KEY);
@@ -703,6 +729,11 @@
       return;
     }
     if (!panelClosed && !refreshTimer) startLoop();
+  });
+
+  window.addEventListener('resize', function () {
+    const panel = document.getElementById(PANEL_ID);
+    if (panel) keepPanelInViewport(panel);
   });
 
   startLoop();

@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.1.3
+// @version      1.1.4
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -22,6 +22,7 @@
   const PANEL_ID = 'jh-binance-trading-data-panel';
   const STORAGE_POS_KEY = 'jh_binance_trading_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_trading_data_collapsed';
+  const PANEL_WIDTH = 280;
   const DEBUG = false;
 
   const PERIOD_MS = 5 * 60 * 1000;  // 数据周期 5 分钟
@@ -406,7 +407,7 @@
     panel = document.createElement('div');
     panel.id = PANEL_ID;
 
-    const savedPos = loadPosition();
+    const savedPos = normalizeSavedPosition(loadPosition(), PANEL_WIDTH);
     const collapsed = loadCollapsed();
 
     Object.assign(panel.style, {
@@ -414,7 +415,7 @@
       top:    savedPos ? savedPos.top + 'px'  : '60px',
       left:   savedPos ? savedPos.left + 'px' : 'auto',
       right:  savedPos ? 'auto' : '16px',
-      width:  '280px',
+      width:  PANEL_WIDTH + 'px',
       zIndex: '999998',
       background:   C.bg,
       border:       '1px solid ' + C.border,
@@ -459,6 +460,7 @@
     ].join('');
 
     document.body.appendChild(panel);
+    keepPanelInViewport(panel);
     setupDrag(panel);
     setupCollapseAndClose(panel);
 
@@ -612,6 +614,30 @@
         stopLoop();
       });
     }
+  }
+
+  function clampNumber(value, min, max) {
+    return Math.max(min, Math.min(value, max));
+  }
+
+  function normalizeSavedPosition(pos, panelWidth) {
+    if (!pos || !Number.isFinite(pos.left) || !Number.isFinite(pos.top)) return null;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || panelWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 80;
+    return {
+      left: clampNumber(pos.left, 0, Math.max(0, viewportWidth - panelWidth)),
+      top: clampNumber(pos.top, 0, Math.max(0, viewportHeight - 48)),
+    };
+  }
+
+  function keepPanelInViewport(panel) {
+    const rect = panel.getBoundingClientRect();
+    const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
+    if (!normalized) return;
+    panel.style.left = normalized.left + 'px';
+    panel.style.top = normalized.top + 'px';
+    panel.style.right = 'auto';
+    savePosition(normalized.left, normalized.top);
   }
 
   /* ========== localStorage ========== */
@@ -851,6 +877,11 @@
 
     // 每小时重同步服务器时间，防止长驻页面时钟漂移
     setInterval(syncServerTime, 60 * 60 * 1000);
+
+    window.addEventListener('resize', function () {
+      var panel = document.getElementById(PANEL_ID);
+      if (panel) keepPanelInViewport(panel);
+    });
 
     // SPA 切换交易对检测（初始就在后台时延迟到前台再启动）
     if (!document.hidden) {
