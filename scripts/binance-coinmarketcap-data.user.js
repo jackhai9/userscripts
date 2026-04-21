@@ -2,11 +2,12 @@
 // @name         【自写】Binance CoinMarketCap 数据面板
 // @namespace    binance.coinmarketcap.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.1.1
+// @version      0.1.2
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
+// @connect      api.coinmarketcap.com
 // @connect      coinmarketcap.com
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-coinmarketcap-data.user.js
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-coinmarketcap-data.user.js
@@ -23,6 +24,7 @@
   const REFRESH_MS = 30 * 1000;
   const SYMBOL_CHECK_MS = 1_500;
   const CMC_BASE = 'https://coinmarketcap.com/zh/currencies/';
+  const CMC_DETAIL_API = 'https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail';
 
   const SYMBOL_SLUGS = {
     RAVE: 'ravedao',
@@ -140,6 +142,8 @@
         timeout: 20_000,
         headers: {
           Accept: 'text/html,application/xhtml+xml',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
         },
         onload(response) {
           if (response.status < 200 || response.status >= 300) {
@@ -156,6 +160,50 @@
         },
       });
     });
+  }
+
+  function requestJson(url) {
+    return new Promise(function (resolve, reject) {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        timeout: 20_000,
+        headers: {
+          Accept: 'application/json, text/plain, */*',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+        onload(response) {
+          if (response.status < 200 || response.status >= 300) {
+            reject(new Error('CMC API HTTP ' + response.status));
+            return;
+          }
+          try {
+            resolve(JSON.parse(response.responseText || '{}'));
+          } catch (error) {
+            reject(new Error('CMC API JSON parse failed'));
+          }
+        },
+        onerror() {
+          reject(new Error('CMC API request failed'));
+        },
+        ontimeout() {
+          reject(new Error('CMC API request timeout'));
+        },
+      });
+    });
+  }
+
+  function detailApiUrlForSymbol(symbol) {
+    const slug = slugForSymbol(symbol);
+    if (!slug) return null;
+    const params = new URLSearchParams({
+      slug,
+      convertId: '2781',
+      languageCode: 'zh',
+      _: String(Date.now()),
+    });
+    return CMC_DETAIL_API + '?' + params.toString();
   }
 
   function extractNextData(html) {
@@ -179,6 +227,41 @@
     return detail;
   }
 
+  function collectApiDetail(payload) {
+    const detail = payload && payload.data;
+    if (!detail || !detail.statistics) {
+      throw new Error('CMC API missing detail statistics');
+    }
+    return detail;
+  }
+
+  function holderDisplayMetric(detail, symbol) {
+    const treasuryHoldings = numberOrNull(detail.treasuryHoldings);
+    if (detail.showTreasuriesFlag && treasuryHoldings !== null && treasuryHoldings > 0) {
+      return {
+        label: '金库资产',
+        value: formatToken(treasuryHoldings, symbol),
+      };
+    }
+
+    const holders = detail.holders && typeof detail.holders === 'object'
+      ? numberOrNull(detail.holders.holderCount || detail.holders.total || detail.holders.count)
+      : null;
+    return {
+      label: '持有者',
+      value: formatCount(holders),
+    };
+  }
+
+  function formatProfileScore(value) {
+    if (value && typeof value === 'object') {
+      const percentage = numberOrNull(value.percentage);
+      return percentage !== null ? percentage.toFixed(0) + '%' : '--';
+    }
+    const percentage = numberOrNull(value);
+    return percentage !== null ? percentage.toFixed(0) + '%' : '--';
+  }
+
   function buildRows(detail) {
     const stats = detail.statistics || {};
     const symbol = detail.symbol || '';
@@ -188,9 +271,7 @@
     const liquidityToMarketCap = numberOrNull(stats.liquidityMcapRatio) !== null
       ? numberOrNull(stats.liquidityMcapRatio) * 100
       : null;
-    const holders = detail.holders && typeof detail.holders === 'object'
-      ? numberOrNull(detail.holders.holderCount || detail.holders.total || detail.holders.count)
-      : null;
+    const holderMetric = holderDisplayMetric(detail, symbol);
 
     return [
       {
@@ -247,30 +328,50 @@
         highlight: false,
       },
       {
-        label: '持有者',
-        value: formatCount(holders),
+        label: holderMetric.label,
+        value: holderMetric.value,
         highlight: false,
       },
       {
         label: 'Profile score',
-        value: detail.profileCompletionScore ? String(detail.profileCompletionScore) + '%' : '--',
+        value: formatProfileScore(detail.profileCompletionScore),
         highlight: false,
       },
     ];
   }
 
-  async function fetchCmcData(symbol) {
+  async function fetchCmcApiData(symbol) {
+    const url = detailApiUrlForSymbol(symbol);
+    if (!url) throw new Error('无法识别当前合约');
+    const payload = await requestJson(url);
+    return collectApiDetail(payload);
+  }
+
+  async function fetchCmcPageData(symbol) {
     const url = cmcUrlForSymbol(symbol);
     if (!url) throw new Error('无法识别当前合约');
     const html = await requestText(url);
     const nextData = extractNextData(html);
-    const detail = collectDetail(nextData);
+    return collectDetail(nextData);
+  }
+
+  async function fetchCmcData(symbol) {
+    const url = cmcUrlForSymbol(symbol);
+    let detail;
+    let source = 'data-api';
+    try {
+      detail = await fetchCmcApiData(symbol);
+    } catch (apiError) {
+      detail = await fetchCmcPageData(symbol);
+      source = 'page-snapshot';
+    }
     return {
       url,
       name: detail.name || '',
       symbol: detail.symbol || baseAssetFromSymbol(symbol),
       rank: detail.statistics && detail.statistics.rank,
       lastUpdated: detail.latestUpdateTime || '',
+      source,
       rows: buildRows(detail),
     };
   }
@@ -393,10 +494,12 @@
     }
     if (footerEl) {
       lastUpdateTs = Date.now();
+      const cmcClock = data.lastUpdated ? formatClock(Date.parse(data.lastUpdated)) : '--';
+      const sourceLabel = data.source === 'page-snapshot' ? 'CMC 页面快照' : 'CMC data-api';
       footerEl.innerHTML = [
         '<div style="display:flex;justify-content:space-between;gap:8px;">',
-          '<a href="', data.url, '" target="_blank" style="color:', C.accent, ';text-decoration:none;">CMC</a>',
-          '<span>', formatClock(lastUpdateTs), '</span>',
+          '<a href="', data.url, '" target="_blank" style="color:', C.accent, ';text-decoration:none;">', sourceLabel, '</a>',
+          '<span>CMC ', cmcClock, ' / 拉取 ', formatClock(lastUpdateTs), '</span>',
         '</div>',
       ].join('');
     }
@@ -535,6 +638,7 @@
   }
 
   function formatClock(timestamp) {
+    if (!Number.isFinite(timestamp)) return '--';
     const date = new Date(timestamp);
     return [
       String(date.getHours()).padStart(2, '0'),
