@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         【自写】CoinMarketCap 估值口径增强
 // @namespace    coinmarketcap.valuation.helper
-// @icon         https://s2.coinmarketcap.com/static/cloud/img/coinmarketcap_1.svg
-// @version      0.1.1
+// @icon         https://avatars.githubusercontent.com/u/5935568?s=128
+// @version      0.1.2
 // @author       jackhai9
 // @description  在 CoinMarketCap 币种页面明确显示流通市值、FDV、流通量、最大供应量和计算口径
 // @match        https://coinmarketcap.com/currencies/*
