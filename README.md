@@ -11,7 +11,7 @@
 | 【自写】Binance 订单簿双击下单 | 双击订单簿行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
 | 【自写】Binance 合约交易数据面板 | 在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号 | 本仓库 | [`点击安装`][install-binance-trading-data] |
 | 【自写】定时刷新指定页面 | 指定页面按设定时间自动刷新 | 本仓库 | [`点击安装`][install-auto-refresh] |
-| 【自写】CoinMarketCap 估值口径增强 | 在币种页面显示流通市值、FDV、供应量和计算口径 | 本仓库 | [`点击安装`][install-coinmarketcap-valuation-helper] |
+| 【自写】CoinMarketCap 估值口径命名 | 在中文币种页面左上角统计区把“市值”标注为“流通市值”，把“FDV”标注为“FDV/总估值” | 本仓库 | [`点击安装`][install-coinmarketcap-valuation-helper] |
 | 【改写】m3u8-downloader | m3u8 下载增强脚本 | jackhai9/m3u8-downloader | [`点击安装`][install-m3u8] |
 
 ## 维护规则
