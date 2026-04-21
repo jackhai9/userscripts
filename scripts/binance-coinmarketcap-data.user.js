@@ -2,12 +2,13 @@
 // @name         【自写】Binance CoinMarketCap 数据面板
 // @namespace    binance.coinmarketcap.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.1.2
+// @version      0.1.3
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @connect      api.coinmarketcap.com
+// @connect      dapi.coinmarketcap.com
 // @connect      coinmarketcap.com
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-coinmarketcap-data.user.js
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-coinmarketcap-data.user.js
@@ -25,6 +26,7 @@
   const SYMBOL_CHECK_MS = 1_500;
   const CMC_BASE = 'https://coinmarketcap.com/zh/currencies/';
   const CMC_DETAIL_API = 'https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail';
+  const CMC_HOLDER_API = 'https://dapi.coinmarketcap.com/dex-stats/v3/dexer/crypto-holder/show_holders';
 
   const SYMBOL_SLUGS = {
     RAVE: 'ravedao',
@@ -92,22 +94,21 @@
     if (!Number.isFinite(value)) return '--';
     const sign = value < 0 ? '-' : '';
     const abs = Math.abs(value);
-    if (abs >= 1e12) return sign + '$' + (abs / 1e12).toFixed(2) + 'T';
-    if (abs >= 1e9) return sign + '$' + (abs / 1e9).toFixed(2) + 'B';
-    if (abs >= 1e6) return sign + '$' + (abs / 1e6).toFixed(2) + 'M';
-    if (abs >= 1e3) return sign + '$' + (abs / 1e3).toFixed(2) + 'K';
-    return sign + '$' + abs.toFixed(4);
+    if (abs >= 1e12) return sign + '$' + formatCompactNumber(abs / 1e12, 4) + '万亿';
+    if (abs >= 1e8) return sign + '$' + formatCompactNumber(abs / 1e8, 4) + '亿';
+    if (abs >= 1e4) return sign + '$' + formatCompactNumber(abs / 1e4, 4) + '万';
+    return sign + '$' + formatCompactNumber(abs, 4);
   }
 
   function formatToken(value, symbol) {
     if (!Number.isFinite(value)) return '--';
+    const sign = value < 0 ? '-' : '';
     const abs = Math.abs(value);
     let formatted;
-    if (abs >= 1e12) formatted = (value / 1e12).toFixed(2) + 'T';
-    else if (abs >= 1e9) formatted = (value / 1e9).toFixed(2) + 'B';
-    else if (abs >= 1e6) formatted = (value / 1e6).toFixed(2) + 'M';
-    else if (abs >= 1e3) formatted = (value / 1e3).toFixed(2) + 'K';
-    else formatted = value.toFixed(2);
+    if (abs >= 1e12) formatted = sign + formatCompactNumber(abs / 1e12, 4) + '万亿';
+    else if (abs >= 1e8) formatted = sign + formatCompactNumber(abs / 1e8, 4) + '亿';
+    else if (abs >= 1e4) formatted = sign + formatCompactNumber(abs / 1e4, 4) + '万';
+    else formatted = sign + formatCompactNumber(abs, 4);
     return symbol ? formatted + ' ' + symbol : formatted;
   }
 
@@ -124,9 +125,16 @@
 
   function formatCount(value) {
     if (!Number.isFinite(value)) return '--';
-    if (value >= 1e6) return (value / 1e6).toFixed(2) + 'M';
-    if (value >= 1e3) return (value / 1e3).toFixed(2) + 'K';
-    return String(Math.round(value));
+    return formatToken(value, '');
+  }
+
+  function formatCompactNumber(value, maxDecimals) {
+    if (!Number.isFinite(value)) return '--';
+    return value.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: maxDecimals,
+      useGrouping: false,
+    });
   }
 
   function numberOrNull(value) {
@@ -206,6 +214,16 @@
     return CMC_DETAIL_API + '?' + params.toString();
   }
 
+  function holderApiUrlForCryptoId(cryptoId) {
+    const id = numberOrNull(cryptoId);
+    if (id === null) return null;
+    const params = new URLSearchParams({
+      cryptoId: String(id),
+      _: String(Date.now()),
+    });
+    return CMC_HOLDER_API + '?' + params.toString();
+  }
+
   function extractNextData(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const script = doc.getElementById('__NEXT_DATA__');
@@ -244,9 +262,14 @@
       };
     }
 
-    const holders = detail.holders && typeof detail.holders === 'object'
-      ? numberOrNull(detail.holders.holderCount || detail.holders.total || detail.holders.count)
-      : null;
+    const holdersFromPageMetric = numberOrNull(detail.cmcHolderCount);
+    const holders = holdersFromPageMetric !== null
+      ? holdersFromPageMetric
+      : (
+        detail.holders && typeof detail.holders === 'object'
+          ? numberOrNull(detail.holders.holderCount || detail.holders.total || detail.holders.count)
+          : null
+      );
     return {
       label: '持有者',
       value: formatCount(holders),
@@ -347,6 +370,15 @@
     return collectApiDetail(payload);
   }
 
+  async function fetchCmcHolderData(cryptoId) {
+    const url = holderApiUrlForCryptoId(cryptoId);
+    if (!url) return null;
+    const payload = await requestJson(url);
+    const data = payload && payload.data;
+    if (!data || !data.showFlag) return null;
+    return numberOrNull(data.count);
+  }
+
   async function fetchCmcPageData(symbol) {
     const url = cmcUrlForSymbol(symbol);
     if (!url) throw new Error('无法识别当前合约');
@@ -365,6 +397,15 @@
       detail = await fetchCmcPageData(symbol);
       source = 'page-snapshot';
     }
+    let holderCount = null;
+    if (!detail.showTreasuriesFlag) {
+      try {
+        holderCount = await fetchCmcHolderData(detail.id);
+      } catch (holderError) {
+        holderCount = null;
+      }
+    }
+    if (holderCount !== null) detail = { ...detail, cmcHolderCount: holderCount };
     return {
       url,
       name: detail.name || '',
