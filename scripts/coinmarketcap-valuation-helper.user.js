@@ -2,7 +2,7 @@
 // @name         【自写】CoinMarketCap 估值口径增强
 // @namespace    coinmarketcap.valuation.helper
 // @icon         https://s2.coinmarketcap.com/static/cloud/img/coinmarketcap_1.svg
-// @version      0.1.0
+// @version      0.1.1
 // @author       jackhai9
 // @description  在 CoinMarketCap 币种页面明确显示流通市值、FDV、流通量、最大供应量和计算口径
 // @match        https://coinmarketcap.com/currencies/*
@@ -19,28 +19,9 @@
   const PANEL_ID = 'jh-cmc-valuation-helper';
   const REFRESH_MS = 2000;
 
-  function textOf(node) {
-    return node ? (node.textContent || '').replace(/\s+/g, ' ').trim() : '';
-  }
-
-  function parseNumber(text) {
-    if (!text) return null;
-    const normalized = text
-      .replace(/,/g, '')
-      .replace(/[$¥€£]/g, '')
-      .replace(/USD|USDT|RAVE/gi, '')
-      .trim();
-    const match = normalized.match(/-?\d+(?:\.\d+)?/);
-    if (!match) return null;
-    const raw = Number(match[0]);
-    if (!Number.isFinite(raw)) return null;
-    if (/万亿|兆|T\b/i.test(normalized)) return raw * 1e12;
-    if (/十亿|B\b/i.test(normalized)) return raw * 1e9;
-    if (/亿/.test(normalized)) return raw * 1e8;
-    if (/百万|M\b/i.test(normalized)) return raw * 1e6;
-    if (/万/.test(normalized)) return raw * 1e4;
-    if (/千|K\b/i.test(normalized)) return raw * 1e3;
-    return raw;
+  function asNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
   }
 
   function formatUsd(value) {
@@ -51,61 +32,76 @@
     return `$${value.toFixed(2)}`;
   }
 
-  function formatToken(value) {
+  function formatToken(value, symbol) {
     if (!Number.isFinite(value)) return 'n/a';
-    if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
-    if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
-    if (value >= 1e3) return `${(value / 1e3).toFixed(2)}K`;
-    return value.toFixed(2);
+    let formatted;
+    if (value >= 1e9) formatted = `${(value / 1e9).toFixed(2)}B`;
+    else if (value >= 1e6) formatted = `${(value / 1e6).toFixed(2)}M`;
+    else if (value >= 1e3) formatted = `${(value / 1e3).toFixed(2)}K`;
+    else formatted = value.toFixed(2);
+    return symbol ? `${formatted} ${symbol}` : formatted;
   }
 
-  function findMetricValue(labels) {
-    const labelSet = labels.map((label) => label.toLowerCase());
-    const nodes = Array.from(document.querySelectorAll('body *'));
-    for (const node of nodes) {
-      const text = textOf(node);
-      if (!text || text.length > 80) continue;
-      const lower = text.toLowerCase();
-      if (!labelSet.some((label) => lower === label || lower.includes(label))) continue;
-
-      let current = node;
-      for (let depth = 0; current && depth < 5; depth += 1, current = current.parentElement) {
-        const candidates = Array.from(current.querySelectorAll('span, div, dd, p'))
-          .map(textOf)
-          .filter((value) => value && value !== text);
-        for (const candidate of candidates) {
-          if (/[$¥€£]/.test(candidate) || /\d/.test(candidate)) {
-            const parsed = parseNumber(candidate);
-            if (parsed !== null) return { text: candidate, value: parsed };
-          }
-        }
+  function findStatisticsInObject(value) {
+    if (!value || typeof value !== 'object') return null;
+    if (
+      typeof value.marketCap !== 'undefined' &&
+      typeof value.fullyDilutedMarketCap !== 'undefined' &&
+      typeof value.circulatingSupply !== 'undefined'
+    ) {
+      return value;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = findStatisticsInObject(item);
+        if (found) return found;
       }
+      return null;
+    }
+    for (const item of Object.values(value)) {
+      const found = findStatisticsInObject(item);
+      if (found) return found;
     }
     return null;
   }
 
-  function findPrice() {
-    const candidates = Array.from(document.querySelectorAll('[data-test="text-cdp-price-display"], h1, span, div'))
-      .map(textOf)
-      .filter((value) => /^[$¥€£]?\d+(?:,\d{3})*(?:\.\d+)?$/.test(value) || /^[$¥€£]\d/.test(value));
-    for (const candidate of candidates) {
-      const value = parseNumber(candidate);
-      if (value !== null && value > 0) return { text: candidate, value };
+  function readNextData() {
+    const script = document.getElementById('__NEXT_DATA__');
+    if (!script || !script.textContent) return null;
+    try {
+      return JSON.parse(script.textContent);
+    } catch (error) {
+      return null;
     }
-    return null;
   }
 
   function collectMetrics() {
-    const price = findPrice();
-    const marketCap = findMetricValue(['Market cap', '市值']);
-    const fdv = findMetricValue(['FDV', '完全稀释估值', 'Fully diluted']);
-    const circulatingSupply = findMetricValue(['Circulating supply', '流通量', '流通供应量']);
-    const maxSupply = findMetricValue(['Max. supply', 'Max supply', '最大供应量']);
+    const nextData = readNextData();
+    const detail = nextData && nextData.props && nextData.props.pageProps && nextData.props.pageProps.detailRes && nextData.props.pageProps.detailRes.detail;
+    const statistics = detail && detail.statistics ? detail.statistics : findStatisticsInObject(nextData);
+    if (!statistics) return null;
 
-    const computedMarketCap = price && circulatingSupply ? price.value * circulatingSupply.value : null;
-    const computedFdv = price && maxSupply ? price.value * maxSupply.value : null;
+    const symbol = detail && detail.symbol ? String(detail.symbol) : '';
+    const price = asNumber(statistics.price);
+    const marketCap = asNumber(statistics.marketCap);
+    const fdv = asNumber(statistics.fullyDilutedMarketCap);
+    const circulatingSupply = asNumber(statistics.circulatingSupply);
+    const maxSupply = asNumber(statistics.maxSupply);
+    const totalSupply = asNumber(statistics.totalSupply);
+    const displayMaxSupply = maxSupply || totalSupply;
+    const computedMarketCap = price && circulatingSupply ? price * circulatingSupply : null;
+    const computedFdv = price && displayMaxSupply ? price * displayMaxSupply : null;
 
-    return { price, marketCap, fdv, circulatingSupply, maxSupply, computedMarketCap, computedFdv };
+    return {
+      symbol,
+      price,
+      marketCap,
+      fdv,
+      circulatingSupply,
+      maxSupply: displayMaxSupply,
+      computedMarketCap,
+      computedFdv,
+    };
   }
 
   function row(label, value, subtext) {
@@ -121,11 +117,7 @@
       document.body.appendChild(panel);
     }
 
-    const marketCapDisplay = data.marketCap ? data.marketCap.text : formatUsd(data.computedMarketCap);
-    const fdvDisplay = data.fdv ? data.fdv.text : formatUsd(data.computedFdv);
-    const circulatingDisplay = data.circulatingSupply ? data.circulatingSupply.text : 'n/a';
-    const maxSupplyDisplay = data.maxSupply ? data.maxSupply.text : 'n/a';
-
+    const symbol = data && data.symbol ? data.symbol : '';
     panel.innerHTML = `
       <style>
         #${PANEL_ID} {
@@ -148,12 +140,12 @@
         }
       </style>
       <h2>估值口径</h2>
-      ${row('价格', data.price ? data.price.text : 'n/a')}
-      ${row('流通市值', marketCapDisplay, data.computedMarketCap ? `计算: price × circulating = ${formatUsd(data.computedMarketCap)}` : '')}
-      ${row('FDV / 总估值', fdvDisplay, data.computedFdv ? `计算: price × max = ${formatUsd(data.computedFdv)}` : '')}
-      ${row('流通量', circulatingDisplay, data.circulatingSupply ? formatToken(data.circulatingSupply.value) : '')}
-      ${row('最大供应量', maxSupplyDisplay, data.maxSupply ? formatToken(data.maxSupply.value) : '')}
-      <div class="jh-cmc-note">页面字段优先；缺失时用页面价格和供应量现场计算。</div>
+      ${row('价格', data ? formatUsd(data.price) : 'n/a')}
+      ${row('流通市值', data ? formatUsd(data.marketCap) : 'n/a', data && data.computedMarketCap ? `price × circulating = ${formatUsd(data.computedMarketCap)}` : '')}
+      ${row('FDV / 总估值', data ? formatUsd(data.fdv) : 'n/a', data && data.computedFdv ? `price × max = ${formatUsd(data.computedFdv)}` : '')}
+      ${row('流通量', data ? formatToken(data.circulatingSupply, symbol) : 'n/a')}
+      ${row('最大供应量', data ? formatToken(data.maxSupply, symbol) : 'n/a')}
+      <div class="jh-cmc-note">读取 CoinMarketCap 页面内置数据；不抓取正文文案，不调用 API。</div>
     `;
   }
 
