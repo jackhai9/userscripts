@@ -2,7 +2,7 @@
 // @name         【自写】Binance CoinMarketCap 数据面板
 // @namespace    binance.coinmarketcap.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.1.4
+// @version      0.1.6
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -26,23 +26,12 @@
   const REFRESH_MS = 30 * 1000;
   const SYMBOL_CHECK_MS = 1_500;
   const CMC_BASE = 'https://coinmarketcap.com/zh/currencies/';
+  const CMC_MAP_API = 'https://api.coinmarketcap.com/data-api/v1/cryptocurrency/map';
   const CMC_DETAIL_API = 'https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail';
   const CMC_HOLDER_API = 'https://dapi.coinmarketcap.com/dex-stats/v3/dexer/crypto-holder/show_holders';
 
-  const SYMBOL_SLUGS = {
-    RAVE: 'ravedao',
-    BTC: 'bitcoin',
-    ETH: 'ethereum',
-    BNB: 'bnb',
-    SOL: 'solana',
-    XRP: 'xrp',
-    DOGE: 'dogecoin',
-    ADA: 'cardano',
-    AVAX: 'avalanche',
-    LINK: 'chainlink',
-    HYPE: 'hyperliquid',
-    PEPE: 'pepe',
-    SHIB: 'shiba-inu',
+  const ASSET_OVERRIDES = {
+    RAVE: { id: 38967, symbol: 'RAVE', slug: 'ravedao' },
   };
 
   const C = {
@@ -62,6 +51,7 @@
   let symbolTimer = null;
   let inFlightSymbol = null;
   let lastRowsHtml = '';
+  const assetCache = Object.create(null);
 
   function getCurrentSymbol() {
     const match = location.pathname.match(/\/futures\/([A-Z0-9_]+)/i);
@@ -73,22 +63,77 @@
   function baseAssetFromSymbol(symbol) {
     if (!symbol) return null;
     return symbol
+      .replace(/_PERP$/i, '')
       .replace(/USDT$/i, '')
       .replace(/USDC$/i, '')
       .replace(/USD$/i, '')
-      .replace(/_PERP$/i, '')
       .toUpperCase();
   }
 
-  function slugForSymbol(symbol) {
-    const base = baseAssetFromSymbol(symbol);
-    if (!base) return null;
-    return SYMBOL_SLUGS[base] || base.toLowerCase();
+  function cmcSymbolFromBaseAsset(baseAsset) {
+    if (!baseAsset) return null;
+    return baseAsset.replace(/^(1000000|1000)(?=[A-Z])/, '');
   }
 
-  function cmcUrlForSymbol(symbol) {
-    const slug = slugForSymbol(symbol);
-    return slug ? CMC_BASE + slug + '/' : null;
+  function normalizeCmcAsset(rawAsset, fallbackBaseAsset) {
+    if (!rawAsset || typeof rawAsset !== 'object') return null;
+    const id = numberOrNull(rawAsset.id);
+    const symbol = typeof rawAsset.symbol === 'string' ? rawAsset.symbol.trim().toUpperCase() : '';
+    const slug = typeof rawAsset.slug === 'string' ? rawAsset.slug.trim() : '';
+    if (id === null || !symbol || !slug) return null;
+    return {
+      id,
+      symbol,
+      slug,
+      baseAsset: fallbackBaseAsset || symbol,
+    };
+  }
+
+  function mapApiUrlForBaseAsset(baseAsset) {
+    const cmcSymbol = cmcSymbolFromBaseAsset(baseAsset);
+    if (!cmcSymbol) return null;
+    const params = new URLSearchParams({
+      symbol: cmcSymbol,
+      listing_status: 'active',
+      _: String(Date.now()),
+    });
+    return CMC_MAP_API + '?' + params.toString();
+  }
+
+  async function resolveCmcAsset(symbol) {
+    const base = baseAssetFromSymbol(symbol);
+    if (!base) return null;
+    if (assetCache[base]) return assetCache[base];
+    const override = ASSET_OVERRIDES[base];
+    if (override) {
+      assetCache[base] = normalizeCmcAsset(override, base);
+      return assetCache[base];
+    }
+
+    const url = mapApiUrlForBaseAsset(base);
+    if (!url) return null;
+    const payload = await requestJson(url);
+    const cmcSymbol = cmcSymbolFromBaseAsset(base);
+    const matches = Array.isArray(payload && payload.data)
+      ? payload.data.filter(function (row) {
+        return row
+          && row.is_active === 1
+          && String(row.symbol || '').trim().toUpperCase() === cmcSymbol;
+      })
+      : [];
+    if (matches.length !== 1) {
+      throw new Error(
+        matches.length > 1
+          ? 'CMC symbol ambiguous: ' + cmcSymbol
+          : 'CMC symbol not found: ' + cmcSymbol
+      );
+    }
+    assetCache[base] = normalizeCmcAsset(matches[0], base);
+    return assetCache[base];
+  }
+
+  function cmcUrlForAsset(asset) {
+    return asset && asset.slug ? CMC_BASE + asset.slug + '/' : null;
   }
 
   function formatUsd(value) {
@@ -203,11 +248,10 @@
     });
   }
 
-  function detailApiUrlForSymbol(symbol) {
-    const slug = slugForSymbol(symbol);
-    if (!slug) return null;
+  function detailApiUrlForAsset(asset) {
+    if (!asset) return null;
     const params = new URLSearchParams({
-      slug,
+      id: String(asset.id),
       convertId: '2781',
       languageCode: 'zh',
       _: String(Date.now()),
@@ -364,8 +408,8 @@
     ];
   }
 
-  async function fetchCmcApiData(symbol) {
-    const url = detailApiUrlForSymbol(symbol);
+  async function fetchCmcApiData(asset) {
+    const url = detailApiUrlForAsset(asset);
     if (!url) throw new Error('无法识别当前合约');
     const payload = await requestJson(url);
     return collectApiDetail(payload);
@@ -380,8 +424,8 @@
     return numberOrNull(data.count);
   }
 
-  async function fetchCmcPageData(symbol) {
-    const url = cmcUrlForSymbol(symbol);
+  async function fetchCmcPageData(asset) {
+    const url = cmcUrlForAsset(asset);
     if (!url) throw new Error('无法识别当前合约');
     const html = await requestText(url);
     const nextData = extractNextData(html);
@@ -389,13 +433,14 @@
   }
 
   async function fetchCmcData(symbol) {
-    const url = cmcUrlForSymbol(symbol);
+    const asset = await resolveCmcAsset(symbol);
+    const url = cmcUrlForAsset(asset);
     let detail;
     let source = 'data-api';
     try {
-      detail = await fetchCmcApiData(symbol);
+      detail = await fetchCmcApiData(asset);
     } catch (apiError) {
-      detail = await fetchCmcPageData(symbol);
+      detail = await fetchCmcPageData(asset);
       source = 'page-snapshot';
     }
     let holderCount = null;
@@ -410,7 +455,7 @@
     return {
       url,
       name: detail.name || '',
-      symbol: detail.symbol || baseAssetFromSymbol(symbol),
+      symbol: detail.symbol || (asset && asset.symbol) || baseAssetFromSymbol(symbol),
       rank: detail.statistics && detail.statistics.rank,
       lastUpdated: detail.latestUpdateTime || '',
       source,
