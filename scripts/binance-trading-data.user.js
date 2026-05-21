@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.1.4
+// @version      1.1.5
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -461,8 +461,12 @@
 
     document.body.appendChild(panel);
     keepPanelInViewport(panel);
+    savePanelPosition(panel);
     setupDrag(panel);
     setupCollapseAndClose(panel);
+    window.addEventListener('beforeunload', function () {
+      savePanelPosition(panel);
+    });
 
     return panel;
   }
@@ -562,7 +566,15 @@
     const header = panel.querySelector('#' + PANEL_ID + '-header');
     if (!header) return;
 
-    let dragging = false, startX, startY, startLeft, startTop;
+    let dragging = false, startX, startY, startLeft, startTop, saveQueued = false;
+    const queuePositionSave = function () {
+      if (saveQueued) return;
+      saveQueued = true;
+      window.requestAnimationFrame(function () {
+        saveQueued = false;
+        savePanelPosition(panel);
+      });
+    };
 
     header.addEventListener('mousedown', function (e) {
       if (e.target.tagName === 'BUTTON') return;
@@ -582,12 +594,13 @@
       panel.style.left  = newLeft + 'px';
       panel.style.top   = newTop + 'px';
       panel.style.right = 'auto';
+      queuePositionSave();
     });
 
     document.addEventListener('mouseup', function () {
       if (!dragging) return;
       dragging = false;
-      savePosition(parseInt(panel.style.left, 10), parseInt(panel.style.top, 10));
+      savePanelPosition(panel);
     });
   }
 
@@ -640,6 +653,14 @@
     savePosition(normalized.left, normalized.top);
   }
 
+  function savePanelPosition(panel) {
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
+    if (!normalized) return;
+    savePosition(normalized.left, normalized.top);
+  }
+
   /* ========== localStorage ========== */
 
   function loadPosition() {
@@ -653,6 +674,7 @@
   }
 
   function savePosition(left, top) {
+    if (!Number.isFinite(left) || !Number.isFinite(top)) return;
     localStorage.setItem(STORAGE_POS_KEY, JSON.stringify({ left: left, top: top }));
   }
 

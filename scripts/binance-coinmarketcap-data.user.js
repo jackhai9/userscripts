@@ -2,7 +2,7 @@
 // @name         【自写】Binance CoinMarketCap 数据面板
 // @namespace    binance.coinmarketcap.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.1.6
+// @version      0.1.7
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -521,8 +521,12 @@
 
     document.body.appendChild(panel);
     keepPanelInViewport(panel);
+    savePanelPosition(panel);
     setupDrag(panel);
     setupControls(panel);
+    window.addEventListener('beforeunload', function () {
+      savePanelPosition(panel);
+    });
     return panel;
   }
 
@@ -645,6 +649,15 @@
     let startY;
     let startLeft;
     let startTop;
+    let saveQueued = false;
+    const queuePositionSave = function () {
+      if (saveQueued) return;
+      saveQueued = true;
+      window.requestAnimationFrame(function () {
+        saveQueued = false;
+        savePanelPosition(panel);
+      });
+    };
 
     header.addEventListener('mousedown', function (event) {
       const target = event.target;
@@ -665,12 +678,13 @@
       panel.style.left = newLeft + 'px';
       panel.style.top = newTop + 'px';
       panel.style.right = 'auto';
+      queuePositionSave();
     });
 
     document.addEventListener('mouseup', function () {
       if (!dragging) return;
       dragging = false;
-      savePosition(parseInt(panel.style.left, 10), parseInt(panel.style.top, 10));
+      savePanelPosition(panel);
     });
   }
 
@@ -723,6 +737,14 @@
     panel.style.left = normalized.left + 'px';
     panel.style.top = normalized.top + 'px';
     panel.style.right = 'auto';
+    savePosition(normalized.left, normalized.top);
+  }
+
+  function savePanelPosition(panel) {
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
+    if (!normalized) return;
     savePosition(normalized.left, normalized.top);
   }
 
