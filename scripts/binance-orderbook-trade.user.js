@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.4.8
+// @version      2.4.9
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -40,6 +40,7 @@
   const DEFAULT_OPEN_LEVERAGE = 3;
   const AUTO_OPEN_LEVERAGE_DELAY_MS = 120;
   const AUTO_OPEN_LEVERAGE_DEDUPE_MS = 1200;
+  const DOM_LOOKUP_CACHE_MS = 250;
   const INPUT_BORDER_COLOR = 'var(--color-InputLine)';
   const INPUT_ERROR_COLOR = 'var(--color-Error)';
   const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
@@ -58,6 +59,8 @@
   let lastAppliedCacheSnapshot = '';  // applyCachedNativeCloseButtonState 去重用
   let autoOpenLeverageTask = null;
   let lastAutoOpenLeverage = { symbol: null, at: 0 };
+  let tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
+  const controlledNativeButtons = new Set();
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
@@ -261,7 +264,11 @@
     return false;
   }
 
-  function getTradeSearchScopes(mode) {
+  function invalidateTradeButtonCache() {
+    tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
+  }
+
+  function getTradeSearchScopes() {
     const activeTab = getActiveTradeTab();
     const scopes = [];
     const seen = new Set();
@@ -289,28 +296,46 @@
       }
     }
 
-    pushScope(document.body);
-    return scopes.filter((scope) => {
-      const buttons = Array.from(scope.querySelectorAll('button')).filter((button) => {
-        if (isOwnPanelButton(button) || !isVisibleElement(button)) return false;
-        return mode === 'OPEN'
-          ? buttonTextMatches(button, ['开多', 'open long', '开空', 'open short'])
-          : buttonTextMatches(button, ['平多', 'close long', '平空', 'close short']);
-      });
-      return buttons.length > 0;
-    });
+    return scopes;
+  }
+
+  function getTradeMutationRoot() {
+    return getTradeSearchScopes()[0] || findQtyFormItem(findQtyInput())?.parentElement || document.body || null;
+  }
+
+  function collectTradeButtons(mode) {
+    const now = Date.now();
+    if (tradeButtonCache.mode === mode && tradeButtonCache.expiresAt > now) {
+      return tradeButtonCache.buttons;
+    }
+
+    const modePatterns = mode === 'OPEN'
+      ? ['开多', 'open long', '开空', 'open short']
+      : ['平多', 'close long', '平空', 'close short'];
+    const buttons = [];
+    const seen = new Set();
+    const collectFrom = (scope) => {
+      if (!scope) return;
+      for (const candidate of scope.querySelectorAll('button')) {
+        if (seen.has(candidate) || isOwnPanelButton(candidate) || !isVisibleElement(candidate)) continue;
+        seen.add(candidate);
+        if (buttonTextMatches(candidate, modePatterns)) buttons.push(candidate);
+      }
+    };
+
+    for (const scope of getTradeSearchScopes()) collectFrom(scope);
+    if (buttons.length === 0 && document.body) collectFrom(document.body);
+
+    tradeButtonCache = {
+      mode,
+      expiresAt: now + DOM_LOOKUP_CACHE_MS,
+      buttons,
+    };
+    return buttons;
   }
 
   function findTradeButton(patterns, mode) {
-    const scopes = getTradeSearchScopes(mode);
-    for (const scope of scopes) {
-      const button = Array.from(scope.querySelectorAll('button')).find((candidate) => {
-        if (isOwnPanelButton(candidate) || !isVisibleElement(candidate)) return false;
-        return buttonTextMatches(candidate, patterns);
-      });
-      if (button) return button;
-    }
-    return null;
+    return collectTradeButtons(mode).find((candidate) => buttonTextMatches(candidate, patterns)) || null;
   }
 
   function findCloseLongButton() {
@@ -1105,18 +1130,24 @@
     if (!button) return;
     // 状态没变则不操作 DOM，避免产生多余的 mutation 触发 observer 死循环
     const alreadyDisabled = button.getAttribute(NATIVE_ACTION_DISABLED_ATTR) === 'true';
-    if (disabled === alreadyDisabled) return;
+    if (disabled === alreadyDisabled) {
+      if (disabled) controlledNativeButtons.add(button);
+      else controlledNativeButtons.delete(button);
+      return;
+    }
 
     if (disabled) {
       button.setAttribute(NATIVE_ACTION_DISABLED_ATTR, 'true');
       button.disabled = true;
       button.setAttribute('aria-disabled', 'true');
+      controlledNativeButtons.add(button);
       return;
     }
 
     button.removeAttribute(NATIVE_ACTION_DISABLED_ATTR);
     button.disabled = false;
     button.setAttribute('aria-disabled', 'false');
+    controlledNativeButtons.delete(button);
   }
 
   function syncNativeCloseButtons(tradeMode, closeContext) {
@@ -1127,8 +1158,11 @@
       if (knowsShort) desiredStates.set(closeShortBtn, !hasShort);
     }
 
-    const controlledButtons = document.querySelectorAll(`button[${NATIVE_ACTION_DISABLED_ATTR}="true"]`);
-    for (const button of controlledButtons) {
+    for (const button of Array.from(controlledNativeButtons)) {
+      if (!button.isConnected) {
+        controlledNativeButtons.delete(button);
+        continue;
+      }
       if (desiredStates.get(button) !== true) {
         setNativeActionButtonDisabled(button, false);
       }
@@ -1507,6 +1541,7 @@
         if (mutationTouchesTradeUi(mutation)) { matched = true; break; }
       }
       if (!matched) return;
+      invalidateTradeButtonCache();
 
       // 每次匹配到 trade UI 变化时立即应用缓存状态，
       // 确保 data 属性在下一帧绘制前就位。
@@ -1522,7 +1557,13 @@
       }, 50);
     });
 
-    tradeUiMutationObserver.observe(document.body, {
+    const mutationRoot = getTradeMutationRoot();
+    if (!mutationRoot) {
+      scheduleRenderPanel({ followUpMs: timeoutMs });
+      return;
+    }
+
+    tradeUiMutationObserver.observe(mutationRoot, {
       subtree: true,
       childList: true,
       characterData: true,
@@ -1547,6 +1588,7 @@
       const isEnteringOpen = (tab.textContent || '').includes('开仓')
         && tab.getAttribute('aria-selected') !== 'true';
       if (isEnteringClose) {
+        invalidateTradeButtonCache();
         closeGuard = {
           symbol: getCurrentSymbol(),
           expiresAt: Date.now() + 500,
@@ -1557,6 +1599,7 @@
         };
       }
       if (isEnteringOpen) {
+        invalidateTradeButtonCache();
         window.requestAnimationFrame(() => {
           queueAutoOpenLeverageReset('click');
         });
@@ -1579,6 +1622,7 @@
         const isEnteringOpen = (mutation.target.textContent || '').includes('开仓')
           && mutation.target.getAttribute('aria-selected') === 'true';
         if (isEnteringClose) {
+          invalidateTradeButtonCache();
           closeGuard = {
             symbol: getCurrentSymbol(),
             expiresAt: Date.now() + 500,
@@ -1589,6 +1633,7 @@
           };
         }
         if (isEnteringOpen) {
+          invalidateTradeButtonCache();
           queueAutoOpenLeverageReset('mutation');
         }
         applyCachedCloseUiState();
@@ -1739,6 +1784,7 @@
     const symbol = getCurrentSymbol();
     if (!symbol || symbol === lastObservedSymbol) return;
     lastObservedSymbol = symbol;
+    invalidateTradeButtonCache();
     if (getActiveTradeMode() === 'OPEN') {
       queueAutoOpenLeverageReset('symbol_change');
     }
