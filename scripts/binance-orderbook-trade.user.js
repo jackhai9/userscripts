@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿双击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.5.0
+// @version      2.5.1
 // @author       jackhai9
 // @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -23,8 +23,7 @@
     COOLDOWN_MS: 0,
     DEBUG: false,
   };
-  const LOCAL_CLOSE_QTY_MULTIPLIER_KEY = 'jh_binance_close_qty_multiplier';
-  const LOCAL_OPEN_QTY_MULTIPLIER_KEY = 'jh_binance_open_qty_multiplier';
+  const LOCAL_QTY_MULTIPLIER_PREFIX = 'jh_binance_qty_multiplier_v2';
   const LOCAL_CLOSE_SIDE_KEY = 'jh_binance_close_side';
   const LOCAL_OPEN_SIDE_KEY = 'jh_binance_open_side';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
@@ -1098,18 +1097,23 @@
     };
   }
 
-  function multiplierKey(mode) {
-    return mode === 'OPEN' ? LOCAL_OPEN_QTY_MULTIPLIER_KEY : LOCAL_CLOSE_QTY_MULTIPLIER_KEY;
+  function multiplierKey(mode, symbol) {
+    const normalizedSymbol = String(symbol || getCurrentSymbol() || '').toUpperCase();
+    if (!normalizedSymbol) return null;
+    const normalizedMode = mode === 'OPEN' ? 'OPEN' : 'CLOSE';
+    return `${LOCAL_QTY_MULTIPLIER_PREFIX}:${normalizedMode}:${normalizedSymbol}`;
   }
 
-  function loadMultiplier(mode) {
-    const key = multiplierKey(mode || getActiveTradeMode());
+  function loadMultiplier(mode, symbol) {
+    const key = multiplierKey(mode || getActiveTradeMode(), symbol);
+    if (!key) return DEFAULT_MULTIPLIER;
     const value = localStorage.getItem(key);
     return isValidMultiplier(value) ? String(value) : DEFAULT_MULTIPLIER;
   }
 
-  function saveMultiplier(value, mode) {
-    const key = multiplierKey(mode || getActiveTradeMode());
+  function saveMultiplier(value, mode, symbol) {
+    const key = multiplierKey(mode || getActiveTradeMode(), symbol);
+    if (!key) return;
     localStorage.setItem(key, value);
   }
 
@@ -1121,7 +1125,7 @@
     const input = document.getElementById(INPUT_ID);
     const normalized = sanitizeMultiplier(nextValue);
     isEditingMultiplier = false;
-    saveMultiplier(normalized);
+    saveMultiplier(normalized, getActiveTradeMode(), getCurrentSymbol());
     if (input) input.value = normalized;
     renderPanel();
   }
@@ -1411,7 +1415,7 @@
     const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
     const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
     if (input) {
-      input.value = loadMultiplier();
+      input.value = loadMultiplier(getActiveTradeMode(), getCurrentSymbol());
       input.addEventListener('focus', () => {
         isEditingMultiplier = true;
         applyInputVisualState(input, input.value);
@@ -1421,7 +1425,7 @@
         const value = String(input.value || '').replace(/[^\d]/g, '');
         if (input.value !== value) input.value = value;
         if (isValidMultiplier(value)) {
-          saveMultiplier(value);
+          saveMultiplier(value, getActiveTradeMode(), getCurrentSymbol());
         }
         const symbol = getCurrentSymbol() || '-';
         const qtyRuleContext = getQtyRuleContext(symbol !== '-' ? symbol : null, getActiveTradeMode());
@@ -1432,7 +1436,7 @@
         const value = String(input.value || '').trim();
         const normalized = sanitizeMultiplier(value);
         isEditingMultiplier = false;
-        saveMultiplier(normalized);
+        saveMultiplier(normalized, getActiveTradeMode(), getCurrentSymbol());
         input.value = normalized;
         applyInputVisualState(input, normalized);
         renderPanel();
@@ -1441,13 +1445,13 @@
     }
     if (decBtn) {
       decBtn.addEventListener('click', () => {
-        const current = Number(loadMultiplier());
+        const current = Number(loadMultiplier(getActiveTradeMode(), getCurrentSymbol()));
         updateMultiplier(String(Math.max(1, current - 1)));
       });
     }
     if (incBtn) {
       incBtn.addEventListener('click', () => {
-        const current = Number(loadMultiplier());
+        const current = Number(loadMultiplier(getActiveTradeMode(), getCurrentSymbol()));
         updateMultiplier(String(current + 1));
       });
     }
@@ -1481,7 +1485,7 @@
     if (symbol !== '-' && !rulesCache[symbol]) {
       ensureRules(symbol).then((rules) => { if (rules) scheduleRenderPanel(); });
     }
-    const storedMultiplier = loadMultiplier();
+    const storedMultiplier = loadMultiplier(getActiveTradeMode(), symbol !== '-' ? symbol : null);
     if (input && !isEditingMultiplier && input.value !== storedMultiplier) {
       input.value = storedMultiplier;
     }
@@ -1667,7 +1671,7 @@
       if (symbol && !rulesCache[symbol]) ensureRules(symbol);
       return null;
     }
-    const multiplier = loadMultiplier(tradeMode);
+    const multiplier = loadMultiplier(tradeMode, symbol);
     const qty = multiplyDecimalByInt(qtyRuleContext.effectiveMinQty, multiplier);
     if (!qty) return null;
     return {
@@ -1769,8 +1773,7 @@
 
   window.addEventListener('storage', (event) => {
     if (
-      event.key === LOCAL_CLOSE_QTY_MULTIPLIER_KEY ||
-      event.key === LOCAL_OPEN_QTY_MULTIPLIER_KEY ||
+      event.key?.startsWith(`${LOCAL_QTY_MULTIPLIER_PREFIX}:`) ||
       event.key === LOCAL_CLOSE_SIDE_KEY ||
       event.key === LOCAL_OPEN_SIDE_KEY
     ) scheduleRenderPanel();
@@ -1784,7 +1787,9 @@
     const symbol = getCurrentSymbol();
     if (!symbol || symbol === lastObservedSymbol) return;
     lastObservedSymbol = symbol;
+    isEditingMultiplier = false;
     invalidateTradeButtonCache();
+    scheduleRenderPanel();
     if (getActiveTradeMode() === 'OPEN') {
       queueAutoOpenLeverageReset('symbol_change');
     }
