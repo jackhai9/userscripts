@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         【自写】Binance 订单簿双击下单
+// @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.5.1
+// @version      2.5.2
 // @author       jackhai9
-// @description  双击订单簿任意行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
+// @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
@@ -19,8 +19,8 @@
   const CFG = {
     // true=只填数量；false=填数量并自动点“开多/开空/平多/平空”
     SAFE_MODE: false,
-    // Optional duplicate-action guard. Default is off so fast consecutive double-clicks all execute.
-    COOLDOWN_MS: 0,
+    // Only suppress duplicate dispatch from the same physical click, not deliberate fast clicks.
+    COOLDOWN_MS: 150,
     DEBUG: false,
   };
   const LOCAL_QTY_MULTIPLIER_PREFIX = 'jh_binance_qty_multiplier_v2';
@@ -63,7 +63,7 @@
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
   const NATIVE_ACTION_DISABLED_ATTR = 'data-jh-native-action-disabled';
-  const PREFIX = '[双击下单]';
+  const PREFIX = '[订单簿下单]';
 
   // 注入原生禁用按钮的 CSS 规则。使用 data 属性选择器 + !important，
   // 确保样式不会被 React re-render 的 inline style 覆盖。
@@ -448,6 +448,13 @@
   function findOrderbookRow(node) {
     if (!node) return null;
     return node.closest('#futuresOrderbook .row-content');
+  }
+
+  function findClickedPriceNode(node) {
+    if (!node) return null;
+    const priceNode = node.closest('#futuresOrderbook .ask-light.emit-price, #futuresOrderbook .bid-light.emit-price');
+    if (!priceNode) return null;
+    return findOrderbookRow(priceNode) ? priceNode : null;
   }
 
   function findPriceNodeFromRow(row) {
@@ -1221,18 +1228,18 @@
     if (hintEl) {
       if (tradeMode === 'OPEN') {
         const action = openSide === 'LONG' ? '开多' : '开空';
-        hintEl.textContent = `开仓模式：双击订单簿后将${CFG.SAFE_MODE ? '填数量' : action}`;
+        hintEl.textContent = `开仓模式：单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
       } else if (isPending && !isUsingCache) {
         hintEl.textContent = '平仓模式：正在读取可平仓位';
       } else if (isPending && isUsingCache) {
         hintEl.textContent = '平仓模式：正在刷新可平仓位，暂沿用上次识别结果';
       } else if (closeMode === 'single_long') {
-        hintEl.textContent = `平仓模式：当前仅有多仓，双击订单簿后将${CFG.SAFE_MODE ? '填数量' : '平多'}`;
+        hintEl.textContent = `平仓模式：当前仅有多仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平多'}`;
       } else if (closeMode === 'single_short') {
-        hintEl.textContent = `平仓模式：当前仅有空仓，双击订单簿后将${CFG.SAFE_MODE ? '填数量' : '平空'}`;
+        hintEl.textContent = `平仓模式：当前仅有空仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平空'}`;
       } else if (closeMode === 'dual') {
         const action = closeSide === 'LONG' ? '平多' : '平空';
-        hintEl.textContent = `平仓模式：双向持仓时双击订单簿后将${CFG.SAFE_MODE ? '填数量' : action}`;
+        hintEl.textContent = `平仓模式：双向持仓时单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
       } else {
         hintEl.textContent = '平仓模式：暂未识别到可平仓位';
       }
@@ -1667,7 +1674,7 @@
     const symbol = getCurrentSymbol();
     const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
     if (qtyRuleContext.status !== 'ready' || !qtyRuleContext.effectiveMinQty) {
-      // 规则未就绪时触发加载，下次双击即可命中缓存
+      // 规则未就绪时触发加载，下次点击即可命中缓存
       if (symbol && !rulesCache[symbol]) ensureRules(symbol);
       return null;
     }
@@ -1682,18 +1689,17 @@
     };
   }
 
-  // 使用捕获阶段监听，避免页面内部在冒泡阶段 stopPropagation 导致双击事件丢失
-  document.addEventListener('dblclick', (e) => {
+  // 使用捕获阶段监听，避免页面内部在冒泡阶段 stopPropagation 导致价格点击事件丢失
+  document.addEventListener('click', (e) => {
     try {
-      const row = findOrderbookRow(e.target);
-      if (!row) return;
-      const priceNode = findPriceNodeFromRow(row);
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const priceNode = findClickedPriceNode(e.target);
       if (!priceNode) return;
       // 忽略脚本触发的程序化 click，避免日志噪音
       if (!e.isTrusted) return;
 
       if (CFG.DEBUG) {
-        log('命中订单簿整行 dblclick', {
+        log('命中订单簿价格 click', {
           targetClass: e.target?.className || '',
           targetText: (e.target?.textContent || '').trim().slice(0, 24),
         });
@@ -1832,6 +1838,7 @@
     findOpenLongButton,
     findOpenShortButton,
     findOrderbookRow,
+    findClickedPriceNode,
     findPriceNodeFromRow,
     getCachedPositionState,
     resolveCloseAction,
