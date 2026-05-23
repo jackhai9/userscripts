@@ -8,7 +8,7 @@
 
 | 脚本 | 说明 | 源码真源 | 安装 |
 |---|---|---|---|
-| 【自写】Binance 订单簿双击下单 | 双击订单簿行，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
+| 【自写】Binance 订单簿单击下单 | 单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
 | 【自写】Binance 合约交易数据面板 | 在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号 | 本仓库 | [`点击安装`][install-binance-trading-data] |
 | 【自写】Binance CoinMarketCap 数据面板 | 在 Binance 合约页面显示当前币种的 CoinMarketCap 估值、供应量和流动性数据 | 本仓库 | [`点击安装`][install-binance-coinmarketcap-data] |
 | 【自写】定时刷新指定页面 | 指定页面按设定时间自动刷新 | 本仓库 | [`点击安装`][install-auto-refresh] |
