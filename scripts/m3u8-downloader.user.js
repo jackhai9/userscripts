@@ -2,13 +2,15 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.6
+// @version      0.10.7
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
 // @include      https://*.18jav.tv/*
 // @include      https://njav.com/*
 // @include      https://*.njav.com/*
+// @include      https://www.brookstradingcourse.com/*
+// @include      https://brookstradingcourse.com/*
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/m3u8-downloader.user.js
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/m3u8-downloader.user.js
 // @grant        none
