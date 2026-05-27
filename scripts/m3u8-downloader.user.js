@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.8
+// @version      0.10.9
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -23,7 +23,8 @@
   var showMp4 = true
   var m3u8Target = ''
   var mp4Objs = []
-  var m3u8Objs = []
+  var mp4UrlSet = new Set()
+  var m3u8UrlSet = new Set()
   var originXHR = window.XMLHttpRequest
   var windowOpen = window.open
 
@@ -82,33 +83,109 @@
     })
   }
 
-  // 定时器，检查 mp4 视频资源
-  function checkVideo() {
-    let $videoList = document.getElementsByTagName('video')
-    for (let i = 0, length = $videoList.length; i < length; i++) {
-      const video = $videoList[i]
-      const sourceUrls = [video.currentSrc, video.src]
-        .concat(Array.from(video.querySelectorAll('source')).map(source => source.src))
-        .filter(Boolean)
-
-      sourceUrls.forEach(url => {
-        if (url.indexOf('.m3u8') > 0 && !m3u8Objs.includes(url)) {
-          m3u8Objs.push(url)
-          checkM3u8Url(url)
-        }
-      })
-
-      const url = video.currentSrc || video.src
-      if (url.indexOf('.mp4') > 0 && !mp4Objs.find(mp4 => mp4.url === url)) {
-        appendDom();
-        document.getElementById('mp4-show').style.display = 'block'
-        mp4Objs.push({
-          url,
-          fileName: url.slice(url.lastIndexOf('/') + 1).split('?')[0],
-        });
-      }
+  function normalizeMediaUrl(url) {
+    if (!url) {
+      return ''
     }
-    setTimeout(checkVideo, 3000);
+    try {
+      return new URL(url, location.href).href
+    } catch (error) {
+      return url.toString()
+    }
+  }
+
+  function registerM3u8Url(url) {
+    url = normalizeMediaUrl(url)
+    if (url.indexOf('.m3u8') <= 0 || m3u8UrlSet.has(url)) {
+      return
+    }
+    m3u8UrlSet.add(url)
+    checkM3u8Url(url)
+  }
+
+  function registerMp4Url(url) {
+    url = normalizeMediaUrl(url)
+    if (url.indexOf('.mp4') <= 0 || mp4UrlSet.has(url)) {
+      return
+    }
+    mp4UrlSet.add(url)
+    appendDom();
+    document.getElementById('mp4-show').style.display = 'block'
+    mp4Objs.push({
+      url,
+      fileName: url.slice(url.lastIndexOf('/') + 1).split('?')[0],
+    });
+  }
+
+  function scanVideo(video) {
+    const sourceUrls = [video.currentSrc, video.src]
+      .concat(Array.from(video.querySelectorAll('source')).map(source => source.src))
+      .filter(Boolean)
+
+    sourceUrls.forEach(registerM3u8Url)
+    registerMp4Url(video.currentSrc || video.src)
+  }
+
+  function scanMedia(root) {
+    if (!root || !root.querySelectorAll) {
+      return
+    }
+    if (root.matches && root.matches('video')) {
+      scanVideo(root)
+    }
+    root.querySelectorAll('video').forEach(scanVideo)
+  }
+
+  function nodeMayContainMedia(node) {
+    if (!node || node.nodeType !== 1) {
+      return false
+    }
+    if (node.matches && node.matches('video, source')) {
+      return true
+    }
+    return !!(node.querySelector && node.querySelector('video, source'))
+  }
+
+  function startMediaScan() {
+    let pendingScan = false
+    const scheduleScan = () => {
+      if (pendingScan) {
+        return
+      }
+      pendingScan = true
+      requestAnimationFrame(() => {
+        pendingScan = false
+        scanMedia(document)
+      })
+    }
+
+    scanMedia(document)
+    document.addEventListener('DOMContentLoaded', scheduleScan, { once: true })
+    window.addEventListener('load', scheduleScan, { once: true })
+
+    const observeTarget = document.documentElement || document
+    new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'attributes' && nodeMayContainMedia(mutation.target)) {
+          scheduleScan()
+          return
+        }
+        if (mutation.type !== 'childList') {
+          continue
+        }
+        for (const node of mutation.addedNodes) {
+          if (nodeMayContainMedia(node)) {
+            scheduleScan()
+            return
+          }
+        }
+      }
+    }).observe(observeTarget, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['src'],
+    })
   }
 
   async function downloadCaption(url) {
@@ -172,7 +249,7 @@
     window.XMLHttpRequest = function () {
       var realXHR = new originXHR()
       realXHR.open = function (method, url) {
-        url.toString() && url.toString().indexOf('.m3u8') > 0 && checkM3u8Url(url.toString())
+        registerM3u8Url(url && url.toString())
         // if (url.toString() && url.toString().toLocaleLowerCase().indexOf('.mp4') > 0) {
         //   appendDom();
         //   document.getElementById('mp4-show').style.display = 'block'
@@ -442,5 +519,5 @@
   }
 
   resetAjax()
-  checkVideo()
+  startMediaScan()
 })();
