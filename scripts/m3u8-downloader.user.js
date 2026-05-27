@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.14
+// @version      0.10.15
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -148,7 +148,7 @@
       '--referer',
       shellQuote(m3u8Referer),
       '-N',
-      '8',
+      '16',
       '-o',
       shellQuote(output),
       shellQuote(sourceUrl),
@@ -494,7 +494,7 @@
     border-radius: 4px;
     border: 1px solid #eeeeee;
     background-color: #3D8AC7;
-  " id="m3u8-copy-command">Copy yt-dlp Command</div>
+  " id="m3u8-copy-command">复制 yt-dlp 命令</div>
   <div style="
     margin-top: 4px;
     height: 34px;
@@ -551,7 +551,7 @@
 
     m3u8CopyCommand.addEventListener('click', function () {
       copyToClipboard(buildYtDlpCommand())
-      alert('yt-dlp command copied')
+      alert('yt-dlp 命令已复制')
     })
 
     m3u8Append.addEventListener('click', function () {
