@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.7
+// @version      0.10.8
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -11,6 +11,7 @@
 // @include      https://*.njav.com/*
 // @include      https://www.brookstradingcourse.com/*
 // @include      https://brookstradingcourse.com/*
+// @include      https://iframe.mediadelivery.net/*
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/m3u8-downloader.user.js
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/m3u8-downloader.user.js
 // @grant        none
@@ -22,6 +23,7 @@
   var showMp4 = true
   var m3u8Target = ''
   var mp4Objs = []
+  var m3u8Objs = []
   var originXHR = window.XMLHttpRequest
   var windowOpen = window.open
 
@@ -84,7 +86,19 @@
   function checkVideo() {
     let $videoList = document.getElementsByTagName('video')
     for (let i = 0, length = $videoList.length; i < length; i++) {
-      const url = $videoList[i].currentSrc
+      const video = $videoList[i]
+      const sourceUrls = [video.currentSrc, video.src]
+        .concat(Array.from(video.querySelectorAll('source')).map(source => source.src))
+        .filter(Boolean)
+
+      sourceUrls.forEach(url => {
+        if (url.indexOf('.m3u8') > 0 && !m3u8Objs.includes(url)) {
+          m3u8Objs.push(url)
+          checkM3u8Url(url)
+        }
+      })
+
+      const url = video.currentSrc || video.src
       if (url.indexOf('.mp4') > 0 && !mp4Objs.find(mp4 => mp4.url === url)) {
         appendDom();
         document.getElementById('mp4-show').style.display = 'block'
