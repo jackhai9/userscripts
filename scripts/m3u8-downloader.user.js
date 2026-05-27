@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.15
+// @version      0.10.16
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -111,16 +111,17 @@
     document.getElementById('m3u8-close').style.display = 'block'
     document.getElementById('m3u8-append').style.display = 'block'
     document.getElementById('m3u8-copy-command').style.display = 'block'
-    m3u8Jump.style.display = isRefererProtectedM3u8(url) ? 'none' : 'block'
+    m3u8Jump.style.display = isExternalDownloaderBlocked(url) ? 'none' : 'block'
   }
 
   function buildExternalDownloaderUrl(sourceUrl) {
     return 'https://blog.luckly-mjw.cn/tool-show/m3u8-downloader/index.html?source=' + sourceUrl
   }
 
-  function isRefererProtectedM3u8(url) {
+  function isExternalDownloaderBlocked(url) {
     try {
-      return new URL(url).hostname.endsWith('.b-cdn.net')
+      const hostname = new URL(url).hostname
+      return hostname.endsWith('.b-cdn.net') || hostname.endsWith('.hshdkshd.com')
     } catch (error) {
       return false
     }
