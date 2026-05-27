@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.11
+// @version      0.10.12
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -103,7 +103,7 @@
   }
 
   function showM3u8Controls(url, referer) {
-    appendDom()
+    appendDom(referer)
     m3u8Target = url
     m3u8Referer = referer || location.href
 
@@ -149,6 +149,8 @@
       'yt-dlp',
       '--referer',
       shellQuote(m3u8Referer),
+      '-N',
+      '8',
       '-o',
       shellQuote(output),
       shellQuote(sourceUrl),
@@ -413,7 +415,21 @@
     return title.replace("BTC PAF","Video")
   }
 
-  function appendDom() {
+  function findRefererIframe(referer) {
+    if (!referer || referer === location.href) {
+      return null
+    }
+    const refererUrl = new URL(referer)
+    const videoId = refererUrl.pathname.split('/').filter(Boolean).pop()
+    return Array.from(document.querySelectorAll('iframe')).find(iframe => {
+      if (iframe.src === referer) {
+        return true
+      }
+      return videoId && iframe.src.indexOf(videoId) > -1
+    })
+  }
+
+  function appendDom(referer) {
     if (document.getElementById('m3u8-download-dom')) {
       return
     }
@@ -480,13 +496,21 @@
     `
     var $section = document.createElement('section')
     $section.id = 'm3u8-download-dom'
-    $section.style.position = 'fixed'
     $section.style.zIndex = '9999'
-    $section.style.bottom = '20px'
-    $section.style.right = '20px'
     $section.style.textAlign = 'center'
     $section.innerHTML = domStr
-    document.body.appendChild($section);
+    const refererIframe = findRefererIframe(referer)
+    if (refererIframe && refererIframe.parentNode) {
+      $section.style.position = 'relative'
+      $section.style.margin = '10px 0 16px auto'
+      $section.style.width = 'fit-content'
+      refererIframe.insertAdjacentElement('afterend', $section)
+    } else {
+      $section.style.position = 'fixed'
+      $section.style.bottom = '20px'
+      $section.style.right = '20px'
+      document.body.appendChild($section)
+    }
 
     var mp4Show = document.getElementById('mp4-show')
     var m3u8Jump = document.getElementById('m3u8-jump')
