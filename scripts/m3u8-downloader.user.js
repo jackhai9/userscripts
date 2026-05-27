@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.10
+// @version      0.10.11
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -22,11 +22,13 @@
   'use strict';
   var showMp4 = true
   var m3u8Target = ''
+  var m3u8Referer = location.href
   var mp4Objs = []
   var mp4UrlSet = new Set()
   var m3u8UrlSet = new Set()
   var originXHR = window.XMLHttpRequest
   var windowOpen = window.open
+  var M3U8_MESSAGE_TYPE = 'jh-userscripts:m3u8-detected'
 
   function ajax(options) {
     options = options || {};
@@ -67,22 +69,49 @@
       url,
       success: (fileStr) => {
         if (/(png|image|ts|jpg|mp4|jpeg|EXTINF)/.test(fileStr)) {
-          appendDom()
-          const m3u8Jump = document.getElementById('m3u8-jump')
-          document.getElementById('m3u8-close').style.display = 'block'
-          document.getElementById('m3u8-append').style.display = 'block'
-          document.getElementById('m3u8-copy-command').style.display = 'block'
-
           const urlObj = new URL(url)
           urlObj.searchParams.append('title', getTitle())
-          m3u8Target = urlObj.href
-          m3u8Jump.style.display = isRefererProtectedM3u8(urlObj.href) ? 'none' : 'block'
+          if (window.top !== window.self) {
+            notifyParentM3u8Detected(urlObj.href)
+          } else {
+            showM3u8Controls(urlObj.href, location.href)
+          }
           console.log('【m3u8】----------------------------------------')
           console.log(urlObj)
-          console.log(buildExternalDownloaderUrl(m3u8Target))
+          console.log(buildExternalDownloaderUrl(urlObj.href))
         }
       }
     })
+  }
+
+  function notifyParentM3u8Detected(url) {
+    window.parent.postMessage({
+      type: M3U8_MESSAGE_TYPE,
+      url,
+      referer: location.href,
+    }, '*')
+  }
+
+  function listenForFrameM3u8() {
+    window.addEventListener('message', (event) => {
+      const data = event.data || {}
+      if (data.type !== M3U8_MESSAGE_TYPE || !data.url || data.url.indexOf('.m3u8') <= 0) {
+        return
+      }
+      showM3u8Controls(data.url, data.referer || location.href)
+    })
+  }
+
+  function showM3u8Controls(url, referer) {
+    appendDom()
+    m3u8Target = url
+    m3u8Referer = referer || location.href
+
+    const m3u8Jump = document.getElementById('m3u8-jump')
+    document.getElementById('m3u8-close').style.display = 'block'
+    document.getElementById('m3u8-append').style.display = 'block'
+    document.getElementById('m3u8-copy-command').style.display = 'block'
+    m3u8Jump.style.display = isRefererProtectedM3u8(url) ? 'none' : 'block'
   }
 
   function buildExternalDownloaderUrl(sourceUrl) {
@@ -119,7 +148,7 @@
     return [
       'yt-dlp',
       '--referer',
-      shellQuote(location.href),
+      shellQuote(m3u8Referer),
       '-o',
       shellQuote(output),
       shellQuote(sourceUrl),
@@ -608,5 +637,6 @@
   }
 
   resetAjax()
+  listenForFrameM3u8()
   startMediaScan()
 })();
