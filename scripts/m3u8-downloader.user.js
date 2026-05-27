@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.9
+// @version      0.10.10
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -68,19 +68,122 @@
       success: (fileStr) => {
         if (/(png|image|ts|jpg|mp4|jpeg|EXTINF)/.test(fileStr)) {
           appendDom()
-          document.getElementById('m3u8-jump').style.display = 'block'
+          const m3u8Jump = document.getElementById('m3u8-jump')
           document.getElementById('m3u8-close').style.display = 'block'
           document.getElementById('m3u8-append').style.display = 'block'
+          document.getElementById('m3u8-copy-command').style.display = 'block'
 
           const urlObj = new URL(url)
           urlObj.searchParams.append('title', getTitle())
           m3u8Target = urlObj.href
+          m3u8Jump.style.display = isRefererProtectedM3u8(urlObj.href) ? 'none' : 'block'
           console.log('【m3u8】----------------------------------------')
           console.log(urlObj)
-          console.log('http://blog.luckly-mjw.cn/tool-show/m3u8-downloader/index.html?source=' + m3u8Target)
+          console.log(buildExternalDownloaderUrl(m3u8Target))
         }
       }
     })
+  }
+
+  function buildExternalDownloaderUrl(sourceUrl) {
+    const url = new URL('https://blog.luckly-mjw.cn/tool-show/m3u8-downloader/index.html')
+    url.searchParams.set('source', sourceUrl)
+    return url.href
+  }
+
+  function isRefererProtectedM3u8(url) {
+    try {
+      return new URL(url).hostname.endsWith('.b-cdn.net')
+    } catch (error) {
+      return false
+    }
+  }
+
+  function getCleanM3u8Target() {
+    if (!m3u8Target) {
+      return ''
+    }
+    const url = new URL(m3u8Target)
+    url.searchParams.delete('title')
+    return url.href
+  }
+
+  function shellQuote(value) {
+    return "'" + value.replace(/'/g, "'\\''") + "'"
+  }
+
+  function buildYtDlpCommand() {
+    const sourceUrl = getCleanM3u8Target()
+    const title = new URL(m3u8Target).searchParams.get('title') || getTitle()
+    const output = title.replace(/[/:*?"<>|]/g, '_') + '.%(ext)s'
+    return [
+      'yt-dlp',
+      '--referer',
+      shellQuote(location.href),
+      '-o',
+      shellQuote(output),
+      shellQuote(sourceUrl),
+    ].join(' ')
+  }
+
+  function sanitizeInjectedDownloader(section) {
+    const promoSelectors = [
+      'script',
+      '#m-loading',
+      '.m-p-help',
+      '.m-p-mse',
+      '.m-p-tamper',
+      '.m-p-github',
+      '.m-p-other',
+      '.m-p-language',
+      '.m-p-refer',
+      '.m-p-final',
+      '.m-p-tips[v-else]',
+      'a[href*="segmentfault.com"]',
+      'a[href*="github.com/Momo707577045"]',
+      'a[href*="media-source-extract"]',
+      'a[href*="tool-show/index.html"]',
+      'a[href*="m3u8-downloader.user.js"]',
+      'a[href*="index-en.html"]',
+      'img[src*="/Assets/qrcode/"]',
+      'img[src*="/tool-show/m3u8-downloader/imgs/"]',
+    ]
+
+    section.querySelectorAll(promoSelectors.join(',')).forEach(node => node.remove())
+
+    const style = document.createElement('style')
+    style.textContent = `
+      .m-p-help,
+      .m-p-mse,
+      .m-p-tamper,
+      .m-p-github,
+      .m-p-other,
+      .m-p-language,
+      .m-p-refer,
+      .m-p-final,
+      .m-p-tips[v-else] {
+        display: none !important;
+      }
+    `
+    section.appendChild(style)
+  }
+
+  function copyToClipboard(content) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(content).catch(() => copyToClipboardWithTextarea(content))
+      return
+    }
+    copyToClipboardWithTextarea(content)
+  }
+
+  function copyToClipboardWithTextarea(content) {
+    const textarea = document.createElement('textarea')
+    textarea.style.opacity = '0'
+    textarea.value = content
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    textarea.remove()
   }
 
   function normalizeMediaUrl(url) {
@@ -320,6 +423,17 @@
     background-color: #3D8AC7;
   " id="m3u8-append">注入下载</div>
   <div style="
+    display: none;
+    margin-top: 6px;
+    padding: 6px 10px ;
+    font-size: 18px;
+    color: white;
+    cursor: pointer;
+    border-radius: 4px;
+    border: 1px solid #eeeeee;
+    background-color: #3D8AC7;
+  " id="m3u8-copy-command">Copy yt-dlp Command</div>
+  <div style="
     margin-top: 4px;
     height: 34px;
     width: 34px;
@@ -349,6 +463,7 @@
     var m3u8Jump = document.getElementById('m3u8-jump')
     var m3u8Close = document.getElementById('m3u8-close')
     var m3u8Append = document.getElementById('m3u8-append')
+    var m3u8CopyCommand = document.getElementById('m3u8-copy-command')
 
     mp4Show.addEventListener('click', function () {
       showMp4 = !showMp4
@@ -361,7 +476,12 @@
     })
 
     m3u8Jump.addEventListener('click', function () {
-      windowOpen('//blog.luckly-mjw.cn/tool-show/m3u8-downloader/index.html?source=' + m3u8Target)
+      windowOpen(buildExternalDownloaderUrl(m3u8Target))
+    })
+
+    m3u8CopyCommand.addEventListener('click', function () {
+      copyToClipboard(buildYtDlpCommand())
+      alert('yt-dlp command copied')
     })
 
     m3u8Append.addEventListener('click', function () {
@@ -384,13 +504,6 @@
     downloadCaption(cnUrl);
     downloadCaption(enUrl);
 
-      var _hmt = _hmt || [];
-      (function () {
-        var hm = document.createElement("script");
-        hm.src = "https://hm.baidu.com/hm.js?1f12b0865d866ae1b93514870d93ce89";
-        var s = document.getElementsByTagName("script")[0];
-        s.parentNode.insertBefore(hm, s);
-      })();
       ajax({
         url: 'https://blog.luckly-mjw.cn/tool-show/m3u8-downloader/index.html?t=' + new Date().getTime(),
         success: (fileStr) => {
@@ -407,12 +520,11 @@
           // 注入html
           let $section = document.createElement('section')
           $section.innerHTML = `${dom}`
+          sanitizeInjectedDownloader($section)
           $section.style.width = '100%'
-          $section.style.height = '100%'
-          $section.style.maxHeight = '800px'
-          $section.style.bottom = '0'
-          $section.style.left = '0'
-          $section.style.position = 'absolute'
+          $section.style.minHeight = '800px'
+          $section.style.marginTop = '24px'
+          $section.style.position = 'relative'
           $section.style.zIndex = '9999'
           $section.style.fontSize = '14px'
           $section.style.overflowY = 'auto'
@@ -454,29 +566,6 @@
             }
           })
 
-          // // 加载 ASE 解密
-          // let $ase = document.createElement('script')
-          // $ase.src = 'https://blog.luckly-mjw.cn/tool-show/m3u8-downloader/aes-decryptor.js'
-
-          // // 加载 mp4 转码
-          // let $mp4 = document.createElement('script')
-          // $mp4.src = 'https://blog.luckly-mjw.cn/tool-show/m3u8-downloader/mux-mp4.js'
-
-          // // 加载 vue
-          // let $vue = document.createElement('script')
-          // $vue.src = 'https://upyun.luckly-mjw.cn/lib/vue.js'
-
-          // // 加载 stream 流式下载器
-          // let $streamSaver = document.createElement('script')
-          // $streamSaver.src = 'https://upyun.luckly-mjw.cn/lib/stream-saver.js'
-
-          // // 监听 vue 加载完成，执行业务代码
-          // $vue.addEventListener('load', function () { eval(script) })
-          // document.body.appendChild($streamSaver);
-          // document.body.appendChild($mp4);
-          // document.body.appendChild($ase);
-          // document.body.appendChild($vue);
-          // alert('注入成功，请滚动到页面底部')
         },
       })
     })
