@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.16
+// @version      0.10.17
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -29,6 +29,10 @@
   var originXHR = window.XMLHttpRequest
   var windowOpen = window.open
   var M3U8_MESSAGE_TYPE = 'jh-userscripts:m3u8-detected'
+  var EXTERNAL_DOWNLOADER_BLOCKED_HOST_SUFFIXES = [
+    '.b-cdn.net',
+    '.hshdkshd.com',
+  ]
 
   function ajax(options) {
     options = options || {};
@@ -121,7 +125,7 @@
   function isExternalDownloaderBlocked(url) {
     try {
       const hostname = new URL(url).hostname
-      return hostname.endsWith('.b-cdn.net') || hostname.endsWith('.hshdkshd.com')
+      return EXTERNAL_DOWNLOADER_BLOCKED_HOST_SUFFIXES.some(suffix => hostname.endsWith(suffix))
     } catch (error) {
       return false
     }
