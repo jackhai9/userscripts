@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.12
+// @version      0.10.13
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -103,9 +103,9 @@
   }
 
   function showM3u8Controls(url, referer) {
-    appendDom(referer)
     m3u8Target = url
     m3u8Referer = referer || location.href
+    appendDom()
 
     const m3u8Jump = document.getElementById('m3u8-jump')
     document.getElementById('m3u8-close').style.display = 'block'
@@ -429,7 +429,26 @@
     })
   }
 
-  function appendDom(referer) {
+  function isVisibleElement(element) {
+    const rect = element.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }
+
+  function findVisibleMediaElement() {
+    const refererIframe = findRefererIframe(m3u8Referer)
+    if (refererIframe) {
+      return refererIframe
+    }
+
+    const video = Array.from(document.querySelectorAll('video')).find(isVisibleElement)
+    if (video) {
+      return video
+    }
+
+    return Array.from(document.querySelectorAll('iframe')).find(isVisibleElement)
+  }
+
+  function appendDom() {
     if (document.getElementById('m3u8-download-dom')) {
       return
     }
@@ -499,12 +518,12 @@
     $section.style.zIndex = '9999'
     $section.style.textAlign = 'center'
     $section.innerHTML = domStr
-    const refererIframe = findRefererIframe(referer)
-    if (refererIframe && refererIframe.parentNode) {
+    const mediaElement = findVisibleMediaElement()
+    if (mediaElement && mediaElement.parentNode) {
       $section.style.position = 'relative'
       $section.style.margin = '10px 0 16px auto'
       $section.style.width = 'fit-content'
-      refererIframe.insertAdjacentElement('afterend', $section)
+      mediaElement.insertAdjacentElement('afterend', $section)
     } else {
       $section.style.position = 'fixed'
       $section.style.bottom = '20px'
