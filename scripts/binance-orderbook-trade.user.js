@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.5.2
+// @version      2.6.0
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -26,6 +26,10 @@
   const LOCAL_QTY_MULTIPLIER_PREFIX = 'jh_binance_qty_multiplier_v2';
   const LOCAL_CLOSE_SIDE_KEY = 'jh_binance_close_side';
   const LOCAL_OPEN_SIDE_KEY = 'jh_binance_open_side';
+  const LOCAL_LADDER_EXPANDED_KEY = 'jh_binance_ladder_expanded';
+  const LOCAL_LADDER_OPEN_PERCENT_KEY = 'jh_binance_ladder_open_percent';
+  const LOCAL_LADDER_CLOSE_PERCENT_KEY = 'jh_binance_ladder_close_percent';
+  const LOCAL_LADDER_LEVELS_KEY = 'jh_binance_ladder_levels';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
   const SPACER_ID = 'jh-binance-close-qty-multiplier-spacer';
   const INPUT_ID = 'jh-binance-close-qty-multiplier-input';
@@ -33,9 +37,19 @@
   const INC_ID = 'jh-binance-close-qty-multiplier-inc';
   const SIDE_LONG_ID = 'jh-binance-close-side-long';
   const SIDE_SHORT_ID = 'jh-binance-close-side-short';
+  const LADDER_TOGGLE_ID = 'jh-binance-ladder-toggle';
+  const LADDER_BODY_ID = 'jh-binance-ladder-body';
+  const LADDER_STATUS_ID = 'jh-binance-ladder-status';
   const DEFAULT_MULTIPLIER = '1';
   const DEFAULT_CLOSE_SIDE = 'LONG';
   const DEFAULT_OPEN_SIDE = 'LONG';
+  const DEFAULT_LADDER_OPEN_PERCENT = 30;
+  const DEFAULT_LADDER_CLOSE_PERCENT = 50;
+  const DEFAULT_LADDER_LEVELS = 5;
+  const LADDER_OPEN_PERCENTS = [10, 20, 30, 40, 50, 60, 70];
+  const LADDER_CLOSE_PERCENTS = [20, 30, 50, 70, 100];
+  const LADDER_LEVEL_OPTIONS = [3, 5, 7, 9];
+  const LADDER_ORDER_DELAY_MS = 520;
   const DEFAULT_OPEN_LEVERAGE = 3;
   const AUTO_OPEN_LEVERAGE_DELAY_MS = 120;
   const AUTO_OPEN_LEVERAGE_DEDUPE_MS = 1200;
@@ -59,6 +73,9 @@
   let autoOpenLeverageTask = null;
   let lastAutoOpenLeverage = { symbol: null, at: 0 };
   let tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
+  let ladderTask = null;
+  let ladderStopRequested = false;
+  let ladderStatusText = '空闲';
   const controlledNativeButtons = new Set();
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
@@ -121,6 +138,63 @@
     return new Promise((resolve) => {
       window.setTimeout(resolve, ms);
     });
+  }
+
+  function isValidOption(value, options) {
+    const num = Number(value);
+    return options.includes(num);
+  }
+
+  function loadNumberOption(key, options, fallback) {
+    const stored = localStorage.getItem(key);
+    return isValidOption(stored, options) ? Number(stored) : fallback;
+  }
+
+  function saveNumberOption(key, value, options) {
+    if (!isValidOption(value, options)) return;
+    localStorage.setItem(key, String(Number(value)));
+  }
+
+  function isLadderExpanded() {
+    return localStorage.getItem(LOCAL_LADDER_EXPANDED_KEY) === 'true';
+  }
+
+  function setLadderExpanded(expanded) {
+    localStorage.setItem(LOCAL_LADDER_EXPANDED_KEY, expanded ? 'true' : 'false');
+    scheduleRenderPanel();
+  }
+
+  function getLadderOpenPercent() {
+    return loadNumberOption(LOCAL_LADDER_OPEN_PERCENT_KEY, LADDER_OPEN_PERCENTS, DEFAULT_LADDER_OPEN_PERCENT);
+  }
+
+  function setLadderOpenPercent(value) {
+    saveNumberOption(LOCAL_LADDER_OPEN_PERCENT_KEY, value, LADDER_OPEN_PERCENTS);
+    scheduleRenderPanel();
+  }
+
+  function getLadderClosePercent() {
+    return loadNumberOption(LOCAL_LADDER_CLOSE_PERCENT_KEY, LADDER_CLOSE_PERCENTS, DEFAULT_LADDER_CLOSE_PERCENT);
+  }
+
+  function setLadderClosePercent(value) {
+    saveNumberOption(LOCAL_LADDER_CLOSE_PERCENT_KEY, value, LADDER_CLOSE_PERCENTS);
+    scheduleRenderPanel();
+  }
+
+  function getLadderLevels() {
+    return loadNumberOption(LOCAL_LADDER_LEVELS_KEY, LADDER_LEVEL_OPTIONS, DEFAULT_LADDER_LEVELS);
+  }
+
+  function setLadderLevels(value) {
+    saveNumberOption(LOCAL_LADDER_LEVELS_KEY, value, LADDER_LEVEL_OPTIONS);
+    scheduleRenderPanel();
+  }
+
+  function setLadderStatus(text) {
+    ladderStatusText = String(text || '空闲');
+    const statusEl = document.getElementById(LADDER_STATUS_ID);
+    if (statusEl) statusEl.textContent = ladderStatusText;
   }
 
   function isValidMultiplier(value) {
@@ -473,6 +547,286 @@
     return Number.isFinite(n) ? n : null;
   }
 
+  function getOrderbookPrices(side, levels) {
+    const isBid = side === 'BID';
+    const selector = isBid
+      ? '#futuresOrderbook .bid-light.emit-price'
+      : '#futuresOrderbook .ask-light.emit-price';
+    let prices = Array.from(document.querySelectorAll(selector))
+      .filter((node) => isVisibleElement(node) && findOrderbookRow(node))
+      .map((node) => parsePrice(node))
+      .filter(Boolean);
+    if (!isBid) prices = prices.reverse();
+
+    const deduped = [];
+    for (const price of prices) {
+      if (!deduped.includes(price)) deduped.push(price);
+      if (deduped.length >= levels) break;
+    }
+    return deduped;
+  }
+
+  function getBestOrderbookPrice(side) {
+    return getOrderbookPrices(side, 1)[0] || null;
+  }
+
+  function getLadderActionSpec(actionType) {
+    const specs = {
+      OPEN_LONG: {
+        mode: 'OPEN',
+        label: '阶梯开多',
+        priceSide: 'BID',
+        orderSide: 'BUY',
+        side: 'LONG',
+        buttonGetter: findOpenLongButton,
+      },
+      OPEN_SHORT: {
+        mode: 'OPEN',
+        label: '阶梯开空',
+        priceSide: 'ASK',
+        orderSide: 'SELL',
+        side: 'SHORT',
+        buttonGetter: findOpenShortButton,
+      },
+      CLOSE_LONG: {
+        mode: 'CLOSE',
+        label: '阶梯平多',
+        priceSide: 'ASK',
+        orderSide: 'SELL',
+        side: 'LONG',
+        buttonGetter: findCloseLongButton,
+      },
+      CLOSE_SHORT: {
+        mode: 'CLOSE',
+        label: '阶梯平空',
+        priceSide: 'BID',
+        orderSide: 'BUY',
+        side: 'SHORT',
+        buttonGetter: findCloseShortButton,
+      },
+    };
+    return specs[actionType] || null;
+  }
+
+  function findTradeModeTabByMode(mode) {
+    const label = mode === 'OPEN' ? '开仓' : '平仓';
+    const tabs = document.querySelectorAll(
+      '#position-direction [role="tab"], .bn-tabs__buySell [role="tab"], [role="tab"].bn-tab__buySell'
+    );
+    return Array.from(tabs).find((tab) => (tab.textContent || '').includes(label)) || null;
+  }
+
+  function findLimitOrderTab() {
+    const tabs = document.querySelectorAll('[role="tab"]');
+    return Array.from(tabs).find((tab) => {
+      const text = (tab.textContent || '').trim();
+      const key = String(tab.getAttribute('data-tab-key') || '').toUpperCase();
+      return key === 'LIMIT' || text.includes('限价');
+    }) || null;
+  }
+
+  async function activateTradeMode(mode) {
+    if (getActiveTradeMode() === mode) return true;
+    const tab = findTradeModeTabByMode(mode);
+    if (!tab) return false;
+    tab.click();
+    await delay(260);
+    invalidateTradeButtonCache();
+    scheduleRenderPanel();
+    return getActiveTradeMode() === mode;
+  }
+
+  async function ensureLimitOrderType() {
+    const orderType = getCurrentOrderType();
+    if (orderType.includes('LIMIT')) return true;
+    const tab = findLimitOrderTab();
+    if (!tab) return false;
+    tab.click();
+    await delay(220);
+    return getCurrentOrderType().includes('LIMIT');
+  }
+
+  async function readOpenBaseQtyForLadder(spec, referencePrice) {
+    const priceInput = findPriceInput();
+    if (!priceInput || !referencePrice) return null;
+    setInputValueReact(priceInput, referencePrice);
+    await delay(220);
+    const openLongBtn = findOpenLongButton();
+    const openShortBtn = findOpenShortButton();
+    const { longQty, shortQty, qtySource } = readOpenableQty(openLongBtn, openShortBtn);
+    return {
+      qty: spec.side === 'LONG' ? longQty : shortQty,
+      qtySource,
+    };
+  }
+
+  function readCloseBaseQtyForLadder(spec) {
+    const raw = readCloseContext();
+    const display = resolveDisplayCloseState(raw, getCurrentSymbol());
+    const qty = spec.side === 'LONG' ? display.longQty : display.shortQty;
+    return {
+      qty: qty != null ? normalizeDecimalString(String(qty)) : null,
+      qtySource: display.qtySource,
+    };
+  }
+
+  async function buildLadderPlan(actionType) {
+    const spec = getLadderActionSpec(actionType);
+    if (!spec) throw new Error('未知阶梯动作');
+
+    const startSymbol = getCurrentSymbol();
+    if (!startSymbol) throw new Error('未识别当前交易对');
+
+    const modeReady = await activateTradeMode(spec.mode);
+    if (!modeReady || getCurrentSymbol() !== startSymbol) throw new Error('切换开仓/平仓失败或交易对已变化');
+
+    const limitReady = await ensureLimitOrderType();
+    if (!limitReady) throw new Error('请先切到限价委托，Maker 阶梯不支持市价/条件委托');
+
+    const levels = getLadderLevels();
+    const prices = getOrderbookPrices(spec.priceSide, levels);
+    if (prices.length < levels) throw new Error(`订单簿${spec.priceSide === 'BID' ? '买盘' : '卖盘'}不足 ${levels} 档`);
+
+    const rules = await ensureRules(startSymbol);
+    if (!rules || getCurrentSymbol() !== startSymbol) throw new Error('交易规则未就绪或交易对已变化');
+
+    const ruleContext = getQtyRuleContext(startSymbol, spec.mode, prices[0]);
+    if (ruleContext.status !== 'ready' || !ruleContext.stepSize || !ruleContext.baseMinQty) {
+      throw new Error('数量步进/最小量未就绪');
+    }
+    const minRequiredQty = spec.mode === 'OPEN'
+      ? prices
+        .map((price) => getQtyRuleContext(startSymbol, spec.mode, price).effectiveMinQty)
+        .filter(Boolean)
+        .reduce((maxQty, qty) => maxDecimalString(maxQty, qty), ruleContext.baseMinQty)
+      : ruleContext.baseMinQty;
+
+    const base = spec.mode === 'OPEN'
+      ? await readOpenBaseQtyForLadder(spec, prices[0])
+      : readCloseBaseQtyForLadder(spec);
+    const baseQty = normalizeDecimalString(base?.qty || '');
+    if (!baseQty || !isPositiveDecimalString(baseQty)) {
+      throw new Error(`未读取到可用${spec.mode === 'OPEN' ? '可开' : '可平'}数量`);
+    }
+
+    const percent = spec.mode === 'OPEN' ? getLadderOpenPercent() : getLadderClosePercent();
+    const totalQty = multiplyDecimalByRatio(baseQty, percent, 100);
+    const rawPerOrderQty = multiplyDecimalByRatio(totalQty, 1, levels);
+    const perOrderQty = floorDecimalToStep(rawPerOrderQty, ruleContext.stepSize);
+    if (!perOrderQty || !isPositiveDecimalString(perOrderQty)) {
+      throw new Error('拆分后每档数量为 0，请提高比例或减少档位');
+    }
+    if (!isDecimalAtLeast(perOrderQty, minRequiredQty)) {
+      throw new Error(`每档数量 ${perOrderQty} 小于最小下单量 ${minRequiredQty}`);
+    }
+
+    return {
+      spec,
+      symbol: startSymbol,
+      percent,
+      levels,
+      baseQty,
+      totalQty,
+      perOrderQty,
+      minRequiredQty,
+      prices,
+      qtySource: base.qtySource,
+      orders: prices.map((price) => ({ price, qty: perOrderQty })),
+    };
+  }
+
+  function assertLadderMakerPrice(plan, price) {
+    const oppositeSide = plan.spec.orderSide === 'BUY' ? 'ASK' : 'BID';
+    const oppositePrice = getBestOrderbookPrice(oppositeSide);
+    if (!oppositePrice) throw new Error('盘口已刷新，未读取到对手盘价格');
+
+    const cmp = compareDecimalStrings(price, oppositePrice);
+    if (cmp == null) throw new Error('盘口价格校验失败');
+
+    if (plan.spec.orderSide === 'BUY' && cmp >= 0) {
+      throw new Error(`盘口已移动，买单 ${price} 可能吃单，对手卖一 ${oppositePrice}`);
+    }
+    if (plan.spec.orderSide === 'SELL' && cmp <= 0) {
+      throw new Error(`盘口已移动，卖单 ${price} 可能吃单，对手买一 ${oppositePrice}`);
+    }
+  }
+
+  async function executeLadderPlan(plan) {
+    const priceInput = findPriceInput();
+    const qtyInput = findQtyInput();
+    if (!priceInput || !qtyInput) throw new Error('未找到价格或数量输入框');
+
+    let done = 0;
+    for (const order of plan.orders) {
+      if (ladderStopRequested) break;
+      if (getCurrentSymbol() !== plan.symbol) throw new Error('执行中交易对变化，已停止');
+      if (getActiveTradeMode() !== plan.spec.mode) {
+        const ok = await activateTradeMode(plan.spec.mode);
+        if (!ok) throw new Error('执行中切回开仓/平仓失败');
+      }
+      if (!(await ensureLimitOrderType())) throw new Error('执行中限价委托状态丢失');
+      assertLadderMakerPrice(plan, order.price);
+
+      const currentPriceInput = findPriceInput();
+      const currentQtyInput = findQtyInput();
+      if (!currentPriceInput || !currentQtyInput) throw new Error('执行中价格或数量输入框丢失');
+
+      setInputValueReact(currentPriceInput, order.price);
+      await delay(90);
+      setInputValueReact(currentQtyInput, order.qty);
+      await delay(120);
+
+      const button = plan.spec.buttonGetter();
+      if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
+        throw new Error(`未找到可点击的${plan.spec.label}按钮`);
+      }
+
+      if (!CFG.SAFE_MODE) {
+        button.click();
+      }
+      done++;
+      setLadderStatus(`${plan.spec.label} ${done}/${plan.orders.length}`);
+      waitForTradeUiMutation({ timeoutMs: 350 });
+      await delay(LADDER_ORDER_DELAY_MS);
+    }
+    return done;
+  }
+
+  async function startLadder(actionType) {
+    if (ladderTask) {
+      setLadderStatus('正在执行，先点停止');
+      return;
+    }
+    ladderStopRequested = false;
+    const spec = getLadderActionSpec(actionType);
+    setLadderStatus(`${spec?.label || '阶梯'} 准备中`);
+    ladderTask = (async () => {
+      const plan = await buildLadderPlan(actionType);
+      setLadderStatus(`${plan.spec.label} ${plan.percent}%/${plan.levels}档`);
+      const done = await executeLadderPlan(plan);
+      setLadderStatus(ladderStopRequested ? `已停止 ${done}/${plan.orders.length}` : `完成 ${done}/${plan.orders.length}`);
+    })()
+      .catch((e) => {
+        err('Maker 阶梯执行失败:', e);
+        setLadderStatus(e?.message || '执行失败');
+      })
+      .finally(() => {
+        ladderTask = null;
+        ladderStopRequested = false;
+        scheduleRenderPanel();
+      });
+    await ladderTask;
+  }
+
+  function stopLadder() {
+    if (!ladderTask) {
+      setLadderStatus('空闲');
+      return;
+    }
+    ladderStopRequested = true;
+    setLadderStatus('停止中');
+  }
+
   function pow10(exp) {
     let result = 1n;
     for (let i = 0; i < exp; i += 1) result *= 10n;
@@ -565,6 +919,36 @@
     return tail ? `${head}.${tail}` : head;
   }
 
+  function multiplyDecimalByRatio(decimalValue, numerator, denominator) {
+    const parsed = parseDecimalString(decimalValue);
+    const num = BigInt(Number(numerator));
+    const den = BigInt(Number(denominator));
+    if (!parsed || num <= 0n || den <= 0n) return null;
+    const digits = (parsed.digits * num) / den;
+    return formatDecimalParts(digits, parsed.scale);
+  }
+
+  function floorDecimalToStep(decimalValue, stepSize) {
+    const value = parseDecimalString(decimalValue);
+    const step = parseDecimalString(stepSize);
+    if (!value || !step || step.digits <= 0n) return null;
+    const scale = Math.max(value.scale, step.scale);
+    const valueDigits = value.digits * pow10(scale - value.scale);
+    const stepDigits = step.digits * pow10(scale - step.scale);
+    const steps = valueDigits / stepDigits;
+    return formatDecimalParts(steps * step.digits, step.scale);
+  }
+
+  function isPositiveDecimalString(value) {
+    const parsed = parseDecimalString(value);
+    return !!parsed && parsed.digits > 0n;
+  }
+
+  function isDecimalAtLeast(value, minimum) {
+    const cmp = compareDecimalStrings(value, minimum);
+    return cmp != null && cmp >= 0;
+  }
+
   function readQtyByDataTestId(testId) {
     const el = document.querySelector(`[data-testid="${testId}"]`);
     if (!el) return null;
@@ -620,6 +1004,45 @@
     return {
       longQty: readCloseableQtyNearButton(closeLongBtn),
       shortQty: readCloseableQtyNearButton(closeShortBtn),
+      qtySource: 'near_button',
+    };
+  }
+
+  function readQtyTextNearButton(button, label) {
+    if (!button) return null;
+    const btnRect = button.getBoundingClientRect();
+    const root = button.closest('[class*="order"], [data-testid*="order"]') || document.body;
+    let best = null;
+    let bestScore = Infinity;
+    const nodes = root.querySelectorAll('div, span, p, small');
+    const re = new RegExp(`${label}\\s*([\\d,]*\\.?\\d+)`, 'g');
+    for (const node of nodes) {
+      const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!text.includes(label)) continue;
+      const matches = Array.from(text.matchAll(re));
+      if (!matches.length) continue;
+      const r = node.getBoundingClientRect();
+      if (!r || !Number.isFinite(r.left)) continue;
+      const nodeX = (r.left + r.right) / 2;
+      const btnX = (btnRect.left + btnRect.right) / 2;
+      const dy = r.top - btnRect.bottom;
+      if (dy < -32 || dy > 240) continue;
+      const dx = Math.abs(nodeX - btnX);
+      const score = dx + Math.abs(dy) * 2;
+      if (score >= bestScore) continue;
+      const matchIndex = matches.length > 1 && btnX < nodeX ? 0 : matches.length - 1;
+      const qty = normalizeDecimalString(matches[matchIndex]?.[1] || '');
+      if (!qty) continue;
+      bestScore = score;
+      best = qty;
+    }
+    return best;
+  }
+
+  function readOpenableQty(openLongBtn, openShortBtn) {
+    return {
+      longQty: readQtyTextNearButton(openLongBtn, '可开'),
+      shortQty: readQtyTextNearButton(openShortBtn, '可开'),
       qtySource: 'near_button',
     };
   }
@@ -1187,6 +1610,53 @@
     }
   }
 
+  function ladderOptionButton(label, value, selected, group) {
+    const activeStyle = selected
+      ? 'border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:#1e2329;font-weight:600;'
+      : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;font-weight:500;';
+    return `<button type="button" data-ladder-group="${group}" data-ladder-value="${value}" style="height:24px;min-width:34px;padding:0 6px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;cursor:pointer;${activeStyle}">${label}</button>`;
+  }
+
+  function ladderOptionRow(title, options, selected, group, suffix = '') {
+    return [
+      '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:6px;">',
+      `<span style="width:28px;color:#76808f;font-size:12px;">${title}</span>`,
+      ...options.map((value) => ladderOptionButton(`${value}${suffix}`, value, Number(value) === Number(selected), group)),
+      '</div>',
+    ].join('');
+  }
+
+  function refreshLadderPanel(panel) {
+    const toggle = panel.querySelector(`#${LADDER_TOGGLE_ID}`);
+    const body = panel.querySelector(`#${LADDER_BODY_ID}`);
+    const status = panel.querySelector(`#${LADDER_STATUS_ID}`);
+    const expanded = isLadderExpanded();
+    if (toggle) {
+      toggle.textContent = `Maker 阶梯 ${expanded ? '▾' : '▸'}`;
+    }
+    if (body) {
+      body.style.display = expanded ? 'block' : 'none';
+      if (expanded) {
+        body.innerHTML = [
+          ladderOptionRow('开', LADDER_OPEN_PERCENTS, getLadderOpenPercent(), 'openPercent', '%'),
+          ladderOptionRow('平', LADDER_CLOSE_PERCENTS, getLadderClosePercent(), 'closePercent', '%'),
+          ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
+          '<button type="button" data-ladder-action="OPEN_LONG" style="height:30px;border:1px solid var(--color-Buy);border-radius:6px;background:var(--color-GreenAlpha01);color:var(--color-Buy);font-size:13px;cursor:pointer;">阶梯开多</button>',
+          '<button type="button" data-ladder-action="OPEN_SHORT" style="height:30px;border:1px solid var(--color-Sell);border-radius:6px;background:var(--color-RedAlpha01);color:var(--color-Sell);font-size:13px;cursor:pointer;">阶梯开空</button>',
+          '<button type="button" data-ladder-action="CLOSE_LONG" style="height:30px;border:1px solid var(--color-Sell);border-radius:6px;background:var(--color-RedAlpha01);color:var(--color-Sell);font-size:13px;cursor:pointer;">阶梯平多</button>',
+          '<button type="button" data-ladder-action="CLOSE_SHORT" style="height:30px;border:1px solid var(--color-Buy);border-radius:6px;background:var(--color-GreenAlpha01);color:var(--color-Buy);font-size:13px;cursor:pointer;">阶梯平空</button>',
+          '</div>',
+          '<button type="button" data-ladder-stop="true" style="width:100%;height:26px;margin-top:4px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:12px;cursor:pointer;">停止</button>',
+        ].join('');
+      }
+    }
+    if (status) {
+      status.textContent = ladderStatusText;
+      status.style.display = expanded || ladderTask || ladderStatusText !== '空闲' ? 'block' : 'none';
+    }
+  }
+
   function refreshComputedInfo(panel, multiplier, qtyRuleContext) {
     const minEl = panel.querySelector('#jh-binance-close-qty-min');
     const finalEl = panel.querySelector('#jh-binance-close-qty-final');
@@ -1297,6 +1767,7 @@
     }
 
     syncNativeCloseButtons(tradeMode, closeContext);
+    refreshLadderPanel(panel);
   }
 
   function findQtyFormItem(input) {
@@ -1413,6 +1884,11 @@
         `<button id="${SIDE_LONG_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平多</button>` +
       '</div>',
       `<div id="${MODE_HINT_ID}" style="margin-top:6px;color:#76808f;"></div>`,
+      '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #eef0f2;">',
+      `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;text-align:left;font-size:13px;font-weight:600;cursor:pointer;">Maker 阶梯 ▸</button>`,
+      `<div id="${LADDER_BODY_ID}" style="display:none;"></div>`,
+      `<div id="${LADDER_STATUS_ID}" style="display:none;margin-top:5px;color:#76808f;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
+      '</div>',
     ].join('');
     document.body.appendChild(panel);
 
@@ -1421,6 +1897,7 @@
     const incBtn = panel.querySelector(`#${INC_ID}`);
     const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
     const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
+    const ladderToggle = panel.querySelector(`#${LADDER_TOGGLE_ID}`);
     if (input) {
       input.value = loadMultiplier(getActiveTradeMode(), getCurrentSymbol());
       input.addEventListener('focus', () => {
@@ -1480,6 +1957,33 @@
         updateCloseSide('SHORT');
       });
     }
+    if (ladderToggle) {
+      ladderToggle.addEventListener('click', () => {
+        setLadderExpanded(!isLadderExpanded());
+      });
+    }
+    panel.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      const optionBtn = target.closest('[data-ladder-group][data-ladder-value]');
+      if (optionBtn) {
+        const group = optionBtn.getAttribute('data-ladder-group');
+        const value = Number(optionBtn.getAttribute('data-ladder-value'));
+        if (group === 'openPercent') setLadderOpenPercent(value);
+        if (group === 'closePercent') setLadderClosePercent(value);
+        if (group === 'levels') setLadderLevels(value);
+        return;
+      }
+      const actionBtn = target.closest('[data-ladder-action]');
+      if (actionBtn) {
+        startLadder(actionBtn.getAttribute('data-ladder-action'));
+        return;
+      }
+      const stopBtn = target.closest('[data-ladder-stop]');
+      if (stopBtn) {
+        stopLadder();
+      }
+    });
 
     return panel;
   }
@@ -1504,6 +2008,7 @@
     if (input) {
       applyInputVisualState(input, multiplier);
     }
+    positionPanel(panel);
   }
 
   function scheduleRenderPanel(options = {}) {
@@ -1781,7 +2286,11 @@
     if (
       event.key?.startsWith(`${LOCAL_QTY_MULTIPLIER_PREFIX}:`) ||
       event.key === LOCAL_CLOSE_SIDE_KEY ||
-      event.key === LOCAL_OPEN_SIDE_KEY
+      event.key === LOCAL_OPEN_SIDE_KEY ||
+      event.key === LOCAL_LADDER_EXPANDED_KEY ||
+      event.key === LOCAL_LADDER_OPEN_PERCENT_KEY ||
+      event.key === LOCAL_LADDER_CLOSE_PERCENT_KEY ||
+      event.key === LOCAL_LADDER_LEVELS_KEY
     ) scheduleRenderPanel();
   });
 
@@ -1844,6 +2353,10 @@
     resolveCloseAction,
     resolveTradeAction,
     resolveTargetQty,
+    getOrderbookPrices,
+    buildLadderPlan,
+    startLadder,
+    stopLadder,
     queueAutoOpenLeverageReset,
     renderPanel,
   };
