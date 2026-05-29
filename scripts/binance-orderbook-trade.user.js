@@ -2,14 +2,14 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.2
+// @version      2.6.7
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        none
 // ==/UserScript==
 
@@ -30,6 +30,9 @@
   const LOCAL_LADDER_OPEN_PERCENT_KEY = 'jh_binance_ladder_open_percent';
   const LOCAL_LADDER_CLOSE_PERCENT_KEY = 'jh_binance_ladder_close_percent';
   const LOCAL_LADDER_LEVELS_KEY = 'jh_binance_ladder_levels';
+  const BINANCE_PERSIST_KEY = 'persist:futures-trade-ui';
+  const BINANCE_POST_ONLY_ORDER_TYPE = 'POST_ONLY';
+  const BINANCE_POST_ONLY_TIME_IN_FORCE = 'GTC';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
   const SPACER_ID = 'jh-binance-close-qty-multiplier-spacer';
   const INPUT_ID = 'jh-binance-close-qty-multiplier-input';
@@ -52,6 +55,7 @@
   const LADDER_ORDER_DELAY_MS = 520;
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
   const LADDER_SUBMIT_POLL_MS = 80;
+  const LADDER_MAKER_BUFFER_LEVELS = 1;
   const DEFAULT_OPEN_LEVERAGE = 3;
   const AUTO_OPEN_LEVERAGE_DELAY_MS = 120;
   const AUTO_OPEN_LEVERAGE_DEDUPE_MS = 1200;
@@ -123,6 +127,77 @@
 
   function err(...args) {
     emit('ERR', ...args);
+  }
+
+  function parseJsonSafe(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    try {
+      return JSON.parse(raw);
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function parsePersistedField(state, key) {
+    const value = state?.[key];
+    if (typeof value === 'string') return parseJsonSafe(value) || {};
+    return value && typeof value === 'object' ? value : {};
+  }
+
+  function readPersistedBinanceOrderForm() {
+    try {
+      const state = parseJsonSafe(window.localStorage?.getItem(BINANCE_PERSIST_KEY));
+      return parsePersistedField(state, 'futuresOrderForm');
+    } catch (_e) {
+      return {};
+    }
+  }
+
+  function isPersistedPostOnlyOrderType() {
+    const form = readPersistedBinanceOrderForm();
+    return (
+      form.orderType === BINANCE_POST_ONLY_ORDER_TYPE &&
+      form.subOrderType === BINANCE_POST_ONLY_ORDER_TYPE
+    );
+  }
+
+  function ensurePostOnlyPreferencePersisted() {
+    try {
+      const raw = window.localStorage?.getItem(BINANCE_PERSIST_KEY);
+      const state = parseJsonSafe(raw) || {};
+      const form = parsePersistedField(state, 'futuresOrderForm');
+      const nextForm = {
+        ...form,
+        orderType: BINANCE_POST_ONLY_ORDER_TYPE,
+        subOrderType: BINANCE_POST_ONLY_ORDER_TYPE,
+        timeInForce: BINANCE_POST_ONLY_TIME_IN_FORCE,
+      };
+
+      if (
+        form.orderType === nextForm.orderType &&
+        form.subOrderType === nextForm.subOrderType &&
+        form.timeInForce === nextForm.timeInForce
+      ) {
+        return { ok: true, changed: false };
+      }
+
+      const nextState = {
+        ...state,
+        futuresOrderForm: JSON.stringify(nextForm),
+        _persist: state._persist || JSON.stringify({ version: 1, rehydrated: true }),
+      };
+      window.localStorage?.setItem(BINANCE_PERSIST_KEY, JSON.stringify(nextState));
+      return { ok: true, changed: true };
+    } catch (e) {
+      return { ok: false, changed: false, error: e };
+    }
+  }
+
+  const postOnlyPreferenceInit = ensurePostOnlyPreferencePersisted();
+  if (!postOnlyPreferenceInit.ok) {
+    warn('无法写入只做Maker偏好', postOnlyPreferenceInit.error);
+  } else if (postOnlyPreferenceInit.changed) {
+    log('已写入只做Maker偏好，Binance 会在页面初始化时读取');
   }
 
   function setInputValueReact(input, value) {
@@ -256,6 +331,16 @@
   function getCurrentOrderType() {
     const activeTab = document.querySelector('[role="tab"][aria-selected="true"][data-tab-key]');
     return String(activeTab?.getAttribute('data-tab-key') || 'LIMIT').toUpperCase();
+  }
+
+  function isPostOnlyOrderTypeActive() {
+    const orderType = getCurrentOrderType();
+    if (!orderType.includes('CONDITIONAL') && !orderType.includes(BINANCE_POST_ONLY_ORDER_TYPE)) return false;
+    const visibleText = Array.from(document.querySelectorAll('[role="tab"], [role="combobox"], .bn-select-field-input'))
+      .filter(isVisibleElement)
+      .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
+      .join(' ');
+    return /只做Maker|Post Only/i.test(visibleText) || isPersistedPostOnlyOrderType();
   }
 
   function getActiveTradeTab() {
@@ -572,6 +657,11 @@
     return getOrderbookPrices(side, 1)[0] || null;
   }
 
+  function getBufferedMakerPrices(side, levels) {
+    return getOrderbookPrices(side, levels + LADDER_MAKER_BUFFER_LEVELS)
+      .slice(LADDER_MAKER_BUFFER_LEVELS, LADDER_MAKER_BUFFER_LEVELS + levels);
+  }
+
   function getLadderActionSpec(actionType) {
     const specs = {
       OPEN_LONG: {
@@ -618,12 +708,42 @@
     return Array.from(tabs).find((tab) => (tab.textContent || '').includes(label)) || null;
   }
 
-  function findLimitOrderTab() {
+  function findConditionalOrderTab() {
     const tabs = document.querySelectorAll('[role="tab"]');
     return Array.from(tabs).find((tab) => {
       const text = (tab.textContent || '').trim();
       const key = String(tab.getAttribute('data-tab-key') || '').toUpperCase();
-      return key === 'LIMIT' || text.includes('限价');
+      return key === 'CONDITIONAL' || text.includes('条件委托') || /只做Maker|Post Only/i.test(text);
+    }) || null;
+  }
+
+  function findConditionalSubtypeCombobox() {
+    const tab = findConditionalOrderTab();
+    if (!tab) return null;
+    return Array.from(tab.querySelectorAll('[role="combobox"], .bn-select-trigger, .bn-select-field'))
+      .find(isVisibleElement) || null;
+  }
+
+  function clickElementLikeUser(el) {
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const clientX = (rect.left + rect.right) / 2;
+    const clientY = (rect.top + rect.bottom) / 2;
+    const PointerCtor = window.PointerEvent || MouseEvent;
+    el.dispatchEvent(new PointerCtor('pointerdown', { bubbles: true, clientX, clientY }));
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX, clientY }));
+    el.dispatchEvent(new PointerCtor('pointerup', { bubbles: true, clientX, clientY }));
+    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX, clientY }));
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX, clientY }));
+    el.click?.();
+  }
+
+  function findPostOnlyOption() {
+    const options = document.querySelectorAll('[role="option"], [role="menuitem"], .bn-select-option, div, li');
+    return Array.from(options).find((el) => {
+      if (!isVisibleElement(el)) return false;
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      return /只做Maker|Post Only/i.test(text) && text.length < 120;
     }) || null;
   }
 
@@ -638,14 +758,28 @@
     return getActiveTradeMode() === mode;
   }
 
-  async function ensureLimitOrderType() {
-    const orderType = getCurrentOrderType();
-    if (orderType.includes('LIMIT')) return true;
-    const tab = findLimitOrderTab();
+  async function ensurePostOnlyOrderType() {
+    if (isPostOnlyOrderTypeActive()) return true;
+
+    const tab = findConditionalOrderTab();
     if (!tab) return false;
-    tab.click();
-    await delay(220);
-    return getCurrentOrderType().includes('LIMIT');
+    if (!getCurrentOrderType().includes('CONDITIONAL')) {
+      tab.click();
+      await delay(320);
+    }
+    if (isPostOnlyOrderTypeActive()) return true;
+
+    const combo = findConditionalSubtypeCombobox();
+    if (!combo) return false;
+    clickElementLikeUser(combo);
+    await delay(260);
+
+    const option = findPostOnlyOption();
+    if (!option) return false;
+    clickElementLikeUser(option);
+    await delay(360);
+
+    return isPostOnlyOrderTypeActive();
   }
 
   async function readOpenBaseQtyForLadder(spec, referencePrice) {
@@ -682,11 +816,11 @@
     const modeReady = await activateTradeMode(spec.mode);
     if (!modeReady || getCurrentSymbol() !== startSymbol) throw new Error('切换开仓/平仓失败或交易对已变化');
 
-    const limitReady = await ensureLimitOrderType();
-    if (!limitReady) throw new Error('请先切到限价委托，Maker 阶梯不支持市价/条件委托');
+    const postOnlyReady = await ensurePostOnlyOrderType();
+    if (!postOnlyReady) throw new Error('请刷新页面让只做Maker (Post Only) 生效后重试，脚本不会用普通限价继续');
 
     const levels = getLadderLevels();
-    const prices = getOrderbookPrices(spec.priceSide, levels);
+    const prices = getBufferedMakerPrices(spec.priceSide, levels);
     if (prices.length < levels) throw new Error(`订单簿${spec.priceSide === 'BID' ? '买盘' : '卖盘'}不足 ${levels} 档`);
 
     const rules = await ensureRules(startSymbol);
@@ -713,27 +847,24 @@
 
     const percent = spec.mode === 'OPEN' ? getLadderOpenPercent() : getLadderClosePercent();
     const totalQty = multiplyDecimalByRatio(baseQty, percent, 100);
-    const rawPerOrderQty = multiplyDecimalByRatio(totalQty, 1, levels);
-    const perOrderQty = floorDecimalToStep(rawPerOrderQty, ruleContext.stepSize);
-    if (!perOrderQty || !isPositiveDecimalString(perOrderQty)) {
-      throw new Error('拆分后每档数量为 0，请提高比例或减少档位');
-    }
-    if (!isDecimalAtLeast(perOrderQty, minRequiredQty)) {
-      throw new Error(`每档数量 ${perOrderQty} 小于最小下单量 ${minRequiredQty}`);
+    const allocation = allocateLadderQuantities(totalQty, levels, ruleContext.stepSize, minRequiredQty);
+    if (!allocation || allocation.actualLevels < 1) {
+      throw new Error(`目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${spec.mode === 'OPEN' ? '开仓' : '平仓'}`);
     }
 
+    const orderPrices = prices.slice(0, allocation.actualLevels);
     return {
       spec,
       symbol: startSymbol,
       percent,
-      levels,
+      levels: allocation.actualLevels,
+      requestedLevels: allocation.requestedLevels,
       baseQty,
-      totalQty,
-      perOrderQty,
+      totalQty: allocation.totalQty,
       minRequiredQty,
-      prices,
+      prices: orderPrices,
       qtySource: base.qtySource,
-      orders: prices.map((price) => ({ price, qty: perOrderQty })),
+      orders: orderPrices.map((price, index) => ({ price, qty: allocation.quantities[index] })),
     };
   }
 
@@ -833,7 +964,7 @@
         const ok = await activateTradeMode(plan.spec.mode);
         if (!ok) throw new Error('执行中切回开仓/平仓失败');
       }
-      if (!(await ensureLimitOrderType())) throw new Error('执行中限价委托状态丢失');
+      if (!(await ensurePostOnlyOrderType())) throw new Error('执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试');
       assertLadderMakerPrice(plan, order.price);
 
       const currentPriceInput = findPriceInput();
@@ -844,6 +975,9 @@
       await delay(90);
       setInputValueReact(currentQtyInput, order.qty);
       await delay(120);
+      const submittedPrice = normalizeDecimalString(currentPriceInput.value);
+      if (!submittedPrice) throw new Error('执行中价格输入框值无效');
+      assertLadderMakerPrice(plan, submittedPrice);
 
       const button = plan.spec.buttonGetter();
       if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
@@ -874,7 +1008,10 @@
     setLadderStatus(`${spec?.label || '阶梯'} 准备中`);
     ladderTask = (async () => {
       const plan = await buildLadderPlan(actionType);
-      setLadderStatus(`${plan.spec.label} ${plan.percent}%/${plan.levels}档`);
+      const levelText = plan.levels === plan.requestedLevels
+        ? `${plan.levels}档`
+        : `${plan.levels}/${plan.requestedLevels}档`;
+      setLadderStatus(`${plan.spec.label} ${plan.percent}%/${levelText}`);
       const done = await executeLadderPlan(plan);
       setLadderStatus(ladderStopRequested ? `已停止 ${done}/${plan.orders.length}` : `完成 ${done}/${plan.orders.length}`);
     })()
@@ -897,6 +1034,96 @@
     }
     ladderStopRequested = true;
     setLadderStatus('停止中');
+  }
+
+  function findVisibleElementByText(selector, patterns, root = document) {
+    for (const el of root.querySelectorAll(selector)) {
+      if (!isVisibleElement(el)) continue;
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (patterns.some((pattern) => pattern.test(text))) return el;
+    }
+    return null;
+  }
+
+  async function activateOpenOrdersTab() {
+    const tab = findVisibleElementByText('[role="tab"]', [/^当前委托/, /^Open Orders/i]);
+    if (!tab) return false;
+    if (tab.getAttribute('aria-selected') === 'true') return true;
+    tab.click();
+    await delay(350);
+    return true;
+  }
+
+  function findCurrentSymbolCancelAllButton() {
+    const el = findVisibleElementByText(
+      'button, [role="button"], a, span, div',
+      [/^全撤$/, /^全部撤单$/, /^撤销全部$/, /^Cancel All$/i]
+    );
+    return el?.closest?.('button, [role="button"], a') || el || null;
+  }
+
+  function findHideOtherSymbolCheckbox() {
+    return Array.from(document.querySelectorAll('[role="checkbox"][name="hideOtherSymbol"]'))
+      .find(isVisibleElement) || null;
+  }
+
+  async function ensureOpenOrdersLimitedToCurrentSymbol() {
+    const checkbox = findHideOtherSymbolCheckbox();
+    if (!checkbox) return false;
+    if (checkbox.getAttribute('aria-checked') !== 'true') {
+      checkbox.click();
+      await delay(450);
+    }
+    return checkbox.getAttribute('aria-checked') === 'true';
+  }
+
+  function findVisibleDialogConfirmButton() {
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="Modal"]'))
+      .filter(isVisibleElement);
+    for (const dialog of dialogs) {
+      const button = findVisibleElementByText(
+        'button, [role="button"]',
+        [/^确认$/, /^确定$/, /^Confirm$/i],
+        dialog
+      );
+      if (button) return button;
+    }
+    return findVisibleElementByText('button, [role="button"]', [/^确认$/, /^确定$/, /^Confirm$/i]);
+  }
+
+  async function cancelCurrentSymbolOpenOrders() {
+    const symbol = getCurrentSymbol();
+    if (!symbol) {
+      setLadderStatus('未识别当前交易对');
+      return;
+    }
+    const ok = window.confirm(`撤销 ${symbol} 当前所有挂单？`);
+    if (!ok) return;
+
+    setLadderStatus(`查找 ${symbol} 当前委托`);
+    await activateOpenOrdersTab();
+    const limitedToCurrentSymbol = await ensureOpenOrdersLimitedToCurrentSymbol();
+    if (!limitedToCurrentSymbol) {
+      setLadderStatus('未确认只显示当前币挂单');
+      return;
+    }
+
+    const cancelAllButton = findCurrentSymbolCancelAllButton();
+    if (!cancelAllButton) {
+      setLadderStatus('未找到当前委托全撤按钮');
+      return;
+    }
+
+    cancelAllButton.click();
+    await delay(300);
+
+    const confirmButton = findVisibleDialogConfirmButton();
+    if (confirmButton) {
+      confirmButton.click();
+    }
+
+    setLadderStatus(`${symbol} 撤单已提交`);
+    waitForTradeUiMutation({ timeoutMs: 800 });
   }
 
   function pow10(exp) {
@@ -1009,6 +1236,65 @@
     const stepDigits = step.digits * pow10(scale - step.scale);
     const steps = valueDigits / stepDigits;
     return formatDecimalParts(steps * step.digits, step.scale);
+  }
+
+  function decimalToStepCount(decimalValue, stepSize, rounding = 'floor') {
+    const value = parseDecimalString(decimalValue);
+    const step = parseDecimalString(stepSize);
+    if (!value || !step || step.digits <= 0n) return null;
+    const scale = Math.max(value.scale, step.scale);
+    const valueDigits = value.digits * pow10(scale - value.scale);
+    const stepDigits = step.digits * pow10(scale - step.scale);
+    if (rounding === 'ceil') return (valueDigits + stepDigits - 1n) / stepDigits;
+    return valueDigits / stepDigits;
+  }
+
+  function formatStepCount(stepCount, stepSize) {
+    const step = parseDecimalString(stepSize);
+    if (!step || step.digits <= 0n || stepCount == null || stepCount < 0n) return null;
+    return formatDecimalParts(stepCount * step.digits, step.scale);
+  }
+
+  function allocateLadderQuantities(totalQty, desiredLevels, stepSize, minRequiredQty) {
+    const totalSteps = decimalToStepCount(totalQty, stepSize, 'floor');
+    const minSteps = decimalToStepCount(minRequiredQty, stepSize, 'ceil');
+    const requestedLevels = Number(desiredLevels);
+    if (!totalSteps || !minSteps || totalSteps <= 0n || minSteps <= 0n || requestedLevels <= 0) {
+      return null;
+    }
+
+    const maxExecutableLevels = totalSteps / minSteps;
+    const actualLevels = Math.min(requestedLevels, Number(maxExecutableLevels));
+    if (actualLevels < 1) return null;
+
+    const levelCount = BigInt(actualLevels);
+    const baseSteps = totalSteps / levelCount;
+    if (baseSteps < minSteps) return null;
+
+    const quantities = [];
+    let remainingSteps = totalSteps;
+    for (let i = 0; i < actualLevels; i += 1) {
+      const isLast = i === actualLevels - 1;
+      const steps = isLast ? remainingSteps : baseSteps;
+      if (steps < minSteps) {
+        if (quantities.length === 0) return null;
+        const previous = decimalToStepCount(quantities.pop(), stepSize, 'floor');
+        const merged = previous + steps;
+        if (merged < minSteps) return null;
+        quantities.push(formatStepCount(merged, stepSize));
+        remainingSteps = 0n;
+        break;
+      }
+      quantities.push(formatStepCount(steps, stepSize));
+      remainingSteps -= steps;
+    }
+
+    return {
+      requestedLevels,
+      actualLevels: quantities.length,
+      totalQty: formatStepCount(totalSteps, stepSize),
+      quantities,
+    };
   }
 
   function isPositiveDecimalString(value) {
@@ -1744,7 +2030,10 @@
       if (expanded) {
         body.innerHTML = [
           ...getLadderActionRows(mode, closeContext),
-          '<button type="button" data-ladder-stop="true" style="width:100%;height:26px;margin-top:4px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:12px;cursor:pointer;">停止</button>',
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
+          '<button type="button" data-ladder-stop="true" style="height:26px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:12px;cursor:pointer;">停止阶梯挂单</button>',
+          '<button type="button" data-ladder-cancel-symbol="true" style="height:26px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:12px;cursor:pointer;">撤本币挂单</button>',
+          '</div>',
         ].join('');
       }
     }
@@ -2080,6 +2369,11 @@
       const stopBtn = target.closest('[data-ladder-stop]');
       if (stopBtn) {
         stopLadder();
+        return;
+      }
+      const cancelSymbolBtn = target.closest('[data-ladder-cancel-symbol]');
+      if (cancelSymbolBtn) {
+        cancelCurrentSymbolOpenOrders();
       }
     });
 
@@ -2411,10 +2705,10 @@
   // Binance SPA 切换币种时 URL 变化但不触发 popstate，用轮询检测
   setInterval(checkSymbolChangeForLeverage, 500);
 
-  // 首次进入：如果当前已在开仓 tab，延迟触发一次
-  if (getActiveTradeMode() === 'OPEN') {
-    window.setTimeout(() => queueAutoOpenLeverageReset('init'), 1500);
-  }
+  // 首次进入：document-start 时 DOM 可能尚未 ready，所以延迟后再判断当前 tab。
+  window.setTimeout(() => {
+    if (getActiveTradeMode() === 'OPEN') queueAutoOpenLeverageReset('init');
+  }, 1500);
 
   let renderPanelTimer = document.hidden ? null : setInterval(renderPanel, 1000);
   document.addEventListener('visibilitychange', () => {
@@ -2452,9 +2746,14 @@
     resolveTradeAction,
     resolveTargetQty,
     getOrderbookPrices,
+    readPersistedBinanceOrderForm,
+    isPersistedPostOnlyOrderType,
+    ensurePostOnlyPreferencePersisted,
+    ensurePostOnlyOrderType,
     buildLadderPlan,
     startLadder,
     stopLadder,
+    cancelCurrentSymbolOpenOrders,
     queueAutoOpenLeverageReset,
     renderPanel,
   };
