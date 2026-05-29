@@ -1626,11 +1626,44 @@
     ].join('');
   }
 
-  function refreshLadderPanel(panel) {
+  function ladderActionButton(actionType, label, tone, disabled = false) {
+    const isBuyTone = tone === 'BUY';
+    const borderColor = isBuyTone ? 'var(--color-Buy)' : 'var(--color-Sell)';
+    const background = isBuyTone ? 'var(--color-GreenAlpha01)' : 'var(--color-RedAlpha01)';
+    const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
+    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:30px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:13px;cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? '0.45' : '1'};">${label}</button>`;
+  }
+
+  function getLadderActionRows(tradeMode, closeContext) {
+    if (tradeMode === 'OPEN') {
+      return [
+        ladderOptionRow('开', LADDER_OPEN_PERCENTS, getLadderOpenPercent(), 'openPercent', '%'),
+        ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
+        ladderActionButton('OPEN_LONG', '阶梯开多', 'BUY'),
+        ladderActionButton('OPEN_SHORT', '阶梯开空', 'SELL'),
+        '</div>',
+      ];
+    }
+
+    const closeLongDisabled = closeContext?.knowsLong ? !closeContext.hasLong : false;
+    const closeShortDisabled = closeContext?.knowsShort ? !closeContext.hasShort : false;
+    return [
+      ladderOptionRow('平', LADDER_CLOSE_PERCENTS, getLadderClosePercent(), 'closePercent', '%'),
+      ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
+      ladderActionButton('CLOSE_SHORT', '阶梯平空', 'BUY', closeShortDisabled),
+      ladderActionButton('CLOSE_LONG', '阶梯平多', 'SELL', closeLongDisabled),
+      '</div>',
+    ];
+  }
+
+  function refreshLadderPanel(panel, tradeMode, closeContext) {
     const toggle = panel.querySelector(`#${LADDER_TOGGLE_ID}`);
     const body = panel.querySelector(`#${LADDER_BODY_ID}`);
     const status = panel.querySelector(`#${LADDER_STATUS_ID}`);
     const expanded = isLadderExpanded();
+    const mode = tradeMode === 'OPEN' ? 'OPEN' : 'CLOSE';
     if (toggle) {
       toggle.textContent = `Maker 阶梯 ${expanded ? '▾' : '▸'}`;
     }
@@ -1638,15 +1671,7 @@
       body.style.display = expanded ? 'block' : 'none';
       if (expanded) {
         body.innerHTML = [
-          ladderOptionRow('开', LADDER_OPEN_PERCENTS, getLadderOpenPercent(), 'openPercent', '%'),
-          ladderOptionRow('平', LADDER_CLOSE_PERCENTS, getLadderClosePercent(), 'closePercent', '%'),
-          ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
-          '<button type="button" data-ladder-action="OPEN_LONG" style="height:30px;border:1px solid var(--color-Buy);border-radius:6px;background:var(--color-GreenAlpha01);color:var(--color-Buy);font-size:13px;cursor:pointer;">阶梯开多</button>',
-          '<button type="button" data-ladder-action="OPEN_SHORT" style="height:30px;border:1px solid var(--color-Sell);border-radius:6px;background:var(--color-RedAlpha01);color:var(--color-Sell);font-size:13px;cursor:pointer;">阶梯开空</button>',
-          '<button type="button" data-ladder-action="CLOSE_LONG" style="height:30px;border:1px solid var(--color-Sell);border-radius:6px;background:var(--color-RedAlpha01);color:var(--color-Sell);font-size:13px;cursor:pointer;">阶梯平多</button>',
-          '<button type="button" data-ladder-action="CLOSE_SHORT" style="height:30px;border:1px solid var(--color-Buy);border-radius:6px;background:var(--color-GreenAlpha01);color:var(--color-Buy);font-size:13px;cursor:pointer;">阶梯平空</button>',
-          '</div>',
+          ...getLadderActionRows(mode, closeContext),
           '<button type="button" data-ladder-stop="true" style="width:100%;height:26px;margin-top:4px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:12px;cursor:pointer;">停止</button>',
         ].join('');
       }
@@ -1767,7 +1792,7 @@
     }
 
     syncNativeCloseButtons(tradeMode, closeContext);
-    refreshLadderPanel(panel);
+    refreshLadderPanel(panel, tradeMode, closeContext);
   }
 
   function findQtyFormItem(input) {
@@ -1976,6 +2001,7 @@
       }
       const actionBtn = target.closest('[data-ladder-action]');
       if (actionBtn) {
+        if (actionBtn.disabled || actionBtn.getAttribute('aria-disabled') === 'true') return;
         startLadder(actionBtn.getAttribute('data-ladder-action'));
         return;
       }
