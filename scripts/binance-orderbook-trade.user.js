@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.1
+// @version      2.6.2
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -50,6 +50,8 @@
   const LADDER_CLOSE_PERCENTS = [20, 30, 50, 70, 100];
   const LADDER_LEVEL_OPTIONS = [3, 5, 7, 9];
   const LADDER_ORDER_DELAY_MS = 520;
+  const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
+  const LADDER_SUBMIT_POLL_MS = 80;
   const DEFAULT_OPEN_LEVERAGE = 3;
   const AUTO_OPEN_LEVERAGE_DELAY_MS = 120;
   const AUTO_OPEN_LEVERAGE_DEDUPE_MS = 1200;
@@ -751,6 +753,73 @@
     }
   }
 
+  function isSubmitButtonBusy(button) {
+    if (!button) return false;
+    const text = (button.textContent || '').toLowerCase();
+    const cls = String(button.className || '').toLowerCase();
+    return (
+      button.disabled ||
+      button.getAttribute('aria-disabled') === 'true' ||
+      button.getAttribute('data-loading') === 'true' ||
+      text.includes('提交中') ||
+      text.includes('placing') ||
+      text.includes('loading') ||
+      cls.includes('loading') ||
+      !!button.querySelector('[class*="loading"], [class*="spinner"], [aria-busy="true"]')
+    );
+  }
+
+  function readVisibleOrderFeedbackText() {
+    const selectors = [
+      '[role="alert"]',
+      '[aria-live]',
+      '[class*="toast"]',
+      '[class*="Toast"]',
+      '[class*="message"]',
+      '[class*="Message"]',
+      '[class*="notification"]',
+      '[class*="Notification"]',
+    ];
+    const seen = new Set();
+    for (const el of document.querySelectorAll(selectors.join(','))) {
+      if (seen.has(el) || !isVisibleElement(el)) continue;
+      seen.add(el);
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!text || text.length > 300) continue;
+      if (/订单|委托|下单|order|failed|error|成功|失败/i.test(text)) return text;
+    }
+    return '';
+  }
+
+  function classifyOrderFeedback(text) {
+    if (!text) return 'none';
+    if (/失败|拒绝|错误|不足|过期|取消|failed|rejected|error|insufficient/i.test(text)) return 'failure';
+    if (/成功|已提交|已下单|委托已|order placed|submitted|success/i.test(text)) return 'success';
+    return 'unknown';
+  }
+
+  async function waitForOrderSubmitAcknowledgement(button, label, previousFeedback) {
+    const startedAt = Date.now();
+    let sawBusy = isSubmitButtonBusy(button);
+
+    while (Date.now() - startedAt < LADDER_SUBMIT_ACK_TIMEOUT_MS) {
+      const feedback = readVisibleOrderFeedbackText();
+      if (feedback && feedback !== previousFeedback) {
+        const feedbackType = classifyOrderFeedback(feedback);
+        if (feedbackType === 'failure') throw new Error(feedback);
+        if (feedbackType === 'success') return;
+      }
+
+      const busy = isSubmitButtonBusy(button);
+      if (busy) sawBusy = true;
+      if (sawBusy && !busy) return;
+
+      await delay(LADDER_SUBMIT_POLL_MS);
+    }
+
+    throw new Error(`未确认${label}已提交，已停止；请核对当前委托/历史成交`);
+  }
+
   async function executeLadderPlan(plan) {
     const priceInput = findPriceInput();
     const qtyInput = findQtyInput();
@@ -782,11 +851,14 @@
       }
 
       if (!CFG.SAFE_MODE) {
+        const previousFeedback = readVisibleOrderFeedbackText();
         button.click();
+        setLadderStatus(`${plan.spec.label} ${done + 1}/${plan.orders.length} 确认中`);
+        waitForTradeUiMutation({ timeoutMs: 500 });
+        await waitForOrderSubmitAcknowledgement(button, plan.spec.label, previousFeedback);
       }
       done++;
       setLadderStatus(`${plan.spec.label} ${done}/${plan.orders.length}`);
-      waitForTradeUiMutation({ timeoutMs: 350 });
       await delay(LADDER_ORDER_DELAY_MS);
     }
     return done;
