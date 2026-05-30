@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.12
+// @version      2.6.13
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -85,6 +85,7 @@
   let autoOpenLeverageTask = null;
   let lastAutoOpenLeverage = { symbol: null, at: 0 };
   let tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
+  let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
   let ladderTask = null;
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
@@ -335,20 +336,20 @@
   }
 
   function getCurrentOrderType() {
-    const activeTab = collectVisibleTradeScopeElements('[role="tab"][aria-selected="true"][data-tab-key]')
-      .find((tab) => !isTradeModeTab(tab));
+    const activeTab = findVisibleTradeScopeElement(
+      '[role="tab"][aria-selected="true"][data-tab-key]',
+      (tab) => !isTradeModeTab(tab)
+    );
     return String(activeTab?.getAttribute('data-tab-key') || 'LIMIT').toUpperCase();
   }
 
   function isPostOnlyOrderTypeActive() {
     const orderType = getCurrentOrderType();
     if (!orderType.includes('CONDITIONAL') && !orderType.includes(BINANCE_POST_ONLY_ORDER_TYPE)) return false;
-    const visibleText = collectVisibleTradeScopeElements(
-      '[role="tab"], [role="combobox"], .bn-select-field-input, .bn-select-trigger, .bn-select-field'
-    )
-      .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
-      .join(' ');
-    return /只做Maker|Post Only/i.test(visibleText);
+    return !!findVisibleTradeScopeElement(
+      '[role="tab"], [role="combobox"], .bn-select-field-input, .bn-select-trigger, .bn-select-field',
+      (el) => /只做Maker|Post Only/i.test((el.textContent || '').replace(/\s+/g, ' ').trim())
+    );
   }
 
   function getActiveTradeTab() {
@@ -434,10 +435,20 @@
 
   function invalidateTradeButtonCache() {
     tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
+    tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
   }
 
   function getTradeSearchScopes() {
+    const now = Date.now();
     const activeTab = getActiveTradeTab();
+    if (
+      tradeScopeCache.activeTab === activeTab &&
+      tradeScopeCache.expiresAt > now &&
+      tradeScopeCache.scopes.every((scope) => scope?.isConnected)
+    ) {
+      return tradeScopeCache.scopes;
+    }
+
     const scopes = [];
     const seen = new Set();
     const pushScope = (node) => {
@@ -464,29 +475,33 @@
       }
     }
 
+    tradeScopeCache = {
+      activeTab,
+      expiresAt: now + DOM_LOOKUP_CACHE_MS,
+      scopes,
+    };
     return scopes;
   }
 
-  function collectVisibleElementsInScopes(scopes, selector) {
-    const elements = [];
+  function findVisibleElementInScopes(scopes, selector, predicate = () => true) {
     const seen = new Set();
     for (const scope of scopes) {
       if (!scope) continue;
       for (const el of scope.querySelectorAll(selector)) {
         if (seen.has(el) || !isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) continue;
         seen.add(el);
-        elements.push(el);
+        if (predicate(el)) return el;
       }
     }
-    return elements;
+    return null;
   }
 
-  function collectVisibleTradeScopeElements(selector) {
-    return collectVisibleElementsInScopes(getTradeSearchScopes(), selector);
+  function findVisibleTradeScopeElement(selector, predicate) {
+    return findVisibleElementInScopes(getTradeSearchScopes(), selector, predicate);
   }
 
   function getTradeMutationRoot() {
-    return getTradeSearchScopes()[0] || findQtyFormItem(findQtyInput())?.parentElement || document.body || null;
+    return getTradeSearchScopes()[0] || findQtyFormItem(findQtyInput())?.parentElement || null;
   }
 
   function collectTradeButtons(mode) {
@@ -510,7 +525,6 @@
     };
 
     for (const scope of getTradeSearchScopes()) collectFrom(scope);
-    if (buttons.length === 0 && document.body) collectFrom(document.body);
 
     tradeButtonCache = {
       mode,
@@ -735,11 +749,11 @@
   }
 
   function findConditionalOrderTab() {
-    return collectVisibleTradeScopeElements('[role="tab"]').find((tab) => {
+    return findVisibleTradeScopeElement('[role="tab"]', (tab) => {
       const text = (tab.textContent || '').trim();
       const key = String(tab.getAttribute('data-tab-key') || '').toUpperCase();
       return key === 'CONDITIONAL' || text.includes('条件委托') || /只做Maker|Post Only/i.test(text);
-    }) || null;
+    });
   }
 
   function findConditionalSubtypeCombobox() {
@@ -764,7 +778,7 @@
   }
 
   function findPostOnlyOption() {
-    const options = document.querySelectorAll('[role="option"], [role="menuitem"], .bn-select-option, div, li');
+    const options = document.querySelectorAll('[role="option"], [role="menuitem"], .bn-select-option');
     return Array.from(options).find((el) => {
       if (!isVisibleElement(el)) return false;
       const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
@@ -1408,10 +1422,18 @@
     return { longQty, shortQty, qtySource: 'testid' };
   }
 
+  function getButtonTextSearchRoot(button) {
+    if (!button) return null;
+    const localRoot = button.closest('[class*="order"], [data-testid*="order"]');
+    if (localRoot && localRoot !== document.body) return localRoot;
+    return getTradeSearchScopes().find((scope) => scope && scope !== document.body && scope.contains(button)) || null;
+  }
+
   function readCloseableQtyNearButton(button) {
     if (!button) return null;
     const btnRect = button.getBoundingClientRect();
-    const root = button.closest('[class*="order"], [data-testid*="order"]') || document.body;
+    const root = getButtonTextSearchRoot(button);
+    if (!root) return null;
     let best = null;
     let bestScore = Infinity;
     const nodes = root.querySelectorAll('div, span, p, small');
@@ -1451,7 +1473,8 @@
   function readQtyTextNearButton(button, label) {
     if (!button) return null;
     const btnRect = button.getBoundingClientRect();
-    const root = button.closest('[class*="order"], [data-testid*="order"]') || document.body;
+    const root = getButtonTextSearchRoot(button);
+    if (!root) return null;
     let best = null;
     let bestScore = Infinity;
     const nodes = root.querySelectorAll('div, span, p, small');
@@ -1634,14 +1657,14 @@
 
   function readCurrentLeverageFromDom() {
     // 杠杆按钮通常显示 "全仓 20x" 或 "逐仓 5x"
-    const candidates = collectVisibleTradeScopeElements('button, [role="button"]');
-    for (const el of candidates) {
+    const leverageButton = findVisibleTradeScopeElement('button, [role="button"]', (el) => {
       const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (text.length > 48) continue;
-      const match = text.match(/(?:全仓|逐仓|cross|isolated)\s*(\d{1,3})\s*[xX]/i);
-      if (match) return Number(match[1]);
-    }
-    return null;
+      if (text.length > 48) return false;
+      return /(?:全仓|逐仓|cross|isolated)\s*\d{1,3}\s*[xX]/i.test(text);
+    });
+    const text = (leverageButton?.textContent || '').replace(/\s+/g, ' ').trim();
+    const match = text.match(/(?:全仓|逐仓|cross|isolated)\s*(\d{1,3})\s*[xX]/i);
+    return match ? Number(match[1]) : null;
   }
 
   function getCachedPositionState(symbol) {
@@ -2468,7 +2491,6 @@
 
   function renderPanel() {
     const panel = ensurePanel();
-    positionPanel(panel);
     const input = panel.querySelector(`#${INPUT_ID}`);
     const symbol = getCurrentSymbol() || '-';
     if (symbol !== '-' && !rulesCache[symbol]) {
