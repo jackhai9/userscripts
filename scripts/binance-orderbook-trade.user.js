@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.28
+// @version      2.6.29
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -78,6 +78,7 @@
   const DISABLED_CONTROL_OPACITY = '0.65';
   const LADDER_CONTROL_BUTTON_HEIGHT = 32;
   const LADDER_CONTROL_BUTTON_FONT_SIZE = 14;
+  const PANEL_BOTTOM_TOOLTIP_GAP = 24;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -2663,7 +2664,7 @@
   function positionPanel(panel) {
     const qtyInput = findQtyInput();
     const host = findQtyFormItem(qtyInput);
-    const spacer = ensureSpacer(host, Math.max(panel.offsetHeight || 0, 76));
+    const spacer = ensureSpacer(host, Math.max((panel.offsetHeight || 0) + PANEL_BOTTOM_TOOLTIP_GAP, 76));
     const anchorRect = spacer?.getBoundingClientRect() || qtyInput?.getBoundingClientRect() || null;
     placePanelFloating(panel, anchorRect);
   }
@@ -2708,7 +2709,7 @@
       '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #eef0f2;">',
       `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;text-align:left;font-size:13px;font-weight:600;cursor:pointer;">Maker 阶梯 ▸</button>`,
       `<div id="${LADDER_BODY_ID}" style="display:none;"></div>`,
-      `<div id="${LADDER_STATUS_ID}" style="display:none;margin-top:5px;color:#76808f;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
+      `<div id="${LADDER_STATUS_ID}" style="display:none;margin-top:6px;color:#76808f;font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
       '</div>',
     ].join('');
     document.body.appendChild(panel);
