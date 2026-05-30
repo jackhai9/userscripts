@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.19
+// @version      2.6.20
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1183,6 +1183,19 @@
     return null;
   }
 
+  function findVisibleTextElement(patterns, root = document) {
+    const candidates = Array.from(root.querySelectorAll('button, [role="button"], a, [tabindex], div, span'))
+      .filter(isVisibleElement)
+      .map((el) => ({
+        el,
+        text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+        rect: el.getBoundingClientRect(),
+      }))
+      .filter(({ text }) => patterns.some((pattern) => pattern.test(text)));
+    candidates.sort((a, b) => (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height));
+    return candidates[0]?.el || null;
+  }
+
   function getNormalizedText(el) {
     return (el?.textContent || '').replace(/\s+/g, ' ').trim();
   }
@@ -1256,7 +1269,7 @@
       'button, [role="button"], a',
       [/^全撤$/, /^全部撤单$/, /^撤销全部$/, /^Cancel All$/i],
       root
-    );
+    ) || findVisibleTextElement([/^全撤$/, /^全部撤单$/, /^撤销全部$/, /^Cancel All$/i], root);
     if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return null;
     return button;
   }
@@ -1304,8 +1317,6 @@
       setLadderStatus('未识别当前交易对');
       return;
     }
-    const ok = window.confirm(`撤销 ${symbol} 当前所有挂单？`);
-    if (!ok) return;
 
     setLadderStatus(`查找 ${symbol} 当前委托`);
     const tabReady = await activateOpenOrdersTab();
@@ -1340,15 +1351,14 @@
 
     const confirmButton = findVisibleDialogConfirmButton(dialogsBefore);
     if (confirmButton) {
-      confirmButton.click();
+      setLadderStatus(`${symbol} 撤单确认弹窗已打开`);
+      waitForTradeUiMutation({ timeoutMs: 800 });
+      return;
     } else {
       setLadderStatus(`${symbol} 撤单已点击，请核对当前委托`);
       waitForTradeUiMutation({ timeoutMs: 800 });
       return;
     }
-
-    setLadderStatus(`${symbol} 撤单已提交`);
-    waitForTradeUiMutation({ timeoutMs: 800 });
   }
 
   function pow10(exp) {
