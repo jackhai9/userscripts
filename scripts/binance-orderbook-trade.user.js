@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.7
+// @version      2.6.8
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -49,7 +49,7 @@
   const DEFAULT_LADDER_OPEN_PERCENT = 30;
   const DEFAULT_LADDER_CLOSE_PERCENT = 50;
   const DEFAULT_LADDER_LEVELS = 5;
-  const LADDER_OPEN_PERCENTS = [10, 20, 30, 40, 50, 60, 70];
+  const LADDER_OPEN_PERCENTS = [10, 20, 30, 50, 60, 70];
   const LADDER_CLOSE_PERCENTS = [20, 30, 50, 70, 100];
   const LADDER_LEVEL_OPTIONS = [3, 5, 7, 9];
   const LADDER_ORDER_DELAY_MS = 520;
@@ -1024,6 +1024,7 @@
         ladderStopRequested = false;
         scheduleRenderPanel();
       });
+    scheduleRenderPanel();
     await ladderTask;
   }
 
@@ -1034,6 +1035,7 @@
     }
     ladderStopRequested = true;
     setLadderStatus('停止中');
+    scheduleRenderPanel();
   }
 
   function findVisibleElementByText(selector, patterns, root = document) {
@@ -2028,10 +2030,15 @@
     if (body) {
       body.style.display = expanded ? 'block' : 'none';
       if (expanded) {
+        const stopDisabled = !ladderTask;
+        const stopDisabledAttrs = stopDisabled ? ' disabled aria-disabled="true"' : '';
+        const stopStyle = stopDisabled
+          ? 'border-color:#d5d9e2;background:#f5f5f5;color:#b7bdc6;cursor:not-allowed;opacity:0.65;'
+          : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;';
         body.innerHTML = [
           ...getLadderActionRows(mode, closeContext),
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
-          '<button type="button" data-ladder-stop="true" style="height:26px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:12px;cursor:pointer;">停止阶梯挂单</button>',
+          `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:26px;border:1px solid #d5d9e2;border-radius:6px;font-size:12px;${stopStyle}">停止阶梯挂单</button>`,
           '<button type="button" data-ladder-cancel-symbol="true" style="height:26px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:12px;cursor:pointer;">撤本币挂单</button>',
           '</div>',
         ].join('');
@@ -2368,6 +2375,7 @@
       }
       const stopBtn = target.closest('[data-ladder-stop]');
       if (stopBtn) {
+        if (stopBtn.disabled || stopBtn.getAttribute('aria-disabled') === 'true') return;
         stopLadder();
         return;
       }
