@@ -37,6 +37,7 @@ export function hasCurrentSymbolOpenOrdersEvidence({
   symbol,
   symbolFilterOk,
   openOrdersCount,
+  cancelAllAvailable,
 }) {
   const normalizedSymbol = String(symbol || '').toUpperCase();
   if (!normalizedSymbol) return false;
@@ -45,5 +46,8 @@ export function hasCurrentSymbolOpenOrdersEvidence({
   if (visibleSymbols.some((visibleSymbol) => visibleSymbol === normalizedSymbol)) return true;
   if (visibleSymbols.length > 0) return false;
 
-  return Boolean(symbolFilterOk && openOrdersCount !== null && openOrdersCount > 0);
+  return Boolean(symbolFilterOk && (
+    (openOrdersCount !== null && openOrdersCount > 0) ||
+    cancelAllAvailable
+  ));
 }

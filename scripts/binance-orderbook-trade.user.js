@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.0
+// @version      2.7.1
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -47,14 +47,15 @@
     scopeText,
     symbol,
     symbolFilterOk,
-    openOrdersCount
+    openOrdersCount,
+    cancelAllAvailable
   }) {
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
     if (visibleSymbols.some((visibleSymbol) => visibleSymbol === normalizedSymbol)) return true;
     if (visibleSymbols.length > 0) return false;
-    return Boolean(symbolFilterOk && openOrdersCount !== null && openOrdersCount > 0);
+    return Boolean(symbolFilterOk && (openOrdersCount !== null && openOrdersCount > 0 || cancelAllAvailable));
   }
 
   // src/binance-orderbook-trade/core/decimal.js
@@ -1398,13 +1399,29 @@
     function isOpenOrdersScopeLimitedToSymbol(root, symbol) {
       return isOpenOrdersScopeLimitedToSymbolText(root?.textContent || "", symbol);
     }
-    function hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk) {
+    function hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton) {
       return hasCurrentSymbolOpenOrdersEvidence({
         scopeText: root?.textContent || "",
         symbol,
         symbolFilterOk,
-        openOrdersCount: getOpenOrdersTabCount()
+        openOrdersCount: getOpenOrdersTabCount(),
+        cancelAllAvailable: Boolean(cancelAllButton)
       });
+    }
+    async function waitForCurrentSymbolOpenOrders(root, symbol, symbolFilterOk) {
+      const deadline = Date.now() + 1600;
+      while (Date.now() < deadline) {
+        const cancelAllButton2 = findCurrentSymbolCancelAllButton(root);
+        if (hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton2)) {
+          return { hasOrders: true, cancelAllButton: cancelAllButton2 };
+        }
+        await delay(100);
+      }
+      const cancelAllButton = findCurrentSymbolCancelAllButton(root);
+      return {
+        hasOrders: hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton),
+        cancelAllButton
+      };
     }
     async function setHideOtherSymbolChecked(root, desiredChecked) {
       const checkbox = findHideOtherSymbolCheckbox(root);
@@ -1495,13 +1512,14 @@
         setLadderStatus("未确认只显示当前币挂单");
         return;
       }
-      if (!hasCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok)) {
+      const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
+      if (!openOrdersEvidence.hasOrders) {
         await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus(`${symbol} 当前币无挂单`);
         return;
       }
-      const cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope);
+      const { cancelAllButton } = openOrdersEvidence;
       if (!cancelAllButton) {
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus("未找到当前委托全撤按钮");
