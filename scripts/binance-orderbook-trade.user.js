@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.11
+// @version      2.6.12
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -335,15 +335,17 @@
   }
 
   function getCurrentOrderType() {
-    const activeTab = document.querySelector('[role="tab"][aria-selected="true"][data-tab-key]');
+    const activeTab = collectVisibleTradeScopeElements('[role="tab"][aria-selected="true"][data-tab-key]')
+      .find((tab) => !isTradeModeTab(tab));
     return String(activeTab?.getAttribute('data-tab-key') || 'LIMIT').toUpperCase();
   }
 
   function isPostOnlyOrderTypeActive() {
     const orderType = getCurrentOrderType();
     if (!orderType.includes('CONDITIONAL') && !orderType.includes(BINANCE_POST_ONLY_ORDER_TYPE)) return false;
-    const visibleText = Array.from(document.querySelectorAll('[role="tab"], [role="combobox"], .bn-select-field-input'))
-      .filter(isVisibleElement)
+    const visibleText = collectVisibleTradeScopeElements(
+      '[role="tab"], [role="combobox"], .bn-select-field-input, .bn-select-trigger, .bn-select-field'
+    )
       .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
       .join(' ');
     return /只做Maker|Post Only/i.test(visibleText);
@@ -463,6 +465,24 @@
     }
 
     return scopes;
+  }
+
+  function collectVisibleElementsInScopes(scopes, selector) {
+    const elements = [];
+    const seen = new Set();
+    for (const scope of scopes) {
+      if (!scope) continue;
+      for (const el of scope.querySelectorAll(selector)) {
+        if (seen.has(el) || !isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) continue;
+        seen.add(el);
+        elements.push(el);
+      }
+    }
+    return elements;
+  }
+
+  function collectVisibleTradeScopeElements(selector) {
+    return collectVisibleElementsInScopes(getTradeSearchScopes(), selector);
   }
 
   function getTradeMutationRoot() {
@@ -715,8 +735,7 @@
   }
 
   function findConditionalOrderTab() {
-    const tabs = document.querySelectorAll('[role="tab"]');
-    return Array.from(tabs).find((tab) => {
+    return collectVisibleTradeScopeElements('[role="tab"]').find((tab) => {
       const text = (tab.textContent || '').trim();
       const key = String(tab.getAttribute('data-tab-key') || '').toUpperCase();
       return key === 'CONDITIONAL' || text.includes('条件委托') || /只做Maker|Post Only/i.test(text);
@@ -1084,33 +1103,49 @@
     return activeTab?.getAttribute('aria-selected') === 'true';
   }
 
-  function findCurrentSymbolCancelAllButton() {
+  function getActiveOpenOrdersScope() {
+    const tab = findVisibleElementByText('[role="tab"]', [/^当前委托/, /^Open Orders/i]);
+    if (!tab || tab.getAttribute('aria-selected') !== 'true') return null;
+    const paneId = tab.getAttribute('aria-controls');
+    const pane = paneId ? document.getElementById(paneId) : null;
+    return pane && isVisibleElement(pane) ? pane : null;
+  }
+
+  function findCurrentSymbolCancelAllButton(root) {
+    if (!root) return null;
     const el = findVisibleElementByText(
       'button, [role="button"], a, span, div',
-      [/^全撤$/, /^全部撤单$/, /^撤销全部$/, /^Cancel All$/i]
+      [/^全撤$/, /^全部撤单$/, /^撤销全部$/, /^Cancel All$/i],
+      root
     );
     return el?.closest?.('button, [role="button"], a') || el || null;
   }
 
-  function findHideOtherSymbolCheckbox() {
-    return Array.from(document.querySelectorAll('[role="checkbox"][name="hideOtherSymbol"]'))
+  function findHideOtherSymbolCheckbox(root) {
+    if (!root) return null;
+    return Array.from(root.querySelectorAll('[role="checkbox"][name="hideOtherSymbol"]'))
       .find(isVisibleElement) || null;
   }
 
-  async function ensureOpenOrdersLimitedToCurrentSymbol() {
-    const checkbox = findHideOtherSymbolCheckbox();
+  async function ensureOpenOrdersLimitedToCurrentSymbol(root) {
+    const checkbox = findHideOtherSymbolCheckbox(root);
     if (!checkbox) return false;
     if (checkbox.getAttribute('aria-checked') !== 'true') {
       checkbox.click();
       await delay(450);
     }
-    return findHideOtherSymbolCheckbox()?.getAttribute('aria-checked') === 'true';
+    return findHideOtherSymbolCheckbox(root)?.getAttribute('aria-checked') === 'true';
   }
 
-  function findVisibleDialogConfirmButton() {
-    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="Modal"]'))
+  function getVisibleDialogs() {
+    return Array.from(document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="Modal"]'))
       .filter(isVisibleElement);
-    for (const dialog of dialogs) {
+  }
+
+  function findVisibleDialogConfirmButton(dialogsBefore) {
+    const previousDialogs = dialogsBefore || new Set();
+    for (const dialog of getVisibleDialogs()) {
+      if (previousDialogs.has(dialog)) continue;
       const button = findVisibleElementByText(
         'button, [role="button"]',
         [/^确认$/, /^确定$/, /^Confirm$/i],
@@ -1136,18 +1171,24 @@
       setLadderStatus('当前委托页未就绪或交易对已变化');
       return;
     }
-    const limitedToCurrentSymbol = await ensureOpenOrdersLimitedToCurrentSymbol();
+    const openOrdersScope = getActiveOpenOrdersScope();
+    if (!openOrdersScope) {
+      setLadderStatus('未定位到当前委托面板');
+      return;
+    }
+    const limitedToCurrentSymbol = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope);
     if (!limitedToCurrentSymbol) {
       setLadderStatus('未确认只显示当前币挂单');
       return;
     }
 
-    const cancelAllButton = findCurrentSymbolCancelAllButton();
+    const cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope);
     if (!cancelAllButton) {
       setLadderStatus('未找到当前委托全撤按钮');
       return;
     }
 
+    const dialogsBefore = new Set(getVisibleDialogs());
     cancelAllButton.click();
     await delay(300);
     if (getCurrentSymbol() !== symbol) {
@@ -1155,7 +1196,7 @@
       return;
     }
 
-    const confirmButton = findVisibleDialogConfirmButton();
+    const confirmButton = findVisibleDialogConfirmButton(dialogsBefore);
     if (confirmButton) {
       confirmButton.click();
     } else {
@@ -1593,11 +1634,8 @@
 
   function readCurrentLeverageFromDom() {
     // 杠杆按钮通常显示 "全仓 20x" 或 "逐仓 5x"
-    const candidates = document.querySelectorAll(
-      'button, [role="button"]'
-    );
+    const candidates = collectVisibleTradeScopeElements('button, [role="button"]');
     for (const el of candidates) {
-      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) continue;
       const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
       if (text.length > 48) continue;
       const match = text.match(/(?:全仓|逐仓|cross|isolated)\s*(\d{1,3})\s*[xX]/i);
