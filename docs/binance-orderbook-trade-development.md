@@ -184,3 +184,5 @@ Then verify:
 - `@version` was bumped for behavior changes
 - install URL remains unchanged
 - README still points users to the generated single-file userscript
+- release reaches `main` through a GitHub PR merged with `gh pr merge`
+- do not publish by locally merging into `main` and direct-pushing `main`

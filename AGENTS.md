@@ -30,6 +30,8 @@
 - 修改 `src/binance-orderbook-trade/**` 且改变行为时，必须同步 bump 生成 userscript 头部 `@version`。
 - 修改尚未迁移的 `scripts/` 下任意 userscript，必须同步 bump 该文件头部 `@version`。
 - 保留 `@updateURL` 和 `@downloadURL` 指向真源 raw 地址。
+- 发布到 `main` 必须通过 GitHub PR 合并；不要在本地 merge 到 `main` 后直接 push `main`。
+- 如果用户要求“发布”“上线”或“合并到 main”，默认流程是 push feature branch、创建 PR、等待检查通过，然后用 `gh pr merge` 合并。
 - 改 Binance API 相关逻辑时，只信官方文档和现网响应，不根据页面偶然行为猜语义。
 - 涉及交易规则时，按当前 `symbol` 的确定性数据计算，不允许用旧 DOM 状态或无 symbol 语义的值去猜。
 - 涉及定时器、重试、缓存、前后台切换时，优先保证时间语义闭合，再考虑 UI 表现。
