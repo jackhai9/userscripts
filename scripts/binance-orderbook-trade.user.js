@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.17
+// @version      2.6.18
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1183,18 +1183,54 @@
     return null;
   }
 
+  function getNormalizedText(el) {
+    return (el?.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function isOpenOrdersTab(tab) {
+    const text = getNormalizedText(tab);
+    return /^当前委托(?:\(|\s|$)/.test(text) || /^Open Orders(?:\(|\s|$)/i.test(text);
+  }
+
+  function isAccountOrdersTab(tab) {
+    let node = tab.parentElement;
+    let depth = 0;
+    while (node && node !== document.body && depth < 5) {
+      const tabTexts = Array.from(node.querySelectorAll('[role="tab"]'))
+        .filter(isVisibleElement)
+        .map(getNormalizedText)
+        .join(' ');
+      if (
+        /(仓位|Positions)/i.test(tabTexts) &&
+        /(当前委托|Open Orders)/i.test(tabTexts) &&
+        /(历史委托|Order History|历史成交|Trade History|资金流水|Transaction)/i.test(tabTexts)
+      ) {
+        return true;
+      }
+      node = node.parentElement;
+      depth += 1;
+    }
+    return false;
+  }
+
+  function findOpenOrdersTab() {
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
+      .filter((tab) => isVisibleElement(tab) && isOpenOrdersTab(tab));
+    return tabs.find(isAccountOrdersTab) || tabs[0] || null;
+  }
+
   async function activateOpenOrdersTab() {
-    const tab = findVisibleElementByText('[role="tab"]', [/^当前委托/, /^Open Orders/i]);
+    const tab = findOpenOrdersTab();
     if (!tab) return false;
     if (tab.getAttribute('aria-selected') === 'true') return true;
     tab.click();
     await delay(350);
-    const activeTab = findVisibleElementByText('[role="tab"]', [/^当前委托/, /^Open Orders/i]);
+    const activeTab = findOpenOrdersTab();
     return activeTab?.getAttribute('aria-selected') === 'true';
   }
 
   function getActiveOpenOrdersScope() {
-    const tab = findVisibleElementByText('[role="tab"]', [/^当前委托/, /^Open Orders/i]);
+    const tab = findOpenOrdersTab();
     if (!tab || tab.getAttribute('aria-selected') !== 'true') return null;
     const paneId = tab.getAttribute('aria-controls');
     const pane = paneId ? document.getElementById(paneId) : null;
