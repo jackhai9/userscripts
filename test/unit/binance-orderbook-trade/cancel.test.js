@@ -48,6 +48,23 @@ test('open-orders tab count is evidence only after symbol filter is confirmed', 
   }), false);
 });
 
+test('enabled cancel-all is evidence after current-symbol filter is confirmed', () => {
+  assert.equal(hasCurrentSymbolOpenOrdersEvidence({
+    scopeText: '隐藏其他合约 当前委托 价格 数量',
+    symbol: 'HYPEUSDT',
+    symbolFilterOk: true,
+    openOrdersCount: null,
+    cancelAllAvailable: true,
+  }), true);
+  assert.equal(hasCurrentSymbolOpenOrdersEvidence({
+    scopeText: '隐藏其他合约 当前委托 价格 数量',
+    symbol: 'HYPEUSDT',
+    symbolFilterOk: false,
+    openOrdersCount: null,
+    cancelAllAvailable: true,
+  }), false);
+});
+
 test('zero tab count or other visible symbols do not authorize current-symbol cancel', () => {
   assert.equal(hasCurrentSymbolOpenOrdersEvidence({
     scopeText: '隐藏其他合约 当前委托',
@@ -60,6 +77,13 @@ test('zero tab count or other visible symbols do not authorize current-symbol ca
     symbol: 'HYPEUSDT',
     symbolFilterOk: true,
     openOrdersCount: 2,
+  }), false);
+  assert.equal(hasCurrentSymbolOpenOrdersEvidence({
+    scopeText: 'BTCUSDT 永续',
+    symbol: 'HYPEUSDT',
+    symbolFilterOk: true,
+    openOrdersCount: null,
+    cancelAllAvailable: true,
   }), false);
 });
 
