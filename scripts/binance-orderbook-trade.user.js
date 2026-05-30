@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.16
+// @version      2.6.17
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -718,13 +718,44 @@
     return getOrderbookPrices(side, 1)[0] || null;
   }
 
+  function inferOrderbookDisplayStep(prices) {
+    let displayStep = null;
+    for (let i = 1; i < prices.length; i += 1) {
+      const prev = prices[i - 1];
+      const current = prices[i];
+      let diff = subtractDecimalStrings(current, prev) || subtractDecimalStrings(prev, current);
+      diff = normalizeDecimalString(diff);
+      if (!diff || !isPositiveDecimalString(diff)) continue;
+      if (!displayStep || compareDecimalStrings(diff, displayStep) < 0) displayStep = diff;
+    }
+    return displayStep;
+  }
+
+  function calculateDisplayStepPrice(bestPrice, displayStep, side, offsetRows) {
+    let price = bestPrice;
+    for (let i = 0; i < offsetRows; i += 1) {
+      price = side === 'ASK'
+        ? addDecimalStrings(price, displayStep)
+        : subtractDecimalStrings(price, displayStep);
+      if (!price || !isPositiveDecimalString(price)) return null;
+    }
+    return price;
+  }
+
   function getBufferedMakerPrices(side, levels, ladderStep = DEFAULT_LADDER_STEP) {
     const step = Math.max(LADDER_STEP_MIN, Math.min(Number(ladderStep) || DEFAULT_LADDER_STEP, LADDER_STEP_MAX));
     const requiredDepth = LADDER_MAKER_BUFFER_LEVELS + (levels - 1) * step + 1;
     const prices = getOrderbookPrices(side, requiredDepth);
+    const bestPrice = prices[0] || null;
+    const displayStep = inferOrderbookDisplayStep(prices);
     const result = [];
     for (let i = 0; i < levels; i += 1) {
-      const price = prices[LADDER_MAKER_BUFFER_LEVELS + i * step];
+      const offsetRows = LADDER_MAKER_BUFFER_LEVELS + i * step;
+      const price = prices[offsetRows] || (
+        bestPrice && displayStep
+          ? calculateDisplayStepPrice(bestPrice, displayStep, side, offsetRows)
+          : null
+      );
       if (price) result.push(price);
     }
     return result;
@@ -1325,6 +1356,27 @@
     const rightDigits = right.digits * pow10(scale - right.scale);
     if (leftDigits === rightDigits) return 0;
     return leftDigits > rightDigits ? 1 : -1;
+  }
+
+  function addDecimalStrings(a, b) {
+    const left = parseDecimalString(a);
+    const right = parseDecimalString(b);
+    if (!left || !right) return null;
+    const scale = Math.max(left.scale, right.scale);
+    const leftDigits = left.digits * pow10(scale - left.scale);
+    const rightDigits = right.digits * pow10(scale - right.scale);
+    return formatDecimalParts(leftDigits + rightDigits, scale);
+  }
+
+  function subtractDecimalStrings(a, b) {
+    const left = parseDecimalString(a);
+    const right = parseDecimalString(b);
+    if (!left || !right) return null;
+    const scale = Math.max(left.scale, right.scale);
+    const leftDigits = left.digits * pow10(scale - left.scale);
+    const rightDigits = right.digits * pow10(scale - right.scale);
+    if (leftDigits < rightDigits) return null;
+    return formatDecimalParts(leftDigits - rightDigits, scale);
   }
 
   function maxDecimalString(a, b) {
