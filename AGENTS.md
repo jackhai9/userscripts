@@ -2,7 +2,10 @@
 
 ## Scope
 
-- 本仓库是真源仓库，脚本源码只放在 `scripts/*.user.js`。
+- 本仓库是真源仓库。
+- `src/binance-orderbook-trade/` 是 `scripts/binance-orderbook-trade.user.js` 的开发真源。
+- `scripts/binance-orderbook-trade.user.js` 是生成后的单文件安装/更新入口，必须保持可读、非压缩、非混淆。
+- 其它 userscript 在迁移前仍以 `scripts/*.user.js` 为真源。
 - `README.md` 只维护安装入口、真源说明和发布约束，不承载开发细节。
 - 非真源仓库不复制脚本源码，只放安装链接。
 
@@ -14,6 +17,8 @@
   Binance 合约交易数据面板，核心风险在 5 分钟调度、缓存回退、前后台切换。
 - `scripts/auto_refresh.user.js`
   定时刷新页面，核心风险在 URL 匹配、时间计算、启停行为。
+- `docs/binance-orderbook-trade-development.md`
+  Binance 订单簿脚本开发手册，记录源码/产物关系、模块边界、测试、构建、发版和手测矩阵。
 - `skills/userscript-review/SKILL.md`
   代码审查骨架。
 - `skills/userscript-release/SKILL.md`
@@ -21,7 +26,9 @@
 
 ## Hard Rules
 
-- 修改 `scripts/` 下任意 userscript，必须同步 bump 该文件头部 `@version`。
+- 修改 `src/binance-orderbook-trade/**` 后必须运行 `npm run build:binance-orderbook-trade` 生成 `scripts/binance-orderbook-trade.user.js`。
+- 修改 `src/binance-orderbook-trade/**` 且改变行为时，必须同步 bump 生成 userscript 头部 `@version`。
+- 修改尚未迁移的 `scripts/` 下任意 userscript，必须同步 bump 该文件头部 `@version`。
 - 保留 `@updateURL` 和 `@downloadURL` 指向真源 raw 地址。
 - 改 Binance API 相关逻辑时，只信官方文档和现网响应，不根据页面偶然行为猜语义。
 - 涉及交易规则时，按当前 `symbol` 的确定性数据计算，不允许用旧 DOM 状态或无 symbol 语义的值去猜。
@@ -30,7 +37,8 @@
 
 ## Validation
 
-- 最低门槛：对改动过的 userscript 跑 `node --check <file>`。
+- `binance-orderbook-trade` 最低门槛：`npm test`、`npm run build:binance-orderbook-trade`、`npm run check:binance-orderbook-trade`。
+- 尚未迁移的 userscript 最低门槛：对改动过的 userscript 跑 `node --check <file>`。
 - 如果改动触及 Binance 数据调度或下单规则，必须补手测结论；没测的路径要明确写出来。
 - review 输出优先列 findings，再给 summary。
 

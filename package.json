@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:binance-orderbook-trade": "node scripts/binance-orderbook-trade-build.mjs",
+    "check:binance-orderbook-trade": "node --check scripts/binance-orderbook-trade.user.js",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "jsdom": "^29.1.1"
+  }
+}

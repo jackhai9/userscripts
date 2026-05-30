@@ -1,0 +1,27 @@
+<main>
+  <section id="trade-form-tabs">
+    <div role="tab" aria-selected="true" aria-controls="right-pane">当前委托(99)</div>
+    <div role="tab">Open Orders</div>
+  </section>
+  <section id="right-pane">
+    <button>开多</button>
+  </section>
+
+  <section id="account-orders">
+    <div class="account-tab-group">
+      <div role="tab" aria-selected="false">仓位</div>
+      <div role="tab" aria-selected="true" aria-controls="wrong-pane">当前委托(2)</div>
+      <div role="tab" aria-selected="false">历史委托</div>
+      <div role="tab" aria-selected="false">历史成交</div>
+      <div role="tab" aria-selected="false">资金流水</div>
+    </div>
+    <div id="wrong-pane">
+      <p>右侧表单复用 pane id，但没有当前委托控件</p>
+    </div>
+    <div id="bottom-open-orders">
+      <label role="checkbox" name="hideOtherSymbol" aria-checked="true">隐藏其他合约</label>
+      <button>全撤</button>
+      <div>HYPEUSDT 永续</div>
+    </div>
+  </section>
+</main>
