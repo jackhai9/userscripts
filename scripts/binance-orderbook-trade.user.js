@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.22
+// @version      2.6.23
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1282,28 +1282,51 @@
       .find(isVisibleElement) || null;
   }
 
+  function getCheckboxCheckedState(checkbox) {
+    if (!checkbox) return null;
+    const ariaChecked = checkbox.getAttribute('aria-checked');
+    if (ariaChecked === 'true') return true;
+    if (ariaChecked === 'false') return false;
+    if (typeof checkbox.checked === 'boolean') return checkbox.checked;
+    const input = checkbox.matches('input[type="checkbox"]')
+      ? checkbox
+      : checkbox.querySelector('input[type="checkbox"]');
+    if (input && typeof input.checked === 'boolean') return input.checked;
+    if (checkbox.hasAttribute('checked')) return true;
+    return null;
+  }
+
+  async function setHideOtherSymbolChecked(root, desiredChecked) {
+    const checkbox = findHideOtherSymbolCheckbox(root);
+    if (!checkbox) return false;
+    const currentChecked = getCheckboxCheckedState(checkbox);
+    if (currentChecked === desiredChecked) return true;
+    if (currentChecked === null) return false;
+    checkbox.click();
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline) {
+      await delay(80);
+      const nextChecked = getCheckboxCheckedState(findHideOtherSymbolCheckbox(root));
+      if (nextChecked === desiredChecked) return true;
+    }
+    return false;
+  }
+
   async function ensureOpenOrdersLimitedToCurrentSymbol(root) {
     const checkbox = findHideOtherSymbolCheckbox(root);
     if (!checkbox) return { ok: false, originalChecked: null };
-    const originalChecked = checkbox.getAttribute('aria-checked') === 'true';
-    if (!originalChecked) {
-      checkbox.click();
-      await delay(450);
-    }
+    const originalChecked = getCheckboxCheckedState(checkbox);
+    if (originalChecked === null) return { ok: false, originalChecked };
+    const ok = originalChecked || await setHideOtherSymbolChecked(root, true);
     return {
-      ok: findHideOtherSymbolCheckbox(root)?.getAttribute('aria-checked') === 'true',
+      ok,
       originalChecked,
     };
   }
 
   async function restoreOpenOrdersSymbolFilter(root, originalChecked) {
     if (originalChecked !== false) return true;
-    const checkbox = findHideOtherSymbolCheckbox(root);
-    if (!checkbox) return false;
-    if (checkbox.getAttribute('aria-checked') !== 'true') return true;
-    checkbox.click();
-    await delay(250);
-    return findHideOtherSymbolCheckbox(root)?.getAttribute('aria-checked') !== 'true';
+    return setHideOtherSymbolChecked(root, false);
   }
 
   function getVisibleDialogs() {
