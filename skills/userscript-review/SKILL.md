@@ -28,6 +28,7 @@ Check these first:
 - 规则未 ready 时是否拒绝下单，而不是 fallback 去猜
 - 前后台切换、面板渲染、observer、兜底轮询是否引入竞态
 - Binance UI 操作是否按业务区域收窄，而不是全局按文本匹配同名 tab 或按钮
+- 使用 `aria-controls` / pane `id` 定位 Binance 面板时，是否校验 pane 内存在目标业务控件；不要假设 `bn-tab-pane-*` id 全局唯一
 - `当前委托`、`隐藏其他合约`、`全撤` 等控件是否用现网 DOM / accessibility tree 验证过语义；不要假设可见文字一定在 `button`
 - 撤单类破坏性动作是否只打开 Binance 原生确认弹窗，不自动点击原生确认
 - 临时改动 `隐藏其他合约` 等页面筛选状态时，是否记录原值并在原生流程结束后恢复；不要覆盖用户原本偏好；勾选判断不能只依赖 `aria-checked`，必要时要用可见委托行的合约代码兜底确认
