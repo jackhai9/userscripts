@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.10
+// @version      2.6.11
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -346,7 +346,7 @@
       .filter(isVisibleElement)
       .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
       .join(' ');
-    return /只做Maker|Post Only/i.test(visibleText) || isPersistedPostOnlyOrderType();
+    return /只做Maker|Post Only/i.test(visibleText);
   }
 
   function getActiveTradeTab() {
@@ -846,6 +846,13 @@
     const base = spec.mode === 'OPEN'
       ? await readOpenBaseQtyForLadder(spec, prices[0])
       : readCloseBaseQtyForLadder(spec);
+    if (
+      getCurrentSymbol() !== startSymbol ||
+      getActiveTradeMode() !== spec.mode ||
+      !isPostOnlyOrderTypeActive()
+    ) {
+      throw new Error('读取可用数量后交易上下文已变化，已停止');
+    }
     const baseQty = normalizeDecimalString(base?.qty || '');
     if (!baseQty || !isPositiveDecimalString(baseQty)) {
       throw new Error(`未读取到可用${spec.mode === 'OPEN' ? '可开' : '可平'}数量`);
@@ -888,6 +895,12 @@
     if (plan.spec.orderSide === 'SELL' && cmp <= 0) {
       throw new Error(`盘口已移动，卖单 ${price} 可能吃单，对手买一 ${oppositePrice}`);
     }
+  }
+
+  function assertLadderExecutionContext(plan) {
+    if (getCurrentSymbol() !== plan.symbol) throw new Error('执行中交易对变化，已停止');
+    if (getActiveTradeMode() !== plan.spec.mode) throw new Error('执行中开仓/平仓模式变化，已停止');
+    if (!isPostOnlyOrderTypeActive()) throw new Error('执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试');
   }
 
   function assertSubmittedPriceMatchesClickedPrice(clickedPrice, submittedPrice) {
@@ -974,12 +987,9 @@
     let done = 0;
     for (const order of plan.orders) {
       if (ladderStopRequested) break;
-      if (getCurrentSymbol() !== plan.symbol) throw new Error('执行中交易对变化，已停止');
-      if (getActiveTradeMode() !== plan.spec.mode) {
-        const ok = await activateTradeMode(plan.spec.mode);
-        if (!ok) throw new Error('执行中切回开仓/平仓失败');
-      }
+      assertLadderExecutionContext(plan);
       if (!(await ensurePostOnlyOrderType())) throw new Error('执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试');
+      assertLadderExecutionContext(plan);
       assertLadderMakerPrice(plan, order.price);
 
       const currentPriceInput = findPriceInput();
@@ -992,6 +1002,8 @@
       await delay(120);
       const submittedPrice = normalizeDecimalString(currentPriceInput.value);
       if (!submittedPrice) throw new Error('执行中价格输入框值无效');
+      assertSubmittedPriceMatchesClickedPrice(order.price, submittedPrice);
+      assertLadderExecutionContext(plan);
       assertLadderMakerPrice(plan, submittedPrice);
 
       const button = plan.spec.buttonGetter();
@@ -1068,7 +1080,8 @@
     if (tab.getAttribute('aria-selected') === 'true') return true;
     tab.click();
     await delay(350);
-    return true;
+    const activeTab = findVisibleElementByText('[role="tab"]', [/^当前委托/, /^Open Orders/i]);
+    return activeTab?.getAttribute('aria-selected') === 'true';
   }
 
   function findCurrentSymbolCancelAllButton() {
@@ -1091,7 +1104,7 @@
       checkbox.click();
       await delay(450);
     }
-    return checkbox.getAttribute('aria-checked') === 'true';
+    return findHideOtherSymbolCheckbox()?.getAttribute('aria-checked') === 'true';
   }
 
   function findVisibleDialogConfirmButton() {
@@ -1105,7 +1118,7 @@
       );
       if (button) return button;
     }
-    return findVisibleElementByText('button, [role="button"]', [/^确认$/, /^确定$/, /^Confirm$/i]);
+    return null;
   }
 
   async function cancelCurrentSymbolOpenOrders() {
@@ -1118,7 +1131,11 @@
     if (!ok) return;
 
     setLadderStatus(`查找 ${symbol} 当前委托`);
-    await activateOpenOrdersTab();
+    const tabReady = await activateOpenOrdersTab();
+    if (!tabReady || getCurrentSymbol() !== symbol) {
+      setLadderStatus('当前委托页未就绪或交易对已变化');
+      return;
+    }
     const limitedToCurrentSymbol = await ensureOpenOrdersLimitedToCurrentSymbol();
     if (!limitedToCurrentSymbol) {
       setLadderStatus('未确认只显示当前币挂单');
@@ -1133,10 +1150,17 @@
 
     cancelAllButton.click();
     await delay(300);
+    if (getCurrentSymbol() !== symbol) {
+      setLadderStatus('确认撤单前交易对已变化');
+      return;
+    }
 
     const confirmButton = findVisibleDialogConfirmButton();
     if (confirmButton) {
       confirmButton.click();
+    } else {
+      setLadderStatus('未找到撤单确认弹窗');
+      return;
     }
 
     setLadderStatus(`${symbol} 撤单已提交`);
@@ -1663,10 +1687,10 @@
     if (!symbol) return;
 
     const positionState = getCachedPositionState(symbol);
-    // unknown（无缓存）：DOM 持仓列表未找到 symbol 时视为无仓，允许重置
-    // has_position：确认有仓，跳过
+    // Only confirmed flat is allowed to reset leverage. Unknown means the
+    // position panel/cache is not reliable enough for a state-changing call.
     if (positionState.status === 'has_position') return;
-    if (positionState.status !== 'flat' && positionState.status !== 'unknown') return;
+    if (positionState.status !== 'flat') return;
     if (!isStableOpenContext(symbol) && triggerSource === 'mutation') return;
 
     const now = Date.now();
@@ -2667,6 +2691,25 @@
       await delay(SINGLE_ORDER_QTY_SYNC_DELAY_MS);
       const submittedPriceInput = findPriceInput() || priceInput;
       assertSubmittedPriceMatchesClickedPrice(clickedPrice, submittedPriceInput.value);
+
+      const currentSymbol = getCurrentSymbol();
+      if (currentSymbol !== qtyPlan.symbol) {
+        throw new Error(`交易对已变化，点击时 ${qtyPlan.symbol}，当前 ${currentSymbol || '-'}`);
+      }
+      if (getActiveTradeMode() !== action.mode) {
+        throw new Error('开仓/平仓模式已变化，已停止提交');
+      }
+      const currentAction = resolveTradeAction();
+      if (
+        !currentAction ||
+        currentAction.mode !== action.mode ||
+        currentAction.side !== action.side ||
+        !currentAction.button ||
+        currentAction.button.disabled ||
+        currentAction.button.getAttribute('aria-disabled') === 'true'
+      ) {
+        throw new Error(`提交前${action.side}按钮状态已变化，已停止`);
+      }
       log(
         '已填价格/数量',
         clickedPrice,
@@ -2700,7 +2743,7 @@
         return;
       }
 
-      action.button.click();
+      currentAction.button.click();
       scheduleRenderPanel();
       waitForTradeUiMutation({ timeoutMs: 400 });
       log(`已点击${action.side}`);
