@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.1
+// @version      2.7.3
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -26,13 +26,42 @@
     const match = /(?:当前\s*委托|Open Orders)\s*\(?\s*(\d+)\s*\)?/i.exec(normalized);
     return match ? Number(match[1]) : null;
   }
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function normalizeContractCandidate(candidate, separator) {
+    const normalized = String(candidate || "").toUpperCase();
+    if (separator === ":") {
+      const timeJoinedMatch = /^\d{1,2}([A-Z][A-Z0-9]*USDT)$/.exec(normalized);
+      if (timeJoinedMatch) return timeJoinedMatch[1];
+    }
+    return normalized;
+  }
+  function isTimestampJoinedCandidate(candidate, symbol) {
+    const normalizedCandidate = String(candidate || "").toUpperCase();
+    const normalizedSymbol = String(symbol || "").toUpperCase();
+    if (!normalizedCandidate || !normalizedSymbol || !normalizedCandidate.endsWith(normalizedSymbol)) {
+      return false;
+    }
+    const prefix = normalizedCandidate.slice(0, -normalizedSymbol.length);
+    return /^\d{1,2}$/.test(prefix);
+  }
+  function hasVisibleContractText(text, symbol) {
+    const normalizedSymbol = String(symbol || "").toUpperCase();
+    if (!normalizedSymbol) return false;
+    const symbolPattern = escapeRegExp(normalizedSymbol);
+    return new RegExp(`(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*永续`, "i").test(String(text || ""));
+  }
   function readVisibleOpenOrderSymbolsText(text) {
     const normalized = String(text || "").toUpperCase();
     const symbols = /* @__PURE__ */ new Set();
-    const pattern = /\b([A-Z0-9]{2,30}USDT)\s*永续/g;
+    const pattern = /([A-Z0-9]{2,30}USDT)\s*永续/g;
     let match = pattern.exec(normalized);
     while (match) {
-      symbols.add(match[1]);
+      const separator = normalized[match.index - 1] || "";
+      if (!/[A-Z0-9]/.test(separator)) {
+        symbols.add(normalizeContractCandidate(match[1], separator));
+      }
       match = pattern.exec(normalized);
     }
     return Array.from(symbols);
@@ -41,7 +70,7 @@
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const visibleSymbols = readVisibleOpenOrderSymbolsText(text);
-    return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol);
+    return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol || hasVisibleContractText(text, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol));
   }
   function hasCurrentSymbolOpenOrdersEvidence({
     scopeText,
@@ -53,7 +82,7 @@
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
-    if (visibleSymbols.some((visibleSymbol) => visibleSymbol === normalizedSymbol)) return true;
+    if (visibleSymbols.some((visibleSymbol) => visibleSymbol === normalizedSymbol || hasVisibleContractText(scopeText, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol))) return true;
     if (visibleSymbols.length > 0) return false;
     return Boolean(symbolFilterOk && (openOrdersCount !== null && openOrdersCount > 0 || cancelAllAvailable));
   }
@@ -281,6 +310,16 @@
   function containsNestedAccountOrdersGroupOutsideTab(node, tab, isVisibleElement) {
     return Array.from(node.children).some((child) => !child.contains(tab) && hasAccountOrdersTabs(child, isVisibleElement));
   }
+  function hasOpenOrdersPanelText(node) {
+    return /(基础单|条件委托|Open Orders|成交数量|只减仓|只做Maker|生效时间|追单)/i.test(getNormalizedText(node));
+  }
+  function hasOpenOrdersPanelEvidence(node, {
+    findHideOtherSymbolCheckbox,
+    findCurrentSymbolCancelAllButton
+  }) {
+    if (findCurrentSymbolCancelAllButton(node)) return true;
+    return Boolean(findHideOtherSymbolCheckbox(node) && hasOpenOrdersPanelText(node));
+  }
   function isAccountOrdersTab(tab, { isVisibleElement }) {
     let node = tab.parentElement;
     let depth = 0;
@@ -326,21 +365,25 @@
     const doc = root.ownerDocument || root;
     const paneId = tab.getAttribute("aria-controls");
     const pane = paneId ? doc.getElementById(paneId) : null;
-    if (pane && isVisibleElement(pane) && (findHideOtherSymbolCheckbox(pane) || findCurrentSymbolCancelAllButton(pane))) {
+    if (pane && isVisibleElement(pane) && hasOpenOrdersPanelEvidence(pane, {
+      findHideOtherSymbolCheckbox,
+      findCurrentSymbolCancelAllButton
+    })) {
       return pane;
     }
     let node = tab.parentElement;
-    let fallback = null;
     let depth = 0;
     while (node && node !== doc.body && depth < 8) {
-      const hasCheckbox = !!findHideOtherSymbolCheckbox(node);
-      const hasCancelAll = !!findCurrentSymbolCancelAllButton(node);
-      if (hasCheckbox && hasCancelAll) return node;
-      if (!fallback && (hasCheckbox || hasCancelAll)) fallback = node;
+      if (hasOpenOrdersPanelEvidence(node, {
+        findHideOtherSymbolCheckbox,
+        findCurrentSymbolCancelAllButton
+      })) {
+        return node;
+      }
       node = node.parentElement;
       depth += 1;
     }
-    return fallback;
+    return null;
   }
 
   // src/binance-orderbook-trade/dom/trade-form.js
@@ -1368,6 +1411,15 @@
         findCurrentSymbolCancelAllButton
       });
     }
+    async function waitForActiveOpenOrdersScope() {
+      const deadline = Date.now() + 2200;
+      while (Date.now() < deadline) {
+        const scope = getActiveOpenOrdersScope2();
+        if (scope) return scope;
+        await delay(100);
+      }
+      return getActiveOpenOrdersScope2();
+    }
     function findCurrentSymbolCancelAllButton(root) {
       if (!root) return null;
       const button = findVisibleElementByText(
@@ -1500,7 +1552,7 @@
         setLadderStatus("当前委托页未就绪或交易对已变化");
         return;
       }
-      const openOrdersScope = getActiveOpenOrdersScope2();
+      const openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope) {
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus("未定位到当前委托面板");

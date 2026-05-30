@@ -41,3 +41,29 @@ test('returns no active open-orders scope when current-orders tab is not active'
 
   assert.equal(scope, null);
 });
+
+test('does not treat stale position content as active open-orders scope', () => {
+  const { window } = loadFixtureDom(`
+    <section id="account-orders">
+      <div class="account-tab-group">
+        <div role="tab" aria-selected="false">仓位(1)</div>
+        <div role="tab" aria-selected="true">当前委托(9)</div>
+        <div role="tab" aria-selected="false">历史委托</div>
+        <div role="tab" aria-selected="false">历史成交</div>
+        <div role="tab" aria-selected="false">资金流水</div>
+      </div>
+      <div id="stale-position-pane">
+        <label role="checkbox" name="hideOtherSymbol" aria-checked="false">隐藏其他合约</label>
+        <button>市价全部平仓</button>
+        <div>HYPEUSDT 永续 3x -5.64 HYPE</div>
+      </div>
+    </section>
+  `);
+  const scope = getActiveOpenOrdersScope(window.document, {
+    isVisibleElement,
+    findHideOtherSymbolCheckbox: (root) => root.querySelector('[role="checkbox"][name="hideOtherSymbol"]'),
+    findCurrentSymbolCancelAllButton: (root) => Array.from(root.querySelectorAll('button')).find((button) => button.textContent.trim() === '全撤') || null,
+  });
+
+  assert.equal(scope, null);
+});
