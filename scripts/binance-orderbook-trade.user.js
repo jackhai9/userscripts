@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.27
+// @version      2.6.28
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1228,10 +1228,40 @@
     return false;
   }
 
+  function getAccountOrdersTabGroup(tab) {
+    let node = tab?.parentElement;
+    let depth = 0;
+    while (node && node !== document.body && depth < 5) {
+      const tabTexts = Array.from(node.querySelectorAll('[role="tab"]'))
+        .filter(isVisibleElement)
+        .map(getNormalizedText)
+        .join(' ');
+      if (
+        /(仓位|Positions)/i.test(tabTexts) &&
+        /(当前委托|Open Orders)/i.test(tabTexts) &&
+        /(历史委托|Order History|历史成交|Trade History|资金流水|Transaction)/i.test(tabTexts)
+      ) {
+        return node;
+      }
+      node = node.parentElement;
+      depth += 1;
+    }
+    return null;
+  }
+
   function findOpenOrdersTab() {
     const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
       .filter((tab) => isVisibleElement(tab) && isOpenOrdersTab(tab));
     return tabs.find(isAccountOrdersTab) || tabs[0] || null;
+  }
+
+  function findSelectedAccountOrdersTab() {
+    const openOrdersTab = findOpenOrdersTab();
+    if (!openOrdersTab) return null;
+    const tabGroup = getAccountOrdersTabGroup(openOrdersTab);
+    if (!tabGroup) return null;
+    return Array.from(tabGroup.querySelectorAll('[role="tab"][aria-selected="true"]'))
+      .filter(isVisibleElement)[0] || null;
   }
 
   async function activateOpenOrdersTab() {
@@ -1242,6 +1272,14 @@
     await delay(350);
     const activeTab = findOpenOrdersTab();
     return activeTab?.getAttribute('aria-selected') === 'true';
+  }
+
+  async function restoreAccountOrdersTab(previousTab) {
+    if (!previousTab || !previousTab.isConnected || !isVisibleElement(previousTab)) return true;
+    if (previousTab.getAttribute('aria-selected') === 'true') return true;
+    previousTab.click();
+    await delay(250);
+    return previousTab.getAttribute('aria-selected') === 'true';
   }
 
   function getActiveOpenOrdersScope() {
@@ -1399,30 +1437,36 @@
       return;
     }
 
+    const previousAccountOrdersTab = findSelectedAccountOrdersTab();
     setLadderStatus(`查找 ${symbol} 当前委托`);
     const tabReady = await activateOpenOrdersTab();
     if (!tabReady || getCurrentSymbol() !== symbol) {
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('当前委托页未就绪或交易对已变化');
       return;
     }
     const openOrdersScope = getActiveOpenOrdersScope();
     if (!openOrdersScope) {
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('未定位到当前委托面板');
       return;
     }
     const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
     if (!symbolFilter.ok) {
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('未确认只显示当前币挂单');
       return;
     }
     if (!readVisibleOpenOrderSymbols(openOrdersScope).some((visibleSymbol) => visibleSymbol === symbol.toUpperCase())) {
       await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus(`${symbol} 当前币无挂单`);
       return;
     }
 
     const cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope);
     if (!cancelAllButton) {
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('未找到当前委托全撤按钮');
       return;
     }
@@ -1431,6 +1475,7 @@
     cancelAllButton.click();
     await delay(300);
     if (getCurrentSymbol() !== symbol) {
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('确认撤单前交易对已变化');
       return;
     }
@@ -1442,9 +1487,11 @@
       await waitForDialogToClose(confirm.dialog);
       const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
       if (!restored) {
+        await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus('未能恢复隐藏其他合约状态');
         return;
       }
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus(`${symbol} 撤单流程结束，已恢复筛选状态`);
       return;
     } else {
@@ -1452,6 +1499,7 @@
       waitForTradeUiMutation({ timeoutMs: 800 });
       const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
       if (!restored) setLadderStatus('未能恢复隐藏其他合约状态');
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
       return;
     }
   }
