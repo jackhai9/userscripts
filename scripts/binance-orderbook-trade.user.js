@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.26
+// @version      2.6.27
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1322,15 +1322,6 @@
     return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol);
   }
 
-  function hasVisibleOpenOrdersForCurrentSymbol() {
-    const symbol = getCurrentSymbol();
-    if (!symbol) return false;
-    const scope = getActiveOpenOrdersScope();
-    if (!scope) return false;
-    const normalizedSymbol = symbol.toUpperCase();
-    return readVisibleOpenOrderSymbols(scope).some((visibleSymbol) => visibleSymbol === normalizedSymbol);
-  }
-
   async function setHideOtherSymbolChecked(root, desiredChecked) {
     const checkbox = findHideOtherSymbolCheckbox(root);
     if (!checkbox) return false;
@@ -1422,6 +1413,11 @@
     const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
     if (!symbolFilter.ok) {
       setLadderStatus('未确认只显示当前币挂单');
+      return;
+    }
+    if (!readVisibleOpenOrderSymbols(openOrdersScope).some((visibleSymbol) => visibleSymbol === symbol.toUpperCase())) {
+      await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
+      setLadderStatus(`${symbol} 当前币无挂单`);
       return;
     }
 
@@ -2415,20 +2411,15 @@
       body.style.display = expanded ? 'block' : 'none';
       if (expanded) {
         const stopDisabled = !ladderTask;
-        const cancelSymbolDisabled = !hasVisibleOpenOrdersForCurrentSymbol();
         const stopDisabledAttrs = stopDisabled ? ' disabled aria-disabled="true"' : '';
-        const cancelSymbolDisabledAttrs = cancelSymbolDisabled ? ' disabled aria-disabled="true"' : '';
         const stopStyle = stopDisabled
-          ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`
-          : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;';
-        const cancelSymbolStyle = cancelSymbolDisabled
           ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`
           : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;';
         body.innerHTML = [
           ...getLadderActionRows(mode, closeContext),
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
           `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${stopStyle}">停止阶梯挂单</button>`,
-          `<button type="button" data-ladder-cancel-symbol="true"${cancelSymbolDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${cancelSymbolStyle}">撤本币挂单</button>`,
+          `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">撤本币挂单</button>`,
           '</div>',
         ].join('');
       }
