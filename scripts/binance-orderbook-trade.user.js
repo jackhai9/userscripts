@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.29
+// @version      2.6.30
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -78,7 +78,7 @@
   const DISABLED_CONTROL_OPACITY = '0.65';
   const LADDER_CONTROL_BUTTON_HEIGHT = 32;
   const LADDER_CONTROL_BUTTON_FONT_SIZE = 14;
-  const PANEL_BOTTOM_TOOLTIP_GAP = 24;
+  const PANEL_BOTTOM_TOOLTIP_GAP = 12;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -1256,6 +1256,14 @@
     return tabs.find(isAccountOrdersTab) || tabs[0] || null;
   }
 
+  function getOpenOrdersTabCount() {
+    const tab = findOpenOrdersTab();
+    if (!tab) return null;
+    const text = getNormalizedText(tab);
+    const match = /(?:当前委托|Open Orders)\s*\(?\s*(\d+)\s*\)?/i.exec(text);
+    return match ? Number(match[1]) : null;
+  }
+
   function findSelectedAccountOrdersTab() {
     const openOrdersTab = findOpenOrdersTab();
     if (!openOrdersTab) return null;
@@ -1361,6 +1369,14 @@
     return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol);
   }
 
+  function hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk) {
+    const normalizedSymbol = String(symbol || '').toUpperCase();
+    if (!normalizedSymbol) return false;
+    if (readVisibleOpenOrderSymbols(root).some((visibleSymbol) => visibleSymbol === normalizedSymbol)) return true;
+    const openOrdersCount = getOpenOrdersTabCount();
+    return Boolean(symbolFilterOk && openOrdersCount !== null && openOrdersCount > 0);
+  }
+
   async function setHideOtherSymbolChecked(root, desiredChecked) {
     const checkbox = findHideOtherSymbolCheckbox(root);
     if (!checkbox) return false;
@@ -1458,7 +1474,7 @@
       setLadderStatus('未确认只显示当前币挂单');
       return;
     }
-    if (!readVisibleOpenOrderSymbols(openOrdersScope).some((visibleSymbol) => visibleSymbol === symbol.toUpperCase())) {
+    if (!hasCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok)) {
       await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
       await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus(`${symbol} 当前币无挂单`);
