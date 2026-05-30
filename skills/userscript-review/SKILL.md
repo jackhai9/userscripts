@@ -27,6 +27,12 @@ Check these first:
 - `LOT_SIZE`、`MARKET_LOT_SIZE`、`MIN_NOTIONAL` 是否按当前 symbol 闭合
 - 规则未 ready 时是否拒绝下单，而不是 fallback 去猜
 - 前后台切换、面板渲染、observer、兜底轮询是否引入竞态
+- Binance UI 操作是否按业务区域收窄，而不是全局按文本匹配同名 tab 或按钮
+- `当前委托`、`隐藏其他合约`、`全撤` 等控件是否用现网 DOM / accessibility tree 验证过语义；不要假设可见文字一定在 `button`
+- 撤单类破坏性动作是否只打开 Binance 原生确认弹窗，不自动点击原生确认
+- 阶梯挂单运行中是否禁用启动类按钮，避免并行启动多个全局 `ladderTask`
+- 订单簿 DOM 深度不足时，价格推导是否基于当前显示精度的相邻价格差，而不是直接用交易所 `tickSize`
+- 高频路径是否避免全页面 DOM 扫描；全局扫描只能用于低频动作并保持候选范围明确
 
 ### `scripts/binance-trading-data.user.js`
 
