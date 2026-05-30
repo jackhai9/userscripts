@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.2
+// @version      2.7.3
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -26,13 +26,42 @@
     const match = /(?:当前\s*委托|Open Orders)\s*\(?\s*(\d+)\s*\)?/i.exec(normalized);
     return match ? Number(match[1]) : null;
   }
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function normalizeContractCandidate(candidate, separator) {
+    const normalized = String(candidate || "").toUpperCase();
+    if (separator === ":") {
+      const timeJoinedMatch = /^\d{1,2}([A-Z][A-Z0-9]*USDT)$/.exec(normalized);
+      if (timeJoinedMatch) return timeJoinedMatch[1];
+    }
+    return normalized;
+  }
+  function isTimestampJoinedCandidate(candidate, symbol) {
+    const normalizedCandidate = String(candidate || "").toUpperCase();
+    const normalizedSymbol = String(symbol || "").toUpperCase();
+    if (!normalizedCandidate || !normalizedSymbol || !normalizedCandidate.endsWith(normalizedSymbol)) {
+      return false;
+    }
+    const prefix = normalizedCandidate.slice(0, -normalizedSymbol.length);
+    return /^\d{1,2}$/.test(prefix);
+  }
+  function hasVisibleContractText(text, symbol) {
+    const normalizedSymbol = String(symbol || "").toUpperCase();
+    if (!normalizedSymbol) return false;
+    const symbolPattern = escapeRegExp(normalizedSymbol);
+    return new RegExp(`(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*永续`, "i").test(String(text || ""));
+  }
   function readVisibleOpenOrderSymbolsText(text) {
     const normalized = String(text || "").toUpperCase();
     const symbols = /* @__PURE__ */ new Set();
-    const pattern = /\b([A-Z0-9]{2,30}USDT)\s*永续/g;
+    const pattern = /([A-Z0-9]{2,30}USDT)\s*永续/g;
     let match = pattern.exec(normalized);
     while (match) {
-      symbols.add(match[1]);
+      const separator = normalized[match.index - 1] || "";
+      if (!/[A-Z0-9]/.test(separator)) {
+        symbols.add(normalizeContractCandidate(match[1], separator));
+      }
       match = pattern.exec(normalized);
     }
     return Array.from(symbols);
@@ -41,7 +70,7 @@
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const visibleSymbols = readVisibleOpenOrderSymbolsText(text);
-    return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol);
+    return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol || hasVisibleContractText(text, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol));
   }
   function hasCurrentSymbolOpenOrdersEvidence({
     scopeText,
@@ -53,7 +82,7 @@
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
-    if (visibleSymbols.some((visibleSymbol) => visibleSymbol === normalizedSymbol)) return true;
+    if (visibleSymbols.some((visibleSymbol) => visibleSymbol === normalizedSymbol || hasVisibleContractText(scopeText, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol))) return true;
     if (visibleSymbols.length > 0) return false;
     return Boolean(symbolFilterOk && (openOrdersCount !== null && openOrdersCount > 0 || cancelAllAvailable));
   }

@@ -33,6 +33,17 @@ test('visible current-symbol rows are direct open-order evidence', () => {
   }), true);
 });
 
+test('parses symbol when Binance joins time text and contract text', () => {
+  assert.deepEqual(readVisibleOpenOrderSymbolsText('2026-05-30 10:27HYPEUSDT永续 限价'), ['HYPEUSDT']);
+  assert.equal(hasCurrentSymbolOpenOrdersEvidence({
+    scopeText: '2026-05-30 10:27HYPEUSDT永续 限价',
+    symbol: 'HYPEUSDT',
+    symbolFilterOk: true,
+    openOrdersCount: 5,
+    cancelAllAvailable: true,
+  }), true);
+});
+
 test('open-orders tab count is evidence only after symbol filter is confirmed', () => {
   assert.equal(hasCurrentSymbolOpenOrdersEvidence({
     scopeText: '隐藏其他合约 当前委托',
