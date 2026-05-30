@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.20
+// @version      2.6.21
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1282,12 +1282,26 @@
 
   async function ensureOpenOrdersLimitedToCurrentSymbol(root) {
     const checkbox = findHideOtherSymbolCheckbox(root);
-    if (!checkbox) return false;
-    if (checkbox.getAttribute('aria-checked') !== 'true') {
+    if (!checkbox) return { ok: false, originalChecked: null };
+    const originalChecked = checkbox.getAttribute('aria-checked') === 'true';
+    if (!originalChecked) {
       checkbox.click();
       await delay(450);
     }
-    return findHideOtherSymbolCheckbox(root)?.getAttribute('aria-checked') === 'true';
+    return {
+      ok: findHideOtherSymbolCheckbox(root)?.getAttribute('aria-checked') === 'true',
+      originalChecked,
+    };
+  }
+
+  async function restoreOpenOrdersSymbolFilter(root, originalChecked) {
+    if (originalChecked !== false) return true;
+    const checkbox = findHideOtherSymbolCheckbox(root);
+    if (!checkbox) return false;
+    if (checkbox.getAttribute('aria-checked') !== 'true') return true;
+    checkbox.click();
+    await delay(250);
+    return findHideOtherSymbolCheckbox(root)?.getAttribute('aria-checked') !== 'true';
   }
 
   function getVisibleDialogs() {
@@ -1297,7 +1311,7 @@
       .filter(isVisibleElement);
   }
 
-  function findVisibleDialogConfirmButton(dialogsBefore) {
+  function findVisibleDialogConfirm(dialogsBefore) {
     const previousDialogs = dialogsBefore || new Set();
     for (const dialog of getVisibleDialogs()) {
       if (previousDialogs.has(dialog)) continue;
@@ -1306,9 +1320,15 @@
         [/^确认$/, /^确定$/, /^Confirm$/i],
         dialog
       );
-      if (button) return button;
+      if (button) return { button, dialog };
     }
     return null;
+  }
+
+  async function waitForDialogToClose(dialog) {
+    while (dialog.isConnected && isVisibleElement(dialog)) {
+      await delay(500);
+    }
   }
 
   async function cancelCurrentSymbolOpenOrders() {
@@ -1329,8 +1349,8 @@
       setLadderStatus('未定位到当前委托面板');
       return;
     }
-    const limitedToCurrentSymbol = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope);
-    if (!limitedToCurrentSymbol) {
+    const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope);
+    if (!symbolFilter.ok) {
       setLadderStatus('未确认只显示当前币挂单');
       return;
     }
@@ -1349,14 +1369,23 @@
       return;
     }
 
-    const confirmButton = findVisibleDialogConfirmButton(dialogsBefore);
-    if (confirmButton) {
+    const confirm = findVisibleDialogConfirm(dialogsBefore);
+    if (confirm) {
       setLadderStatus(`${symbol} 撤单确认弹窗已打开`);
       waitForTradeUiMutation({ timeoutMs: 800 });
+      await waitForDialogToClose(confirm.dialog);
+      const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
+      if (!restored) {
+        setLadderStatus('未能恢复隐藏其他合约状态');
+        return;
+      }
+      setLadderStatus(`${symbol} 撤单流程结束，已恢复筛选状态`);
       return;
     } else {
       setLadderStatus(`${symbol} 撤单已点击，请核对当前委托`);
       waitForTradeUiMutation({ timeoutMs: 800 });
+      const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
+      if (!restored) setLadderStatus('未能恢复隐藏其他合约状态');
       return;
     }
   }
