@@ -49,6 +49,11 @@ test('multiplies decimal strings by integer or ratio', () => {
   assert.equal(multiplyDecimalByRatio('10', 3, 4), '7');
 });
 
+test('multiplies decimal strings by decimal ratio without floating point conversion', () => {
+  assert.equal(multiplyDecimalByRatio('5.64', 0.3, 100), '0.01692');
+  assert.equal(multiplyDecimalByRatio('10', 0.3, 100), '0.03');
+});
+
 test('selects the maximum normalized decimal string', () => {
   assert.equal(maxDecimalString('1.20', '1.2'), '1.2');
   assert.equal(maxDecimalString('1.19', '1.2'), '1.2');

@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.5
+// @version      2.7.6
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -188,11 +188,25 @@
   }
   function multiplyDecimalByRatio(decimalValue, numerator, denominator) {
     const parsed = parseDecimalString(decimalValue);
-    const num = BigInt(Number(numerator));
-    const den = BigInt(Number(denominator));
-    if (!parsed || num <= 0n || den <= 0n) return null;
-    const digits = parsed.digits * num / den;
-    return formatDecimalParts(digits, parsed.scale);
+    const num = parseDecimalString(numerator);
+    const den = parseDecimalString(denominator);
+    if (!parsed || !num || !den || num.digits <= 0n || den.digits <= 0n) return null;
+    if (num.scale === 0 && den.scale === 0) {
+      const digits2 = parsed.digits * num.digits / den.digits;
+      return formatDecimalParts(digits2, parsed.scale);
+    }
+    const denominatorIntegerDigits = Math.max(0, den.digits.toString().length - den.scale);
+    const resultScale = parsed.scale + num.scale + Math.max(0, denominatorIntegerDigits - 1);
+    let scaledNumerator = parsed.digits * num.digits;
+    let scaledDenominator = den.digits;
+    const scaleExp = den.scale + resultScale - parsed.scale - num.scale;
+    if (scaleExp >= 0) {
+      scaledNumerator *= pow10(scaleExp);
+    } else {
+      scaledDenominator *= pow10(-scaleExp);
+    }
+    const digits = scaledNumerator / scaledDenominator;
+    return formatDecimalParts(digits, resultScale);
   }
   function isPositiveDecimalString(value) {
     const parsed = parseDecimalString(value);
