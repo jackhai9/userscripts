@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.14
+// @version      2.6.15
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -30,6 +30,7 @@
   const LOCAL_LADDER_OPEN_PERCENT_KEY = 'jh_binance_ladder_open_percent';
   const LOCAL_LADDER_CLOSE_PERCENT_KEY = 'jh_binance_ladder_close_percent';
   const LOCAL_LADDER_LEVELS_KEY = 'jh_binance_ladder_levels';
+  const LOCAL_LADDER_STEP_KEY = 'jh_binance_ladder_step';
   const BINANCE_PERSIST_KEY = 'persist:futures-trade-ui';
   const BINANCE_POST_ONLY_ORDER_TYPE = 'POST_ONLY';
   const BINANCE_POST_ONLY_TIME_IN_FORCE = 'GTC';
@@ -49,9 +50,12 @@
   const DEFAULT_LADDER_OPEN_PERCENT = 30;
   const DEFAULT_LADDER_CLOSE_PERCENT = 50;
   const DEFAULT_LADDER_LEVELS = 5;
+  const DEFAULT_LADDER_STEP = 1;
   const LADDER_OPEN_PERCENTS = [10, 20, 30, 50, 60, 70];
   const LADDER_CLOSE_PERCENTS = [20, 30, 50, 70, 100];
   const LADDER_LEVEL_OPTIONS = [3, 5, 7, 9];
+  const LADDER_STEP_MIN = 1;
+  const LADDER_STEP_MAX = 5;
   const LADDER_ORDER_DELAY_MS = 520;
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
   const LADDER_SUBMIT_POLL_MS = 80;
@@ -274,6 +278,19 @@
 
   function setLadderLevels(value) {
     saveNumberOption(LOCAL_LADDER_LEVELS_KEY, value, LADDER_LEVEL_OPTIONS);
+    scheduleRenderPanel();
+  }
+
+  function getLadderStep() {
+    const value = Number(localStorage.getItem(LOCAL_LADDER_STEP_KEY) || DEFAULT_LADDER_STEP);
+    if (!Number.isInteger(value)) return DEFAULT_LADDER_STEP;
+    return Math.max(LADDER_STEP_MIN, Math.min(value, LADDER_STEP_MAX));
+  }
+
+  function setLadderStep(value) {
+    const num = Number(value);
+    if (!Number.isInteger(num)) return;
+    localStorage.setItem(LOCAL_LADDER_STEP_KEY, String(Math.max(LADDER_STEP_MIN, Math.min(num, LADDER_STEP_MAX))));
     scheduleRenderPanel();
   }
 
@@ -701,9 +718,16 @@
     return getOrderbookPrices(side, 1)[0] || null;
   }
 
-  function getBufferedMakerPrices(side, levels) {
-    return getOrderbookPrices(side, levels + LADDER_MAKER_BUFFER_LEVELS)
-      .slice(LADDER_MAKER_BUFFER_LEVELS, LADDER_MAKER_BUFFER_LEVELS + levels);
+  function getBufferedMakerPrices(side, levels, ladderStep = DEFAULT_LADDER_STEP) {
+    const step = Math.max(LADDER_STEP_MIN, Math.min(Number(ladderStep) || DEFAULT_LADDER_STEP, LADDER_STEP_MAX));
+    const requiredDepth = LADDER_MAKER_BUFFER_LEVELS + (levels - 1) * step + 1;
+    const prices = getOrderbookPrices(side, requiredDepth);
+    const result = [];
+    for (let i = 0; i < levels; i += 1) {
+      const price = prices[LADDER_MAKER_BUFFER_LEVELS + i * step];
+      if (price) result.push(price);
+    }
+    return result;
   }
 
   function getLadderActionSpec(actionType) {
@@ -875,8 +899,11 @@
     if (!postOnlyReady) throw new Error('请刷新页面让只做Maker (Post Only) 生效后重试，脚本不会用普通限价继续');
 
     const levels = getLadderLevels();
-    const prices = getBufferedMakerPrices(spec.priceSide, levels);
-    if (prices.length < levels) throw new Error(`订单簿${spec.priceSide === 'BID' ? '买盘' : '卖盘'}不足 ${levels} 档`);
+    const ladderStep = getLadderStep();
+    const prices = getBufferedMakerPrices(spec.priceSide, levels, ladderStep);
+    if (prices.length < levels) {
+      throw new Error(`订单簿${spec.priceSide === 'BID' ? '买盘' : '卖盘'}不足 ${levels} 档，档幅 ${ladderStep}`);
+    }
 
     const rules = await ensureRules(startSymbol);
     if (!rules || getCurrentSymbol() !== startSymbol) throw new Error('交易规则未就绪或交易对已变化');
@@ -919,6 +946,7 @@
       spec,
       symbol: startSymbol,
       percent,
+      ladderStep,
       levels: allocation.actualLevels,
       requestedLevels: allocation.requestedLevels,
       baseQty,
@@ -1087,7 +1115,8 @@
       const levelText = plan.levels === plan.requestedLevels
         ? `${plan.levels}档`
         : `${plan.levels}/${plan.requestedLevels}档`;
-      setLadderStatus(`${plan.spec.label} ${plan.percent}%/${levelText}`);
+      const stepText = plan.ladderStep > DEFAULT_LADDER_STEP ? `/幅${plan.ladderStep}` : '';
+      setLadderStatus(`${plan.spec.label} ${plan.percent}%/${levelText}${stepText}`);
       const done = await executeLadderPlan(plan);
       setLadderStatus(ladderStopRequested ? `已停止 ${done}/${plan.orders.length}` : `完成 ${done}/${plan.orders.length}`);
     })()
@@ -1138,7 +1167,20 @@
     if (!tab || tab.getAttribute('aria-selected') !== 'true') return null;
     const paneId = tab.getAttribute('aria-controls');
     const pane = paneId ? document.getElementById(paneId) : null;
-    return pane && isVisibleElement(pane) ? pane : null;
+    if (pane && isVisibleElement(pane)) return pane;
+
+    let node = tab.parentElement;
+    let fallback = null;
+    let depth = 0;
+    while (node && node !== document.body && depth < 8) {
+      const hasCheckbox = !!findHideOtherSymbolCheckbox(node);
+      const hasCancelAll = !!findCurrentSymbolCancelAllButton(node);
+      if (hasCheckbox && hasCancelAll) return node;
+      if (!fallback && (hasCheckbox || hasCancelAll)) fallback = node;
+      node = node.parentElement;
+      depth += 1;
+    }
+    return fallback;
   }
 
   function findCurrentSymbolCancelAllButton(root) {
@@ -2102,6 +2144,27 @@
     ].join('');
   }
 
+  function ladderStepRow() {
+    const value = getLadderStep();
+    const decDisabled = value <= LADDER_STEP_MIN;
+    const incDisabled = value >= LADDER_STEP_MAX;
+    const stepButton = (action, label, disabled) => {
+      const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
+      const style = disabled
+        ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`
+        : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;';
+      return `<button type="button" data-ladder-step-action="${action}"${disabledAttrs} style="width:28px;height:24px;padding:0;border-radius:5px;border:1px solid #d5d9e2;font-size:14px;line-height:22px;${style}">${label}</button>`;
+    };
+    return [
+      '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:6px;">',
+      '<span style="width:28px;color:#76808f;font-size:12px;">幅</span>',
+      stepButton('dec', '-', decDisabled),
+      `<span style="min-width:26px;height:24px;border:1px solid #d5d9e2;border-radius:5px;background:#ffffff;color:#1e2329;font-size:12px;font-weight:600;line-height:22px;text-align:center;">${value}</span>`,
+      stepButton('inc', '+', incDisabled),
+      '</div>',
+    ].join('');
+  }
+
   function ladderActionButton(actionType, label, tone, disabled = false) {
     const isBuyTone = tone === 'BUY';
     const borderColor = disabled ? DISABLED_CONTROL_BORDER : isBuyTone ? 'var(--color-Buy)' : 'var(--color-Sell)';
@@ -2116,6 +2179,7 @@
       return [
         ladderOptionRow('开', LADDER_OPEN_PERCENTS, getLadderOpenPercent(), 'openPercent', '%'),
         ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
+        ladderStepRow(),
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
         ladderActionButton('OPEN_LONG', '阶梯开多', 'BUY'),
         ladderActionButton('OPEN_SHORT', '阶梯开空', 'SELL'),
@@ -2128,6 +2192,7 @@
     return [
       ladderOptionRow('平', LADDER_CLOSE_PERCENTS, getLadderClosePercent(), 'closePercent', '%'),
       ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
+      ladderStepRow(),
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
       ladderActionButton('CLOSE_SHORT', '阶梯平空', 'BUY', closeShortDisabled),
       ladderActionButton('CLOSE_LONG', '阶梯平多', 'SELL', closeLongDisabled),
@@ -2484,6 +2549,13 @@
         if (group === 'levels') setLadderLevels(value);
         return;
       }
+      const stepBtn = target.closest('[data-ladder-step-action]');
+      if (stepBtn) {
+        if (stepBtn.disabled || stepBtn.getAttribute('aria-disabled') === 'true') return;
+        const delta = stepBtn.getAttribute('data-ladder-step-action') === 'inc' ? 1 : -1;
+        setLadderStep(getLadderStep() + delta);
+        return;
+      }
       const actionBtn = target.closest('[data-ladder-action]');
       if (actionBtn) {
         if (actionBtn.disabled || actionBtn.getAttribute('aria-disabled') === 'true') return;
@@ -2837,7 +2909,8 @@
       event.key === LOCAL_LADDER_EXPANDED_KEY ||
       event.key === LOCAL_LADDER_OPEN_PERCENT_KEY ||
       event.key === LOCAL_LADDER_CLOSE_PERCENT_KEY ||
-      event.key === LOCAL_LADDER_LEVELS_KEY
+      event.key === LOCAL_LADDER_LEVELS_KEY ||
+      event.key === LOCAL_LADDER_STEP_KEY
     ) scheduleRenderPanel();
   });
 
