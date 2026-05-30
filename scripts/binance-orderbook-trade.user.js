@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.9
+// @version      2.6.10
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -56,6 +56,8 @@
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
   const LADDER_SUBMIT_POLL_MS = 80;
   const LADDER_MAKER_BUFFER_LEVELS = 1;
+  const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
+  const SINGLE_ORDER_QTY_SYNC_DELAY_MS = 120;
   const DEFAULT_OPEN_LEVERAGE = 3;
   const AUTO_OPEN_LEVERAGE_DELAY_MS = 120;
   const AUTO_OPEN_LEVERAGE_DEDUPE_MS = 1200;
@@ -885,6 +887,15 @@
     }
     if (plan.spec.orderSide === 'SELL' && cmp <= 0) {
       throw new Error(`盘口已移动，卖单 ${price} 可能吃单，对手买一 ${oppositePrice}`);
+    }
+  }
+
+  function assertSubmittedPriceMatchesClickedPrice(clickedPrice, submittedPrice) {
+    const clicked = normalizeDecimalString(clickedPrice);
+    const submitted = normalizeDecimalString(submittedPrice);
+    const cmp = compareDecimalStrings(clicked, submitted);
+    if (cmp !== 0) {
+      throw new Error(`价格框未同步，点击价 ${clicked || clickedPrice}，当前提交价 ${submitted || submittedPrice || '-'}`);
     }
   }
 
@@ -2600,7 +2611,7 @@
   }
 
   // 使用捕获阶段监听，避免页面内部在冒泡阶段 stopPropagation 导致价格点击事件丢失
-  document.addEventListener('click', (e) => {
+  document.addEventListener('click', async (e) => {
     try {
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
       const priceNode = findClickedPriceNode(e.target);
@@ -2631,6 +2642,11 @@
         warn('未找到数量输入框');
         return;
       }
+      const priceInput = findPriceInput();
+      if (!priceInput) {
+        warn('未找到价格输入框');
+        return;
+      }
 
       const action = resolveTradeAction();
       if (!action || !action.button) {
@@ -2643,9 +2659,17 @@
         warn('未找到可用数量来源（数量倍率/有效最小量）');
         return;
       }
+      lastTs = now;
+
+      setInputValueReact(priceInput, clickedPrice);
+      await delay(SINGLE_ORDER_PRICE_SYNC_DELAY_MS);
       setInputValueReact(qtyInput, qtyPlan.qty);
+      await delay(SINGLE_ORDER_QTY_SYNC_DELAY_MS);
+      const submittedPriceInput = findPriceInput() || priceInput;
+      assertSubmittedPriceMatchesClickedPrice(clickedPrice, submittedPriceInput.value);
       log(
-        '已填数量',
+        '已填价格/数量',
+        clickedPrice,
         qtyPlan.qty,
         '来源',
         qtyPlan.source,
@@ -2672,18 +2696,17 @@
       );
 
       if (CFG.SAFE_MODE) {
-        lastTs = now;
-        warn(`SAFE_MODE=true，仅填数量，不点击${action.side}`);
+        warn(`SAFE_MODE=true，仅填价格/数量，不点击${action.side}`);
         return;
       }
 
       action.button.click();
       scheduleRenderPanel();
       waitForTradeUiMutation({ timeoutMs: 400 });
-      lastTs = now;
       log(`已点击${action.side}`);
     } catch (e2) {
       err('click handler 异常:', e2);
+      warn(e2?.message || '订单簿点击提交失败');
     }
   }, true);
 
