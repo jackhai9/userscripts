@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.15
+// @version      2.6.16
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1185,12 +1185,13 @@
 
   function findCurrentSymbolCancelAllButton(root) {
     if (!root) return null;
-    const el = findVisibleElementByText(
-      'button, [role="button"], a, span, div',
+    const button = findVisibleElementByText(
+      'button, [role="button"], a',
       [/^全撤$/, /^全部撤单$/, /^撤销全部$/, /^Cancel All$/i],
       root
     );
-    return el?.closest?.('button, [role="button"], a') || el || null;
+    if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return null;
+    return button;
   }
 
   function findHideOtherSymbolCheckbox(root) {
@@ -1210,7 +1211,9 @@
   }
 
   function getVisibleDialogs() {
-    return Array.from(document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="Modal"]'))
+    return Array.from(document.querySelectorAll(
+      '[role="dialog"], [class*="modal"], [class*="Modal"], [class*="popover"], [class*="Popover"], [class*="drawer"], [class*="Drawer"]'
+    ))
       .filter(isVisibleElement);
   }
 
@@ -1272,7 +1275,8 @@
     if (confirmButton) {
       confirmButton.click();
     } else {
-      setLadderStatus('未找到撤单确认弹窗');
+      setLadderStatus(`${symbol} 撤单已点击，请核对当前委托`);
+      waitForTradeUiMutation({ timeoutMs: 800 });
       return;
     }
 
