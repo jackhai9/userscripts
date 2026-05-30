@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.21
+// @version      2.6.22
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -76,6 +76,8 @@
   const DISABLED_CONTROL_BG = '#f5f5f5';
   const DISABLED_CONTROL_TEXT = '#b7bdc6';
   const DISABLED_CONTROL_OPACITY = '0.65';
+  const LADDER_CONTROL_BUTTON_HEIGHT = 32;
+  const LADDER_CONTROL_BUTTON_FONT_SIZE = 14;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -2302,7 +2304,7 @@
     const background = disabled ? DISABLED_CONTROL_BG : isBuyTone ? 'var(--color-GreenAlpha01)' : 'var(--color-RedAlpha01)';
     const color = disabled ? DISABLED_CONTROL_TEXT : borderColor;
     const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
-    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:30px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${color};font-size:13px;cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? DISABLED_CONTROL_OPACITY : '1'};">${label}</button>`;
+    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${color};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? DISABLED_CONTROL_OPACITY : '1'};">${label}</button>`;
   }
 
   function getLadderActionRows(tradeMode, closeContext) {
@@ -2352,8 +2354,8 @@
         body.innerHTML = [
           ...getLadderActionRows(mode, closeContext),
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
-          `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:26px;border:1px solid #d5d9e2;border-radius:6px;font-size:12px;${stopStyle}">停止阶梯挂单</button>`,
-          '<button type="button" data-ladder-cancel-symbol="true" style="height:26px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:12px;cursor:pointer;">撤本币挂单</button>',
+          `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${stopStyle}">停止阶梯挂单</button>`,
+          `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">撤本币挂单</button>`,
           '</div>',
         ].join('');
       }
