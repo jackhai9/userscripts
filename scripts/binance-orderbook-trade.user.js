@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.18
+// @version      2.6.19
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2267,20 +2267,21 @@
   }
 
   function getLadderActionRows(tradeMode, closeContext) {
+    const ladderRunning = !!ladderTask;
     if (tradeMode === 'OPEN') {
       return [
         ladderOptionRow('开', LADDER_OPEN_PERCENTS, getLadderOpenPercent(), 'openPercent', '%'),
         ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
         ladderStepRow(),
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
-        ladderActionButton('OPEN_LONG', '阶梯开多', 'BUY'),
-        ladderActionButton('OPEN_SHORT', '阶梯开空', 'SELL'),
+        ladderActionButton('OPEN_LONG', '阶梯开多', 'BUY', ladderRunning),
+        ladderActionButton('OPEN_SHORT', '阶梯开空', 'SELL', ladderRunning),
         '</div>',
       ];
     }
 
-    const closeLongDisabled = closeContext?.knowsLong ? !closeContext.hasLong : false;
-    const closeShortDisabled = closeContext?.knowsShort ? !closeContext.hasShort : false;
+    const closeLongDisabled = ladderRunning || (closeContext?.knowsLong ? !closeContext.hasLong : false);
+    const closeShortDisabled = ladderRunning || (closeContext?.knowsShort ? !closeContext.hasShort : false);
     return [
       ladderOptionRow('平', LADDER_CLOSE_PERCENTS, getLadderClosePercent(), 'closePercent', '%'),
       ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
