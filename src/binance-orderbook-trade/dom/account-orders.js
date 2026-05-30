@@ -25,6 +25,19 @@ function containsNestedAccountOrdersGroupOutsideTab(node, tab, isVisibleElement)
   ));
 }
 
+function hasOpenOrdersPanelText(node) {
+  return /(基础单|条件委托|Open Orders|成交数量|只减仓|只做Maker|生效时间|追单)/i
+    .test(getNormalizedText(node));
+}
+
+function hasOpenOrdersPanelEvidence(node, {
+  findHideOtherSymbolCheckbox,
+  findCurrentSymbolCancelAllButton,
+}) {
+  if (findCurrentSymbolCancelAllButton(node)) return true;
+  return Boolean(findHideOtherSymbolCheckbox(node) && hasOpenOrdersPanelText(node));
+}
+
 export function isAccountOrdersTab(tab, { isVisibleElement }) {
   let node = tab.parentElement;
   let depth = 0;
@@ -86,21 +99,27 @@ export function getActiveOpenOrdersScope(root, {
   if (
     pane &&
     isVisibleElement(pane) &&
-    (findHideOtherSymbolCheckbox(pane) || findCurrentSymbolCancelAllButton(pane))
+    hasOpenOrdersPanelEvidence(pane, {
+      findHideOtherSymbolCheckbox,
+      findCurrentSymbolCancelAllButton,
+    })
   ) {
     return pane;
   }
 
   let node = tab.parentElement;
-  let fallback = null;
   let depth = 0;
   while (node && node !== doc.body && depth < 8) {
-    const hasCheckbox = !!findHideOtherSymbolCheckbox(node);
-    const hasCancelAll = !!findCurrentSymbolCancelAllButton(node);
-    if (hasCheckbox && hasCancelAll) return node;
-    if (!fallback && (hasCheckbox || hasCancelAll)) fallback = node;
+    if (
+      hasOpenOrdersPanelEvidence(node, {
+        findHideOtherSymbolCheckbox,
+        findCurrentSymbolCancelAllButton,
+      })
+    ) {
+      return node;
+    }
     node = node.parentElement;
     depth += 1;
   }
-  return fallback;
+  return null;
 }

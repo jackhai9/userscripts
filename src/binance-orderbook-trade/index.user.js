@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.1
+// @version      2.7.2
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1203,6 +1203,16 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     });
   }
 
+  async function waitForActiveOpenOrdersScope() {
+    const deadline = Date.now() + 2200;
+    while (Date.now() < deadline) {
+      const scope = getActiveOpenOrdersScope();
+      if (scope) return scope;
+      await delay(100);
+    }
+    return getActiveOpenOrdersScope();
+  }
+
   function findCurrentSymbolCancelAllButton(root) {
     if (!root) return null;
     const button = findVisibleElementByText(
@@ -1353,7 +1363,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       setLadderStatus('当前委托页未就绪或交易对已变化');
       return;
     }
-    const openOrdersScope = getActiveOpenOrdersScope();
+    const openOrdersScope = await waitForActiveOpenOrdersScope();
     if (!openOrdersScope) {
       await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('未定位到当前委托面板');

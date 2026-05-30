@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.1
+// @version      2.7.2
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -281,6 +281,16 @@
   function containsNestedAccountOrdersGroupOutsideTab(node, tab, isVisibleElement) {
     return Array.from(node.children).some((child) => !child.contains(tab) && hasAccountOrdersTabs(child, isVisibleElement));
   }
+  function hasOpenOrdersPanelText(node) {
+    return /(基础单|条件委托|Open Orders|成交数量|只减仓|只做Maker|生效时间|追单)/i.test(getNormalizedText(node));
+  }
+  function hasOpenOrdersPanelEvidence(node, {
+    findHideOtherSymbolCheckbox,
+    findCurrentSymbolCancelAllButton
+  }) {
+    if (findCurrentSymbolCancelAllButton(node)) return true;
+    return Boolean(findHideOtherSymbolCheckbox(node) && hasOpenOrdersPanelText(node));
+  }
   function isAccountOrdersTab(tab, { isVisibleElement }) {
     let node = tab.parentElement;
     let depth = 0;
@@ -326,21 +336,25 @@
     const doc = root.ownerDocument || root;
     const paneId = tab.getAttribute("aria-controls");
     const pane = paneId ? doc.getElementById(paneId) : null;
-    if (pane && isVisibleElement(pane) && (findHideOtherSymbolCheckbox(pane) || findCurrentSymbolCancelAllButton(pane))) {
+    if (pane && isVisibleElement(pane) && hasOpenOrdersPanelEvidence(pane, {
+      findHideOtherSymbolCheckbox,
+      findCurrentSymbolCancelAllButton
+    })) {
       return pane;
     }
     let node = tab.parentElement;
-    let fallback = null;
     let depth = 0;
     while (node && node !== doc.body && depth < 8) {
-      const hasCheckbox = !!findHideOtherSymbolCheckbox(node);
-      const hasCancelAll = !!findCurrentSymbolCancelAllButton(node);
-      if (hasCheckbox && hasCancelAll) return node;
-      if (!fallback && (hasCheckbox || hasCancelAll)) fallback = node;
+      if (hasOpenOrdersPanelEvidence(node, {
+        findHideOtherSymbolCheckbox,
+        findCurrentSymbolCancelAllButton
+      })) {
+        return node;
+      }
       node = node.parentElement;
       depth += 1;
     }
-    return fallback;
+    return null;
   }
 
   // src/binance-orderbook-trade/dom/trade-form.js
@@ -1368,6 +1382,15 @@
         findCurrentSymbolCancelAllButton
       });
     }
+    async function waitForActiveOpenOrdersScope() {
+      const deadline = Date.now() + 2200;
+      while (Date.now() < deadline) {
+        const scope = getActiveOpenOrdersScope2();
+        if (scope) return scope;
+        await delay(100);
+      }
+      return getActiveOpenOrdersScope2();
+    }
     function findCurrentSymbolCancelAllButton(root) {
       if (!root) return null;
       const button = findVisibleElementByText(
@@ -1500,7 +1523,7 @@
         setLadderStatus("当前委托页未就绪或交易对已变化");
         return;
       }
-      const openOrdersScope = getActiveOpenOrdersScope2();
+      const openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope) {
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus("未定位到当前委托面板");
