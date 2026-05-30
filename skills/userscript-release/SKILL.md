@@ -22,12 +22,19 @@ Use this skill when shipping changes in this repository.
    - `node --check <file>` for changed hand-maintained userscripts outside `binance-orderbook-trade`
 6. Summarize what changed, what was verified, and what was not tested.
 7. If asked to commit or push, use a concise message that reflects user-facing impact.
+8. If asked to publish, ship through GitHub PR workflow:
+   - push the feature branch
+   - create a PR with `gh pr create`
+   - wait for required checks to pass, or explicitly report missing checks
+   - merge with `gh pr merge`
+   - do not locally merge into `main` and direct-push `main`
 
 ## Release Checklist
 
 - `@version` updated for every behavior-changing userscript
 - generated userscript artifacts refreshed from their source
 - tests, build, syntax check, and whitespace check passed where applicable
+- release to `main` goes through PR review/merge history, not direct `main` push
 - no accidental source-of-truth drift in `README.md`
 - final summary includes residual risks when browser hand-testing was skipped
 
@@ -35,3 +42,4 @@ Use this skill when shipping changes in this repository.
 
 - `binance-orderbook-trade` has an automated source test suite; do not pretend `node --check` alone is enough.
 - If a change only touches docs or non-script files, version bump is not required.
+- Treat "publish", "release", "ship", and "merge to main" as PR-based operations unless the user explicitly authorizes an emergency direct push to `main`.
