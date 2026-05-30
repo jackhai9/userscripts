@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.23
+// @version      2.6.24
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1296,6 +1296,26 @@
     return null;
   }
 
+  function readVisibleOpenOrderSymbols(root) {
+    if (!root) return [];
+    const text = (root.textContent || '').toUpperCase();
+    const symbols = new Set();
+    const pattern = /\b([A-Z0-9]{2,30}USDT)\s*永续/g;
+    let match = pattern.exec(text);
+    while (match) {
+      symbols.add(match[1]);
+      match = pattern.exec(text);
+    }
+    return Array.from(symbols);
+  }
+
+  function isOpenOrdersScopeLimitedToSymbol(root, symbol) {
+    const normalizedSymbol = String(symbol || '').toUpperCase();
+    if (!normalizedSymbol) return false;
+    const visibleSymbols = readVisibleOpenOrderSymbols(root);
+    return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol);
+  }
+
   async function setHideOtherSymbolChecked(root, desiredChecked) {
     const checkbox = findHideOtherSymbolCheckbox(root);
     if (!checkbox) return false;
@@ -1312,14 +1332,24 @@
     return false;
   }
 
-  async function ensureOpenOrdersLimitedToCurrentSymbol(root) {
+  async function ensureOpenOrdersLimitedToCurrentSymbol(root, symbol) {
     const checkbox = findHideOtherSymbolCheckbox(root);
-    if (!checkbox) return { ok: false, originalChecked: null };
+    if (!checkbox) {
+      return {
+        ok: isOpenOrdersScopeLimitedToSymbol(root, symbol),
+        originalChecked: null,
+      };
+    }
     const originalChecked = getCheckboxCheckedState(checkbox);
-    if (originalChecked === null) return { ok: false, originalChecked };
+    if (originalChecked === null) {
+      return {
+        ok: isOpenOrdersScopeLimitedToSymbol(root, symbol),
+        originalChecked,
+      };
+    }
     const ok = originalChecked || await setHideOtherSymbolChecked(root, true);
     return {
-      ok,
+      ok: ok || isOpenOrdersScopeLimitedToSymbol(root, symbol),
       originalChecked,
     };
   }
@@ -1374,7 +1404,7 @@
       setLadderStatus('未定位到当前委托面板');
       return;
     }
-    const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope);
+    const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
     if (!symbolFilter.ok) {
       setLadderStatus('未确认只显示当前币挂单');
       return;
