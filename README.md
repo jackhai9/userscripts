@@ -22,8 +22,7 @@
 3. 修改 `src/binance-orderbook-trade/**` 后运行 `npm run build:binance-orderbook-trade`，确保生成产物保持单文件、可读、非压缩。
 4. 非真源仓库只放安装链接，不复制脚本源码。
 5. 每次发布递增 `@version`，并保留 `@updateURL/@downloadURL` 指向真源 raw 地址。
-6. 发布到 `main` 必须通过 GitHub PR 合并，不从本地 merge 后直接 push `main`。
-7. Tampermonkey 统一用安装链接重装，不在面板里手改代码。
+6. Tampermonkey 统一用安装链接重装，不在面板里手改代码。
 
 开发手册：[Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
 
