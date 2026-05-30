@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.13
+// @version      2.6.14
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -56,6 +56,8 @@
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
   const LADDER_SUBMIT_POLL_MS = 80;
   const LADDER_MAKER_BUFFER_LEVELS = 1;
+  const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
+  const LADDER_OPEN_QTY_POLL_MS = 80;
   const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
   const SINGLE_ORDER_QTY_SYNC_DELAY_MS = 120;
   const DEFAULT_OPEN_LEVERAGE = 3;
@@ -475,11 +477,13 @@
       }
     }
 
-    tradeScopeCache = {
-      activeTab,
-      expiresAt: now + DOM_LOOKUP_CACHE_MS,
-      scopes,
-    };
+    tradeScopeCache = activeTab && scopes.length
+      ? {
+        activeTab,
+        expiresAt: now + DOM_LOOKUP_CACHE_MS,
+        scopes,
+      }
+      : { activeTab: null, expiresAt: 0, scopes: [] };
     return scopes;
   }
 
@@ -825,7 +829,19 @@
     const priceInput = findPriceInput();
     if (!priceInput || !referencePrice) return null;
     setInputValueReact(priceInput, referencePrice);
-    await delay(220);
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < LADDER_OPEN_QTY_READY_TIMEOUT_MS) {
+      const openLongBtn = findOpenLongButton();
+      const openShortBtn = findOpenShortButton();
+      const { longQty, shortQty, qtySource } = readOpenableQty(openLongBtn, openShortBtn);
+      const qty = spec.side === 'LONG' ? longQty : shortQty;
+      if (qty != null && isPositiveDecimalString(String(qty))) {
+        return { qty, qtySource };
+      }
+      await delay(LADDER_OPEN_QTY_POLL_MS);
+    }
+
     const openLongBtn = findOpenLongButton();
     const openShortBtn = findOpenShortButton();
     const { longQty, shortQty, qtySource } = readOpenableQty(openLongBtn, openShortBtn);
