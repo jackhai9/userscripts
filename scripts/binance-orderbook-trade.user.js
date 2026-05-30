@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.6.8
+// @version      2.6.9
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -64,6 +64,10 @@
   const INPUT_ERROR_COLOR = 'var(--color-Error)';
   const INPUT_FOCUS_COLOR = 'var(--color-PrimaryYellow)';
   const INPUT_DEFAULT_BG = 'transparent';
+  const DISABLED_CONTROL_BORDER = '#d5d9e2';
+  const DISABLED_CONTROL_BG = '#f5f5f5';
+  const DISABLED_CONTROL_TEXT = '#b7bdc6';
+  const DISABLED_CONTROL_OPACITY = '0.65';
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -98,10 +102,10 @@
     style.id = styleId;
     style.textContent = `
       button[${NATIVE_ACTION_DISABLED_ATTR}="true"] {
-        background: var(--color-DisableBtn) !important;
-        color: var(--color-DisableText) !important;
-        border-color: var(--color-DisableBtn) !important;
-        opacity: 1 !important;
+        background: ${DISABLED_CONTROL_BG} !important;
+        color: ${DISABLED_CONTROL_TEXT} !important;
+        border-color: ${DISABLED_CONTROL_BORDER} !important;
+        opacity: ${DISABLED_CONTROL_OPACITY} !important;
         cursor: not-allowed !important;
         pointer-events: none !important;
       }
@@ -1988,10 +1992,11 @@
 
   function ladderActionButton(actionType, label, tone, disabled = false) {
     const isBuyTone = tone === 'BUY';
-    const borderColor = isBuyTone ? 'var(--color-Buy)' : 'var(--color-Sell)';
-    const background = isBuyTone ? 'var(--color-GreenAlpha01)' : 'var(--color-RedAlpha01)';
+    const borderColor = disabled ? DISABLED_CONTROL_BORDER : isBuyTone ? 'var(--color-Buy)' : 'var(--color-Sell)';
+    const background = disabled ? DISABLED_CONTROL_BG : isBuyTone ? 'var(--color-GreenAlpha01)' : 'var(--color-RedAlpha01)';
+    const color = disabled ? DISABLED_CONTROL_TEXT : borderColor;
     const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
-    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:30px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:13px;cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? '0.45' : '1'};">${label}</button>`;
+    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:30px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${color};font-size:13px;cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? DISABLED_CONTROL_OPACITY : '1'};">${label}</button>`;
   }
 
   function getLadderActionRows(tradeMode, closeContext) {
@@ -2033,7 +2038,7 @@
         const stopDisabled = !ladderTask;
         const stopDisabledAttrs = stopDisabled ? ' disabled aria-disabled="true"' : '';
         const stopStyle = stopDisabled
-          ? 'border-color:#d5d9e2;background:#f5f5f5;color:#b7bdc6;cursor:not-allowed;opacity:0.65;'
+          ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`
           : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;';
         body.innerHTML = [
           ...getLadderActionRows(mode, closeContext),
@@ -2125,16 +2130,16 @@
       sideLongBtn.textContent = isOpenMode ? '开多' : '平多';
       sideLongBtn.style.order = isOpenMode ? '0' : '1';
       sideLongBtn.disabled = isDisabled;
-      sideLongBtn.style.borderColor = isActive
+      sideLongBtn.style.borderColor = isDisabled ? DISABLED_CONTROL_BORDER : isActive
         ? isOpenMode ? 'var(--color-Buy)' : 'var(--color-Sell)'
         : 'var(--color-InputLine)';
-      sideLongBtn.style.background = isActive
+      sideLongBtn.style.background = isDisabled ? DISABLED_CONTROL_BG : isActive
         ? isOpenMode ? 'var(--color-GreenAlpha01)' : 'var(--color-RedAlpha01)'
         : '#ffffff';
-      sideLongBtn.style.color = isActive
+      sideLongBtn.style.color = isDisabled ? DISABLED_CONTROL_TEXT : isActive
         ? isOpenMode ? 'var(--color-Buy)' : 'var(--color-Sell)'
         : '#5e6673';
-      sideLongBtn.style.opacity = isDisabled ? '0.45' : '1';
+      sideLongBtn.style.opacity = isDisabled ? DISABLED_CONTROL_OPACITY : '1';
       sideLongBtn.style.cursor = isDisabled ? 'not-allowed' : 'pointer';
     }
     if (sideShortBtn) {
@@ -2146,16 +2151,16 @@
       sideShortBtn.textContent = isOpenMode ? '开空' : '平空';
       sideShortBtn.style.order = isOpenMode ? '1' : '0';
       sideShortBtn.disabled = isDisabled;
-      sideShortBtn.style.borderColor = isActive
+      sideShortBtn.style.borderColor = isDisabled ? DISABLED_CONTROL_BORDER : isActive
         ? isOpenMode ? 'var(--color-Sell)' : 'var(--color-Buy)'
         : 'var(--color-InputLine)';
-      sideShortBtn.style.background = isActive
+      sideShortBtn.style.background = isDisabled ? DISABLED_CONTROL_BG : isActive
         ? isOpenMode ? 'var(--color-RedAlpha01)' : 'var(--color-GreenAlpha01)'
         : '#ffffff';
-      sideShortBtn.style.color = isActive
+      sideShortBtn.style.color = isDisabled ? DISABLED_CONTROL_TEXT : isActive
         ? isOpenMode ? 'var(--color-Sell)' : 'var(--color-Buy)'
         : '#5e6673';
-      sideShortBtn.style.opacity = isDisabled ? '0.45' : '1';
+      sideShortBtn.style.opacity = isDisabled ? DISABLED_CONTROL_OPACITY : '1';
       sideShortBtn.style.cursor = isDisabled ? 'not-allowed' : 'pointer';
     }
 
