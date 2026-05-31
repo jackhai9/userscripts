@@ -4,7 +4,9 @@
 
 - 本仓库是真源仓库。
 - `src/binance-orderbook-trade/` 是 `scripts/binance-orderbook-trade.user.js` 的开发真源。
-- `scripts/binance-orderbook-trade.user.js` 是生成后的单文件安装/更新入口，必须保持可读、非压缩、非混淆。
+- `src/binance-trading-data/` 是 `scripts/binance-trading-data.user.js` 的开发真源。
+- `src/binance-coinmarketcap-data/` 是 `scripts/binance-coinmarketcap-data.user.js` 的开发真源。
+- `scripts/binance-orderbook-trade.user.js`、`scripts/binance-trading-data.user.js`、`scripts/binance-coinmarketcap-data.user.js` 是生成后的单文件安装/更新入口，必须保持可读、非压缩、非混淆。
 - 其它 userscript 在迁移前仍以 `scripts/*.user.js` 为真源。
 - `README.md` 只维护安装入口、真源说明和发布约束，不承载开发细节。
 - 非真源仓库不复制脚本源码，只放安装链接。
@@ -15,6 +17,8 @@
   Binance 订单簿双击下单，核心风险在 symbol 切换、交易规则读取、首单竞态。
 - `scripts/binance-trading-data.user.js`
   Binance 合约交易数据面板，核心风险在 5 分钟调度、缓存回退、前后台切换。
+- `scripts/binance-coinmarketcap-data.user.js`
+  Binance CoinMarketCap 数据面板，核心风险在 symbol 解析、CMC 资产映射、跨页误注入。
 - `scripts/auto_refresh.user.js`
   定时刷新页面，核心风险在 URL 匹配、时间计算、启停行为。
 - `docs/binance-orderbook-trade-development.md`
@@ -27,7 +31,8 @@
 ## Hard Rules
 
 - 修改 `src/binance-orderbook-trade/**` 后必须运行 `npm run build:binance-orderbook-trade` 生成 `scripts/binance-orderbook-trade.user.js`。
-- 修改 `src/binance-orderbook-trade/**` 且改变行为时，必须同步 bump 生成 userscript 头部 `@version`。
+- 修改 `src/binance-trading-data/**`、`src/binance-coinmarketcap-data/**` 或 `src/shared/**` 后必须运行 `npm run build:binance-userscripts` 或对应单脚本 build 命令生成 `scripts/*.user.js`。
+- 修改已迁移的 `src/binance-*` 或 `src/shared/**` 且改变行为时，必须同步 bump 对应生成 userscript 头部 `@version`。
 - 修改尚未迁移的 `scripts/` 下任意 userscript，必须同步 bump 该文件头部 `@version`。
 - 保留 `@updateURL` 和 `@downloadURL` 指向真源 raw 地址。
 - 发布到 `main` 必须通过 GitHub PR 合并；不要在本地 merge 到 `main` 后直接 push `main`。
@@ -40,6 +45,7 @@
 ## Validation
 
 - `binance-orderbook-trade` 最低门槛：`npm test`、`npm run build:binance-orderbook-trade`、`npm run check:binance-orderbook-trade`。
+- 已迁移 Binance userscript 共享逻辑最低门槛：`npm test`、`npm run build:binance-userscripts`、`npm run check:binance-userscripts`。
 - 尚未迁移的 userscript 最低门槛：对改动过的 userscript 跑 `node --check <file>`。
 - 如果改动触及 Binance 数据调度或下单规则，必须补手测结论；没测的路径要明确写出来。
 - review 输出优先列 findings，再给 summary。

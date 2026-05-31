@@ -2,11 +2,13 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.9
+// @version      2.7.10
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
+// @exclude      https://www.binance.com/*/my/wallet/futures/*
+// @exclude      https://www.binance.com/my/wallet/futures/*
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
 // @run-at       document-start
@@ -42,6 +44,10 @@ import {
   isPotentialOrderFeedbackText,
 } from './core/order-feedback.js';
 import {
+  isFuturesTradingPathname,
+  parseFuturesTradingSymbolFromPathname,
+} from '../shared/binance-futures-route.js';
+import {
   findOpenOrdersBasicSubTab as findOpenOrdersBasicSubTabDom,
   findOpenOrdersConditionalSubTab as findOpenOrdersConditionalSubTabDom,
   findOpenOrdersTab as findOpenOrdersTabDom,
@@ -59,6 +65,12 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
 
 (function () {
   'use strict';
+
+  function isFuturesTradingPage() {
+    return isFuturesTradingPathname(location.pathname);
+  }
+
+  if (!isFuturesTradingPage()) return;
 
   const CFG = {
     // true=只填数量；false=填数量并自动点“开多/开空/平多/平空”
@@ -1952,12 +1964,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   }
 
   function getCurrentSymbol() {
-    const m = location.pathname.match(/\/futures\/([A-Z0-9_]+)/i);
-    if (m && m[1]) return m[1].toUpperCase();
-
-    const title = document.title || '';
-    const t = title.match(/([A-Z0-9_]{6,})\s+U/i);
-    return t && t[1] ? t[1].toUpperCase() : null;
+    return parseFuturesTradingSymbolFromPathname(location.pathname);
   }
 
   let appDataCache = { text: '', parsed: null }; // #__APP_DATA 解析缓存（仅用于 markPrice）
@@ -2617,7 +2624,19 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     return panel;
   }
 
+  function removePanel() {
+    document.getElementById(PANEL_ID)?.remove();
+    document.getElementById(SPACER_ID)?.remove();
+    ladderPanelBodySignature = '';
+  }
+
   function renderPanel() {
+    if (!isFuturesTradingPage()) {
+      removePanel();
+      stopTradeModeTabObserver();
+      clearTradeUiMutationWait();
+      return;
+    }
     ensureTradeModeTabObserver();
     const panel = ensurePanel();
     const input = panel.querySelector(`#${INPUT_ID}`);
