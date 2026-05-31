@@ -2,7 +2,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:binance-orderbook-trade": "node scripts/binance-orderbook-trade-build.mjs",
+    "build:binance-userscripts": "node scripts/build-userscript.mjs",
+    "build:binance-orderbook-trade": "node scripts/build-userscript.mjs binance-orderbook-trade",
+    "build:binance-trading-data": "node scripts/build-userscript.mjs binance-trading-data",
+    "build:binance-coinmarketcap-data": "node scripts/build-userscript.mjs binance-coinmarketcap-data",
+    "check:binance-userscripts": "node --check scripts/binance-orderbook-trade.user.js && node --check scripts/binance-trading-data.user.js && node --check scripts/binance-coinmarketcap-data.user.js",
     "check:binance-orderbook-trade": "node --check scripts/binance-orderbook-trade.user.js",
     "test": "node --test"
   },

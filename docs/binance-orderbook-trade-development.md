@@ -67,7 +67,7 @@ test/
   fixtures/binance-orderbook-trade/
   helpers/
 scripts/
-  binance-orderbook-trade-build.mjs
+  build-userscript.mjs
   binance-orderbook-trade.user.js
 ```
 

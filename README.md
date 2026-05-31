@@ -18,8 +18,8 @@
 ## 维护规则
 
 1. 同一脚本只允许一个真源仓库改代码。
-2. `binance-orderbook-trade` 的开发真源是 `src/binance-orderbook-trade/`，公开安装入口仍是生成后的 `scripts/binance-orderbook-trade.user.js`。
-3. 修改 `src/binance-orderbook-trade/**` 后运行 `npm run build:binance-orderbook-trade`，确保生成产物保持单文件、可读、非压缩。
+2. `src/binance-orderbook-trade/`、`src/binance-trading-data/`、`src/binance-coinmarketcap-data/` 是对应 Binance 脚本的开发真源。
+3. 公开安装入口仍是生成后的 `scripts/*.user.js`；修改对应 `src/` 后运行 `npm run build:binance-userscripts` 或单脚本 build 命令。
 4. 非真源仓库只放安装链接，不复制脚本源码。
 5. 每次发布递增 `@version`，并保留 `@updateURL/@downloadURL` 指向真源 raw 地址。
 6. Tampermonkey 统一用安装链接重装，不在面板里手改代码。
