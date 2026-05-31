@@ -38,6 +38,35 @@ function hasOpenOrdersPanelEvidence(node, {
   return Boolean(findHideOtherSymbolCheckbox(node) && hasOpenOrdersPanelText(node));
 }
 
+function isOpenOrdersBasicSubTabText(text) {
+  return /^(基础单|Basic Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
+}
+
+function isOpenOrdersConditionalSubTabText(text) {
+  return /^(条件委托|Conditional Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
+}
+
+export function findOpenOrdersBasicSubTab(root, { isVisibleElement }) {
+  return Array.from(root.querySelectorAll('[role="tab"]'))
+    .find((tab) => isVisibleElement(tab) && isOpenOrdersBasicSubTabText(getNormalizedText(tab))) || null;
+}
+
+export function findOpenOrdersConditionalSubTab(root, { isVisibleElement }) {
+  return Array.from(root.querySelectorAll('[role="tab"]'))
+    .find((tab) => isVisibleElement(tab) && isOpenOrdersConditionalSubTabText(getNormalizedText(tab))) || null;
+}
+
+export function findSelectedOpenOrdersSubTab(root, { isVisibleElement }) {
+  return Array.from(root.querySelectorAll('[role="tab"][aria-selected="true"]'))
+    .find((tab) => (
+      isVisibleElement(tab) &&
+      (
+        isOpenOrdersBasicSubTabText(getNormalizedText(tab)) ||
+        isOpenOrdersConditionalSubTabText(getNormalizedText(tab))
+      )
+    )) || null;
+}
+
 export function isAccountOrdersTab(tab, { isVisibleElement }) {
   let node = tab.parentElement;
   let depth = 0;

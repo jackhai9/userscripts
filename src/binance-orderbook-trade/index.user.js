@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.6
+// @version      2.7.7
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -38,8 +38,11 @@ import {
   getLadderPercentForMode,
 } from './core/ladder-plan.js';
 import {
+  findOpenOrdersBasicSubTab as findOpenOrdersBasicSubTabDom,
+  findOpenOrdersConditionalSubTab as findOpenOrdersConditionalSubTabDom,
   findOpenOrdersTab as findOpenOrdersTabDom,
   findSelectedAccountOrdersTab as findSelectedAccountOrdersTabDom,
+  findSelectedOpenOrdersSubTab as findSelectedOpenOrdersSubTabDom,
   getAccountOrdersTabGroup as getAccountOrdersTabGroupDom,
   getActiveOpenOrdersScope as getActiveOpenOrdersScopeDom,
 } from './dom/account-orders.js';
@@ -1203,6 +1206,18 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     });
   }
 
+  function findOpenOrdersBasicSubTab(root) {
+    return findOpenOrdersBasicSubTabDom(root, { isVisibleElement });
+  }
+
+  function findOpenOrdersConditionalSubTab(root) {
+    return findOpenOrdersConditionalSubTabDom(root, { isVisibleElement });
+  }
+
+  function findSelectedOpenOrdersSubTab(root) {
+    return findSelectedOpenOrdersSubTabDom(root, { isVisibleElement });
+  }
+
   async function waitForActiveOpenOrdersScope() {
     const deadline = Date.now() + 2200;
     while (Date.now() < deadline) {
@@ -1211,6 +1226,34 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       await delay(100);
     }
     return getActiveOpenOrdersScope();
+  }
+
+  async function activateOpenOrdersBasicSubTab(root) {
+    const previousSubTab = findSelectedOpenOrdersSubTab(root);
+    const basicTab = findOpenOrdersBasicSubTab(root);
+    if (!basicTab) {
+      return {
+        ready: !findOpenOrdersConditionalSubTab(root),
+        previousSubTab,
+      };
+    }
+    if (basicTab.getAttribute('aria-selected') === 'true') {
+      return { ready: true, previousSubTab };
+    }
+    basicTab.click();
+    await delay(250);
+    return {
+      ready: findOpenOrdersBasicSubTab(root)?.getAttribute('aria-selected') === 'true',
+      previousSubTab,
+    };
+  }
+
+  async function restoreOpenOrdersSubTab(previousSubTab) {
+    if (!previousSubTab || !previousSubTab.isConnected || !isVisibleElement(previousSubTab)) return true;
+    if (previousSubTab.getAttribute('aria-selected') === 'true') return true;
+    previousSubTab.click();
+    await delay(250);
+    return previousSubTab.getAttribute('aria-selected') === 'true';
   }
 
   function findCurrentSymbolCancelAllButton(root) {
@@ -1369,8 +1412,15 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       setLadderStatus('未定位到当前委托面板');
       return;
     }
+    const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
+    if (!basicSubTabState.ready) {
+      await restoreAccountOrdersTab(previousAccountOrdersTab);
+      setLadderStatus('未定位到当前委托基础单');
+      return;
+    }
     const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
     if (!symbolFilter.ok) {
+      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
       await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('未确认只显示当前币挂单');
       return;
@@ -1378,6 +1428,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
     if (!openOrdersEvidence.hasOrders) {
       await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
+      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
       await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus(`${symbol} 当前币无挂单`);
       return;
@@ -1385,6 +1436,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
 
     const { cancelAllButton } = openOrdersEvidence;
     if (!cancelAllButton) {
+      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
       await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('未找到当前委托全撤按钮');
       return;
@@ -1394,6 +1446,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     cancelAllButton.click();
     await delay(300);
     if (getCurrentSymbol() !== symbol) {
+      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
       await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus('确认撤单前交易对已变化');
       return;
@@ -1406,10 +1459,12 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       await waitForDialogToClose(confirm.dialog);
       const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
       if (!restored) {
+        await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus('未能恢复隐藏其他合约状态');
         return;
       }
+      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
       await restoreAccountOrdersTab(previousAccountOrdersTab);
       setLadderStatus(`${symbol} 撤单流程结束，已恢复筛选状态`);
       return;
@@ -1418,6 +1473,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       waitForTradeUiMutation({ timeoutMs: 800 });
       const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
       if (!restored) setLadderStatus('未能恢复隐藏其他合约状态');
+      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
       await restoreAccountOrdersTab(previousAccountOrdersTab);
       return;
     }

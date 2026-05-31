@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.6
+// @version      2.7.7
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -333,6 +333,21 @@
   }) {
     if (findCurrentSymbolCancelAllButton(node)) return true;
     return Boolean(findHideOtherSymbolCheckbox(node) && hasOpenOrdersPanelText(node));
+  }
+  function isOpenOrdersBasicSubTabText(text) {
+    return /^(基础单|Basic Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
+  }
+  function isOpenOrdersConditionalSubTabText(text) {
+    return /^(条件委托|Conditional Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
+  }
+  function findOpenOrdersBasicSubTab(root, { isVisibleElement }) {
+    return Array.from(root.querySelectorAll('[role="tab"]')).find((tab) => isVisibleElement(tab) && isOpenOrdersBasicSubTabText(getNormalizedText(tab))) || null;
+  }
+  function findOpenOrdersConditionalSubTab(root, { isVisibleElement }) {
+    return Array.from(root.querySelectorAll('[role="tab"]')).find((tab) => isVisibleElement(tab) && isOpenOrdersConditionalSubTabText(getNormalizedText(tab))) || null;
+  }
+  function findSelectedOpenOrdersSubTab(root, { isVisibleElement }) {
+    return Array.from(root.querySelectorAll('[role="tab"][aria-selected="true"]')).find((tab) => isVisibleElement(tab) && (isOpenOrdersBasicSubTabText(getNormalizedText(tab)) || isOpenOrdersConditionalSubTabText(getNormalizedText(tab)))) || null;
   }
   function isAccountOrdersTab(tab, { isVisibleElement }) {
     let node = tab.parentElement;
@@ -1425,6 +1440,15 @@
         findCurrentSymbolCancelAllButton
       });
     }
+    function findOpenOrdersBasicSubTab2(root) {
+      return findOpenOrdersBasicSubTab(root, { isVisibleElement });
+    }
+    function findOpenOrdersConditionalSubTab2(root) {
+      return findOpenOrdersConditionalSubTab(root, { isVisibleElement });
+    }
+    function findSelectedOpenOrdersSubTab2(root) {
+      return findSelectedOpenOrdersSubTab(root, { isVisibleElement });
+    }
     async function waitForActiveOpenOrdersScope() {
       const deadline = Date.now() + 2200;
       while (Date.now() < deadline) {
@@ -1433,6 +1457,32 @@
         await delay(100);
       }
       return getActiveOpenOrdersScope2();
+    }
+    async function activateOpenOrdersBasicSubTab(root) {
+      const previousSubTab = findSelectedOpenOrdersSubTab2(root);
+      const basicTab = findOpenOrdersBasicSubTab2(root);
+      if (!basicTab) {
+        return {
+          ready: !findOpenOrdersConditionalSubTab2(root),
+          previousSubTab
+        };
+      }
+      if (basicTab.getAttribute("aria-selected") === "true") {
+        return { ready: true, previousSubTab };
+      }
+      basicTab.click();
+      await delay(250);
+      return {
+        ready: findOpenOrdersBasicSubTab2(root)?.getAttribute("aria-selected") === "true",
+        previousSubTab
+      };
+    }
+    async function restoreOpenOrdersSubTab(previousSubTab) {
+      if (!previousSubTab || !previousSubTab.isConnected || !isVisibleElement(previousSubTab)) return true;
+      if (previousSubTab.getAttribute("aria-selected") === "true") return true;
+      previousSubTab.click();
+      await delay(250);
+      return previousSubTab.getAttribute("aria-selected") === "true";
     }
     function findCurrentSymbolCancelAllButton(root) {
       if (!root) return null;
@@ -1572,8 +1622,15 @@
         setLadderStatus("未定位到当前委托面板");
         return;
       }
+      const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
+      if (!basicSubTabState.ready) {
+        await restoreAccountOrdersTab(previousAccountOrdersTab);
+        setLadderStatus("未定位到当前委托基础单");
+        return;
+      }
       const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
       if (!symbolFilter.ok) {
+        await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus("未确认只显示当前币挂单");
         return;
@@ -1581,12 +1638,14 @@
       const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
       if (!openOrdersEvidence.hasOrders) {
         await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
+        await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus(`${symbol} 当前币无挂单`);
         return;
       }
       const { cancelAllButton } = openOrdersEvidence;
       if (!cancelAllButton) {
+        await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus("未找到当前委托全撤按钮");
         return;
@@ -1595,6 +1654,7 @@
       cancelAllButton.click();
       await delay(300);
       if (getCurrentSymbol() !== symbol) {
+        await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus("确认撤单前交易对已变化");
         return;
@@ -1606,10 +1666,12 @@
         await waitForDialogToClose(confirm.dialog);
         const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
         if (!restored) {
+          await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
           await restoreAccountOrdersTab(previousAccountOrdersTab);
           setLadderStatus("未能恢复隐藏其他合约状态");
           return;
         }
+        await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         setLadderStatus(`${symbol} 撤单流程结束，已恢复筛选状态`);
         return;
@@ -1618,6 +1680,7 @@
         waitForTradeUiMutation({ timeoutMs: 800 });
         const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
         if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
+        await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
         await restoreAccountOrdersTab(previousAccountOrdersTab);
         return;
       }
