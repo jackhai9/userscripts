@@ -17,7 +17,7 @@ function readConstNumber(name) {
 }
 
 test('ladder percent options match configured open and close presets', () => {
-  assert.deepEqual(readConstArray('LADDER_OPEN_PERCENTS'), [10, 30, 50, 70]);
+  assert.deepEqual(readConstArray('LADDER_OPEN_PERCENTS'), [2, 10, 30, 50, 70]);
   assert.deepEqual(readConstArray('LADDER_CLOSE_PERCENTS'), [0.3, 1, 5, 10, 30, 100]);
 });
 

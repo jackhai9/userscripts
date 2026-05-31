@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.7
+// @version      2.7.8
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -91,7 +91,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   const DEFAULT_LADDER_CLOSE_PERCENT = 30;
   const DEFAULT_LADDER_LEVELS = 5;
   const DEFAULT_LADDER_STEP = 1;
-  const LADDER_OPEN_PERCENTS = [10, 30, 50, 70];
+  const LADDER_OPEN_PERCENTS = [2, 10, 30, 50, 70];
   const LADDER_CLOSE_PERCENTS = [0.3, 1, 5, 10, 30, 100];
   const LADDER_LEVEL_OPTIONS = [3, 5, 7, 9];
   const LADDER_STEP_MIN = 1;
