@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.8
+// @version      2.7.9
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -37,6 +37,10 @@ import {
   getLadderActionSpec as getLadderActionSpecData,
   getLadderPercentForMode,
 } from './core/ladder-plan.js';
+import {
+  evaluateOrderSubmitAcknowledgement,
+  isPotentialOrderFeedbackText,
+} from './core/order-feedback.js';
 import {
   findOpenOrdersBasicSubTab as findOpenOrdersBasicSubTabDom,
   findOpenOrdersConditionalSubTab as findOpenOrdersConditionalSubTabDom,
@@ -127,6 +131,8 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   let tradeUiMutationObserver = null;
   let tradeUiMutationTimeout = 0;
   let tradeUiMutationDebounceTimer = 0;
+  let tradeModeTabObserver = null;
+  let tradeModeTabObserverRoot = null;
   let lastConfirmedCloseState = null;  // 第三层：已确认的稳定缓存（仅 CLOSE 模式下写入）
   let lastDisplayCloseState = null;   // 第二层：渲染路径产出的显示态（UI 和执行共用）
   let closeGuard = null;              // 切 tab 保护状态机（OPEN→CLOSE 时创建，500ms 后过期）
@@ -138,6 +144,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   let ladderTask = null;
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
+  let ladderPanelBodySignature = '';
   const controlledNativeButtons = new Set();
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
@@ -998,7 +1005,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     );
   }
 
-  function readVisibleOrderFeedbackText() {
+  function readVisibleOrderFeedbackEntries() {
     const selectors = [
       '[role="alert"]',
       '[aria-live]',
@@ -1010,43 +1017,57 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       '[class*="Notification"]',
     ];
     const seen = new Set();
+    const entries = [];
     for (const el of document.querySelectorAll(selectors.join(','))) {
       if (seen.has(el) || !isVisibleElement(el)) continue;
       seen.add(el);
       const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
       if (!text || text.length > 300) continue;
-      if (/订单|委托|下单|order|failed|error|成功|失败/i.test(text)) return text;
+      if (isPotentialOrderFeedbackText(text)) entries.push({ el, text });
+    }
+    return entries;
+  }
+
+  function takeOrderFeedbackSnapshot() {
+    const entries = readVisibleOrderFeedbackEntries();
+    return {
+      elements: new Set(entries.map(({ el }) => el)),
+      textByElement: new Map(entries.map(({ el, text }) => [el, text])),
+      htmlByElement: new Map(entries.map(({ el }) => [el, el.innerHTML])),
+    };
+  }
+
+  function readNewVisibleOrderFeedbackText(previousSnapshot) {
+    const snapshot = previousSnapshot || { elements: new Set(), textByElement: new Map(), htmlByElement: new Map() };
+    for (const { el, text } of readVisibleOrderFeedbackEntries()) {
+      if (!snapshot.elements.has(el)) return text;
+      if (snapshot.textByElement.get(el) !== text) return text;
+      if (snapshot.htmlByElement.get(el) !== el.innerHTML) return text;
     }
     return '';
   }
 
-  function classifyOrderFeedback(text) {
-    if (!text) return 'none';
-    if (/失败|拒绝|错误|不足|过期|取消|failed|rejected|error|insufficient/i.test(text)) return 'failure';
-    if (/成功|已提交|已下单|委托已|order placed|submitted|success/i.test(text)) return 'success';
-    return 'unknown';
-  }
-
-  async function waitForOrderSubmitAcknowledgement(button, label, previousFeedback) {
+  async function waitForOrderSubmitAcknowledgement(button, label, previousFeedbackSnapshot) {
     const startedAt = Date.now();
     let sawBusy = isSubmitButtonBusy(button);
 
     while (Date.now() - startedAt < LADDER_SUBMIT_ACK_TIMEOUT_MS) {
-      const feedback = readVisibleOrderFeedbackText();
-      if (feedback && feedback !== previousFeedback) {
-        const feedbackType = classifyOrderFeedback(feedback);
-        if (feedbackType === 'failure') throw new Error(feedback);
-        if (feedbackType === 'success') return;
-      }
+      const feedback = readNewVisibleOrderFeedbackText(previousFeedbackSnapshot);
+      const acknowledgement = evaluateOrderSubmitAcknowledgement({
+        feedback,
+        isNewFeedback: Boolean(feedback),
+      });
+      if (acknowledgement.status === 'failure') throw new Error(acknowledgement.message);
+      if (acknowledgement.status === 'success') return;
 
       const busy = isSubmitButtonBusy(button);
       if (busy) sawBusy = true;
-      if (sawBusy && !busy) return;
 
       await delay(LADDER_SUBMIT_POLL_MS);
     }
 
-    throw new Error(`未确认${label}已提交，已停止；请核对当前委托/历史成交`);
+    const settleHint = sawBusy ? '按钮已恢复但未收到明确成功反馈' : '未观察到提交按钮状态变化';
+    throw new Error(`未收到明确${label}成功反馈（${settleHint}），已停止；请核对当前委托/历史成交`);
   }
 
   async function executeLadderPlan(plan) {
@@ -1082,7 +1103,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       }
 
       if (!CFG.SAFE_MODE) {
-        const previousFeedback = readVisibleOrderFeedbackText();
+        const previousFeedback = takeOrderFeedbackSnapshot();
         button.click();
         setLadderStatus(`${plan.spec.label} ${done + 1}/${plan.orders.length} 确认中`);
         waitForTradeUiMutation({ timeoutMs: 500 });
@@ -1371,18 +1392,23 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       .filter(isVisibleElement);
   }
 
-  function findVisibleDialogConfirm(dialogsBefore) {
+  function findNewVisibleDialog(dialogsBefore) {
     const previousDialogs = dialogsBefore || new Set();
     for (const dialog of getVisibleDialogs()) {
       if (previousDialogs.has(dialog)) continue;
-      const button = findVisibleElementByText(
-        'button, [role="button"]',
-        [/^确认$/, /^确定$/, /^Confirm$/i],
-        dialog
-      );
-      if (button) return { button, dialog };
+      return dialog;
     }
     return null;
+  }
+
+  async function waitForNewVisibleDialog(dialogsBefore) {
+    const deadline = Date.now() + 1800;
+    while (Date.now() < deadline) {
+      const dialog = findNewVisibleDialog(dialogsBefore);
+      if (dialog) return dialog;
+      await delay(100);
+    }
+    return findNewVisibleDialog(dialogsBefore);
   }
 
   async function waitForDialogToClose(dialog) {
@@ -1399,83 +1425,73 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     }
 
     const previousAccountOrdersTab = findSelectedAccountOrdersTab();
-    setLadderStatus(`查找 ${symbol} 当前委托`);
-    const tabReady = await activateOpenOrdersTab();
-    if (!tabReady || getCurrentSymbol() !== symbol) {
-      await restoreAccountOrdersTab(previousAccountOrdersTab);
-      setLadderStatus('当前委托页未就绪或交易对已变化');
-      return;
-    }
-    const openOrdersScope = await waitForActiveOpenOrdersScope();
-    if (!openOrdersScope) {
-      await restoreAccountOrdersTab(previousAccountOrdersTab);
-      setLadderStatus('未定位到当前委托面板');
-      return;
-    }
-    const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
-    if (!basicSubTabState.ready) {
-      await restoreAccountOrdersTab(previousAccountOrdersTab);
-      setLadderStatus('未定位到当前委托基础单');
-      return;
-    }
-    const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
-    if (!symbolFilter.ok) {
-      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
-      await restoreAccountOrdersTab(previousAccountOrdersTab);
-      setLadderStatus('未确认只显示当前币挂单');
-      return;
-    }
-    const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
-    if (!openOrdersEvidence.hasOrders) {
-      await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
-      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
-      await restoreAccountOrdersTab(previousAccountOrdersTab);
-      setLadderStatus(`${symbol} 当前币无挂单`);
-      return;
-    }
+    let openOrdersScope = null;
+    let previousOpenOrdersSubTab = null;
+    let symbolFilterOriginalChecked = null;
 
-    const { cancelAllButton } = openOrdersEvidence;
-    if (!cancelAllButton) {
-      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
-      await restoreAccountOrdersTab(previousAccountOrdersTab);
-      setLadderStatus('未找到当前委托全撤按钮');
-      return;
-    }
-
-    const dialogsBefore = new Set(getVisibleDialogs());
-    cancelAllButton.click();
-    await delay(300);
-    if (getCurrentSymbol() !== symbol) {
-      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
-      await restoreAccountOrdersTab(previousAccountOrdersTab);
-      setLadderStatus('确认撤单前交易对已变化');
-      return;
-    }
-
-    const confirm = findVisibleDialogConfirm(dialogsBefore);
-    if (confirm) {
-      setLadderStatus(`${symbol} 撤单确认弹窗已打开`);
-      waitForTradeUiMutation({ timeoutMs: 800 });
-      await waitForDialogToClose(confirm.dialog);
-      const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
-      if (!restored) {
-        await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
-        await restoreAccountOrdersTab(previousAccountOrdersTab);
-        setLadderStatus('未能恢复隐藏其他合约状态');
+    try {
+      setLadderStatus(`查找 ${symbol} 当前委托`);
+      const tabReady = await activateOpenOrdersTab();
+      if (!tabReady || getCurrentSymbol() !== symbol) {
+        setLadderStatus('当前委托页未就绪或交易对已变化');
         return;
       }
-      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
-      await restoreAccountOrdersTab(previousAccountOrdersTab);
-      setLadderStatus(`${symbol} 撤单流程结束，已恢复筛选状态`);
-      return;
-    } else {
+      openOrdersScope = await waitForActiveOpenOrdersScope();
+      if (!openOrdersScope) {
+        setLadderStatus('未定位到当前委托面板');
+        return;
+      }
+      const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
+      previousOpenOrdersSubTab = basicSubTabState.previousSubTab;
+      if (!basicSubTabState.ready) {
+        setLadderStatus('未定位到当前委托基础单');
+        return;
+      }
+      const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
+      symbolFilterOriginalChecked = symbolFilter.originalChecked;
+      if (!symbolFilter.ok) {
+        setLadderStatus('未确认只显示当前币挂单');
+        return;
+      }
+      const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
+      if (!openOrdersEvidence.hasOrders) {
+        setLadderStatus(`${symbol} 当前币无挂单`);
+        return;
+      }
+
+      const { cancelAllButton } = openOrdersEvidence;
+      if (!cancelAllButton) {
+        setLadderStatus('未找到当前委托全撤按钮');
+        return;
+      }
+
+      const dialogsBefore = new Set(getVisibleDialogs());
+      cancelAllButton.click();
+      const dialog = await waitForNewVisibleDialog(dialogsBefore);
+      if (getCurrentSymbol() !== symbol) {
+        setLadderStatus('确认撤单前交易对已变化');
+        return;
+      }
+
+      if (dialog) {
+        setLadderStatus(`${symbol} 撤单确认弹窗已打开`);
+        waitForTradeUiMutation({ timeoutMs: 800 });
+        await waitForDialogToClose(dialog);
+        setLadderStatus(`${symbol} 撤单流程结束，已恢复筛选状态`);
+        return;
+      }
+
       setLadderStatus(`${symbol} 撤单已点击，请核对当前委托`);
       waitForTradeUiMutation({ timeoutMs: 800 });
-      const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilter.originalChecked);
-      if (!restored) setLadderStatus('未能恢复隐藏其他合约状态');
-      await restoreOpenOrdersSubTab(basicSubTabState.previousSubTab);
+    } finally {
+      if (openOrdersScope && symbolFilterOriginalChecked === false) {
+        const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked);
+        if (!restored) setLadderStatus('未能恢复隐藏其他合约状态');
+      }
+      if (previousOpenOrdersSubTab) {
+        await restoreOpenOrdersSubTab(previousOpenOrdersSubTab);
+      }
       await restoreAccountOrdersTab(previousAccountOrdersTab);
-      return;
     }
   }
 
@@ -2236,13 +2252,17 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
         const stopStyle = stopDisabled
           ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`
           : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;';
-        body.innerHTML = [
+        const bodyHtml = [
           ...getLadderActionRows(mode, closeContext),
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
           `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${stopStyle}">停止阶梯挂单</button>`,
           `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">撤本币挂单</button>`,
           '</div>',
         ].join('');
+        if (ladderPanelBodySignature !== bodyHtml || body.innerHTML !== bodyHtml) {
+          body.innerHTML = bodyHtml;
+          ladderPanelBodySignature = bodyHtml;
+        }
       }
     }
     if (status) {
@@ -2598,6 +2618,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   }
 
   function renderPanel() {
+    ensureTradeModeTabObserver();
     const panel = ensurePanel();
     const input = panel.querySelector(`#${INPUT_ID}`);
     const symbol = getCurrentSymbol() || '-';
@@ -2702,78 +2723,97 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     }, timeoutMs);
   }
 
+  function handleTradeModeTabTransition(tab, isEnteringClose, isEnteringOpen, source) {
+    if (!isEnteringClose && !isEnteringOpen) return false;
+    if (isEnteringClose) {
+      invalidateTradeButtonCache();
+      closeGuard = {
+        symbol: getCurrentSymbol(),
+        expiresAt: Date.now() + 500,
+        longZeroStreak: 0,
+        shortZeroStreak: 0,
+        lastRawLong: undefined,
+        lastRawShort: undefined,
+      };
+    }
+    if (isEnteringOpen) {
+      invalidateTradeButtonCache();
+      const reset = () => queueAutoOpenLeverageReset(source);
+      if (source === 'click') window.requestAnimationFrame(reset);
+      else reset();
+    }
+    const apply = () => applyCachedCloseUiState();
+    if (source === 'click') window.requestAnimationFrame(apply);
+    else apply();
+    scheduleRenderPanel();
+    waitForTradeUiMutation();
+    return true;
+  }
+
+  function getTradeModeObserverRoot() {
+    const activeTab = getActiveTradeTab();
+    return (
+      activeTab?.closest('#position-direction, .bn-tabs__buySell') ||
+      activeTab?.parentElement ||
+      document.querySelector('#position-direction') ||
+      document.querySelector('.bn-tabs__buySell') ||
+      document.querySelector('[role="tab"].bn-tab__buySell')?.parentElement ||
+      null
+    );
+  }
+
+  function stopTradeModeTabObserver() {
+    if (tradeModeTabObserver) {
+      tradeModeTabObserver.disconnect();
+      tradeModeTabObserver = null;
+    }
+    tradeModeTabObserverRoot = null;
+  }
+
+  function ensureTradeModeTabObserver() {
+    if (document.hidden) return;
+    const root = getTradeModeObserverRoot();
+    if (!root) {
+      stopTradeModeTabObserver();
+      return;
+    }
+    if (tradeModeTabObserver && tradeModeTabObserverRoot === root && root.isConnected) return;
+
+    stopTradeModeTabObserver();
+    tradeModeTabObserverRoot = root;
+    tradeModeTabObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type !== 'attributes' || mutation.attributeName !== 'aria-selected') continue;
+        if (!isTradeModeTab(mutation.target)) continue;
+        const isSelected = mutation.target.getAttribute('aria-selected') === 'true';
+        const text = mutation.target.textContent || '';
+        const isEnteringClose = isSelected && text.includes('平仓');
+        const isEnteringOpen = isSelected && text.includes('开仓');
+        if (handleTradeModeTabTransition(mutation.target, isEnteringClose, isEnteringOpen, 'mutation')) return;
+      }
+    });
+    tradeModeTabObserver.observe(root, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['aria-selected'],
+    });
+  }
+
   function installUiSyncObservers() {
     document.addEventListener('click', (event) => {
       const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
       if (!isTradeModeTab(tab)) return;
       // 仅在从非 CLOSE 状态切入平仓 tab 时开启 guard（重复点击已选中的平仓 tab 不触发）
-      const isEnteringClose = (tab.textContent || '').includes('平仓')
-        && tab.getAttribute('aria-selected') !== 'true';
-      const isEnteringOpen = (tab.textContent || '').includes('开仓')
-        && tab.getAttribute('aria-selected') !== 'true';
-      if (isEnteringClose) {
-        invalidateTradeButtonCache();
-        closeGuard = {
-          symbol: getCurrentSymbol(),
-          expiresAt: Date.now() + 500,
-          longZeroStreak: 0,
-          shortZeroStreak: 0,
-          lastRawLong: undefined,
-          lastRawShort: undefined,
-        };
-      }
-      if (isEnteringOpen) {
-        invalidateTradeButtonCache();
-        window.requestAnimationFrame(() => {
-          queueAutoOpenLeverageReset('click');
-        });
-      }
-      window.requestAnimationFrame(() => {
-        applyCachedCloseUiState();
-      });
-      scheduleRenderPanel();
-      waitForTradeUiMutation();
+      const text = tab.textContent || '';
+      const isEnteringClose = text.includes('平仓') && tab.getAttribute('aria-selected') !== 'true';
+      const isEnteringOpen = text.includes('开仓') && tab.getAttribute('aria-selected') !== 'true';
+      handleTradeModeTabTransition(tab, isEnteringClose, isEnteringOpen, 'click');
+      ensureTradeModeTabObserver();
     }, true);
 
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type !== 'attributes') continue;
-        if (mutation.attributeName !== 'aria-selected') continue;
-        if (!isTradeModeTab(mutation.target)) continue;
-        // 仅在平仓 tab 变为 selected 时开启 guard（排除离开平仓的 deselect）
-        const isEnteringClose = (mutation.target.textContent || '').includes('平仓')
-          && mutation.target.getAttribute('aria-selected') === 'true';
-        const isEnteringOpen = (mutation.target.textContent || '').includes('开仓')
-          && mutation.target.getAttribute('aria-selected') === 'true';
-        if (isEnteringClose) {
-          invalidateTradeButtonCache();
-          closeGuard = {
-            symbol: getCurrentSymbol(),
-            expiresAt: Date.now() + 500,
-            longZeroStreak: 0,
-            shortZeroStreak: 0,
-            lastRawLong: undefined,
-            lastRawShort: undefined,
-          };
-        }
-        if (isEnteringOpen) {
-          invalidateTradeButtonCache();
-          queueAutoOpenLeverageReset('mutation');
-        }
-        applyCachedCloseUiState();
-        scheduleRenderPanel();
-        waitForTradeUiMutation();
-        return;
-      }
-    });
-
     const startObserve = () => {
-      if (!document.body) return;
-      observer.observe(document.body, {
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['aria-selected'],
-      });
+      ensureTradeModeTabObserver();
+      window.setTimeout(ensureTradeModeTabObserver, 1000);
     };
 
     if (document.body) {
@@ -2950,8 +2990,20 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     }
   }
 
-  // Binance SPA 切换币种时 URL 变化但不触发 popstate，用轮询检测
-  setInterval(checkSymbolChangeForLeverage, 500);
+  let symbolChangeTimer = null;
+  function startSymbolChangeTimer() {
+    if (symbolChangeTimer || document.hidden) return;
+    // Binance SPA 切换币种时 URL 变化但不触发 popstate，用前台轮询检测。
+    symbolChangeTimer = window.setInterval(checkSymbolChangeForLeverage, 500);
+  }
+
+  function stopSymbolChangeTimer() {
+    if (!symbolChangeTimer) return;
+    window.clearInterval(symbolChangeTimer);
+    symbolChangeTimer = null;
+  }
+
+  startSymbolChangeTimer();
 
   // 首次进入：document-start 时 DOM 可能尚未 ready，所以延迟后再判断当前 tab。
   window.setTimeout(() => {
@@ -2961,9 +3013,14 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   let renderPanelTimer = document.hidden ? null : setInterval(renderPanel, 1000);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
+      stopSymbolChangeTimer();
+      stopTradeModeTabObserver();
       clearInterval(renderPanelTimer);
       renderPanelTimer = null;
     } else if (!renderPanelTimer) {
+      checkSymbolChangeForLeverage();
+      startSymbolChangeTimer();
+      ensureTradeModeTabObserver();
       renderPanel();
       renderPanelTimer = setInterval(renderPanel, 1000);
     }
