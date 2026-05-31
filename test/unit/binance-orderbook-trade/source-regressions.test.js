@@ -22,9 +22,11 @@ test('symbol-change polling is stopped while the tab is hidden', () => {
   assert.doesNotMatch(source, /\n  setInterval\(checkSymbolChangeForLeverage,\s*500\);/);
   assert.match(source, /function startSymbolChangeTimer\(\)/);
   assert.match(source, /function stopSymbolChangeTimer\(\)/);
+  const stopTradingBody = readFunctionBody('stopTradingTimers');
+  assert.match(stopTradingBody, /stopSymbolChangeTimer\(\)/);
   const visibilityBody = source.match(/document\.addEventListener\('visibilitychange', \(\) => \{([\s\S]*?)\n  \}\);/)?.[1] || '';
-  assert.match(visibilityBody, /stopSymbolChangeTimer\(\)/);
-  assert.match(visibilityBody, /startSymbolChangeTimer\(\)/);
+  assert.match(visibilityBody, /stopTradingTimers\(\)/);
+  assert.match(visibilityBody, /syncRouteState\(\)/);
 });
 
 test('permanent trade-mode observer is scoped to the trade tab root', () => {
@@ -44,4 +46,18 @@ test('expanded ladder panel avoids rebuilding unchanged body markup', () => {
   const ladderBody = readFunctionBody('refreshLadderPanel');
   assert.match(ladderBody, /ladderPanelBodySignature/);
   assert.match(ladderBody, /body\.innerHTML = bodyHtml/);
+});
+
+test('route watcher owns non-trading page pause instead of business timers spinning forever', () => {
+  assert.match(source, /function startRouteWatcher\(\)/);
+  assert.match(source, /function pauseForNonTradingPage\(\)/);
+  const pauseBody = readFunctionBody('pauseForNonTradingPage');
+  assert.match(pauseBody, /stopTradingTimers\(\)/);
+  assert.doesNotMatch(pauseBody, /stopRouteWatcher\(\)/);
+});
+
+test('Post Only synthetic click helper dispatches a single click event', () => {
+  const clickBody = readFunctionBody('clickElementLikeUser');
+  assert.match(clickBody, /dispatchEvent\(new MouseEvent\('click'/);
+  assert.doesNotMatch(clickBody, /\.click\?\.\(\)/);
 });

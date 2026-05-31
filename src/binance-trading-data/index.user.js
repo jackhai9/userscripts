@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.1.6
+// @version      1.1.7
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -78,6 +78,10 @@ import {
 
   function getCurrentSymbol() {
     return parseFuturesTradingSymbolFromPathname(location.pathname);
+  }
+
+  function isActiveTradingPage() {
+    return !panelClosed && !document.hidden && isFuturesTradingPage();
   }
 
   /* ========== API 层 ========== */
@@ -471,19 +475,27 @@ import {
     document.body.appendChild(panel);
     keepPanelInViewport(panel);
     savePanelPosition(panel);
-    setupDrag(panel);
+    cleanupPanelDrag();
+    dragCleanup = setupDrag(panel);
     setupCollapseAndClose(panel);
-    window.addEventListener('beforeunload', function () {
+    cleanupPanelUnload();
+    const onBeforeUnload = function () {
       savePanelPosition(panel);
-    });
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    unloadCleanup = function cleanupUnload() {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
 
     return panel;
   }
 
-  function renderPanel(result) {
+  function renderPanel(result, symbolOverride) {
+    if (!isActiveTradingPage()) return;
     const panel = ensurePanel();
     const { indicators, longCount, shortCount, total } = result;
-    const symbol = getCurrentSymbol();
+    const symbol = symbolOverride || getCurrentSymbol();
+    if (!symbol) return;
 
     // 检测哪些指标的值发生了变化
     const changed = {};
@@ -573,7 +585,7 @@ import {
 
   function setupDrag(panel) {
     const header = panel.querySelector('#' + PANEL_ID + '-header');
-    if (!header) return;
+    if (!header) return null;
 
     let dragging = false, startX, startY, startLeft, startTop, saveQueued = false;
     const queuePositionSave = function () {
@@ -585,7 +597,7 @@ import {
       });
     };
 
-    header.addEventListener('mousedown', function (e) {
+    const onMouseDown = function (e) {
       if (e.target.tagName === 'BUTTON') return;
       dragging = true;
       const rect = panel.getBoundingClientRect();
@@ -594,9 +606,9 @@ import {
       startLeft = rect.left;
       startTop = rect.top;
       e.preventDefault();
-    });
+    };
 
-    document.addEventListener('mousemove', function (e) {
+    const onMouseMove = function (e) {
       if (!dragging) return;
       const newLeft = Math.max(0, Math.min(startLeft + (e.clientX - startX), window.innerWidth - panel.offsetWidth));
       const newTop  = Math.max(0, Math.min(startTop + (e.clientY - startY), window.innerHeight - panel.offsetHeight));
@@ -604,13 +616,24 @@ import {
       panel.style.top   = newTop + 'px';
       panel.style.right = 'auto';
       queuePositionSave();
-    });
+    };
 
-    document.addEventListener('mouseup', function () {
+    const onMouseUp = function () {
       if (!dragging) return;
       dragging = false;
       savePanelPosition(panel);
-    });
+    };
+
+    header.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    return function cleanupDrag() {
+      dragging = false;
+      header.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
   }
 
   /* ========== 折叠 & 关闭 ========== */
@@ -701,15 +724,19 @@ import {
   let retryTimer = null;
   let pathTimer = null;
   let agoTimer = null;
+  let dragCleanup = null;
+  let unloadCleanup = null;
   let panelClosed = false;
   let lastUpdateTs = 0;
   let fetching = 0; // 0=空闲, 非零=正在拉取的 epoch
   let epoch = 0; // 递增计数器，用于作废过期的异步回调
+  let lastPath = location.pathname;
 
   function renderAll(symbol) {
+    if (!isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
     var data = dataStore[symbol] || {};
     var result = computeSignals(data, failedKeys);
-    renderPanel(result);
+    renderPanel(result, symbol);
   }
 
   // 首次全量拉取（启动 / 切交易对 / tab 恢复）
@@ -732,7 +759,7 @@ import {
         fetchPeriodData(symbol, PERIOD_KEYS),
         fetchFundingRateData(symbol),
       ]);
-      if (epoch !== myEpoch) return; // 已被更新的调用取代
+      if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return; // 已被更新的调用取代
       applyResults(symbol, periodEntries, fundingEntry);
       renderAll(symbol);
     } catch (e) { err('拉取失败:', e); }
@@ -750,6 +777,10 @@ import {
     retryTimer = null;
 
     if (panelClosed || document.hidden) return;
+    if (!isFuturesTradingPage()) {
+      pauseForNonTradingPage();
+      return;
+    }
 
     var now = serverNow();
     var boundary = Math.floor(now / PERIOD_MS) * PERIOD_MS;
@@ -798,7 +829,7 @@ import {
     }
 
     var targetTs = boundary;
-    var myEpoch = epoch;
+    var myEpoch = ++epoch;
 
     fetching = myEpoch;
     try {
@@ -820,7 +851,7 @@ import {
       }
 
       // await 返回后检查：是否已被 initialFetch 取代
-      if (epoch !== myEpoch) return;
+      if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
 
       applyResults(symbol, periodEntries, fundingEntry || null);
       renderAll(symbol);
@@ -856,24 +887,66 @@ import {
     }
   }
 
-  function stopLoop() {
+  function stopBusinessLoop() {
     clearTimeout(cycleTimer);  cycleTimer = null;
     clearTimeout(retryTimer);  retryTimer = null;
-    if (pathTimer) { clearInterval(pathTimer); pathTimer = null; }
     if (agoTimer)  { clearInterval(agoTimer);  agoTimer = null; }
   }
 
+  function stopRouteWatcher() {
+    if (pathTimer) { clearInterval(pathTimer); pathTimer = null; }
+  }
+
+  function stopLoop() {
+    epoch++;
+    stopBusinessLoop();
+    stopRouteWatcher();
+  }
+
+  function cleanupPanelDrag() {
+    if (!dragCleanup) return;
+    dragCleanup();
+    dragCleanup = null;
+  }
+
+  function cleanupPanelUnload() {
+    if (!unloadCleanup) return;
+    unloadCleanup();
+    unloadCleanup = null;
+  }
+
   function removePanel() {
+    cleanupPanelDrag();
+    cleanupPanelUnload();
     var panel = document.getElementById(PANEL_ID);
     if (panel) panel.remove();
   }
 
   function pauseForNonTradingPage() {
-    clearTimeout(cycleTimer);  cycleTimer = null;
-    clearTimeout(retryTimer);  retryTimer = null;
-    if (agoTimer)  { clearInterval(agoTimer);  agoTimer = null; }
+    epoch++;
+    stopBusinessLoop();
     lastSymbol = null;
     removePanel();
+  }
+
+  function handlePathChange() {
+    if (document.hidden || panelClosed) return;
+    if (location.pathname === lastPath) return;
+    lastPath = location.pathname;
+    if (!isFuturesTradingPage()) {
+      pauseForNonTradingPage();
+      return;
+    }
+    var s = getCurrentSymbol();
+    if (s && s !== lastSymbol) {
+      initialFetch(s).then(function () { scheduleCycle(); });
+    }
+  }
+
+  function startRouteWatcher() {
+    if (pathTimer || document.hidden || panelClosed) return;
+    lastPath = location.pathname;
+    pathTimer = setInterval(handlePathChange, 1000);
   }
 
   async function start() {
@@ -889,11 +962,11 @@ import {
     }
 
     // tab 恢复时：重同步服务器时间 + 立即拉取 + 补抓当前周期 + 恢复定时器
-    // tab 隐藏时：暂停 agoTimer 和 pathTimer，减少后台开销
-    var lastPath = location.pathname;
+    // tab 隐藏时：暂停业务 timer 和 route watcher，减少后台开销
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) {
         if (panelClosed) return; // 面板已被用户关闭，不恢复
+        startRouteWatcher();
         if (!isFuturesTradingPage()) {
           pauseForNonTradingPage();
           return;
@@ -911,22 +984,6 @@ import {
             if (el2 && lastUpdateTs) updateFooter(el2);
           }, 1000);
         }
-        if (!pathTimer) {
-          lastPath = location.pathname;
-          pathTimer = setInterval(function () {
-            if (location.pathname !== lastPath) {
-              lastPath = location.pathname;
-              if (!isFuturesTradingPage()) {
-                pauseForNonTradingPage();
-                return;
-              }
-              var s = getCurrentSymbol();
-              if (s && s !== lastSymbol) {
-                initialFetch(s).then(function () { scheduleCycle(); });
-              }
-            }
-          }, 1000);
-        }
       } else {
         stopLoop();
       }
@@ -942,19 +999,7 @@ import {
 
     // SPA 切换交易对检测（初始就在后台时延迟到前台再启动）
     if (!document.hidden) {
-      pathTimer = setInterval(function () {
-        if (location.pathname !== lastPath) {
-          lastPath = location.pathname;
-          if (!isFuturesTradingPage()) {
-            pauseForNonTradingPage();
-            return;
-          }
-          var sym = getCurrentSymbol();
-          if (sym && sym !== lastSymbol) {
-            initialFetch(sym).then(function () { scheduleCycle(); });
-          }
-        }
-      }, 1000);
+      startRouteWatcher();
     }
   }
 

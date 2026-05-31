@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.10
+// @version      2.7.11
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -813,7 +813,6 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     el.dispatchEvent(new PointerCtor('pointerup', { bubbles: true, clientX, clientY }));
     el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX, clientY }));
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX, clientY }));
-    el.click?.();
   }
 
   function findPostOnlyOption() {
@@ -2630,11 +2629,17 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     ladderPanelBodySignature = '';
   }
 
+  function pauseForNonTradingPage() {
+    removePanel();
+    stopTradingTimers();
+    invalidateTradeButtonCache();
+    lastDisplayCloseState = null;
+    lastAppliedCacheSnapshot = '';
+  }
+
   function renderPanel() {
     if (!isFuturesTradingPage()) {
-      removePanel();
-      stopTradeModeTabObserver();
-      clearTradeUiMutationWait();
+      pauseForNonTradingPage();
       return;
     }
     ensureTradeModeTabObserver();
@@ -3022,27 +3027,92 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     symbolChangeTimer = null;
   }
 
-  startSymbolChangeTimer();
+  let renderPanelTimer = null;
+  let routeWatcherTimer = null;
+  let routeWasTrading = isFuturesTradingPage();
+
+  function startRenderPanelTimer() {
+    if (renderPanelTimer || document.hidden || !isFuturesTradingPage()) return;
+    renderPanelTimer = setInterval(renderPanel, 1000);
+  }
+
+  function stopRenderPanelTimer() {
+    if (renderPanelTimer) {
+      clearInterval(renderPanelTimer);
+      renderPanelTimer = null;
+    }
+  }
+
+  function startTradingTimers() {
+    if (document.hidden || !isFuturesTradingPage()) return;
+    startSymbolChangeTimer();
+    ensureTradeModeTabObserver();
+    startRenderPanelTimer();
+  }
+
+  function stopTradingTimers() {
+    stopSymbolChangeTimer();
+    stopTradeModeTabObserver();
+    clearTradeUiMutationWait();
+    stopRenderPanelTimer();
+  }
+
+  function syncRouteState() {
+    if (document.hidden) return;
+    const isTradingRoute = isFuturesTradingPage();
+    if (!isTradingRoute) {
+      if (routeWasTrading) {
+        routeWasTrading = false;
+        pauseForNonTradingPage();
+      }
+      return;
+    }
+
+    const wasTrading = routeWasTrading;
+    routeWasTrading = true;
+    if (!wasTrading) {
+      lastObservedSymbol = getCurrentSymbol();
+      isEditingMultiplier = false;
+      invalidateTradeButtonCache();
+    } else {
+      checkSymbolChangeForLeverage();
+    }
+
+    const needsRender = !renderPanelTimer || !wasTrading;
+    startTradingTimers();
+    if (needsRender) renderPanel();
+    if (!wasTrading && getActiveTradeMode() === 'OPEN') {
+      queueAutoOpenLeverageReset('route_return');
+    }
+  }
+
+  function startRouteWatcher() {
+    if (routeWatcherTimer || document.hidden) return;
+    routeWatcherTimer = setInterval(syncRouteState, 1000);
+  }
+
+  function stopRouteWatcher() {
+    if (!routeWatcherTimer) return;
+    clearInterval(routeWatcherTimer);
+    routeWatcherTimer = null;
+  }
+
+  startRouteWatcher();
+  startTradingTimers();
 
   // 首次进入：document-start 时 DOM 可能尚未 ready，所以延迟后再判断当前 tab。
   window.setTimeout(() => {
-    if (getActiveTradeMode() === 'OPEN') queueAutoOpenLeverageReset('init');
+    if (isFuturesTradingPage() && getActiveTradeMode() === 'OPEN') queueAutoOpenLeverageReset('init');
   }, 1500);
 
-  let renderPanelTimer = document.hidden ? null : setInterval(renderPanel, 1000);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      stopSymbolChangeTimer();
-      stopTradeModeTabObserver();
-      clearInterval(renderPanelTimer);
-      renderPanelTimer = null;
-    } else if (!renderPanelTimer) {
-      checkSymbolChangeForLeverage();
-      startSymbolChangeTimer();
-      ensureTradeModeTabObserver();
-      renderPanel();
-      renderPanelTimer = setInterval(renderPanel, 1000);
+      stopTradingTimers();
+      stopRouteWatcher();
+      return;
     }
+    startRouteWatcher();
+    syncRouteState();
   });
 
   if (document.readyState === 'loading') {

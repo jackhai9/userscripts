@@ -2,7 +2,7 @@
 // @name         【自写】Binance 合约交易数据面板
 // @namespace    binance.trading.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.1.6
+// @version      1.1.7
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -72,6 +72,9 @@
     let lastSymbol = null;
     function getCurrentSymbol() {
       return parseFuturesTradingSymbolFromPathname(location.pathname);
+    }
+    function isActiveTradingPage() {
+      return !panelClosed && !document.hidden && isFuturesTradingPage();
     }
     async function fetchJson(path, params) {
       const url = new URL(path, API_BASE);
@@ -428,17 +431,25 @@
       document.body.appendChild(panel);
       keepPanelInViewport(panel);
       savePanelPosition(panel);
-      setupDrag(panel);
+      cleanupPanelDrag();
+      dragCleanup = setupDrag(panel);
       setupCollapseAndClose(panel);
-      window.addEventListener("beforeunload", function() {
+      cleanupPanelUnload();
+      const onBeforeUnload = function() {
         savePanelPosition(panel);
-      });
+      };
+      window.addEventListener("beforeunload", onBeforeUnload);
+      unloadCleanup = function cleanupUnload() {
+        window.removeEventListener("beforeunload", onBeforeUnload);
+      };
       return panel;
     }
-    function renderPanel(result) {
+    function renderPanel(result, symbolOverride) {
+      if (!isActiveTradingPage()) return;
       const panel = ensurePanel();
       const { indicators, longCount, shortCount, total } = result;
-      const symbol = getCurrentSymbol();
+      const symbol = symbolOverride || getCurrentSymbol();
+      if (!symbol) return;
       const changed = {};
       for (const ind of indicators) {
         if (prevDisplayValues[ind.name] !== void 0 && prevDisplayValues[ind.name] !== ind.display) {
@@ -538,7 +549,7 @@
     }
     function setupDrag(panel) {
       const header = panel.querySelector("#" + PANEL_ID + "-header");
-      if (!header) return;
+      if (!header) return null;
       let dragging = false, startX, startY, startLeft, startTop, saveQueued = false;
       const queuePositionSave = function() {
         if (saveQueued) return;
@@ -548,7 +559,7 @@
           savePanelPosition(panel);
         });
       };
-      header.addEventListener("mousedown", function(e) {
+      const onMouseDown = function(e) {
         if (e.target.tagName === "BUTTON") return;
         dragging = true;
         const rect = panel.getBoundingClientRect();
@@ -557,8 +568,8 @@
         startLeft = rect.left;
         startTop = rect.top;
         e.preventDefault();
-      });
-      document.addEventListener("mousemove", function(e) {
+      };
+      const onMouseMove = function(e) {
         if (!dragging) return;
         const newLeft = Math.max(0, Math.min(startLeft + (e.clientX - startX), window.innerWidth - panel.offsetWidth));
         const newTop = Math.max(0, Math.min(startTop + (e.clientY - startY), window.innerHeight - panel.offsetHeight));
@@ -566,12 +577,21 @@
         panel.style.top = newTop + "px";
         panel.style.right = "auto";
         queuePositionSave();
-      });
-      document.addEventListener("mouseup", function() {
+      };
+      const onMouseUp = function() {
         if (!dragging) return;
         dragging = false;
         savePanelPosition(panel);
-      });
+      };
+      header.addEventListener("mousedown", onMouseDown);
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+      return function cleanupDrag() {
+        dragging = false;
+        header.removeEventListener("mousedown", onMouseDown);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
     }
     function setupCollapseAndClose(panel) {
       const collapseBtn = panel.querySelector("#" + PANEL_ID + "-collapse");
@@ -645,14 +665,18 @@
     let retryTimer = null;
     let pathTimer = null;
     let agoTimer = null;
+    let dragCleanup = null;
+    let unloadCleanup = null;
     let panelClosed = false;
     let lastUpdateTs = 0;
     let fetching = 0;
     let epoch = 0;
+    let lastPath = location.pathname;
     function renderAll(symbol) {
+      if (!isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
       var data = dataStore[symbol] || {};
       var result = computeSignals(data, failedKeys);
-      renderPanel(result);
+      renderPanel(result, symbol);
     }
     async function initialFetch(symbol) {
       epoch++;
@@ -671,7 +695,7 @@
           fetchPeriodData(symbol, PERIOD_KEYS),
           fetchFundingRateData(symbol)
         ]);
-        if (epoch !== myEpoch) return;
+        if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
         applyResults(symbol, periodEntries, fundingEntry);
         renderAll(symbol);
       } catch (e) {
@@ -686,6 +710,10 @@
       cycleTimer = null;
       retryTimer = null;
       if (panelClosed || document.hidden) return;
+      if (!isFuturesTradingPage()) {
+        pauseForNonTradingPage();
+        return;
+      }
       var now = serverNow();
       var boundary = Math.floor(now / PERIOD_MS) * PERIOD_MS;
       if (!forceNext) {
@@ -726,7 +754,7 @@
         log("交易对:", symbol);
       }
       var targetTs = boundary;
-      var myEpoch = epoch;
+      var myEpoch = ++epoch;
       fetching = myEpoch;
       try {
         var periodEntries, fundingEntry;
@@ -745,7 +773,7 @@
           }
           periodEntries = await fetchPeriodData(symbol, pending);
         }
-        if (epoch !== myEpoch) return;
+        if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
         applyResults(symbol, periodEntries, fundingEntry || null);
         renderAll(symbol);
         var stillPending = getPendingKeys(symbol, targetTs);
@@ -773,35 +801,68 @@
         if (fetching === myEpoch) fetching = 0;
       }
     }
-    function stopLoop() {
+    function stopBusinessLoop() {
       clearTimeout(cycleTimer);
       cycleTimer = null;
       clearTimeout(retryTimer);
       retryTimer = null;
+      if (agoTimer) {
+        clearInterval(agoTimer);
+        agoTimer = null;
+      }
+    }
+    function stopRouteWatcher() {
       if (pathTimer) {
         clearInterval(pathTimer);
         pathTimer = null;
       }
-      if (agoTimer) {
-        clearInterval(agoTimer);
-        agoTimer = null;
-      }
+    }
+    function stopLoop() {
+      epoch++;
+      stopBusinessLoop();
+      stopRouteWatcher();
+    }
+    function cleanupPanelDrag() {
+      if (!dragCleanup) return;
+      dragCleanup();
+      dragCleanup = null;
+    }
+    function cleanupPanelUnload() {
+      if (!unloadCleanup) return;
+      unloadCleanup();
+      unloadCleanup = null;
     }
     function removePanel() {
+      cleanupPanelDrag();
+      cleanupPanelUnload();
       var panel = document.getElementById(PANEL_ID);
       if (panel) panel.remove();
     }
     function pauseForNonTradingPage() {
-      clearTimeout(cycleTimer);
-      cycleTimer = null;
-      clearTimeout(retryTimer);
-      retryTimer = null;
-      if (agoTimer) {
-        clearInterval(agoTimer);
-        agoTimer = null;
-      }
+      epoch++;
+      stopBusinessLoop();
       lastSymbol = null;
       removePanel();
+    }
+    function handlePathChange() {
+      if (document.hidden || panelClosed) return;
+      if (location.pathname === lastPath) return;
+      lastPath = location.pathname;
+      if (!isFuturesTradingPage()) {
+        pauseForNonTradingPage();
+        return;
+      }
+      var s = getCurrentSymbol();
+      if (s && s !== lastSymbol) {
+        initialFetch(s).then(function() {
+          scheduleCycle();
+        });
+      }
+    }
+    function startRouteWatcher() {
+      if (pathTimer || document.hidden || panelClosed) return;
+      lastPath = location.pathname;
+      pathTimer = setInterval(handlePathChange, 1e3);
     }
     async function start() {
       if (!isFuturesTradingPage()) return;
@@ -813,10 +874,10 @@
         if (symbol) await initialFetch(symbol);
         scheduleCycle();
       }
-      var lastPath = location.pathname;
       document.addEventListener("visibilitychange", function() {
         if (!document.hidden) {
           if (panelClosed) return;
+          startRouteWatcher();
           if (!isFuturesTradingPage()) {
             pauseForNonTradingPage();
             return;
@@ -836,24 +897,6 @@
               if (el2 && lastUpdateTs) updateFooter(el2);
             }, 1e3);
           }
-          if (!pathTimer) {
-            lastPath = location.pathname;
-            pathTimer = setInterval(function() {
-              if (location.pathname !== lastPath) {
-                lastPath = location.pathname;
-                if (!isFuturesTradingPage()) {
-                  pauseForNonTradingPage();
-                  return;
-                }
-                var s = getCurrentSymbol();
-                if (s && s !== lastSymbol) {
-                  initialFetch(s).then(function() {
-                    scheduleCycle();
-                  });
-                }
-              }
-            }, 1e3);
-          }
         } else {
           stopLoop();
         }
@@ -864,21 +907,7 @@
         if (panel) keepPanelInViewport(panel);
       });
       if (!document.hidden) {
-        pathTimer = setInterval(function() {
-          if (location.pathname !== lastPath) {
-            lastPath = location.pathname;
-            if (!isFuturesTradingPage()) {
-              pauseForNonTradingPage();
-              return;
-            }
-            var sym = getCurrentSymbol();
-            if (sym && sym !== lastSymbol) {
-              initialFetch(sym).then(function() {
-                scheduleCycle();
-              });
-            }
-          }
-        }, 1e3);
+        startRouteWatcher();
       }
     }
     if (document.readyState === "loading") {

@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.10
+// @version      2.7.11
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1149,7 +1149,6 @@
       el.dispatchEvent(new PointerCtor("pointerup", { bubbles: true, clientX, clientY }));
       el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX, clientY }));
       el.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX, clientY }));
-      el.click?.();
     }
     function findPostOnlyOption() {
       const options = document.querySelectorAll('[role="option"], [role="menuitem"], .bn-select-option');
@@ -2684,11 +2683,16 @@
       document.getElementById(SPACER_ID)?.remove();
       ladderPanelBodySignature = "";
     }
+    function pauseForNonTradingPage() {
+      removePanel();
+      stopTradingTimers();
+      invalidateTradeButtonCache();
+      lastDisplayCloseState = null;
+      lastAppliedCacheSnapshot = "";
+    }
     function renderPanel() {
       if (!isFuturesTradingPage()) {
-        removePanel();
-        stopTradeModeTabObserver();
-        clearTradeUiMutationWait();
+        pauseForNonTradingPage();
         return;
       }
       ensureTradeModeTabObserver();
@@ -3010,24 +3014,79 @@
       window.clearInterval(symbolChangeTimer);
       symbolChangeTimer = null;
     }
-    startSymbolChangeTimer();
-    window.setTimeout(() => {
-      if (getActiveTradeMode() === "OPEN") queueAutoOpenLeverageReset("init");
-    }, 1500);
-    let renderPanelTimer = document.hidden ? null : setInterval(renderPanel, 1e3);
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) {
-        stopSymbolChangeTimer();
-        stopTradeModeTabObserver();
+    let renderPanelTimer = null;
+    let routeWatcherTimer = null;
+    let routeWasTrading = isFuturesTradingPage();
+    function startRenderPanelTimer() {
+      if (renderPanelTimer || document.hidden || !isFuturesTradingPage()) return;
+      renderPanelTimer = setInterval(renderPanel, 1e3);
+    }
+    function stopRenderPanelTimer() {
+      if (renderPanelTimer) {
         clearInterval(renderPanelTimer);
         renderPanelTimer = null;
-      } else if (!renderPanelTimer) {
-        checkSymbolChangeForLeverage();
-        startSymbolChangeTimer();
-        ensureTradeModeTabObserver();
-        renderPanel();
-        renderPanelTimer = setInterval(renderPanel, 1e3);
       }
+    }
+    function startTradingTimers() {
+      if (document.hidden || !isFuturesTradingPage()) return;
+      startSymbolChangeTimer();
+      ensureTradeModeTabObserver();
+      startRenderPanelTimer();
+    }
+    function stopTradingTimers() {
+      stopSymbolChangeTimer();
+      stopTradeModeTabObserver();
+      clearTradeUiMutationWait();
+      stopRenderPanelTimer();
+    }
+    function syncRouteState() {
+      if (document.hidden) return;
+      const isTradingRoute = isFuturesTradingPage();
+      if (!isTradingRoute) {
+        if (routeWasTrading) {
+          routeWasTrading = false;
+          pauseForNonTradingPage();
+        }
+        return;
+      }
+      const wasTrading = routeWasTrading;
+      routeWasTrading = true;
+      if (!wasTrading) {
+        lastObservedSymbol = getCurrentSymbol();
+        isEditingMultiplier = false;
+        invalidateTradeButtonCache();
+      } else {
+        checkSymbolChangeForLeverage();
+      }
+      const needsRender = !renderPanelTimer || !wasTrading;
+      startTradingTimers();
+      if (needsRender) renderPanel();
+      if (!wasTrading && getActiveTradeMode() === "OPEN") {
+        queueAutoOpenLeverageReset("route_return");
+      }
+    }
+    function startRouteWatcher() {
+      if (routeWatcherTimer || document.hidden) return;
+      routeWatcherTimer = setInterval(syncRouteState, 1e3);
+    }
+    function stopRouteWatcher() {
+      if (!routeWatcherTimer) return;
+      clearInterval(routeWatcherTimer);
+      routeWatcherTimer = null;
+    }
+    startRouteWatcher();
+    startTradingTimers();
+    window.setTimeout(() => {
+      if (isFuturesTradingPage() && getActiveTradeMode() === "OPEN") queueAutoOpenLeverageReset("init");
+    }, 1500);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        stopTradingTimers();
+        stopRouteWatcher();
+        return;
+      }
+      startRouteWatcher();
+      syncRouteState();
     });
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", renderPanel, { once: true });

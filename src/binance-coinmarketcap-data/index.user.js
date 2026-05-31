@@ -2,7 +2,7 @@
 // @name         【自写】Binance CoinMarketCap 数据面板
 // @namespace    binance.coinmarketcap.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.1.8
+// @version      0.1.9
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -62,8 +62,12 @@ import {
   let lastUpdateTs = 0;
   let refreshTimer = null;
   let symbolTimer = null;
+  let routeTimer = null;
+  let dragCleanup = null;
+  let unloadCleanup = null;
   let inFlightSymbol = null;
   let lastRowsHtml = '';
+  let lastPath = location.pathname;
   const assetCache = Object.create(null);
 
   function getCurrentSymbol() {
@@ -532,11 +536,17 @@ import {
     document.body.appendChild(panel);
     keepPanelInViewport(panel);
     savePanelPosition(panel);
-    setupDrag(panel);
+    cleanupPanelDrag();
+    dragCleanup = setupDrag(panel);
     setupControls(panel);
-    window.addEventListener('beforeunload', function () {
+    cleanupPanelUnload();
+    const onBeforeUnload = function () {
       savePanelPosition(panel);
-    });
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    unloadCleanup = function cleanupUnload() {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
     return panel;
   }
 
@@ -600,7 +610,7 @@ import {
       const sourceLabel = data.source === 'page-snapshot' ? 'CMC 页面快照' : 'CMC data-api';
       footerEl.innerHTML = [
         '<div style="display:flex;justify-content:space-between;gap:8px;">',
-          '<a href="', data.url, '" target="_blank" style="color:', C.accent, ';text-decoration:none;">', sourceLabel, '</a>',
+          '<a href="', escapeHtml(data.url), '" target="_blank" style="color:', C.accent, ';text-decoration:none;">', sourceLabel, '</a>',
           '<span>CMC ', cmcClock, ' / 拉取 ', formatClock(lastUpdateTs), '</span>',
         '</div>',
       ].join('');
@@ -610,7 +620,7 @@ import {
   async function refreshForCurrentSymbol(force, silent) {
     if (panelClosed || document.hidden) return;
     if (!isFuturesTradingPage()) {
-      removePanel();
+      pauseForNonTradingPage();
       return;
     }
     const symbol = getCurrentSymbol();
@@ -632,43 +642,93 @@ import {
     }
   }
 
-  function startLoop() {
-    if (!isFuturesTradingPage()) return;
+  function startDataLoop() {
+    if (panelClosed || document.hidden || !isFuturesTradingPage()) return;
     ensurePanel();
     refreshForCurrentSymbol(true, false);
-    refreshTimer = setInterval(function () {
-      refreshForCurrentSymbol(false, true);
-    }, REFRESH_MS);
-    symbolTimer = setInterval(function () {
-      if (!isFuturesTradingPage()) {
-        removePanel();
-        lastSymbol = null;
-        return;
-      }
-      const symbol = getCurrentSymbol();
-      if (symbol && symbol !== lastSymbol && symbol !== inFlightSymbol) {
-        lastRowsHtml = '';
-        refreshForCurrentSymbol(true, false);
-      }
-    }, SYMBOL_CHECK_MS);
+    if (!refreshTimer) {
+      refreshTimer = setInterval(function () {
+        refreshForCurrentSymbol(false, true);
+      }, REFRESH_MS);
+    }
+    if (!symbolTimer) {
+      symbolTimer = setInterval(function () {
+        if (!isFuturesTradingPage()) {
+          pauseForNonTradingPage();
+          return;
+        }
+        const symbol = getCurrentSymbol();
+        if (symbol && symbol !== lastSymbol && symbol !== inFlightSymbol) {
+          lastRowsHtml = '';
+          refreshForCurrentSymbol(true, false);
+        }
+      }, SYMBOL_CHECK_MS);
+    }
   }
 
-  function stopLoop() {
+  function stopDataLoop() {
     if (refreshTimer) clearInterval(refreshTimer);
     if (symbolTimer) clearInterval(symbolTimer);
     refreshTimer = null;
     symbolTimer = null;
   }
 
+  function stopRouteWatcher() {
+    if (routeTimer) clearInterval(routeTimer);
+    routeTimer = null;
+  }
+
+  function stopLoop() {
+    stopDataLoop();
+    stopRouteWatcher();
+  }
+
+  function cleanupPanelDrag() {
+    if (!dragCleanup) return;
+    dragCleanup();
+    dragCleanup = null;
+  }
+
+  function cleanupPanelUnload() {
+    if (!unloadCleanup) return;
+    unloadCleanup();
+    unloadCleanup = null;
+  }
+
   function removePanel() {
+    cleanupPanelDrag();
+    cleanupPanelUnload();
     const panel = document.getElementById(PANEL_ID);
     if (panel) panel.remove();
     lastRowsHtml = '';
   }
 
+  function pauseForNonTradingPage() {
+    stopDataLoop();
+    removePanel();
+    lastSymbol = null;
+  }
+
+  function handleRouteChange() {
+    if (document.hidden || panelClosed) return;
+    if (location.pathname === lastPath) return;
+    lastPath = location.pathname;
+    if (!isFuturesTradingPage()) {
+      pauseForNonTradingPage();
+      return;
+    }
+    startDataLoop();
+  }
+
+  function startRouteWatcher() {
+    if (routeTimer || document.hidden || panelClosed) return;
+    lastPath = location.pathname;
+    routeTimer = setInterval(handleRouteChange, SYMBOL_CHECK_MS);
+  }
+
   function setupDrag(panel) {
     const header = panel.querySelector('#' + PANEL_ID + '-header');
-    if (!header) return;
+    if (!header) return null;
 
     let dragging = false;
     let startX;
@@ -685,7 +745,7 @@ import {
       });
     };
 
-    header.addEventListener('mousedown', function (event) {
+    const onMouseDown = function (event) {
       const target = event.target;
       if (target && target.closest && target.closest('button,a')) return;
       dragging = true;
@@ -695,9 +755,9 @@ import {
       startLeft = rect.left;
       startTop = rect.top;
       event.preventDefault();
-    });
+    };
 
-    document.addEventListener('mousemove', function (event) {
+    const onMouseMove = function (event) {
       if (!dragging) return;
       const newLeft = Math.max(0, Math.min(startLeft + event.clientX - startX, window.innerWidth - panel.offsetWidth));
       const newTop = Math.max(0, Math.min(startTop + event.clientY - startY, window.innerHeight - panel.offsetHeight));
@@ -705,13 +765,24 @@ import {
       panel.style.top = newTop + 'px';
       panel.style.right = 'auto';
       queuePositionSave();
-    });
+    };
 
-    document.addEventListener('mouseup', function () {
+    const onMouseUp = function () {
       if (!dragging) return;
       dragging = false;
       savePanelPosition(panel);
-    });
+    };
+
+    header.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    return function cleanupDrag() {
+      dragging = false;
+      header.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
   }
 
   function setupControls(panel) {
@@ -821,7 +892,10 @@ import {
       stopLoop();
       return;
     }
-    if (!panelClosed && !refreshTimer) startLoop();
+    if (panelClosed) return;
+    startRouteWatcher();
+    if (isFuturesTradingPage()) startDataLoop();
+    else pauseForNonTradingPage();
   });
 
   window.addEventListener('resize', function () {
@@ -829,5 +903,6 @@ import {
     if (panel) keepPanelInViewport(panel);
   });
 
-  startLoop();
+  startRouteWatcher();
+  startDataLoop();
 })();
