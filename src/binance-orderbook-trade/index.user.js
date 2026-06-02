@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.15
+// @version      2.7.16
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1454,7 +1454,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   function findOpenOrderRowCancelButton(row) {
     const icon = row.querySelector('svg[aria-label="撤销挂单"]');
     if (!icon || !isVisibleElement(icon)) return null;
-    const target = icon.closest('button, [role="button"], a, [tabindex]') || icon.parentElement || icon;
+    const target = icon.closest('button, [role="button"], a, [tabindex]') || icon;
     if (!target || !row.contains(target) || !isVisibleElement(target)) return null;
     if (target.disabled || target.getAttribute('aria-disabled') === 'true') return null;
     return target;
@@ -1511,8 +1511,10 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     return false;
   }
 
-  async function waitForCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
-    const deadline = Date.now() + 1600;
+  async function waitForCurrentSymbolOpenOrderRows(root, symbol, plan = null, options = null) {
+    const { openOrdersCount = null } = options || {};
+    const timeoutMs = openOrdersCount > 0 ? LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS : 1600;
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const rows = readCurrentSymbolOpenOrderRows(root, symbol, plan);
       if (rows.length) return rows;
@@ -1521,7 +1523,8 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     return readCurrentSymbolOpenOrderRows(root, symbol, plan);
   }
 
-  function selectOpenOrderRowsToCancelForPlan(plan, rows) {
+  function selectOpenOrderRowsToCancelForPlan(plan, rows, options = null) {
+    const { allowPartial = false } = options || {};
     const rowsToCancel = [];
     let cancelQty = '0';
     for (const row of rows) {
@@ -1530,7 +1533,16 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       cancelQty = addDecimalStrings(cancelQty, row.qty);
       if (compareDecimalStrings(cancelQty, plan.totalQty) >= 0) break;
     }
-    return compareDecimalStrings(cancelQty, plan.totalQty) >= 0 ? rowsToCancel : [];
+    return compareDecimalStrings(cancelQty, plan.totalQty) >= 0 || (allowPartial && rowsToCancel.length > 0)
+      ? rowsToCancel
+      : [];
+  }
+
+  function getClosePlanDirectionLabel(plan) {
+    if (plan?.spec?.mode !== 'CLOSE') return '';
+    if (plan.spec.side === 'LONG') return '平多';
+    if (plan.spec.side === 'SHORT') return '平空';
+    return '';
   }
 
   function countOpenOrderRowsByKey(root, symbol, key) {
@@ -1553,7 +1565,11 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       if (getCurrentSymbol() !== plan.symbol) throw new Error('逐行撤单前交易对已变化');
       const remainingQty = subtractDecimalStrings(plan.totalQty, cancelQty);
       const rows = readCurrentSymbolOpenOrderRows(root, plan.symbol, plan);
-      const row = selectOpenOrderRowsToCancelForPlan({ ...plan, totalQty: remainingQty }, rows)[0];
+      const row = selectOpenOrderRowsToCancelForPlan(
+        { ...plan, totalQty: remainingQty },
+        rows,
+        { allowPartial: true }
+      )[0];
       if (!row) throw new Error(`${plan.symbol} 当前币可撤挂单数量不足，已停止重挂`);
       const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
       if (!row.cancelButton?.isConnected || !isVisibleElement(row.cancelButton)) {
@@ -1803,14 +1819,18 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
         return { ok: false, status: 'symbol_filter_not_confirmed', message };
       }
 
-      const rows = await waitForCurrentSymbolOpenOrderRows(openOrdersScope, symbol, plan);
+      const openOrdersCount = getOpenOrdersTabCount();
+      const rows = await waitForCurrentSymbolOpenOrderRows(openOrdersScope, symbol, plan, {
+        openOrdersCount,
+      });
       if (!rows.length) {
-        const message = `未定位到 ${symbol} 当前币可逐行撤单的基础单`;
+        const directionLabel = getClosePlanDirectionLabel(plan);
+        const message = `未定位到 ${symbol}${directionLabel ? ` ${directionLabel}` : ''} 当前币可逐行撤单的基础单`;
         setLadderStatus(message);
         return { ok: false, status: 'rows_not_found', message };
       }
 
-      const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
+      const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows, { allowPartial: true });
       if (!rowsToCancel.length) {
         const message = `未选中 ${symbol} 当前币待撤挂单`;
         setLadderStatus(message);

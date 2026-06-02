@@ -147,11 +147,15 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
 
   const cancelButtonBody = readFunctionBody('findOpenOrderRowCancelButton');
   assert.match(cancelButtonBody, /aria-label="撤销挂单"/);
+  assert.match(cancelButtonBody, /const target = icon\.closest\('button, \[role="button"\], a, \[tabindex\]'\) \|\| icon/);
+  assert.doesNotMatch(cancelButtonBody, /\|\| icon\.parentElement \|\| icon/);
 
   const selectRowsBody = readFunctionBody('selectOpenOrderRowsToCancelForPlan');
+  assert.match(selectRowsBody, /allowPartial = false/);
   assert.match(selectRowsBody, /isOpenOrderRowForClosePlan\(row\.sideText,\s*plan\)/);
   assert.match(selectRowsBody, /compareDecimalStrings\(cancelQty,\s*plan\.totalQty\)/);
   assert.match(selectRowsBody, /addDecimalStrings\(cancelQty,\s*row\.qty\)/);
+  assert.match(selectRowsBody, /allowPartial && rowsToCancel\.length > 0/);
   assert.match(selectRowsBody, /return compareDecimalStrings\(cancelQty,\s*plan\.totalQty\) >= 0/);
   assert.match(selectRowsBody, /: \[\]/);
 
@@ -163,14 +167,21 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
   assert.doesNotMatch(directionBody, /includes\('SELL'\)/);
   assert.doesNotMatch(directionBody, /includes\('BUY'\)/);
 
+  const waitRowsBody = readFunctionBody('waitForCurrentSymbolOpenOrderRows');
+  assert.match(waitRowsBody, /openOrdersCount/);
+  assert.match(waitRowsBody, /LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS/);
+
   const cancelOpenOrderRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
   assert.match(cancelOpenOrderRowsBody, /readCurrentSymbolOpenOrderRows\(root,\s*plan\.symbol,\s*plan\)/);
   assert.match(cancelOpenOrderRowsBody, /const remainingQty = subtractDecimalStrings\(plan\.totalQty,\s*cancelQty\)/);
-  assert.match(cancelOpenOrderRowsBody, /selectOpenOrderRowsToCancelForPlan\(\{ \.\.\.plan,\s*totalQty: remainingQty \},\s*rows\)\[0\]/);
+  assert.match(cancelOpenOrderRowsBody, /allowPartial: true/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /for \(const row of rowsToCancel\)/);
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
-  assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows\)/);
+  assert.match(cancelRowsBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
+  assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(openOrdersScope,\s*symbol,\s*plan,\s*\{\s*openOrdersCount,\s*\}\)/);
+  assert.match(cancelRowsBody, /getClosePlanDirectionLabel\(plan\)/);
+  assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows,\s*\{\s*allowPartial: true\s*\}\)/);
   assert.match(cancelRowsBody, /await cancelOpenOrderRowsForPlan\(openOrdersScope,\s*plan\)/);
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
 });
