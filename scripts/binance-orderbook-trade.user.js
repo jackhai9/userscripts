@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.29
+// @version      2.7.30
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1509,9 +1509,9 @@
       el.innerHTML = [
         '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;color:#76808f;font-size:12px;">',
         `<span>缩放 推荐 ${recommendationText}</span>`,
-        statusText,
         `<button type="button" data-orderbook-precision-apply="true"${canApply ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
         `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${refreshButtonStyle}">刷新</button>`,
+        statusText,
         "</div>"
       ].join("");
       if (busy && Number(orderbookPrecisionState.sampleEndsAt) > Date.now()) {

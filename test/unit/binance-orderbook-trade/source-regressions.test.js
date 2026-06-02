@@ -252,6 +252,13 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
+  const recommendationIndex = refreshBody.indexOf('<span>缩放 推荐 ${recommendationText}</span>');
+  const applyButtonIndex = refreshBody.indexOf('data-orderbook-precision-apply="true"');
+  const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
+  const statusTextIndex = refreshBody.lastIndexOf('statusText');
+  assert.ok(recommendationIndex < applyButtonIndex, 'recommendation text should stay before the Apply button');
+  assert.ok(applyButtonIndex < refreshButtonIndex, 'Apply button should stay before the Refresh button');
+  assert.ok(refreshButtonIndex < statusTextIndex, 'transient precision status should stay after both buttons');
 
   const busyStatusBody = readFunctionBody('formatOrderbookPrecisionBusyStatus');
   assert.match(busyStatusBody, /Math\.ceil\(remainingMs \/ 1000\)/);
