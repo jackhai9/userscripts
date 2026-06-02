@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.32
+// @version      2.7.33
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1576,7 +1576,6 @@ import {
         spec,
         symbol,
         totalQty: replacementTotalQty,
-        allowPartialReplacement: true,
       };
     }
     return error;
@@ -2119,8 +2118,7 @@ import {
     return countOpenOrderRowsByKey(root, symbol, key) < previousCount;
   }
 
-  async function cancelOpenOrderRowsForPlan(root, plan, options = null) {
-    const { allowPartialEnd = false } = options || {};
+  async function cancelOpenOrderRowsForPlan(root, plan) {
     let cancelQty = '0';
     let currentRoot = root;
     while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
@@ -2135,9 +2133,6 @@ import {
         { allowPartial: true }
       )[0];
       if (!row) {
-        if (allowPartialEnd && isPositiveDecimalString(cancelQty)) {
-          return { ok: true, partial: true, cancelQty };
-        }
         throw new Error(`${plan.symbol} 当前币可撤挂单数量不足，已停止重挂`);
       }
       currentRoot = row.root || currentRoot;
@@ -2163,7 +2158,7 @@ import {
       }
       cancelQty = addDecimalStrings(cancelQty, row.qty);
     }
-    return { ok: true, partial: false, cancelQty };
+    return { ok: true, cancelQty };
   }
 
   async function setHideOtherSymbolChecked(root, desiredChecked) {
@@ -2417,7 +2412,7 @@ import {
         return { ok: false, status: 'rows_not_found', message };
       }
 
-      const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows, { allowPartial: true });
+      const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
       if (!rowsToCancel.length) {
         const message = `未选中 ${symbol} 当前币待撤挂单`;
         setLadderStatus(message);
@@ -2425,9 +2420,7 @@ import {
       }
 
       setLadderStatus(`${symbol} 撤销 ${rowsToCancel.length} 笔当前币挂单`);
-      await cancelOpenOrderRowsForPlan(openOrdersScope, plan, {
-        allowPartialEnd: plan.allowPartialReplacement === true,
-      });
+      await cancelOpenOrderRowsForPlan(openOrdersScope, plan);
       setLadderStatus(`${symbol} 当前币挂单已替换，继续重挂`);
       return { ok: true, status: 'rows_cleared' };
     } catch (e) {
