@@ -221,7 +221,8 @@ test('cancel current-symbol open orders can wait until replacement orders are cl
 
 test('orderbook precision recommendation is sampled and manually applied only', () => {
   assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3000/);
-  assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS = 600000/);
+  assert.match(source, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6000/);
+  assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
   assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX/);
   assert.match(source, /data-orderbook-precision-apply/);
   assert.match(source, /data-orderbook-precision-refresh/);
@@ -233,7 +234,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
   assert.match(sampleBody, /getCurrentOrderbookDisplayStep/);
   assert.match(sampleBody, /orderbookPrecisionResampleRequested/);
-  assert.match(sampleBody, /const nextDelayMs = shouldResampleImmediately/);
+  assert.doesNotMatch(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
 
   const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
   assert.match(refreshBody, /recommendOrderbookPrecision/);
@@ -243,6 +244,13 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
   assert.match(scheduleBody, /force = false/);
   assert.match(scheduleBody, /if \(force\) orderbookPrecisionResampleRequested = true/);
+  assert.match(scheduleBody, /durationMs/);
+
+  const initialBody = readFunctionBody('startInitialOrderbookPrecisionSample');
+  assert.match(initialBody, /orderbookPrecisionInitialSampledSymbols\.has\(symbol\)/);
+
+  const triggerBody = readFunctionBody('findOrderbookPrecisionTrigger');
+  assert.match(triggerBody, /node\.closest\(clickableSelector\) \|\| node\.parentElement \|\| node/);
 
   const startBody = readFunctionBody('startLadder');
   assert.doesNotMatch(startBody, /applyRecommendedOrderbookPrecision/);

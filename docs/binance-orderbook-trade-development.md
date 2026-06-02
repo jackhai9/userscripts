@@ -154,7 +154,7 @@ SVG action controls need separate treatment from normal buttons. A visible Binan
 
 When orderbook depth is missing, infer missing maker prices from the current displayed orderbook step, not from exchange `tickSize`.
 
-Orderbook precision recommendations must remain non-invasive. The script may sample best bid/ask movement and suggest the closest display precision, but it must not override Binance's remembered precision or change precision during ladder or single-order submission. The first visible recommendation should appear quickly: use sampled price movement when available, and fall back to the current visible orderbook display step when the first short sampling window has too few non-zero moves. Applying a recommended precision requires an explicit user click.
+Orderbook precision recommendations must remain non-invasive and on demand. The script may sample best bid/ask movement once when a symbol is first seen, and once again when the user clicks refresh, but it must not keep a background sampling loop alive. It must not override Binance's remembered precision or change precision during ladder or single-order submission. The first visible recommendation should appear quickly: use sampled price movement when available, and fall back to the current visible orderbook display step when the first short sampling window has too few non-zero moves. Applying a recommended precision requires an explicit user click.
 
 Live Tampermonkey verification must prove the new userscript is actually active. Opening a raw GitHub URL or landing on Tampermonkey's `script_installation.php` intermediate page is not enough. Confirm through the extension update UI, the userscript panel behavior, or live DOM/status evidence.
 
@@ -170,8 +170,8 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - test both `LIMIT` and `MARKET`
 - test open and close modes
 - verify rules-not-ready refuses to order
-- verify orderbook precision recommendation appears after the first short sampling window even when price movement samples are sparse
-- verify the manual precision refresh button starts a new sample round without auto-applying
+- verify orderbook precision recommendation appears after the first short startup sampling window even when price movement samples are sparse
+- verify the manual precision refresh button starts one longer sample round without auto-applying or scheduling background resampling
 - verify the precision apply button changes Binance orderbook precision only after an explicit user click
 - start ladder order, confirm start buttons are disabled while running
 - cancel current-symbol orders, verify only Binance native confirmation opens
