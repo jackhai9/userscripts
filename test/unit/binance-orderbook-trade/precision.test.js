@@ -34,3 +34,11 @@ test('does not recommend precision until enough multi-sample evidence exists', (
     options: ['0.0001', '0.001', '0.01', '0.1', '1'],
   }), null);
 });
+
+test('uses fallback movement to provide a first recommendation when samples are not ready', () => {
+  assert.equal(recommendOrderbookPrecision({
+    samples: [],
+    fallbackMovement: '0.0061',
+    options: ['0.0001', '0.001', '0.01', '0.1', '1'],
+  }), '0.01');
+});

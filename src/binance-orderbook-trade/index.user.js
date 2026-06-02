@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.21
+// @version      2.7.22
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -68,7 +68,10 @@ import {
   isTradeActionButton as isTradeActionButtonDom,
   isTradeModeTab as isTradeModeTabDom,
 } from './dom/trade-form.js';
-import { planBufferedMakerPrices } from './core/orderbook.js';
+import {
+  inferOrderbookDisplayStep,
+  planBufferedMakerPrices,
+} from './core/orderbook.js';
 
 (function () {
   'use strict';
@@ -130,9 +133,9 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   const LADDER_OPEN_QTY_POLL_MS = 80;
   const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
   const SINGLE_ORDER_QTY_SYNC_DELAY_MS = 120;
-  const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 4500;
+  const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3000;
   const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
-  const ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS = 15000;
+  const ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS = 600000;
   const ORDERBOOK_PRECISION_SAMPLE_MAX = 96;
   const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
     '0.00000001',
@@ -187,6 +190,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   let ladderPanelBodySignature = '';
   let orderbookPrecisionSampling = false;
   let orderbookPrecisionSampleTimer = 0;
+  let orderbookPrecisionResampleRequested = false;
   let orderbookPrecisionState = {
     symbol: null,
     samples: [],
@@ -839,8 +843,17 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     const samples = readStoredOrderbookPrecisionSamples(symbol);
     return recommendOrderbookPrecision({
       samples,
+      fallbackMovement: getCurrentOrderbookDisplayStep(),
       options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
     });
+  }
+
+  function getCurrentOrderbookDisplayStep() {
+    const bidStep = inferOrderbookDisplayStep(getOrderbookPrices('BID', 8));
+    const askStep = inferOrderbookDisplayStep(getOrderbookPrices('ASK', 8));
+    if (!bidStep) return askStep;
+    if (!askStep) return bidStep;
+    return compareDecimalStrings(bidStep, askStep) <= 0 ? bidStep : askStep;
   }
 
   function isOrderbookPrecisionNumericText(text) {
@@ -926,13 +939,15 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     }
 
     const samples = readStoredOrderbookPrecisionSamples(symbol);
+    const fallbackMovement = getCurrentOrderbookDisplayStep();
     const recommendation = recommendOrderbookPrecision({
       samples,
+      fallbackMovement,
       options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
     });
     const current = readCurrentOrderbookPrecisionValue();
     const existingStatus = orderbookPrecisionState.symbol === symbol ? orderbookPrecisionState.status : null;
-    const stickyStatus = existingStatus && existingStatus !== 'ready' && existingStatus !== '采样中'
+    const stickyStatus = existingStatus && /^(未定位|未找到|样本不足)/.test(existingStatus)
       ? existingStatus
       : null;
     const status = stickyStatus
@@ -953,7 +968,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       : `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`;
     const recommendationText = recommendation || '--';
     const currentText = current || '--';
-    const sampleText = samples.length ? `${samples.length}` : '0';
+    const sampleText = samples.length ? `${samples.length}` : fallbackMovement ? '档距' : '0';
     const statusText = status === 'ready' ? '' : `<span>${status}</span>`;
     el.innerHTML = [
       '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;color:#76808f;font-size:12px;">',
@@ -962,6 +977,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       `<span>样本 ${sampleText}</span>`,
       statusText,
       `<button type="button" data-orderbook-precision-apply="true"${canApply ? '' : ' disabled aria-disabled="true"'} style="height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;${buttonStyle}">应用</button>`,
+      '<button type="button" data-orderbook-precision-refresh="true" style="height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">刷新</button>',
       '</div>',
     ].join('');
   }
@@ -981,6 +997,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     const samples = readStoredOrderbookPrecisionSamples(symbol);
     const recommendation = recommendOrderbookPrecision({
       samples,
+      fallbackMovement: getCurrentOrderbookDisplayStep(),
       options: actualOptions.length ? actualOptions : ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
     });
     if (!recommendation) {
@@ -1034,16 +1051,37 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
         );
         saveStoredOrderbookPrecisionSamples(symbol, samples);
       }
+      const fallbackMovement = getCurrentOrderbookDisplayStep();
+      const recommendation = recommendOrderbookPrecision({
+        samples: readStoredOrderbookPrecisionSamples(symbol),
+        fallbackMovement,
+        options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
+      });
+      orderbookPrecisionState = {
+        ...orderbookPrecisionState,
+        symbol,
+        recommendation,
+        current: readCurrentOrderbookPrecisionValue(),
+        status: recommendation ? 'ready' : '采样中',
+      };
       refreshOrderbookPrecisionRecommendation();
       scheduleRenderPanel();
     } finally {
+      const shouldResampleImmediately = orderbookPrecisionResampleRequested;
+      orderbookPrecisionResampleRequested = false;
       orderbookPrecisionSampling = false;
-      scheduleOrderbookPrecisionSampleRound(ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS);
+      const nextDelayMs = shouldResampleImmediately ? 0 : ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS;
+      scheduleOrderbookPrecisionSampleRound(nextDelayMs);
     }
   }
 
-  function scheduleOrderbookPrecisionSampleRound(delayMs = 0) {
+  function scheduleOrderbookPrecisionSampleRound(delayMs = 0, options) {
+    const { force = false } = options || {};
     if (document.hidden || !isFuturesTradingPage()) return;
+    if (orderbookPrecisionSampling) {
+      if (force) orderbookPrecisionResampleRequested = true;
+      return;
+    }
     if (orderbookPrecisionSampling || orderbookPrecisionSampleTimer) return;
     orderbookPrecisionSampleTimer = window.setTimeout(runOrderbookPrecisionSampleRound, Math.max(0, Number(delayMs) || 0));
   }
@@ -1051,6 +1089,18 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   function stopOrderbookPrecisionSampler() {
     window.clearTimeout(orderbookPrecisionSampleTimer);
     orderbookPrecisionSampleTimer = 0;
+  }
+
+  function refreshOrderbookPrecisionSamplesNow() {
+    const symbol = getCurrentSymbol();
+    orderbookPrecisionState = {
+      ...orderbookPrecisionState,
+      symbol,
+      status: '刷新中',
+    };
+    stopOrderbookPrecisionSampler();
+    scheduleOrderbookPrecisionSampleRound(0, { force: true });
+    scheduleRenderPanel();
   }
 
   function getBufferedMakerPrices(side, levels, ladderStep = DEFAULT_LADDER_STEP) {
@@ -3306,6 +3356,11 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
         applyRecommendedOrderbookPrecision();
         return;
       }
+      const precisionRefreshBtn = target.closest('[data-orderbook-precision-refresh]');
+      if (precisionRefreshBtn) {
+        refreshOrderbookPrecisionSamplesNow();
+        return;
+      }
       const actionBtn = target.closest('[data-ladder-action]');
       if (actionBtn) {
         if (actionBtn.disabled || actionBtn.getAttribute('aria-disabled') === 'true') return;
@@ -3720,7 +3775,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       status: '采样中',
     };
     stopOrderbookPrecisionSampler();
-    scheduleOrderbookPrecisionSampleRound(0);
+    scheduleOrderbookPrecisionSampleRound(0, { force: true });
     scheduleRenderPanel();
     if (getActiveTradeMode() === 'OPEN') {
       queueAutoOpenLeverageReset('symbol_change');
