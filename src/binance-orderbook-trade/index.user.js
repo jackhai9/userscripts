@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.28
+// @version      2.7.29
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -994,6 +994,57 @@ import {
       .find((node) => readOrderbookPrecisionOptionValue(node) === normalized) || null;
   }
 
+  function dispatchOrderbookPrecisionOpenEvent(target, type) {
+    const EventCtor = type.startsWith('pointer') && typeof PointerEvent === 'function'
+      ? PointerEvent
+      : MouseEvent;
+    return target.dispatchEvent(new EventCtor(type, {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      button: 0,
+      buttons: type === 'pointerup' || type === 'mouseup' || type === 'click' ? 0 : 1,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+    }));
+  }
+
+  async function waitForVisibleOrderbookPrecisionOptions(timeoutMs = 250) {
+    const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+    while (!document.hidden && isFuturesTradingPage()) {
+      if (getVisibleOrderbookPrecisionOptionNodes().length) return true;
+      if (Date.now() >= deadline) return false;
+      await delay(50);
+    }
+    return false;
+  }
+
+  async function openOrderbookPrecisionOptions(triggerElement) {
+    if (!triggerElement || !triggerElement.isConnected) return false;
+    const tickSize = triggerElement.closest?.('.orderbook-tickSize');
+    const candidates = [
+      tickSize,
+      tickSize?.querySelector?.('.tick-content'),
+      triggerElement,
+    ].filter((node, index, nodes) => (
+      node
+      && nodes.indexOf(node) === index
+      && isVisibleElement(node)
+      && !isInsideOrderbookPriceRow(node)
+    ));
+
+    for (const target of candidates) {
+      dispatchOrderbookPrecisionOpenEvent(target, 'pointerdown');
+      dispatchOrderbookPrecisionOpenEvent(target, 'mousedown');
+      dispatchOrderbookPrecisionOpenEvent(target, 'pointerup');
+      dispatchOrderbookPrecisionOpenEvent(target, 'mouseup');
+      dispatchOrderbookPrecisionOpenEvent(target, 'click');
+      if (await waitForVisibleOrderbookPrecisionOptions()) return true;
+    }
+    return false;
+  }
+
   async function waitForVisibleOrderbookPrecisionOption(value, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
     const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
     while (!document.hidden && isFuturesTradingPage()) {
@@ -1102,7 +1153,7 @@ import {
 
     let option = findVisibleOrderbookPrecisionOption(recommendation);
     if (!option) {
-      clickDomTarget(trigger.element);
+      await openOrderbookPrecisionOptions(trigger.element);
       option = await waitForVisibleOrderbookPrecisionOption(recommendation);
     }
     if (!option) {
