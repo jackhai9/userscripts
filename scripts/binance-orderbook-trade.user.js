@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.16
+// @version      2.7.17
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2044,12 +2044,24 @@
           setLadderStatus(message);
           return { ok: false, status: "basic_tab_not_ready", message };
         }
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (!openOrdersScope) {
+          const message = "未定位到当前委托面板";
+          setLadderStatus(message);
+          return { ok: false, status: "scope_not_found", message };
+        }
         const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
         symbolFilterOriginalChecked = symbolFilter.originalChecked;
         if (!symbolFilter.ok) {
           const message = "未确认只显示当前币挂单";
           setLadderStatus(message);
           return { ok: false, status: "symbol_filter_not_confirmed", message };
+        }
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (!openOrdersScope) {
+          const message = "未定位到当前委托面板";
+          setLadderStatus(message);
+          return { ok: false, status: "scope_not_found", message };
         }
         const openOrdersCount = getOpenOrdersTabCount();
         const rows = await waitForCurrentSymbolOpenOrderRows(openOrdersScope, symbol, plan, {
