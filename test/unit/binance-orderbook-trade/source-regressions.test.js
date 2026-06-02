@@ -170,11 +170,19 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
   const waitRowsBody = readFunctionBody('waitForCurrentSymbolOpenOrderRows');
   assert.match(waitRowsBody, /openOrdersCount/);
   assert.match(waitRowsBody, /LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS/);
+  assert.match(waitRowsBody, /let currentRoot = root/);
+  assert.match(waitRowsBody, /readCurrentSymbolOpenOrderRows\(currentRoot,\s*symbol,\s*plan\)/);
+  assert.match(waitRowsBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
+  assert.match(waitRowsBody, /if \(refreshedRoot\) currentRoot = refreshedRoot/);
 
   const cancelOpenOrderRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
-  assert.match(cancelOpenOrderRowsBody, /readCurrentSymbolOpenOrderRows\(root,\s*plan\.symbol,\s*plan\)/);
+  assert.match(cancelOpenOrderRowsBody, /let currentRoot = root/);
+  assert.match(cancelOpenOrderRowsBody, /readCurrentSymbolOpenOrderRows\(currentRoot,\s*plan\.symbol,\s*plan\)/);
   assert.match(cancelOpenOrderRowsBody, /const remainingQty = subtractDecimalStrings\(plan\.totalQty,\s*cancelQty\)/);
   assert.match(cancelOpenOrderRowsBody, /allowPartial: true/);
+  assert.match(cancelOpenOrderRowsBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
+  assert.match(cancelOpenOrderRowsBody, /currentRoot = refreshedRoot/);
+  assert.match(cancelOpenOrderRowsBody, /currentRoot = row\.root \|\| currentRoot/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /for \(const row of rowsToCancel\)/);
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
