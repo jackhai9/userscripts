@@ -220,8 +220,8 @@ test('cancel current-symbol open orders can wait until replacement orders are cl
 });
 
 test('orderbook precision recommendation is sampled and manually applied only', () => {
-  assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3000/);
   assert.match(source, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6000/);
+  assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
   assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3'/);
   assert.match(source, /data-orderbook-precision-apply/);
@@ -252,6 +252,8 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
+  assert.match(refreshBody, /buttonBaseStyle = 'height:32px;[^']*padding:0 12px;[^']*font-size:14px;line-height:30px;/);
+  assert.match(refreshBody, /margin-top:8px;[^']*font-size:14px;/);
   const recommendationIndex = refreshBody.indexOf('<span>缩放 推荐 ${recommendationText}</span>');
   const applyButtonIndex = refreshBody.indexOf('data-orderbook-precision-apply="true"');
   const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
