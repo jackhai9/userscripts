@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.17
+// @version      2.7.18
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1776,12 +1776,15 @@
       const { openOrdersCount = null } = options || {};
       const timeoutMs = openOrdersCount > 0 ? LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS : 1600;
       const deadline = Date.now() + timeoutMs;
+      let currentRoot = root;
       while (Date.now() < deadline) {
-        const rows = readCurrentSymbolOpenOrderRows(root, symbol, plan);
+        const refreshedRoot = getActiveOpenOrdersScope2();
+        if (refreshedRoot) currentRoot = refreshedRoot;
+        const rows = readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
         if (rows.length) return rows;
         await delay(100);
       }
-      return readCurrentSymbolOpenOrderRows(root, symbol, plan);
+      return readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
     }
     function selectOpenOrderRowsToCancelForPlan(plan, rows, options = null) {
       const { allowPartial = false } = options || {};
@@ -1815,16 +1818,22 @@
     }
     async function cancelOpenOrderRowsForPlan(root, plan) {
       let cancelQty = "0";
+      let currentRoot = root;
       while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
         if (getCurrentSymbol() !== plan.symbol) throw new Error("逐行撤单前交易对已变化");
         const remainingQty = subtractDecimalStrings(plan.totalQty, cancelQty);
-        const rows = readCurrentSymbolOpenOrderRows(root, plan.symbol, plan);
+        const refreshedRoot = getActiveOpenOrdersScope2();
+        if (refreshedRoot) currentRoot = refreshedRoot;
+        const rows = readCurrentSymbolOpenOrderRows(currentRoot, plan.symbol, plan);
         const row = selectOpenOrderRowsToCancelForPlan(
           { ...plan, totalQty: remainingQty },
           rows,
           { allowPartial: true }
         )[0];
-        if (!row) throw new Error(`${plan.symbol} 当前币可撤挂单数量不足，已停止重挂`);
+        if (!row) {
+          throw new Error(`${plan.symbol} 当前币可撤挂单数量不足，已停止重挂`);
+        }
+        currentRoot = row.root || currentRoot;
         const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
         if (!row.cancelButton?.isConnected || !isVisibleElement(row.cancelButton)) {
           if (previousKeyCount === 0) continue;
