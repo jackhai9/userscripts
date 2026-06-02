@@ -63,6 +63,14 @@ test('Post Only synthetic click helper dispatches a single click event', () => {
   assert.doesNotMatch(clickBody, /\.click\?\.\(\)/);
 });
 
+test('visible SVG controls do not require offset dimensions', () => {
+  const visibleBody = readFunctionBody('isVisibleElement');
+  assert.match(visibleBody, /Array\.from\(el\.getClientRects\(\)\)/);
+  assert.match(visibleBody, /if \(!rects\.length\) return false/);
+  assert.match(visibleBody, /if \(el\.offsetWidth \|\| el\.offsetHeight\) return true/);
+  assert.match(visibleBody, /rects\.some\(\(rect\) => rect\.width > 0 && rect\.height > 0\)/);
+});
+
 test('close ladder retries with replacement only after Binance reduce-only conflict feedback', () => {
   const replaceBody = readFunctionBody('isReplaceableCloseLadderOpenOrdersFailure');
   assert.match(replaceBody, /plan\?\.spec\?\.mode !== 'CLOSE'/);

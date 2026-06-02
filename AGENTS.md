@@ -55,6 +55,7 @@
 这些经验来自 `scripts/binance-orderbook-trade.user.js` 的真实调试，后续改 Binance 页面自动化时优先套用：
 
 - 页面文字不是语义证据。币安 UI 里“全撤”等可点击控件可能只是 `div/span + image`，不是 `button`、`a` 或 `[role="button"]`。先用截图、accessibility tree 或现网 DOM 确认真实结构，再写选择器。
+- Binance 的 SVG 操作图标可能有 `getClientRects()` 尺寸但没有 `offsetWidth/offsetHeight`；判断可见性时不要只依赖 offset 尺寸，否则“撤销挂单”等 SVG 会被误判为不可见。
 - 同名 tab 必须按业务区域收窄。不要全局找“当前委托”“Open Orders”；应定位包含“仓位 / 当前委托 / 历史委托 / 历史成交 / 资金流水”的账户订单 tab 组，再在该组或对应 pane 内操作。
 - 不要单独信任 Binance tab 的 `aria-controls` / pane `id`。页面里多个 tab 系统可能复用 `bn-tab-pane-*`，`document.getElementById()` 会拿到右侧开仓/平仓表单 pane，而不是底部当前委托 pane。命中 pane 后还必须确认里面有当前委托特征控件，例如“隐藏其他合约”或“全撤”。
 - 切换 Binance tab、子 tab 或勾选“隐藏其他合约”后，必须重新解析当前 active pane / scope。不要继续拿切换前缓存的 `openOrdersScope`、pane、row、checkbox 或 button 去等待/读取/点击；Binance 会重渲染同名区域，旧 root 可能还连着 DOM 但已经不是当前可见数据源。

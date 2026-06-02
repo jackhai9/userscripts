@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.18
+// @version      2.7.19
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -479,7 +479,10 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     if (!el) return false;
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
-    return !!(el.getClientRects().length && (el.offsetWidth || el.offsetHeight));
+    const rects = Array.from(el.getClientRects());
+    if (!rects.length) return false;
+    if (el.offsetWidth || el.offsetHeight) return true;
+    return rects.some((rect) => rect.width > 0 && rect.height > 0);
   }
 
   function buttonTextMatches(button, patterns) {
