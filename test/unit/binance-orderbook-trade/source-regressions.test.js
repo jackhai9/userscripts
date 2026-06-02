@@ -82,6 +82,26 @@ test('close ladder retries with replacement only after Binance reduce-only confl
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(actionType\)/);
 });
 
+test('ladder minimum quantity failure explains safe manual options', () => {
+  const buildBody = readFunctionBody('buildLadderPlan');
+  assert.match(buildBody, /createLadderMinimumQtyFailure\(spec\.mode,\s*minRequiredQty\)/);
+
+  const errorBody = readFunctionBody('createLadderMinimumQtyFailure');
+  assert.match(errorBody, /数量低于最小下单量/);
+  assert.match(errorBody, /error\.statusTitle/);
+  assert.match(errorBody, /开仓比例/);
+  assert.match(errorBody, /平仓比例/);
+  assert.match(errorBody, /减少档数/);
+  assert.match(errorBody, /手动撤销占用保证金或可平数量的挂单/);
+  assert.doesNotMatch(errorBody, /自动撤/);
+
+  const statusBody = readFunctionBody('setLadderStatus');
+  assert.match(statusBody, /statusEl\.title =/);
+
+  const startBody = readFunctionBody('startLadder');
+  assert.match(startBody, /setLadderStatus\(e\?\.message \|\| '执行失败',\s*e\?\.statusTitle\)/);
+});
+
 test('close ladder replacement cancels visible current-symbol rows up to planned quantity', () => {
   const readRowsBody = readFunctionBody('readCurrentSymbolOpenOrderRows');
   assert.match(readRowsBody, /querySelectorAll\('\.list-item-container'\)/);

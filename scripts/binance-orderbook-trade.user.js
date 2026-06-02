@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.13
+// @version      2.7.14
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -812,10 +812,13 @@
       localStorage.setItem(storageKey, String(Math.max(LADDER_STEP_MIN, Math.min(num, LADDER_STEP_MAX))));
       scheduleRenderPanel();
     }
-    function setLadderStatus(text) {
+    function setLadderStatus(text, title = null) {
       ladderStatusText = String(text || "空闲");
       const statusEl = document.getElementById(LADDER_STATUS_ID);
-      if (statusEl) statusEl.textContent = ladderStatusText;
+      if (statusEl) {
+        statusEl.textContent = ladderStatusText;
+        statusEl.title = String(title || ladderStatusText);
+      }
     }
     function isValidMultiplier(value) {
       return /^\d+$/.test(String(value || "").trim()) && Number(value) > 0;
@@ -1277,7 +1280,7 @@
       const totalQty = multiplyDecimalByRatio(baseQty, percent, 100);
       const allocation = allocateLadderQuantities(totalQty, levels, ruleContext.stepSize, minRequiredQty);
       if (!allocation || allocation.actualLevels < 1) {
-        throw new Error(`目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${spec.mode === "OPEN" ? "开仓" : "平仓"}`);
+        throw createLadderMinimumQtyFailure(spec.mode, minRequiredQty);
       }
       const orderPrices = prices.slice(0, allocation.actualLevels);
       return {
@@ -1294,6 +1297,13 @@
         qtySource: base.qtySource,
         orders: orderPrices.map((price, index) => ({ price, qty: allocation.quantities[index] }))
       };
+    }
+    function createLadderMinimumQtyFailure(mode, minRequiredQty) {
+      const percentLabel = mode === "OPEN" ? "开仓比例" : "平仓比例";
+      const actionLabel = mode === "OPEN" ? "开仓" : "平仓";
+      const error = new Error(`数量低于最小下单量 ${minRequiredQty}`);
+      error.statusTitle = `目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；可提高${percentLabel}、减少档数，或手动撤销占用保证金或可平数量的挂单后重试`;
+      return error;
     }
     function assertLadderMakerPrice(plan, price) {
       const oppositeSide = plan.spec.orderSide === "BUY" ? "ASK" : "BID";
@@ -1437,7 +1447,7 @@
         setLadderStatus(ladderStopRequested ? `已停止 ${done}/${plan.orders.length}` : `完成 ${done}/${plan.orders.length}`);
       })().catch((e) => {
         err("Maker 阶梯执行失败:", e);
-        setLadderStatus(e?.message || "执行失败");
+        setLadderStatus(e?.message || "执行失败", e?.statusTitle);
       }).finally(() => {
         ladderTask = null;
         ladderStopRequested = false;
