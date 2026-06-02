@@ -179,6 +179,8 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   assert.match(cancelRowsBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
+  assert.match(cancelRowsBody, /activateOpenOrdersBasicSubTab\(openOrdersScope\)[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(\)/);
+  assert.match(cancelRowsBody, /if \(!openOrdersScope\) \{\s*const message = '未定位到当前委托面板'/);
   assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(openOrdersScope,\s*symbol,\s*plan,\s*\{\s*openOrdersCount,\s*\}\)/);
   assert.match(cancelRowsBody, /getClosePlanDirectionLabel\(plan\)/);
   assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows,\s*\{\s*allowPartial: true\s*\}\)/);
