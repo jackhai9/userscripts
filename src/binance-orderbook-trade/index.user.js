@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.31
+// @version      2.7.32
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -47,6 +47,7 @@ import {
 } from './core/ladder-plan.js';
 import {
   evaluateOrderSubmitAcknowledgement,
+  isOpenLadderOpenOrdersCapacityFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
   isPotentialOrderFeedbackText,
 } from './core/order-feedback.js';
@@ -1500,6 +1501,8 @@ import {
         autoFitLevels = autoFit.levels;
       } else {
         throw createLadderMinimumQtyFailure({
+          spec,
+          symbol: startSymbol,
           mode: spec.mode,
           minRequiredQty,
           baseQty,
@@ -1507,6 +1510,7 @@ import {
           levels,
           minimumPercent: autoFit.minimumPercent,
           maxAutoFitPercent: autoFit.maxPercent,
+          replacementTotalQty: spec.mode === 'OPEN' ? multiplyDecimalByInt(minRequiredQty, levels) : null,
         });
       }
     }
@@ -1537,7 +1541,17 @@ import {
   }
 
   function createLadderMinimumQtyFailure(options) {
-    const { mode, minRequiredQty, percent, levels, minimumPercent, maxAutoFitPercent } = options;
+    const {
+      spec,
+      symbol,
+      mode,
+      minRequiredQty,
+      percent,
+      levels,
+      minimumPercent,
+      maxAutoFitPercent,
+      replacementTotalQty,
+    } = options;
     const percentLabel = mode === 'OPEN' ? '开仓比例' : '平仓比例';
     const actionLabel = mode === 'OPEN' ? '开仓' : '平仓';
     const percentHint = minimumPercent ? `，需 >= ${minimumPercent}%` : '';
@@ -1547,7 +1561,24 @@ import {
       : '';
     const maxText = maxAutoFitPercent ? `自动上限 ${maxAutoFitPercent}%。` : '';
     const levelsText = levels ? `当前档位 ${levels} 档。` : '';
-    error.statusTitle = `当前${percentLabel} ${percent}%，目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；${levelsText}${minimumText}${maxText}已尝试自动提高比例和自动降档；脚本不会自动撤单。`;
+    const replacementText = mode === 'OPEN'
+      ? '脚本只会尝试替换当前币同向开仓基础单，不会自动全撤。'
+      : '脚本不会自动撤单。';
+    error.statusTitle = `当前${percentLabel} ${percent}%，目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；${levelsText}${minimumText}${maxText}已尝试自动提高比例和自动降档；${replacementText}`;
+    if (
+      mode === 'OPEN' &&
+      spec &&
+      symbol &&
+      replacementTotalQty &&
+      isPositiveDecimalString(replacementTotalQty)
+    ) {
+      error.openOrdersReplacementPlan = {
+        spec,
+        symbol,
+        totalQty: replacementTotalQty,
+        allowPartialReplacement: true,
+      };
+    }
     return error;
   }
 
@@ -2006,7 +2037,7 @@ import {
       })
       .filter((row) => (
         isOpenOrderRowCurrentSymbol(row.symbolText, symbol) &&
-        isOpenOrderRowForClosePlan(row.sideText, plan) &&
+        isOpenOrderRowForPlan(row.sideText, plan) &&
         row.qty &&
         isPositiveDecimalString(row.qty) &&
         row.cancelButton
@@ -2018,11 +2049,21 @@ import {
     return tokens.includes(String(symbol || '').toUpperCase());
   }
 
-  function isOpenOrderRowForClosePlan(sideText, plan) {
-    if (!plan || plan.spec?.mode !== 'CLOSE') return true;
+  function isOpenOrderRowForPlan(sideText, plan) {
+    if (!plan) return true;
     const normalized = String(sideText || '').replace(/\s+/g, '').toUpperCase();
-    if (plan.spec.side === 'LONG') return normalized.includes('平多') || normalized.includes('CLOSELONG');
-    if (plan.spec.side === 'SHORT') return normalized.includes('平空') || normalized.includes('CLOSESHORT');
+    if (plan.spec?.mode === 'OPEN' && plan.spec.side === 'LONG') {
+      return normalized.includes('开多') || normalized.includes('OPENLONG');
+    }
+    if (plan.spec?.mode === 'OPEN' && plan.spec.side === 'SHORT') {
+      return normalized.includes('开空') || normalized.includes('OPENSHORT');
+    }
+    if (plan.spec?.mode === 'CLOSE' && plan.spec.side === 'LONG') {
+      return normalized.includes('平多') || normalized.includes('CLOSELONG');
+    }
+    if (plan.spec?.mode === 'CLOSE' && plan.spec.side === 'SHORT') {
+      return normalized.includes('平空') || normalized.includes('CLOSESHORT');
+    }
     return false;
   }
 
@@ -2046,7 +2087,7 @@ import {
     const rowsToCancel = [];
     let cancelQty = '0';
     for (const row of rows) {
-      if (!isOpenOrderRowForClosePlan(row.sideText, plan)) continue;
+      if (!isOpenOrderRowForPlan(row.sideText, plan)) continue;
       rowsToCancel.push(row);
       cancelQty = addDecimalStrings(cancelQty, row.qty);
       if (compareDecimalStrings(cancelQty, plan.totalQty) >= 0) break;
@@ -2056,10 +2097,11 @@ import {
       : [];
   }
 
-  function getClosePlanDirectionLabel(plan) {
-    if (plan?.spec?.mode !== 'CLOSE') return '';
-    if (plan.spec.side === 'LONG') return '平多';
-    if (plan.spec.side === 'SHORT') return '平空';
+  function getPlanDirectionLabel(plan) {
+    if (plan?.spec?.mode === 'OPEN' && plan.spec.side === 'LONG') return '开多';
+    if (plan?.spec?.mode === 'OPEN' && plan.spec.side === 'SHORT') return '开空';
+    if (plan?.spec?.mode === 'CLOSE' && plan.spec.side === 'LONG') return '平多';
+    if (plan?.spec?.mode === 'CLOSE' && plan.spec.side === 'SHORT') return '平空';
     return '';
   }
 
@@ -2077,7 +2119,8 @@ import {
     return countOpenOrderRowsByKey(root, symbol, key) < previousCount;
   }
 
-  async function cancelOpenOrderRowsForPlan(root, plan) {
+  async function cancelOpenOrderRowsForPlan(root, plan, options = null) {
+    const { allowPartialEnd = false } = options || {};
     let cancelQty = '0';
     let currentRoot = root;
     while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
@@ -2092,6 +2135,9 @@ import {
         { allowPartial: true }
       )[0];
       if (!row) {
+        if (allowPartialEnd && isPositiveDecimalString(cancelQty)) {
+          return { ok: true, partial: true, cancelQty };
+        }
         throw new Error(`${plan.symbol} 当前币可撤挂单数量不足，已停止重挂`);
       }
       currentRoot = row.root || currentRoot;
@@ -2117,6 +2163,7 @@ import {
       }
       cancelQty = addDecimalStrings(cancelQty, row.qty);
     }
+    return { ok: true, partial: false, cancelQty };
   }
 
   async function setHideOtherSymbolChecked(root, desiredChecked) {
@@ -2364,7 +2411,7 @@ import {
         openOrdersCount,
       });
       if (!rows.length) {
-        const directionLabel = getClosePlanDirectionLabel(plan);
+        const directionLabel = getPlanDirectionLabel(plan);
         const message = `未定位到 ${symbol}${directionLabel ? ` ${directionLabel}` : ''} 当前币可逐行撤单的基础单`;
         setLadderStatus(message);
         return { ok: false, status: 'rows_not_found', message };
@@ -2378,7 +2425,9 @@ import {
       }
 
       setLadderStatus(`${symbol} 撤销 ${rowsToCancel.length} 笔当前币挂单`);
-      await cancelOpenOrderRowsForPlan(openOrdersScope, plan);
+      await cancelOpenOrderRowsForPlan(openOrdersScope, plan, {
+        allowPartialEnd: plan.allowPartialReplacement === true,
+      });
       setLadderStatus(`${symbol} 当前币挂单已替换，继续重挂`);
       return { ok: true, status: 'rows_cleared' };
     } catch (e) {
@@ -2410,20 +2459,51 @@ import {
     return isReduceOnlyOpenOrdersConflictFeedback(error?.message || '');
   }
 
+  function isReplaceableOpenLadderOpenOrdersFailure(plan, error) {
+    if (plan?.spec?.mode !== 'OPEN') return false;
+    return isOpenLadderOpenOrdersCapacityFeedback(error?.message || '');
+  }
+
+  function getOpenLadderMinimumQtyReplacementPlan(error) {
+    const plan = error?.openOrdersReplacementPlan;
+    if (
+      plan?.spec?.mode === 'OPEN' &&
+      plan.symbol &&
+      plan.totalQty &&
+      isPositiveDecimalString(plan.totalQty)
+    ) {
+      return plan;
+    }
+    return null;
+  }
+
+  function getReplaceableLadderOpenOrdersPlan(plan, error) {
+    if (isReplaceableCloseLadderOpenOrdersFailure(plan, error)) return plan;
+    if (isReplaceableOpenLadderOpenOrdersFailure(plan, error)) return plan;
+    return getOpenLadderMinimumQtyReplacementPlan(error);
+  }
+
+  function formatOpenOrdersReplacementStatus(plan) {
+    if (plan?.spec?.mode === 'OPEN') return `${plan.symbol} 同向开仓挂单可能占用可开数量，准备替换`;
+    return `${plan.symbol} 当前挂单占用可平数量，准备替换`;
+  }
+
   async function runLadderPlanWithOpenOrderReplacement(actionType) {
-    let plan = await buildLadderPlan(actionType);
+    let replacementSymbol = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      setLadderStatus(formatLadderPlanStatus(plan));
+      let plan = null;
       try {
+        plan = await buildLadderPlan(actionType, replacementSymbol);
+        setLadderStatus(formatLadderPlanStatus(plan));
         const done = await executeLadderPlan(plan);
         return { plan, done };
       } catch (e) {
-        if (attempt > 0 || !isReplaceableCloseLadderOpenOrdersFailure(plan, e)) throw e;
-        setLadderStatus(`${plan.symbol} 当前挂单占用可平数量，准备替换`);
-        const replacementSymbol = plan.symbol;
-        const result = await cancelCurrentSymbolOpenOrdersForPlan(plan);
+        const replacementPlan = getReplaceableLadderOpenOrdersPlan(plan, e);
+        if (attempt > 0 || !replacementPlan) throw e;
+        setLadderStatus(formatOpenOrdersReplacementStatus(replacementPlan));
+        replacementSymbol = replacementPlan.symbol;
+        const result = await cancelCurrentSymbolOpenOrdersForPlan(replacementPlan);
         if (!result?.ok) throw new Error(result.message || '当前币挂单未替换，已停止重挂');
-        plan = await buildLadderPlan(actionType, replacementSymbol);
       }
     }
     throw new Error('阶梯重挂流程异常');

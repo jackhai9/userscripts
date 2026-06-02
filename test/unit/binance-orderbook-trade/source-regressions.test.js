@@ -71,19 +71,28 @@ test('visible SVG controls do not require offset dimensions', () => {
   assert.match(visibleBody, /rects\.some\(\(rect\) => rect\.width > 0 && rect\.height > 0\)/);
 });
 
-test('close ladder retries with replacement only after Binance reduce-only conflict feedback', () => {
+test('ladder retries with restricted open-order replacement after supported feedback', () => {
   const replaceBody = readFunctionBody('isReplaceableCloseLadderOpenOrdersFailure');
   assert.match(replaceBody, /plan\?\.spec\?\.mode !== 'CLOSE'/);
   assert.match(replaceBody, /isReduceOnlyOpenOrdersConflictFeedback\(error\?\.message/);
 
+  const openReplaceBody = readFunctionBody('isReplaceableOpenLadderOpenOrdersFailure');
+  assert.match(openReplaceBody, /plan\?\.spec\?\.mode !== 'OPEN'/);
+  assert.match(openReplaceBody, /isOpenLadderOpenOrdersCapacityFeedback\(error\?\.message/);
+
+  const replacePlanBody = readFunctionBody('getReplaceableLadderOpenOrdersPlan');
+  assert.match(replacePlanBody, /isReplaceableCloseLadderOpenOrdersFailure\(plan,\s*error\)/);
+  assert.match(replacePlanBody, /isReplaceableOpenLadderOpenOrdersFailure\(plan,\s*error\)/);
+  assert.match(replacePlanBody, /getOpenLadderMinimumQtyReplacementPlan\(error\)/);
+
   const retryBody = readFunctionBody('runLadderPlanWithOpenOrderReplacement');
   assert.match(retryBody, /await executeLadderPlan\(plan\)/);
-  assert.match(retryBody, /isReplaceableCloseLadderOpenOrdersFailure\(plan,\s*e\)/);
-  assert.match(retryBody, /cancelCurrentSymbolOpenOrdersForPlan\(plan\)/);
+  assert.match(retryBody, /getReplaceableLadderOpenOrdersPlan\(plan,\s*e\)/);
+  assert.match(retryBody, /cancelCurrentSymbolOpenOrdersForPlan\(replacementPlan\)/);
   assert.doesNotMatch(retryBody, /cancelCurrentSymbolOpenOrders\(\{\s*waitUntilCleared: true\s*\}\)/);
-  assert.match(retryBody, /const replacementSymbol = plan\.symbol/);
-  assert.match(retryBody, /plan = await buildLadderPlan\(actionType,\s*replacementSymbol\)/);
-  assert.doesNotMatch(retryBody, /result[\s\S]*plan = await buildLadderPlan\(actionType\);/);
+  assert.match(retryBody, /replacementSymbol = replacementPlan\.symbol/);
+  assert.match(retryBody, /buildLadderPlan\(actionType,\s*replacementSymbol\)/);
+  assert.doesNotMatch(retryBody, /findCurrentSymbolCancelAllButton/);
 
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /const spec = getLadderActionSpec\(actionType\)/);
@@ -102,7 +111,7 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(buildBody, /autoFitLevels = autoFit\.levels/);
   assert.match(buildBody, /autoFitPercent: autoFitPercent/);
   assert.match(buildBody, /autoFitLevels/);
-  assert.match(buildBody, /createLadderMinimumQtyFailure\(\{\s*mode: spec\.mode,\s*minRequiredQty,\s*baseQty,\s*percent,\s*levels,\s*minimumPercent: autoFit\.minimumPercent,\s*maxAutoFitPercent: autoFit\.maxPercent,\s*\}\)/);
+  assert.match(buildBody, /createLadderMinimumQtyFailure\(\{\s*spec,\s*symbol: startSymbol,\s*mode: spec\.mode,\s*minRequiredQty,\s*baseQty,\s*percent,\s*levels,\s*minimumPercent: autoFit\.minimumPercent,\s*maxAutoFitPercent: autoFit\.maxPercent,\s*replacementTotalQty: spec\.mode === 'OPEN' \? multiplyDecimalByInt\(minRequiredQty,\s*levels\) : null,\s*\}\)/);
 
   const errorBody = readFunctionBody('createLadderMinimumQtyFailure');
   assert.match(errorBody, /数量低于最小下单量/);
@@ -115,6 +124,10 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(errorBody, /平仓比例/);
   assert.match(errorBody, /自动提高比例/);
   assert.match(errorBody, /自动降档/);
+  assert.match(errorBody, /openOrdersReplacementPlan/);
+  assert.match(errorBody, /replacementTotalQty/);
+  assert.match(errorBody, /allowPartialReplacement: true/);
+  assert.match(errorBody, /脚本只会尝试替换当前币同向开仓基础单，不会自动全撤/);
   assert.match(errorBody, /脚本不会自动撤单/);
   assert.doesNotMatch(errorBody, /将自动撤单/);
 
@@ -144,13 +157,13 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(startBody, /setLadderStatus\(e\?\.message \|\| '执行失败',\s*e\?\.statusTitle\)/);
 });
 
-test('close ladder replacement cancels visible current-symbol rows up to planned quantity', () => {
+test('ladder replacement cancels visible current-symbol same-direction rows up to planned quantity', () => {
   const readRowsBody = readFunctionBody('readCurrentSymbolOpenOrderRows');
   assert.match(readRowsBody, /querySelectorAll\('\.list-item-container'\)/);
   assert.match(readRowsBody, /cells\[5\]/);
   assert.match(readRowsBody, /sideText/);
   assert.match(readRowsBody, /isOpenOrderRowCurrentSymbol\(row\.symbolText,\s*symbol\)/);
-  assert.match(readRowsBody, /isOpenOrderRowForClosePlan\(row\.sideText,\s*plan\)/);
+  assert.match(readRowsBody, /isOpenOrderRowForPlan\(row\.sideText,\s*plan\)/);
   assert.doesNotMatch(readRowsBody, /symbolText\.includes\(symbol\)/);
 
   const cancelButtonBody = readFunctionBody('findOpenOrderRowCancelButton');
@@ -165,14 +178,20 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
 
   const selectRowsBody = readFunctionBody('selectOpenOrderRowsToCancelForPlan');
   assert.match(selectRowsBody, /allowPartial = false/);
-  assert.match(selectRowsBody, /isOpenOrderRowForClosePlan\(row\.sideText,\s*plan\)/);
+  assert.match(selectRowsBody, /isOpenOrderRowForPlan\(row\.sideText,\s*plan\)/);
   assert.match(selectRowsBody, /compareDecimalStrings\(cancelQty,\s*plan\.totalQty\)/);
   assert.match(selectRowsBody, /addDecimalStrings\(cancelQty,\s*row\.qty\)/);
   assert.match(selectRowsBody, /allowPartial && rowsToCancel\.length > 0/);
   assert.match(selectRowsBody, /return compareDecimalStrings\(cancelQty,\s*plan\.totalQty\) >= 0/);
   assert.match(selectRowsBody, /: \[\]/);
 
-  const directionBody = readFunctionBody('isOpenOrderRowForClosePlan');
+  const directionBody = readFunctionBody('isOpenOrderRowForPlan');
+  assert.match(directionBody, /plan\.spec\?\.mode === 'OPEN'/);
+  assert.match(directionBody, /includes\('开多'\)/);
+  assert.match(directionBody, /includes\('OPENLONG'\)/);
+  assert.match(directionBody, /includes\('开空'\)/);
+  assert.match(directionBody, /includes\('OPENSHORT'\)/);
+  assert.match(directionBody, /plan\.spec\?\.mode === 'CLOSE'/);
   assert.match(directionBody, /includes\('平多'\)/);
   assert.match(directionBody, /includes\('CLOSELONG'\)/);
   assert.match(directionBody, /includes\('平空'\)/);
@@ -193,6 +212,8 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
   assert.match(cancelOpenOrderRowsBody, /readCurrentSymbolOpenOrderRows\(currentRoot,\s*plan\.symbol,\s*plan\)/);
   assert.match(cancelOpenOrderRowsBody, /const remainingQty = subtractDecimalStrings\(plan\.totalQty,\s*cancelQty\)/);
   assert.match(cancelOpenOrderRowsBody, /allowPartial: true/);
+  assert.match(cancelOpenOrderRowsBody, /allowPartialEnd && isPositiveDecimalString\(cancelQty\)/);
+  assert.match(cancelOpenOrderRowsBody, /return \{ ok: true,\s*partial: true,\s*cancelQty \}/);
   assert.match(cancelOpenOrderRowsBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = refreshedRoot/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = row\.root \|\| currentRoot/);
@@ -205,9 +226,9 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
   assert.match(cancelRowsBody, /activateOpenOrdersBasicSubTab\(openOrdersScope\)[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(\)/);
   assert.match(cancelRowsBody, /if \(!openOrdersScope\) \{\s*const message = '未定位到当前委托面板'/);
   assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(openOrdersScope,\s*symbol,\s*plan,\s*\{\s*openOrdersCount,\s*\}\)/);
-  assert.match(cancelRowsBody, /getClosePlanDirectionLabel\(plan\)/);
+  assert.match(cancelRowsBody, /getPlanDirectionLabel\(plan\)/);
   assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows,\s*\{\s*allowPartial: true\s*\}\)/);
-  assert.match(cancelRowsBody, /await cancelOpenOrderRowsForPlan\(openOrdersScope,\s*plan\)/);
+  assert.match(cancelRowsBody, /allowPartialEnd: plan\.allowPartialReplacement === true/);
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
 });
 
