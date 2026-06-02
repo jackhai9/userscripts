@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.22
+// @version      2.7.23
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -713,8 +713,8 @@
     const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
     const SINGLE_ORDER_QTY_SYNC_DELAY_MS = 120;
     const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3e3;
+    const ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6e3;
     const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
-    const ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS = 6e5;
     const ORDERBOOK_PRECISION_SAMPLE_MAX = 96;
     const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
       "0.00000001",
@@ -769,6 +769,8 @@
     let orderbookPrecisionSampling = false;
     let orderbookPrecisionSampleTimer = 0;
     let orderbookPrecisionResampleRequested = false;
+    let orderbookPrecisionResampleDurationMs = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS;
+    const orderbookPrecisionInitialSampledSymbols = /* @__PURE__ */ new Set();
     let orderbookPrecisionState = {
       symbol: null,
       samples: [],
@@ -1311,7 +1313,7 @@
         if (!isVisibleElement(node) || isInsideOrderbookPriceRow(node)) continue;
         const text = (node.textContent || "").trim();
         if (!isOrderbookPrecisionNumericText(text)) continue;
-        const target = node.closest(clickableSelector);
+        const target = node.closest(clickableSelector) || node.parentElement || node;
         if (!target || !isVisibleElement(target) || isInsideOrderbookPriceRow(target)) continue;
         return {
           element: target,
@@ -1423,7 +1425,7 @@
       scheduleRenderPanel({ followUpMs: 350 });
       return true;
     }
-    async function runOrderbookPrecisionSampleRound() {
+    async function runOrderbookPrecisionSampleRound(durationMs = ORDERBOOK_PRECISION_SAMPLE_DURATION_MS) {
       orderbookPrecisionSampleTimer = 0;
       if (orderbookPrecisionSampling || document.hidden || !isFuturesTradingPage()) return;
       const symbol = getCurrentSymbol();
@@ -1431,7 +1433,8 @@
       orderbookPrecisionSampling = true;
       const bidPrices = [];
       const askPrices = [];
-      const deadline = Date.now() + ORDERBOOK_PRECISION_SAMPLE_DURATION_MS;
+      const sampleDurationMs = Math.max(0, Number(durationMs) || ORDERBOOK_PRECISION_SAMPLE_DURATION_MS);
+      const deadline = Date.now() + sampleDurationMs;
       try {
         while (Date.now() < deadline && !document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
           const bid = getBestOrderbookPrice("BID");
@@ -1470,25 +1473,49 @@
         scheduleRenderPanel();
       } finally {
         const shouldResampleImmediately = orderbookPrecisionResampleRequested;
+        const resampleDurationMs = orderbookPrecisionResampleDurationMs;
         orderbookPrecisionResampleRequested = false;
         orderbookPrecisionSampling = false;
-        const nextDelayMs = shouldResampleImmediately ? 0 : ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS;
-        scheduleOrderbookPrecisionSampleRound(nextDelayMs);
+        if (shouldResampleImmediately) {
+          scheduleOrderbookPrecisionSampleRound(0, { force: true, durationMs: resampleDurationMs });
+        }
       }
     }
     function scheduleOrderbookPrecisionSampleRound(delayMs = 0, options) {
-      const { force = false } = options || {};
+      const {
+        force = false,
+        durationMs = ORDERBOOK_PRECISION_SAMPLE_DURATION_MS
+      } = options || {};
       if (document.hidden || !isFuturesTradingPage()) return;
       if (orderbookPrecisionSampling) {
         if (force) orderbookPrecisionResampleRequested = true;
+        if (force) orderbookPrecisionResampleDurationMs = durationMs;
         return;
       }
       if (orderbookPrecisionSampling || orderbookPrecisionSampleTimer) return;
-      orderbookPrecisionSampleTimer = window.setTimeout(runOrderbookPrecisionSampleRound, Math.max(0, Number(delayMs) || 0));
+      orderbookPrecisionSampleTimer = window.setTimeout(
+        () => runOrderbookPrecisionSampleRound(durationMs),
+        Math.max(0, Number(delayMs) || 0)
+      );
     }
     function stopOrderbookPrecisionSampler() {
       window.clearTimeout(orderbookPrecisionSampleTimer);
       orderbookPrecisionSampleTimer = 0;
+      orderbookPrecisionResampleRequested = false;
+    }
+    function startInitialOrderbookPrecisionSample() {
+      const symbol = getCurrentSymbol();
+      if (!symbol || orderbookPrecisionInitialSampledSymbols.has(symbol)) return;
+      orderbookPrecisionInitialSampledSymbols.add(symbol);
+      orderbookPrecisionState = {
+        ...orderbookPrecisionState,
+        symbol,
+        status: "采样中"
+      };
+      scheduleOrderbookPrecisionSampleRound(0, {
+        force: true,
+        durationMs: ORDERBOOK_PRECISION_SAMPLE_DURATION_MS
+      });
     }
     function refreshOrderbookPrecisionSamplesNow() {
       const symbol = getCurrentSymbol();
@@ -1498,7 +1525,10 @@
         status: "刷新中"
       };
       stopOrderbookPrecisionSampler();
-      scheduleOrderbookPrecisionSampleRound(0, { force: true });
+      scheduleOrderbookPrecisionSampleRound(0, {
+        force: true,
+        durationMs: ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS
+      });
       scheduleRenderPanel();
     }
     function getBufferedMakerPrices(side, levels, ladderStep = DEFAULT_LADDER_STEP) {
@@ -3778,7 +3808,7 @@
         status: "采样中"
       };
       stopOrderbookPrecisionSampler();
-      scheduleOrderbookPrecisionSampleRound(0, { force: true });
+      startInitialOrderbookPrecisionSample();
       scheduleRenderPanel();
       if (getActiveTradeMode() === "OPEN") {
         queueAutoOpenLeverageReset("symbol_change");
@@ -3812,7 +3842,7 @@
       startSymbolChangeTimer();
       ensureTradeModeTabObserver();
       startRenderPanelTimer();
-      scheduleOrderbookPrecisionSampleRound(0);
+      startInitialOrderbookPrecisionSample();
     }
     function stopTradingTimers() {
       stopSymbolChangeTimer();
