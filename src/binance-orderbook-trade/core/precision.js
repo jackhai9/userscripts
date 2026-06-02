@@ -35,13 +35,6 @@ function sortedPositiveDecimals(values) {
     .sort((a, b) => compareDecimalStrings(a, b));
 }
 
-function percentileDecimal(values, percentile) {
-  const sorted = sortedPositiveDecimals(values);
-  if (!sorted.length) return null;
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * percentile) - 1));
-  return sorted[index];
-}
-
 function logDistance(a, b) {
   const left = Number(a);
   const right = Number(b);
@@ -49,29 +42,49 @@ function logDistance(a, b) {
   return Math.abs(Math.log10(left) - Math.log10(right));
 }
 
-export function recommendOrderbookPrecision({
-  samples,
-  options,
-  minSamples = 5,
-  percentile = 0.25,
-}) {
-  const usableSamples = sortedPositiveDecimals(samples);
-  const usableOptions = sortedPositiveDecimals(options);
-  if (!usableOptions.length) return null;
-
-  const movement = usableSamples.length >= minSamples
-    ? percentileDecimal(usableSamples, percentile)
-    : null;
-  if (!movement) return null;
-
+function closestPrecisionOption(sample, options) {
   let bestOption = null;
   let bestDistance = Number.POSITIVE_INFINITY;
-  for (const option of usableOptions) {
-    const distance = logDistance(movement, option);
+  for (const option of options) {
+    const distance = logDistance(sample, option);
     if (distance < bestDistance) {
       bestDistance = distance;
       bestOption = option;
     }
   }
   return bestOption;
+}
+
+export function recommendOrderbookPrecision({
+  samples,
+  options,
+  minSamples = 5,
+  minBucketShare = 0.25,
+}) {
+  const usableSamples = sortedPositiveDecimals(samples);
+  const usableOptions = sortedPositiveDecimals(options);
+  if (!usableOptions.length) return null;
+  if (usableSamples.length < minSamples) return null;
+
+  const bucketCounts = new Map(usableOptions.map((option) => [option, 0]));
+  for (const sample of usableSamples) {
+    const option = closestPrecisionOption(sample, usableOptions);
+    if (option) bucketCounts.set(option, (bucketCounts.get(option) || 0) + 1);
+  }
+
+  const minimumBucketCount = Math.max(minSamples, Math.ceil(usableSamples.length * minBucketShare));
+  let selectedOption = null;
+  let selectedCount = 0;
+  for (const option of usableOptions) {
+    const count = bucketCounts.get(option) || 0;
+    if (count < minimumBucketCount) continue;
+    if (
+      count > selectedCount ||
+      (count === selectedCount && selectedOption && compareDecimalStrings(option, selectedOption) < 0)
+    ) {
+      selectedOption = option;
+      selectedCount = count;
+    }
+  }
+  return selectedOption;
 }

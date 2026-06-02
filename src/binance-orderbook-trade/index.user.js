@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.24
+// @version      2.7.25
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -135,6 +135,8 @@ import {
   const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3000;
   const ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6000;
   const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
+  const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5000;
+  const ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS = 6;
   const ORDERBOOK_PRECISION_SAMPLE_MAX = 96;
   const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
     '0.00000001',
@@ -827,6 +829,17 @@ import {
       .slice(0, Math.max(1, Number(limit) || 20));
   }
 
+  async function waitForLatestTradePricesReady(symbol, timeoutMs = ORDERBOOK_PRECISION_READY_TIMEOUT_MS) {
+    const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+    while (!document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
+      const prices = getLatestTradePrices();
+      if (prices.length >= ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS) return prices;
+      if (Date.now() >= deadline) return prices;
+      await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);
+    }
+    return [];
+  }
+
   function orderbookPrecisionSamplesKey(symbol = getCurrentSymbol()) {
     const normalizedSymbol = String(symbol || '').toUpperCase();
     return normalizedSymbol ? `${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:${normalizedSymbol}` : null;
@@ -1056,8 +1069,12 @@ import {
     orderbookPrecisionSampling = true;
     const tradeMoveSamples = [];
     const sampleDurationMs = Math.max(0, Number(durationMs) || ORDERBOOK_PRECISION_SAMPLE_DURATION_MS);
-    const deadline = Date.now() + sampleDurationMs;
     try {
+      const readyPrices = await waitForLatestTradePricesReady(symbol);
+      if (readyPrices.length >= ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS) {
+        tradeMoveSamples.push(...collectNonZeroPriceMoves(readyPrices));
+      }
+      const deadline = Date.now() + sampleDurationMs;
       while (Date.now() < deadline && !document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
         tradeMoveSamples.push(...collectNonZeroPriceMoves(getLatestTradePrices()));
         await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);
