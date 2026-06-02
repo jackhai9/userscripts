@@ -223,14 +223,15 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3000/);
   assert.match(source, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6000/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
-  assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v2'/);
+  assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3'/);
   assert.match(source, /data-orderbook-precision-apply/);
   assert.match(source, /data-orderbook-precision-refresh/);
   assert.match(source, /orderbookPrecisionResampleRequested/);
 
   const sampleBody = readFunctionBody('runOrderbookPrecisionSampleRound');
   assert.match(sampleBody, /collectNonZeroPriceMoves/);
-  assert.match(sampleBody, /mergePrecisionSamples/);
+  assert.match(sampleBody, /saveStoredOrderbookPrecisionSamples\(symbol,\s*newSamples\)/);
+  assert.doesNotMatch(sampleBody, /mergePrecisionSamples\(\s*readStoredOrderbookPrecisionSamples/);
   assert.match(sampleBody, /waitForLatestTradePricesReady/);
   assert.match(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
   assert.match(sampleBody, /getLatestTradePrices/);
@@ -241,11 +242,16 @@ test('orderbook precision recommendation is sampled and manually applied only', 
 
   const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
   assert.match(refreshBody, /recommendOrderbookPrecision/);
+  assert.match(refreshBody, /isOrderbookPrecisionBusy/);
+  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[\s\S]*disabled/);
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
 
   const applyBody = readFunctionBody('applyRecommendedOrderbookPrecision');
+  assert.match(applyBody, /clickDomTarget\(trigger\.element\)/);
+  assert.match(applyBody, /waitForVisibleOrderbookPrecisionOption\(recommendation\)/);
+  assert.doesNotMatch(applyBody, /readVisibleOrderbookPrecisionOptionValues/);
   assert.doesNotMatch(applyBody, /fallbackMovement/);
 
   const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
@@ -257,12 +263,15 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(initialBody, /orderbookPrecisionInitialSampledSymbols\.has\(symbol\)/);
 
   const triggerBody = readFunctionBody('findOrderbookPrecisionTrigger');
-  assert.match(triggerBody, /orderbook-tickSize/);
+  assert.match(triggerBody, /\.orderbook-tickSize/);
+  assert.match(triggerBody, /\.tick-content/);
   assert.match(triggerBody, /node\.closest\(clickableSelector\) \|\| node\.parentElement \|\| node/);
 
   const optionsBody = readFunctionBody('getVisibleOrderbookPrecisionOptionNodes');
-  assert.match(optionsBody, /popupSelector/);
+  assert.match(optionsBody, /\.ob-ticksize-item/);
+  assert.match(optionsBody, /\.ob-ticksize-overlay/);
   assert.match(optionsBody, /ORDERBOOK_PRECISION_CANDIDATE_OPTIONS\.includes/);
+  assert.match(optionsBody, /popupSelector/);
 
   const startBody = readFunctionBody('startLadder');
   assert.doesNotMatch(startBody, /applyRecommendedOrderbookPrecision/);
