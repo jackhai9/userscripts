@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.30
+// @version      2.7.31
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -723,8 +723,8 @@
     const LADDER_OPEN_QTY_POLL_MS = 80;
     const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
     const SINGLE_ORDER_QTY_SYNC_DELAY_MS = 120;
-    const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3e3;
     const ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6e3;
+    const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS;
     const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
     const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5e3;
     const ORDERBOOK_PRECISION_OPTION_WAIT_MS = 1200;
@@ -1502,12 +1502,12 @@
       const disabledButtonStyle = `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`;
       const applyButtonStyle = canApply ? activeButtonStyle : disabledButtonStyle;
       const refreshButtonStyle = canRefresh ? activeButtonStyle : disabledButtonStyle;
-      const buttonBaseStyle = "height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;";
+      const buttonBaseStyle = "height:32px;padding:0 12px;border-radius:6px;border:1px solid #d5d9e2;font-size:14px;line-height:30px;";
       const recommendationText = recommendation || "--";
       const displayStatus = busy ? formatOrderbookPrecisionBusyStatus(status) : status;
       const statusText = displayStatus === "ready" ? "" : `<span>${displayStatus}</span>`;
       el.innerHTML = [
-        '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;color:#76808f;font-size:12px;">',
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;color:#76808f;font-size:14px;">',
         `<span>缩放 推荐 ${recommendationText}</span>`,
         `<button type="button" data-orderbook-precision-apply="true"${canApply ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
         `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${refreshButtonStyle}">刷新</button>`,
