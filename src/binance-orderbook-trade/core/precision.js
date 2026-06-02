@@ -51,10 +51,9 @@ function logDistance(a, b) {
 
 export function recommendOrderbookPrecision({
   samples,
-  fallbackMovement,
   options,
   minSamples = 5,
-  percentile = 0.6,
+  percentile = 0.25,
 }) {
   const usableSamples = sortedPositiveDecimals(samples);
   const usableOptions = sortedPositiveDecimals(options);
@@ -62,7 +61,7 @@ export function recommendOrderbookPrecision({
 
   const movement = usableSamples.length >= minSamples
     ? percentileDecimal(usableSamples, percentile)
-    : normalizeDecimalString(fallbackMovement);
+    : null;
   if (!movement) return null;
 
   let bestOption = null;

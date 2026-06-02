@@ -28,6 +28,16 @@ test('recommends precision from accumulated effective price movement instead of 
   }), '0.01');
 });
 
+test('prefers the lower effective movement over larger trade jumps', () => {
+  assert.equal(recommendOrderbookPrecision({
+    samples: [
+      '0.0061', '0.0075', '0.0089', '0.0107', '0.0112',
+      '0.036', '0.0393', '0.041', '0.052', '0.0838',
+    ],
+    options: ['0.0001', '0.001', '0.01', '0.1', '1'],
+  }), '0.01');
+});
+
 test('does not recommend precision until enough multi-sample evidence exists', () => {
   assert.equal(recommendOrderbookPrecision({
     samples: ['0.0107', '0.0061'],
@@ -35,10 +45,10 @@ test('does not recommend precision until enough multi-sample evidence exists', (
   }), null);
 });
 
-test('uses fallback movement to provide a first recommendation when samples are not ready', () => {
+test('does not treat display precision fallback as a recommendation', () => {
   assert.equal(recommendOrderbookPrecision({
     samples: [],
     fallbackMovement: '0.0061',
     options: ['0.0001', '0.001', '0.01', '0.1', '1'],
-  }), '0.01');
+  }), null);
 });
