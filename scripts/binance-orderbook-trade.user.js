@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.32
+// @version      2.7.33
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -460,7 +460,9 @@
   function isOpenLadderOpenOrdersCapacityFeedback(text) {
     if (!text) return false;
     const normalized = String(text).replace(/\s+/g, "").toLowerCase();
-    return normalized.includes("余额不足") || normalized.includes("可用余额不足") || normalized.includes("可用数量不足") || normalized.includes("可开数量不足") || normalized.includes("可用保证金不足") || normalized.includes("insufficientmargin") || normalized.includes("insufficientbalance") || normalized.includes("insufficientavailablebalance") || normalized.includes("notenoughmargin") || normalized.includes("notenoughbalance") || normalized.includes("notenoughavailablebalance");
+    const hasCapacityFailure = normalized.includes("余额不足") || normalized.includes("可用余额不足") || normalized.includes("可用数量不足") || normalized.includes("可开数量不足") || normalized.includes("可用保证金不足") || normalized.includes("insufficientmargin") || normalized.includes("insufficientbalance") || normalized.includes("insufficientavailablebalance") || normalized.includes("notenoughmargin") || normalized.includes("notenoughbalance") || normalized.includes("notenoughavailablebalance");
+    const hasOpenOrdersHint = normalized.includes("当前挂单") || normalized.includes("取消挂单") || normalized.includes("挂单后重试") || normalized.includes("openorders") || normalized.includes("existingopenorders");
+    return hasCapacityFailure && hasOpenOrdersHint;
   }
 
   // src/shared/binance-futures-route.js
@@ -1906,8 +1908,7 @@
         error.openOrdersReplacementPlan = {
           spec,
           symbol,
-          totalQty: replacementTotalQty,
-          allowPartialReplacement: true
+          totalQty: replacementTotalQty
         };
       }
       return error;
@@ -2359,8 +2360,7 @@
       }
       return countOpenOrderRowsByKey(root, symbol, key) < previousCount;
     }
-    async function cancelOpenOrderRowsForPlan(root, plan, options = null) {
-      const { allowPartialEnd = false } = options || {};
+    async function cancelOpenOrderRowsForPlan(root, plan) {
       let cancelQty = "0";
       let currentRoot = root;
       while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
@@ -2375,9 +2375,6 @@
           { allowPartial: true }
         )[0];
         if (!row) {
-          if (allowPartialEnd && isPositiveDecimalString(cancelQty)) {
-            return { ok: true, partial: true, cancelQty };
-          }
           throw new Error(`${plan.symbol} 当前币可撤挂单数量不足，已停止重挂`);
         }
         currentRoot = row.root || currentRoot;
@@ -2403,7 +2400,7 @@
         }
         cancelQty = addDecimalStrings(cancelQty, row.qty);
       }
-      return { ok: true, partial: false, cancelQty };
+      return { ok: true, cancelQty };
     }
     async function setHideOtherSymbolChecked(root, desiredChecked) {
       const checkbox = findHideOtherSymbolCheckbox(root);
@@ -2632,16 +2629,14 @@
           setLadderStatus(message);
           return { ok: false, status: "rows_not_found", message };
         }
-        const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows, { allowPartial: true });
+        const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
         if (!rowsToCancel.length) {
           const message = `未选中 ${symbol} 当前币待撤挂单`;
           setLadderStatus(message);
           return { ok: false, status: "rows_not_selected", message };
         }
         setLadderStatus(`${symbol} 撤销 ${rowsToCancel.length} 笔当前币挂单`);
-        await cancelOpenOrderRowsForPlan(openOrdersScope, plan, {
-          allowPartialEnd: plan.allowPartialReplacement === true
-        });
+        await cancelOpenOrderRowsForPlan(openOrdersScope, plan);
         setLadderStatus(`${symbol} 当前币挂单已替换，继续重挂`);
         return { ok: true, status: "rows_cleared" };
       } catch (e) {

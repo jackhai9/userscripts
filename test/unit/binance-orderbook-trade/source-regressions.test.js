@@ -126,7 +126,7 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(errorBody, /自动降档/);
   assert.match(errorBody, /openOrdersReplacementPlan/);
   assert.match(errorBody, /replacementTotalQty/);
-  assert.match(errorBody, /allowPartialReplacement: true/);
+  assert.doesNotMatch(errorBody, /allowPartialReplacement/);
   assert.match(errorBody, /脚本只会尝试替换当前币同向开仓基础单，不会自动全撤/);
   assert.match(errorBody, /脚本不会自动撤单/);
   assert.doesNotMatch(errorBody, /将自动撤单/);
@@ -212,8 +212,8 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelOpenOrderRowsBody, /readCurrentSymbolOpenOrderRows\(currentRoot,\s*plan\.symbol,\s*plan\)/);
   assert.match(cancelOpenOrderRowsBody, /const remainingQty = subtractDecimalStrings\(plan\.totalQty,\s*cancelQty\)/);
   assert.match(cancelOpenOrderRowsBody, /allowPartial: true/);
-  assert.match(cancelOpenOrderRowsBody, /allowPartialEnd && isPositiveDecimalString\(cancelQty\)/);
-  assert.match(cancelOpenOrderRowsBody, /return \{ ok: true,\s*partial: true,\s*cancelQty \}/);
+  assert.doesNotMatch(cancelOpenOrderRowsBody, /allowPartialEnd/);
+  assert.doesNotMatch(cancelOpenOrderRowsBody, /partial: true/);
   assert.match(cancelOpenOrderRowsBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = refreshedRoot/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = row\.root \|\| currentRoot/);
@@ -227,8 +227,8 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelRowsBody, /if \(!openOrdersScope\) \{\s*const message = '未定位到当前委托面板'/);
   assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(openOrdersScope,\s*symbol,\s*plan,\s*\{\s*openOrdersCount,\s*\}\)/);
   assert.match(cancelRowsBody, /getPlanDirectionLabel\(plan\)/);
-  assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows,\s*\{\s*allowPartial: true\s*\}\)/);
-  assert.match(cancelRowsBody, /allowPartialEnd: plan\.allowPartialReplacement === true/);
+  assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows\)/);
+  assert.doesNotMatch(cancelRowsBody, /allowPartialEnd/);
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
 });
 

@@ -70,12 +70,14 @@ test('recognizes reduce-only failures caused by existing open orders', () => {
   assert.equal(isReduceOnlyOpenOrdersConflictFeedback('委托已提交'), false);
 });
 
-test('recognizes open ladder capacity failures that may be solved by same-side open orders', () => {
-  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('下单失败：余额不足'), true);
-  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('可用余额不足'), true);
-  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('可开数量不足'), true);
-  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('Order failed: insufficient margin'), true);
-  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('Order failed: not enough available balance'), true);
+test('recognizes open ladder capacity failures only when feedback points to open orders', () => {
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('可开数量不足，请取消当前挂单后重试'), true);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('Order failed: insufficient margin from existing open orders'), true);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('下单失败：余额不足'), false);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('可用余额不足'), false);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('可开数量不足'), false);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('Order failed: insufficient margin'), false);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('Order failed: not enough available balance'), false);
   assert.equal(isOpenLadderOpenOrdersCapacityFeedback('只减仓订单失败。请取消此币种的当前挂单，然后重试。'), false);
   assert.equal(isOpenLadderOpenOrdersCapacityFeedback('委托已提交'), false);
 });

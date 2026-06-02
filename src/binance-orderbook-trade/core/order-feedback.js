@@ -41,7 +41,7 @@ export function isReduceOnlyOpenOrdersConflictFeedback(text) {
 export function isOpenLadderOpenOrdersCapacityFeedback(text) {
   if (!text) return false;
   const normalized = String(text).replace(/\s+/g, '').toLowerCase();
-  return (
+  const hasCapacityFailure = (
     normalized.includes('余额不足') ||
     normalized.includes('可用余额不足') ||
     normalized.includes('可用数量不足') ||
@@ -54,4 +54,12 @@ export function isOpenLadderOpenOrdersCapacityFeedback(text) {
     normalized.includes('notenoughbalance') ||
     normalized.includes('notenoughavailablebalance')
   );
+  const hasOpenOrdersHint = (
+    normalized.includes('当前挂单') ||
+    normalized.includes('取消挂单') ||
+    normalized.includes('挂单后重试') ||
+    normalized.includes('openorders') ||
+    normalized.includes('existingopenorders')
+  );
+  return hasCapacityFailure && hasOpenOrdersHint;
 }
