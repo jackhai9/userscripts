@@ -154,6 +154,8 @@ SVG action controls need separate treatment from normal buttons. A visible Binan
 
 When orderbook depth is missing, infer missing maker prices from the current displayed orderbook step, not from exchange `tickSize`.
 
+Orderbook precision recommendations must remain non-invasive. The script may sample multiple rounds of best bid/ask movement and suggest the closest display precision, but it must not override Binance's remembered precision or change precision during ladder or single-order submission. Applying a recommended precision requires an explicit user click.
+
 Live Tampermonkey verification must prove the new userscript is actually active. Opening a raw GitHub URL or landing on Tampermonkey's `script_installation.php` intermediate page is not enough. Confirm through the extension update UI, the userscript panel behavior, or live DOM/status evidence.
 
 For live Binance tests, confirm the target symbol, order mode, script quantity multiplier, orderbook display precision, and far-away test prices before clicking trade controls. When the user says the zoom/precision should be `1` or max, that refers to the Binance orderbook price-display precision dropdown, not the script quantity multiplier. Set the orderbook precision to the largest/coarsest option, such as `1`, so test orders are placed farther from the live price. Do not treat another open futures tab or another symbol's orders as evidence for the current test.
@@ -168,6 +170,8 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - test both `LIMIT` and `MARKET`
 - test open and close modes
 - verify rules-not-ready refuses to order
+- verify orderbook precision recommendation accumulates multiple price-move samples and does not auto-apply
+- verify the precision apply button changes Binance orderbook precision only after an explicit user click
 - start ladder order, confirm start buttons are disabled while running
 - cancel current-symbol orders, verify only Binance native confirmation opens
 - replace close ladder orders when existing reduce-only close orders occupy the closeable quantity

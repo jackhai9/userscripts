@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.20
+// @version      2.7.21
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -34,6 +34,11 @@ import {
   isDecimalAtLeast,
   isPositiveDecimalString,
 } from './core/decimal.js';
+import {
+  collectNonZeroPriceMoves,
+  mergePrecisionSamples,
+  recommendOrderbookPrecision,
+} from './core/precision.js';
 import { allocateLadderQuantities } from './core/quantity.js';
 import {
   fitLadderPlanForMinimumQty,
@@ -89,6 +94,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   const LOCAL_LADDER_CLOSE_PERCENT_KEY = 'jh_binance_ladder_close_percent';
   const LOCAL_LADDER_LEVELS_KEY = 'jh_binance_ladder_levels';
   const LOCAL_LADDER_STEP_KEY = 'jh_binance_ladder_step';
+  const LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v1';
   const BINANCE_PERSIST_KEY = 'persist:futures-trade-ui';
   const BINANCE_POST_ONLY_ORDER_TYPE = 'POST_ONLY';
   const BINANCE_POST_ONLY_TIME_IN_FORCE = 'GTC';
@@ -102,6 +108,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   const LADDER_TOGGLE_ID = 'jh-binance-ladder-toggle';
   const LADDER_BODY_ID = 'jh-binance-ladder-body';
   const LADDER_STATUS_ID = 'jh-binance-ladder-status';
+  const ORDERBOOK_PRECISION_RECOMMENDATION_ID = 'jh-binance-orderbook-precision-recommendation';
   const DEFAULT_MULTIPLIER = '1';
   const DEFAULT_CLOSE_SIDE = 'LONG';
   const DEFAULT_OPEN_SIDE = 'LONG';
@@ -123,6 +130,24 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   const LADDER_OPEN_QTY_POLL_MS = 80;
   const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
   const SINGLE_ORDER_QTY_SYNC_DELAY_MS = 120;
+  const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 4500;
+  const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
+  const ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS = 15000;
+  const ORDERBOOK_PRECISION_SAMPLE_MAX = 96;
+  const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
+    '0.00000001',
+    '0.0000001',
+    '0.000001',
+    '0.00001',
+    '0.0001',
+    '0.001',
+    '0.01',
+    '0.1',
+    '1',
+    '10',
+    '100',
+    '1000',
+  ];
   const DEFAULT_OPEN_LEVERAGE = 3;
   const AUTO_OPEN_LEVERAGE_DELAY_MS = 120;
   const AUTO_OPEN_LEVERAGE_DEDUPE_MS = 1200;
@@ -160,6 +185,15 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
   let ladderPanelBodySignature = '';
+  let orderbookPrecisionSampling = false;
+  let orderbookPrecisionSampleTimer = 0;
+  let orderbookPrecisionState = {
+    symbol: null,
+    samples: [],
+    recommendation: null,
+    current: null,
+    status: '采样中',
+  };
   const controlledNativeButtons = new Set();
 
   const MODE_HINT_ID = 'jh-binance-trade-mode-hint';
@@ -778,6 +812,245 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
 
   function getBestOrderbookPrice(side) {
     return getOrderbookPrices(side, 1)[0] || null;
+  }
+
+  function orderbookPrecisionSamplesKey(symbol = getCurrentSymbol()) {
+    const normalizedSymbol = String(symbol || '').toUpperCase();
+    return normalizedSymbol ? `${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:${normalizedSymbol}` : null;
+  }
+
+  function readStoredOrderbookPrecisionSamples(symbol = getCurrentSymbol()) {
+    const key = orderbookPrecisionSamplesKey(symbol);
+    if (!key) return [];
+    const parsed = parseJsonSafe(localStorage.getItem(key));
+    return Array.isArray(parsed)
+      ? parsed.map((sample) => normalizeDecimalString(sample)).filter((sample) => sample && isPositiveDecimalString(sample))
+      : [];
+  }
+
+  function saveStoredOrderbookPrecisionSamples(symbol, samples) {
+    const key = orderbookPrecisionSamplesKey(symbol);
+    if (!key) return;
+    const merged = mergePrecisionSamples([], samples, ORDERBOOK_PRECISION_SAMPLE_MAX);
+    localStorage.setItem(key, JSON.stringify(merged));
+  }
+
+  function getOrderbookPrecisionRecommendation(symbol = getCurrentSymbol()) {
+    const samples = readStoredOrderbookPrecisionSamples(symbol);
+    return recommendOrderbookPrecision({
+      samples,
+      options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
+    });
+  }
+
+  function isOrderbookPrecisionNumericText(text) {
+    const raw = String(text || '').replace(/,/g, '').trim();
+    return /^(?:\d+|\d+\.\d+|0?\.\d+)$/.test(raw) && raw.length <= 16;
+  }
+
+  function isInsideOrderbookPriceRow(node) {
+    return !!node?.closest?.('#futuresOrderbook .row-content');
+  }
+
+  function findOrderbookPrecisionTrigger() {
+    const root = document.querySelector('#futuresOrderbook');
+    if (!root) return null;
+    const clickableSelector = 'button,[role="button"],[role="combobox"],[tabindex],.bn-sdd-value,.bn-select-field';
+    const clickables = Array.from(root.querySelectorAll(clickableSelector));
+    for (const candidate of clickables) {
+      if (!isVisibleElement(candidate) || isInsideOrderbookPriceRow(candidate)) continue;
+      const text = (candidate.textContent || '').trim();
+      if (!isOrderbookPrecisionNumericText(text)) continue;
+      return {
+        element: candidate,
+        value: normalizeDecimalString(text),
+      };
+    }
+
+    const numericNodes = Array.from(root.querySelectorAll('span,div'));
+    for (const node of numericNodes) {
+      if (!isVisibleElement(node) || isInsideOrderbookPriceRow(node)) continue;
+      const text = (node.textContent || '').trim();
+      if (!isOrderbookPrecisionNumericText(text)) continue;
+      const target = node.closest(clickableSelector);
+      if (!target || !isVisibleElement(target) || isInsideOrderbookPriceRow(target)) continue;
+      return {
+        element: target,
+        value: normalizeDecimalString(text),
+      };
+    }
+    return null;
+  }
+
+  function readCurrentOrderbookPrecisionValue() {
+    return findOrderbookPrecisionTrigger()?.value || null;
+  }
+
+  function getVisibleOrderbookPrecisionOptionNodes() {
+    const selector = [
+      '[role="option"]',
+      '[role="menuitem"]',
+      '.bn-sdd-option',
+      '.bn-select-option',
+      '[class*="option"]',
+    ].join(',');
+    return Array.from(document.querySelectorAll(selector))
+      .filter((node) => isVisibleElement(node) && !isInsideOrderbookPriceRow(node))
+      .filter((node) => isOrderbookPrecisionNumericText(node.textContent));
+  }
+
+  function readVisibleOrderbookPrecisionOptionValues() {
+    const values = new Set();
+    for (const node of getVisibleOrderbookPrecisionOptionNodes()) {
+      const value = normalizeDecimalString(node.textContent);
+      if (value) values.add(value);
+    }
+    return Array.from(values);
+  }
+
+  function findVisibleOrderbookPrecisionOption(value) {
+    const normalized = normalizeDecimalString(value);
+    if (!normalized) return null;
+    return getVisibleOrderbookPrecisionOptionNodes()
+      .find((node) => normalizeDecimalString(node.textContent) === normalized) || null;
+  }
+
+  function refreshOrderbookPrecisionRecommendation(panel = document.getElementById(PANEL_ID)) {
+    const el = panel?.querySelector?.(`#${ORDERBOOK_PRECISION_RECOMMENDATION_ID}`);
+    if (!el) return;
+
+    const symbol = getCurrentSymbol();
+    if (!symbol) {
+      el.textContent = '';
+      return;
+    }
+
+    const samples = readStoredOrderbookPrecisionSamples(symbol);
+    const recommendation = recommendOrderbookPrecision({
+      samples,
+      options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
+    });
+    const current = readCurrentOrderbookPrecisionValue();
+    const existingStatus = orderbookPrecisionState.symbol === symbol ? orderbookPrecisionState.status : null;
+    const stickyStatus = existingStatus && existingStatus !== 'ready' && existingStatus !== '采样中'
+      ? existingStatus
+      : null;
+    const status = stickyStatus
+      ? existingStatus
+      : recommendation ? 'ready' : '采样中';
+    orderbookPrecisionState = {
+      ...orderbookPrecisionState,
+      symbol,
+      samples,
+      recommendation,
+      current,
+      status,
+    };
+
+    const canApply = recommendation && current !== recommendation;
+    const buttonStyle = canApply
+      ? 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;'
+      : `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`;
+    const recommendationText = recommendation || '--';
+    const currentText = current || '--';
+    const sampleText = samples.length ? `${samples.length}` : '0';
+    const statusText = status === 'ready' ? '' : `<span>${status}</span>`;
+    el.innerHTML = [
+      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;color:#76808f;font-size:12px;">',
+      `<span>缩放 推荐 ${recommendationText}</span>`,
+      `<span>当前 ${currentText}</span>`,
+      `<span>样本 ${sampleText}</span>`,
+      statusText,
+      `<button type="button" data-orderbook-precision-apply="true"${canApply ? '' : ' disabled aria-disabled="true"'} style="height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;${buttonStyle}">应用</button>`,
+      '</div>',
+    ].join('');
+  }
+
+  async function applyRecommendedOrderbookPrecision() {
+    const symbol = getCurrentSymbol();
+    const trigger = findOrderbookPrecisionTrigger();
+    if (!symbol || !trigger?.element) {
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: '未定位到缩放下拉' };
+      scheduleRenderPanel();
+      return false;
+    }
+
+    clickDomTarget(trigger.element);
+    await delay(180);
+    const actualOptions = readVisibleOrderbookPrecisionOptionValues();
+    const samples = readStoredOrderbookPrecisionSamples(symbol);
+    const recommendation = recommendOrderbookPrecision({
+      samples,
+      options: actualOptions.length ? actualOptions : ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
+    });
+    if (!recommendation) {
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: '样本不足' };
+      scheduleRenderPanel();
+      return false;
+    }
+
+    const option = findVisibleOrderbookPrecisionOption(recommendation);
+    if (!option) {
+      orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, status: `未找到 ${recommendation} 档` };
+      scheduleRenderPanel();
+      return false;
+    }
+
+    clickDomTarget(option);
+    orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, current: recommendation, status: '已应用' };
+    scheduleRenderPanel({ followUpMs: 350 });
+    return true;
+  }
+
+  async function runOrderbookPrecisionSampleRound() {
+    orderbookPrecisionSampleTimer = 0;
+    if (orderbookPrecisionSampling || document.hidden || !isFuturesTradingPage()) return;
+    const symbol = getCurrentSymbol();
+    if (!symbol) return;
+
+    orderbookPrecisionSampling = true;
+    const bidPrices = [];
+    const askPrices = [];
+    const deadline = Date.now() + ORDERBOOK_PRECISION_SAMPLE_DURATION_MS;
+    try {
+      while (Date.now() < deadline && !document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
+        const bid = getBestOrderbookPrice('BID');
+        const ask = getBestOrderbookPrice('ASK');
+        if (bid) bidPrices.push(bid);
+        if (ask) askPrices.push(ask);
+        await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);
+      }
+
+      if (getCurrentSymbol() !== symbol) return;
+      const newSamples = [
+        ...collectNonZeroPriceMoves(bidPrices),
+        ...collectNonZeroPriceMoves(askPrices),
+      ];
+      if (newSamples.length) {
+        const samples = mergePrecisionSamples(
+          readStoredOrderbookPrecisionSamples(symbol),
+          newSamples,
+          ORDERBOOK_PRECISION_SAMPLE_MAX
+        );
+        saveStoredOrderbookPrecisionSamples(symbol, samples);
+      }
+      refreshOrderbookPrecisionRecommendation();
+      scheduleRenderPanel();
+    } finally {
+      orderbookPrecisionSampling = false;
+      scheduleOrderbookPrecisionSampleRound(ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS);
+    }
+  }
+
+  function scheduleOrderbookPrecisionSampleRound(delayMs = 0) {
+    if (document.hidden || !isFuturesTradingPage()) return;
+    if (orderbookPrecisionSampling || orderbookPrecisionSampleTimer) return;
+    orderbookPrecisionSampleTimer = window.setTimeout(runOrderbookPrecisionSampleRound, Math.max(0, Number(delayMs) || 0));
+  }
+
+  function stopOrderbookPrecisionSampler() {
+    window.clearTimeout(orderbookPrecisionSampleTimer);
+    orderbookPrecisionSampleTimer = 0;
   }
 
   function getBufferedMakerPrices(side, levels, ladderStep = DEFAULT_LADDER_STEP) {
@@ -2811,6 +3084,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     }
 
     syncNativeCloseButtons(tradeMode, closeContext);
+    refreshOrderbookPrecisionRecommendation(panel);
     refreshLadderPanel(panel, tradeMode, closeContext);
   }
 
@@ -2928,6 +3202,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
         `<button id="${SIDE_LONG_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平多</button>` +
       '</div>',
       `<div id="${MODE_HINT_ID}" style="margin-top:6px;color:#76808f;"></div>`,
+      `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}"></div>`,
       '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #eef0f2;">',
       `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;text-align:left;font-size:13px;font-weight:600;cursor:pointer;">Maker 阶梯 ▸</button>`,
       `<div id="${LADDER_BODY_ID}" style="display:none;"></div>`,
@@ -3025,6 +3300,12 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
         setLadderStep(getLadderStep() + delta);
         return;
       }
+      const precisionApplyBtn = target.closest('[data-orderbook-precision-apply]');
+      if (precisionApplyBtn) {
+        if (precisionApplyBtn.disabled || precisionApplyBtn.getAttribute('aria-disabled') === 'true') return;
+        applyRecommendedOrderbookPrecision();
+        return;
+      }
       const actionBtn = target.closest('[data-ladder-action]');
       if (actionBtn) {
         if (actionBtn.disabled || actionBtn.getAttribute('aria-disabled') === 'true') return;
@@ -3059,6 +3340,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     invalidateTradeButtonCache();
     lastDisplayCloseState = null;
     lastAppliedCacheSnapshot = '';
+    stopOrderbookPrecisionSampler();
   }
 
   function renderPanel() {
@@ -3415,6 +3697,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       event.key === LOCAL_CLOSE_SIDE_KEY ||
       event.key === LOCAL_OPEN_SIDE_KEY ||
       event.key === LOCAL_LADDER_EXPANDED_KEY ||
+      event.key?.startsWith(`${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:`) ||
       isLadderOptionStorageKey(event.key)
     ) scheduleRenderPanel();
   });
@@ -3429,6 +3712,15 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     lastObservedSymbol = symbol;
     isEditingMultiplier = false;
     invalidateTradeButtonCache();
+    orderbookPrecisionState = {
+      symbol,
+      samples: readStoredOrderbookPrecisionSamples(symbol),
+      recommendation: getOrderbookPrecisionRecommendation(symbol),
+      current: readCurrentOrderbookPrecisionValue(),
+      status: '采样中',
+    };
+    stopOrderbookPrecisionSampler();
+    scheduleOrderbookPrecisionSampleRound(0);
     scheduleRenderPanel();
     if (getActiveTradeMode() === 'OPEN') {
       queueAutoOpenLeverageReset('symbol_change');
@@ -3469,6 +3761,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     startSymbolChangeTimer();
     ensureTradeModeTabObserver();
     startRenderPanelTimer();
+    scheduleOrderbookPrecisionSampleRound(0);
   }
 
   function stopTradingTimers() {
@@ -3476,6 +3769,7 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     stopTradeModeTabObserver();
     clearTradeUiMutationWait();
     stopRenderPanelTimer();
+    stopOrderbookPrecisionSampler();
   }
 
   function syncRouteState() {
