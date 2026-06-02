@@ -239,16 +239,27 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(sampleBody, /fallbackMovement/);
   assert.match(sampleBody, /orderbookPrecisionResampleRequested/);
   assert.doesNotMatch(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
+  assert.match(sampleBody, /orderbookPrecisionState[\s\S]*sampleEndsAt: deadline/);
+  assert.match(sampleBody, /scheduleRenderPanel\(\{ followUpMs: 1000 \}\)/);
 
   const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
   assert.match(refreshBody, /recommendOrderbookPrecision/);
   assert.match(refreshBody, /isOrderbookPrecisionBusy/);
+  assert.match(refreshBody, /formatOrderbookPrecisionBusyStatus/);
   assert.match(refreshBody, /data-orderbook-precision-refresh="true"[\s\S]*disabled/);
+  assert.doesNotMatch(refreshBody, /样本/);
+  assert.doesNotMatch(refreshBody, /sampleText/);
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
 
+  const busyStatusBody = readFunctionBody('formatOrderbookPrecisionBusyStatus');
+  assert.match(busyStatusBody, /Math\.ceil\(remainingMs \/ 1000\)/);
+  assert.match(busyStatusBody, /刷新中 \$\{remainingSeconds\}s/);
+
   const applyBody = readFunctionBody('applyRecommendedOrderbookPrecision');
+  assert.match(applyBody, /let option = findVisibleOrderbookPrecisionOption\(recommendation\)/);
+  assert.match(applyBody, /if \(!option\) \{\s*clickDomTarget\(trigger\.element\)/);
   assert.match(applyBody, /clickDomTarget\(trigger\.element\)/);
   assert.match(applyBody, /waitForVisibleOrderbookPrecisionOption\(recommendation\)/);
   assert.doesNotMatch(applyBody, /readVisibleOrderbookPrecisionOptionValues/);

@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.26
+// @version      2.7.27
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -201,6 +201,7 @@ import {
     recommendation: null,
     current: null,
     status: '采样中',
+    sampleEndsAt: 0,
   };
   const controlledNativeButtons = new Set();
 
@@ -994,6 +995,15 @@ import {
     return orderbookPrecisionSampling || status === '刷新中' || status === '采样中';
   }
 
+  function formatOrderbookPrecisionBusyStatus(status, sampleEndsAt = orderbookPrecisionState.sampleEndsAt) {
+    if (status !== '刷新中' && status !== '采样中') return status;
+    const remainingMs = Number(sampleEndsAt) - Date.now();
+    if (!(remainingMs > 0)) return status;
+    const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+    if (status === '刷新中') return `刷新中 ${remainingSeconds}s`;
+    return `采样中 ${remainingSeconds}s`;
+  }
+
   function refreshOrderbookPrecisionRecommendation(panel = document.getElementById(PANEL_ID)) {
     const el = panel?.querySelector?.(`#${ORDERBOOK_PRECISION_RECOMMENDATION_ID}`);
     if (!el) return;
@@ -1012,7 +1022,7 @@ import {
     const current = readCurrentOrderbookPrecisionValue();
     const existingStatus = orderbookPrecisionState.symbol === symbol ? orderbookPrecisionState.status : null;
     const busy = isOrderbookPrecisionBusy(existingStatus);
-    const stickyStatus = existingStatus && /^(未定位|未找到|样本不足)/.test(existingStatus)
+    const stickyStatus = existingStatus && /^(未定位|未找到|数据不足)/.test(existingStatus)
       ? existingStatus
       : null;
     const status = busy
@@ -1041,17 +1051,19 @@ import {
       : disabledButtonStyle;
     const buttonBaseStyle = 'height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;';
     const recommendationText = recommendation || '--';
-    const sampleText = samples.length ? `${samples.length}` : '0';
-    const statusText = status === 'ready' ? '' : `<span>${status}</span>`;
+    const displayStatus = busy ? formatOrderbookPrecisionBusyStatus(status) : status;
+    const statusText = displayStatus === 'ready' ? '' : `<span>${displayStatus}</span>`;
     el.innerHTML = [
       '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;color:#76808f;font-size:12px;">',
       `<span>缩放 推荐 ${recommendationText}</span>`,
-      `<span>样本 ${sampleText}</span>`,
       statusText,
       `<button type="button" data-orderbook-precision-apply="true"${canApply ? '' : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
       `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? '' : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${refreshButtonStyle}">刷新</button>`,
       '</div>',
     ].join('');
+    if (busy && Number(orderbookPrecisionState.sampleEndsAt) > Date.now()) {
+      scheduleRenderPanel({ followUpMs: 1000 });
+    }
   }
 
   async function applyRecommendedOrderbookPrecision() {
@@ -1069,13 +1081,16 @@ import {
       options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
     });
     if (!recommendation) {
-      orderbookPrecisionState = { ...orderbookPrecisionState, status: '样本不足' };
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: '数据不足' };
       scheduleRenderPanel();
       return false;
     }
 
-    clickDomTarget(trigger.element);
-    const option = await waitForVisibleOrderbookPrecisionOption(recommendation);
+    let option = findVisibleOrderbookPrecisionOption(recommendation);
+    if (!option) {
+      clickDomTarget(trigger.element);
+      option = await waitForVisibleOrderbookPrecisionOption(recommendation);
+    }
     if (!option) {
       orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, status: `未找到 ${recommendation} 档` };
       scheduleRenderPanel();
@@ -1103,6 +1118,12 @@ import {
         tradeMoveSamples.push(...collectNonZeroPriceMoves(readyPrices));
       }
       const deadline = Date.now() + sampleDurationMs;
+      orderbookPrecisionState = {
+        ...orderbookPrecisionState,
+        symbol,
+        sampleEndsAt: deadline,
+      };
+      scheduleRenderPanel({ followUpMs: 1000 });
       while (Date.now() < deadline && !document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
         tradeMoveSamples.push(...collectNonZeroPriceMoves(getLatestTradePrices()));
         await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);
@@ -1121,7 +1142,8 @@ import {
         samples,
         recommendation,
         current: readCurrentOrderbookPrecisionValue(),
-        status: recommendation ? 'ready' : '样本不足',
+        status: recommendation ? 'ready' : '数据不足',
+        sampleEndsAt: 0,
       };
       refreshOrderbookPrecisionRecommendation();
       scheduleRenderPanel();
@@ -1168,6 +1190,7 @@ import {
       ...orderbookPrecisionState,
       symbol,
       status: '采样中',
+      sampleEndsAt: Date.now() + ORDERBOOK_PRECISION_SAMPLE_DURATION_MS,
     };
     scheduleOrderbookPrecisionSampleRound(0, {
       force: true,
@@ -1181,6 +1204,7 @@ import {
       ...orderbookPrecisionState,
       symbol,
       status: '刷新中',
+      sampleEndsAt: Date.now() + ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS,
     };
     stopOrderbookPrecisionSampler();
     scheduleOrderbookPrecisionSampleRound(0, {
