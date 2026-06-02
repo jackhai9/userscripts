@@ -218,3 +218,22 @@ test('cancel current-symbol open orders can wait until replacement orders are cl
   assert.match(cancelBody, /return \{ ok: true, status: 'cleared'/);
   assert.match(cancelBody, /return \{ ok: false, status: 'not_cleared'/);
 });
+
+test('orderbook precision recommendation is sampled and manually applied only', () => {
+  assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 4500/);
+  assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX/);
+  assert.match(source, /data-orderbook-precision-apply/);
+
+  const sampleBody = readFunctionBody('runOrderbookPrecisionSampleRound');
+  assert.match(sampleBody, /collectNonZeroPriceMoves/);
+  assert.match(sampleBody, /mergePrecisionSamples/);
+  assert.match(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
+
+  const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
+  assert.match(refreshBody, /recommendOrderbookPrecision/);
+  assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
+
+  const startBody = readFunctionBody('startLadder');
+  assert.doesNotMatch(startBody, /applyRecommendedOrderbookPrecision/);
+  assert.doesNotMatch(startBody, /runOrderbookPrecisionSampleRound/);
+});
