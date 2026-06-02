@@ -158,6 +158,11 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
   assert.match(cancelButtonBody, /const target = icon\.closest\('button, \[role="button"\], a, \[tabindex\]'\) \|\| icon/);
   assert.doesNotMatch(cancelButtonBody, /\|\| icon\.parentElement \|\| icon/);
 
+  const clickDomTargetBody = readFunctionBody('clickDomTarget');
+  assert.match(clickDomTargetBody, /typeof target\.click === 'function'/);
+  assert.match(clickDomTargetBody, /new MouseEvent\('click'/);
+  assert.match(clickDomTargetBody, /bubbles: true/);
+
   const selectRowsBody = readFunctionBody('selectOpenOrderRowsToCancelForPlan');
   assert.match(selectRowsBody, /allowPartial = false/);
   assert.match(selectRowsBody, /isOpenOrderRowForClosePlan\(row\.sideText,\s*plan\)/);
@@ -191,6 +196,8 @@ test('close ladder replacement cancels visible current-symbol rows up to planned
   assert.match(cancelOpenOrderRowsBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = refreshedRoot/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = row\.root \|\| currentRoot/);
+  assert.match(cancelOpenOrderRowsBody, /clickDomTarget\(row\.cancelButton\)/);
+  assert.doesNotMatch(cancelOpenOrderRowsBody, /row\.cancelButton\.click\(\)/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /for \(const row of rowsToCancel\)/);
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
