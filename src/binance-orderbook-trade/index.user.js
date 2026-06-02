@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.14
+// @version      2.7.15
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -36,6 +36,7 @@ import {
 } from './core/decimal.js';
 import { allocateLadderQuantities } from './core/quantity.js';
 import {
+  fitLadderPlanForMinimumQty,
   getLadderActionSpec as getLadderActionSpecData,
   getLadderPercentForMode,
 } from './core/ladder-plan.js';
@@ -951,12 +952,12 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     if (ruleContext.status !== 'ready' || !ruleContext.stepSize || !ruleContext.baseMinQty) {
       throw new Error('数量步进/最小量未就绪');
     }
-    const minRequiredQty = spec.mode === 'OPEN'
-      ? prices
-        .map((price) => getQtyRuleContext(startSymbol, spec.mode, price).effectiveMinQty)
-        .filter(Boolean)
-        .reduce((maxQty, qty) => maxDecimalString(maxQty, qty), ruleContext.baseMinQty)
-      : ruleContext.baseMinQty;
+    const minRequiredQtyByLevel = spec.mode === 'OPEN'
+      ? prices.map((price) => getQtyRuleContext(startSymbol, spec.mode, price).effectiveMinQty || ruleContext.baseMinQty)
+      : prices.map(() => ruleContext.baseMinQty);
+    let minRequiredQty = minRequiredQtyByLevel
+      .filter(Boolean)
+      .reduce((maxQty, qty) => maxDecimalString(maxQty, qty), ruleContext.baseMinQty);
 
     const base = spec.mode === 'OPEN'
       ? await readOpenBaseQtyForLadder(spec, prices[0])
@@ -973,12 +974,39 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       throw new Error(`未读取到可用${spec.mode === 'OPEN' ? '可开' : '可平'}数量`);
     }
 
-    const percent = getLadderPercentForMode(spec.mode, getLadderOpenPercent(), getLadderClosePercent());
+    let percent = getLadderPercentForMode(spec.mode, getLadderOpenPercent(), getLadderClosePercent());
     if (percent == null) throw new Error('未知阶梯模式');
     const totalQty = multiplyDecimalByRatio(baseQty, percent, 100);
-    const allocation = allocateLadderQuantities(totalQty, levels, ruleContext.stepSize, minRequiredQty);
-    if (!allocation || allocation.actualLevels < 1) {
-      throw createLadderMinimumQtyFailure(spec.mode, minRequiredQty);
+    let allocation = allocateLadderQuantities(totalQty, levels, ruleContext.stepSize, minRequiredQty);
+    let autoFitPercent = null;
+    let autoFitLevels = null;
+    if (!allocation || allocation.actualLevels < levels) {
+      const autoFit = fitLadderPlanForMinimumQty({
+        baseQty,
+        minRequiredQty,
+        minRequiredQtyByLevel,
+        percent,
+        levels,
+        stepSize: ruleContext.stepSize,
+        maxPercent: getMaxAutoFitLadderPercent(spec.mode),
+      });
+      if (autoFit.allocation) {
+        allocation = autoFit.allocation;
+        percent = autoFit.percent;
+        minRequiredQty = autoFit.minRequiredQty || minRequiredQty;
+        autoFitPercent = autoFit.percent;
+        autoFitLevels = autoFit.levels;
+      } else {
+        throw createLadderMinimumQtyFailure({
+          mode: spec.mode,
+          minRequiredQty,
+          baseQty,
+          percent,
+          levels,
+          minimumPercent: autoFit.minimumPercent,
+          maxAutoFitPercent: autoFit.maxPercent,
+        });
+      }
     }
 
     const orderPrices = prices.slice(0, allocation.actualLevels);
@@ -992,17 +1020,32 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
       baseQty,
       totalQty: allocation.totalQty,
       minRequiredQty,
+      autoFitPercent: autoFitPercent,
+      autoFitLevels,
       prices: orderPrices,
       qtySource: base.qtySource,
       orders: orderPrices.map((price, index) => ({ price, qty: allocation.quantities[index] })),
     };
   }
 
-  function createLadderMinimumQtyFailure(mode, minRequiredQty) {
+  function getMaxAutoFitLadderPercent(mode) {
+    if (mode === 'OPEN') return String(Math.max(...LADDER_OPEN_PERCENTS));
+    if (mode === 'CLOSE') return '100';
+    return null;
+  }
+
+  function createLadderMinimumQtyFailure(options) {
+    const { mode, minRequiredQty, percent, levels, minimumPercent, maxAutoFitPercent } = options;
     const percentLabel = mode === 'OPEN' ? '开仓比例' : '平仓比例';
     const actionLabel = mode === 'OPEN' ? '开仓' : '平仓';
-    const error = new Error(`数量低于最小下单量 ${minRequiredQty}`);
-    error.statusTitle = `目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；可提高${percentLabel}、减少档数，或手动撤销占用保证金或可平数量的挂单后重试`;
+    const percentHint = minimumPercent ? `，需 >= ${minimumPercent}%` : '';
+    const error = new Error(`数量低于最小下单量 ${minRequiredQty}${percentHint}`);
+    const minimumText = minimumPercent
+      ? `至少需要${percentLabel} ${minimumPercent}% 才能保持当前档位。`
+      : '';
+    const maxText = maxAutoFitPercent ? `自动上限 ${maxAutoFitPercent}%。` : '';
+    const levelsText = levels ? `当前档位 ${levels} 档。` : '';
+    error.statusTitle = `当前${percentLabel} ${percent}%，目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；${levelsText}${minimumText}${maxText}已尝试自动提高比例和自动降档；脚本不会自动撤单。`;
     return error;
   }
 

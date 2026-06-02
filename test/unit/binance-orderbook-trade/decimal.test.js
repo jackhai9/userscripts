@@ -47,6 +47,7 @@ test('multiplies decimal strings by integer or ratio', () => {
   assert.equal(multiplyDecimalByInt('1.20', '10'), '12');
   assert.equal(multiplyDecimalByRatio('1.000', 1, 3), '0.333');
   assert.equal(multiplyDecimalByRatio('10', 3, 4), '7');
+  assert.equal(multiplyDecimalByRatio('0.01', 60, 100), '0.006');
 });
 
 test('multiplies decimal strings by decimal ratio without floating point conversion', () => {
