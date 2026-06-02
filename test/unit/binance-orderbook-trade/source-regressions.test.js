@@ -281,8 +281,20 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   const optionsBody = readFunctionBody('getVisibleOrderbookPrecisionOptionNodes');
   assert.match(optionsBody, /\.ob-ticksize-item/);
   assert.match(optionsBody, /\.ob-ticksize-overlay/);
+  assert.match(optionsBody, /readOrderbookPrecisionOptionValue\(node\)/);
+  assert.match(optionsBody, /getOrderbookPrecisionOptionClickTarget\(node\)/);
   assert.match(optionsBody, /ORDERBOOK_PRECISION_CANDIDATE_OPTIONS\.includes/);
   assert.match(optionsBody, /popupSelector/);
+
+  const optionValueBody = readFunctionBody('readOrderbookPrecisionOptionValue');
+  assert.match(optionValueBody, /\.ob-ticksize-item/);
+  assert.match(optionValueBody, /querySelector\('span'\)/);
+
+  const optionTargetBody = readFunctionBody('getOrderbookPrecisionOptionClickTarget');
+  assert.match(optionTargetBody, /closest\?\.\('\.ob-ticksize-item'\)/);
+
+  const findOptionBody = readFunctionBody('findVisibleOrderbookPrecisionOption');
+  assert.match(findOptionBody, /readOrderbookPrecisionOptionValue\(node\) === normalized/);
 
   const startBody = readFunctionBody('startLadder');
   assert.doesNotMatch(startBody, /applyRecommendedOrderbookPrecision/);

@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.27
+// @version      2.7.28
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -931,6 +931,19 @@ import {
     return findOrderbookPrecisionTrigger()?.value || null;
   }
 
+  function readOrderbookPrecisionOptionValue(node) {
+    if (!node) return null;
+    const item = node.matches?.('.ob-ticksize-item')
+      ? node
+      : node.closest?.('.ob-ticksize-item');
+    const textNode = item?.querySelector('span') || node;
+    return normalizeDecimalString(textNode?.textContent || '');
+  }
+
+  function getOrderbookPrecisionOptionClickTarget(node) {
+    return node?.closest?.('.ob-ticksize-item') || node;
+  }
+
   function getVisibleOrderbookPrecisionOptionNodes() {
     const optionSelector = [
       '[role="option"]',
@@ -958,16 +971,17 @@ import {
         .flatMap((popup) => Array.from(popup.querySelectorAll('div,span,li'))),
     ];
     return candidates
-      .filter((node, index, nodes) => nodes.indexOf(node) === index)
+      .map((node) => getOrderbookPrecisionOptionClickTarget(node))
+      .filter((node, index, nodes) => node && nodes.indexOf(node) === index)
       .filter((node) => isVisibleElement(node) && !isInsideOrderbookPriceRow(node) && !isInsideOwnPanel(node))
-      .filter((node) => isOrderbookPrecisionNumericText(node.textContent))
-      .filter((node) => ORDERBOOK_PRECISION_CANDIDATE_OPTIONS.includes(normalizeDecimalString(node.textContent)));
+      .filter((node) => isOrderbookPrecisionNumericText(readOrderbookPrecisionOptionValue(node)))
+      .filter((node) => ORDERBOOK_PRECISION_CANDIDATE_OPTIONS.includes(readOrderbookPrecisionOptionValue(node)));
   }
 
   function readVisibleOrderbookPrecisionOptionValues() {
     const values = new Set();
     for (const node of getVisibleOrderbookPrecisionOptionNodes()) {
-      const value = normalizeDecimalString(node.textContent);
+      const value = readOrderbookPrecisionOptionValue(node);
       if (value) values.add(value);
     }
     return Array.from(values);
@@ -977,7 +991,7 @@ import {
     const normalized = normalizeDecimalString(value);
     if (!normalized) return null;
     return getVisibleOrderbookPrecisionOptionNodes()
-      .find((node) => normalizeDecimalString(node.textContent) === normalized) || null;
+      .find((node) => readOrderbookPrecisionOptionValue(node) === normalized) || null;
   }
 
   async function waitForVisibleOrderbookPrecisionOption(value, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
