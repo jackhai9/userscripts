@@ -3,17 +3,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const source = await readFile(new URL('../../../src/binance-orderbook-trade/index.user.js', import.meta.url), 'utf8');
+const ladderPlanSource = await readFile(new URL('../../../src/binance-orderbook-trade/core/ladder-plan.js', import.meta.url), 'utf8');
 
-function readFunctionBody(name) {
-  const start = source.indexOf(`function ${name}`);
+function readFunctionBody(name, sourceText = source) {
+  const start = sourceText.indexOf(`function ${name}`);
   assert.notEqual(start, -1, `${name} should exist`);
-  const braceStart = source.indexOf('{', start);
+  const braceStart = sourceText.indexOf('{', start);
   let depth = 0;
-  for (let index = braceStart; index < source.length; index += 1) {
-    const char = source[index];
+  for (let index = braceStart; index < sourceText.length; index += 1) {
+    const char = sourceText[index];
     if (char === '{') depth += 1;
     if (char === '}') depth -= 1;
-    if (depth === 0) return source.slice(braceStart + 1, index);
+    if (depth === 0) return sourceText.slice(braceStart + 1, index);
   }
   assert.fail(`${name} body should be closed`);
 }
@@ -84,16 +85,49 @@ test('close ladder retries with replacement only after Binance reduce-only confl
 
 test('ladder minimum quantity failure explains safe manual options', () => {
   const buildBody = readFunctionBody('buildLadderPlan');
-  assert.match(buildBody, /createLadderMinimumQtyFailure\(spec\.mode,\s*minRequiredQty\)/);
+  assert.match(buildBody, /const minRequiredQtyByLevel = spec\.mode === 'OPEN'/);
+  assert.match(buildBody, /getQtyRuleContext\(startSymbol,\s*spec\.mode,\s*price\)\.effectiveMinQty \|\| ruleContext\.baseMinQty/);
+  assert.match(buildBody, /fitLadderPlanForMinimumQty\(\{\s*baseQty,\s*minRequiredQty,\s*minRequiredQtyByLevel,\s*percent,\s*levels,\s*stepSize: ruleContext\.stepSize,\s*maxPercent: getMaxAutoFitLadderPercent\(spec\.mode\),\s*\}\)/);
+  assert.match(buildBody, /allocation = autoFit\.allocation/);
+  assert.match(buildBody, /percent = autoFit\.percent/);
+  assert.match(buildBody, /minRequiredQty = autoFit\.minRequiredQty \|\| minRequiredQty/);
+  assert.match(buildBody, /autoFitLevels = autoFit\.levels/);
+  assert.match(buildBody, /autoFitPercent: autoFitPercent/);
+  assert.match(buildBody, /autoFitLevels/);
+  assert.match(buildBody, /createLadderMinimumQtyFailure\(\{\s*mode: spec\.mode,\s*minRequiredQty,\s*baseQty,\s*percent,\s*levels,\s*minimumPercent: autoFit\.minimumPercent,\s*maxAutoFitPercent: autoFit\.maxPercent,\s*\}\)/);
 
   const errorBody = readFunctionBody('createLadderMinimumQtyFailure');
   assert.match(errorBody, /数量低于最小下单量/);
   assert.match(errorBody, /error\.statusTitle/);
+  assert.match(errorBody, /当前\$\{percentLabel\}/);
+  assert.match(errorBody, /至少需要\$\{percentLabel\}/);
+  assert.match(errorBody, /自动上限/);
+  assert.match(errorBody, /当前档位/);
   assert.match(errorBody, /开仓比例/);
   assert.match(errorBody, /平仓比例/);
-  assert.match(errorBody, /减少档数/);
-  assert.match(errorBody, /手动撤销占用保证金或可平数量的挂单/);
-  assert.doesNotMatch(errorBody, /自动撤/);
+  assert.match(errorBody, /自动提高比例/);
+  assert.match(errorBody, /自动降档/);
+  assert.match(errorBody, /脚本不会自动撤单/);
+  assert.doesNotMatch(errorBody, /将自动撤单/);
+
+  const percentBody = readFunctionBody('computeMinimumLadderPercent', ladderPlanSource);
+  assert.match(percentBody, /parseDecimalString\(baseQty\)/);
+  assert.match(percentBody, /decimalToStepCount\(minRequiredQty,\s*stepSize,\s*'ceil'\)/);
+  assert.match(percentBody, /formatStepCount\(minSteps \* BigInt\(requestedLevels\),\s*stepSize\)/);
+  assert.match(percentBody, /formatDecimalParts\(scaledPercent,\s*2\)/);
+
+  const fitBody = readFunctionBody('fitLadderPlanForMinimumQty', ladderPlanSource);
+  assert.match(fitBody, /getMinRequiredQtyForLevels\(minRequiredQty,\s*minRequiredQtyByLevel,\s*candidateLevels\)/);
+  assert.match(fitBody, /for \(let candidateLevels = requestedLevels; candidateLevels >= 1; candidateLevels -= 1\)/);
+  assert.match(fitBody, /computeMinimumLadderPercent\(baseQty,\s*candidateMinRequiredQty,\s*candidateLevels,\s*stepSize\)/);
+  assert.match(fitBody, /compareDecimalStrings\(candidatePercent,\s*maxPercent\) > 0/);
+  assert.match(fitBody, /allocateLadderQuantities\(fitTotalQty,\s*candidateLevels,\s*stepSize,\s*candidateMinRequiredQty\)/);
+  assert.match(fitBody, /minRequiredQty: candidateMinRequiredQty/);
+  assert.match(fitBody, /levels: candidateLevels/);
+
+  const maxBody = readFunctionBody('getMaxAutoFitLadderPercent');
+  assert.match(maxBody, /Math\.max\(\.\.\.LADDER_OPEN_PERCENTS\)/);
+  assert.match(maxBody, /100/);
 
   const statusBody = readFunctionBody('setLadderStatus');
   assert.match(statusBody, /statusEl\.title =/);
