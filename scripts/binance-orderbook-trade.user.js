@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.25
+// @version      2.7.26
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -687,7 +687,7 @@
     const LOCAL_LADDER_CLOSE_PERCENT_KEY = "jh_binance_ladder_close_percent";
     const LOCAL_LADDER_LEVELS_KEY = "jh_binance_ladder_levels";
     const LOCAL_LADDER_STEP_KEY = "jh_binance_ladder_step";
-    const LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = "jh_binance_orderbook_precision_samples_v2";
+    const LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = "jh_binance_orderbook_precision_samples_v3";
     const BINANCE_PERSIST_KEY = "persist:futures-trade-ui";
     const BINANCE_POST_ONLY_ORDER_TYPE = "POST_ONLY";
     const BINANCE_POST_ONLY_TIME_IN_FORCE = "GTC";
@@ -727,6 +727,7 @@
     const ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6e3;
     const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
     const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5e3;
+    const ORDERBOOK_PRECISION_OPTION_WAIT_MS = 1200;
     const ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS = 6;
     const ORDERBOOK_PRECISION_SAMPLE_MAX = 96;
     const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
@@ -1294,9 +1295,10 @@
     }
     function saveStoredOrderbookPrecisionSamples(symbol, samples) {
       const key = orderbookPrecisionSamplesKey(symbol);
-      if (!key) return;
+      if (!key) return [];
       const merged = mergePrecisionSamples([], samples, ORDERBOOK_PRECISION_SAMPLE_MAX);
       localStorage.setItem(key, JSON.stringify(merged));
+      return merged;
     }
     function getOrderbookPrecisionRecommendation(symbol = getCurrentSymbol()) {
       const samples = readStoredOrderbookPrecisionSamples(symbol);
@@ -1321,10 +1323,11 @@
       const clickableSelector = 'button,[role="button"],[role="combobox"],[tabindex],.bn-sdd-value,.bn-select-field';
       const tickSize = root.querySelector(".orderbook-tickSize");
       if (tickSize && isVisibleElement(tickSize) && !isInsideOrderbookPriceRow(tickSize)) {
+        const tickContent = tickSize.querySelector(".tick-content");
         const text = (tickSize.textContent || "").trim();
         if (isOrderbookPrecisionNumericText(text)) {
           return {
-            element: tickSize,
+            element: tickContent && isVisibleElement(tickContent) ? tickContent : tickSize,
             value: normalizeDecimalString(text)
           };
         }
@@ -1360,6 +1363,7 @@
       const optionSelector = [
         '[role="option"]',
         '[role="menuitem"]',
+        ".ob-ticksize-item",
         ".bn-sdd-option",
         ".bn-select-option",
         '[class*="option"]',
@@ -1368,6 +1372,7 @@
       const popupSelector = [
         '[role="listbox"]',
         '[role="menu"]',
+        ".ob-ticksize-overlay",
         '[class*="dropdown"]',
         '[class*="Dropdown"]',
         '[class*="popup"]',
@@ -1394,6 +1399,19 @@
       if (!normalized) return null;
       return getVisibleOrderbookPrecisionOptionNodes().find((node) => normalizeDecimalString(node.textContent) === normalized) || null;
     }
+    async function waitForVisibleOrderbookPrecisionOption(value, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
+      const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+      while (!document.hidden && isFuturesTradingPage()) {
+        const option = findVisibleOrderbookPrecisionOption(value);
+        if (option) return option;
+        if (Date.now() >= deadline) return null;
+        await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);
+      }
+      return null;
+    }
+    function isOrderbookPrecisionBusy(status = orderbookPrecisionState.status) {
+      return orderbookPrecisionSampling || status === "刷新中" || status === "采样中";
+    }
     function refreshOrderbookPrecisionRecommendation(panel = document.getElementById(PANEL_ID)) {
       const el = panel?.querySelector?.(`#${ORDERBOOK_PRECISION_RECOMMENDATION_ID}`);
       if (!el) return;
@@ -1409,8 +1427,9 @@
       });
       const current = readCurrentOrderbookPrecisionValue();
       const existingStatus = orderbookPrecisionState.symbol === symbol ? orderbookPrecisionState.status : null;
+      const busy = isOrderbookPrecisionBusy(existingStatus);
       const stickyStatus = existingStatus && /^(未定位|未找到|样本不足)/.test(existingStatus) ? existingStatus : null;
-      const status = stickyStatus ? existingStatus : recommendation ? "ready" : "采样中";
+      const status = busy ? existingStatus || "采样中" : stickyStatus ? existingStatus : recommendation ? "ready" : "采样中";
       orderbookPrecisionState = {
         ...orderbookPrecisionState,
         symbol,
@@ -1419,8 +1438,13 @@
         current,
         status
       };
-      const canApply = recommendation && current !== recommendation;
-      const buttonStyle = canApply ? "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;" : `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`;
+      const canApply = !busy && recommendation && current !== recommendation;
+      const canRefresh = !busy;
+      const activeButtonStyle = "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;";
+      const disabledButtonStyle = `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`;
+      const applyButtonStyle = canApply ? activeButtonStyle : disabledButtonStyle;
+      const refreshButtonStyle = canRefresh ? activeButtonStyle : disabledButtonStyle;
+      const buttonBaseStyle = "height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;";
       const recommendationText = recommendation || "--";
       const sampleText = samples.length ? `${samples.length}` : "0";
       const statusText = status === "ready" ? "" : `<span>${status}</span>`;
@@ -1429,8 +1453,8 @@
         `<span>缩放 推荐 ${recommendationText}</span>`,
         `<span>样本 ${sampleText}</span>`,
         statusText,
-        `<button type="button" data-orderbook-precision-apply="true"${canApply ? "" : ' disabled aria-disabled="true"'} style="height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;${buttonStyle}">应用</button>`,
-        '<button type="button" data-orderbook-precision-refresh="true" style="height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:12px;line-height:22px;cursor:pointer;">刷新</button>',
+        `<button type="button" data-orderbook-precision-apply="true"${canApply ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
+        `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${refreshButtonStyle}">刷新</button>`,
         "</div>"
       ].join("");
     }
@@ -1442,20 +1466,18 @@
         scheduleRenderPanel();
         return false;
       }
-      clickDomTarget(trigger.element);
-      await delay(180);
-      const actualOptions = readVisibleOrderbookPrecisionOptionValues();
       const samples = readStoredOrderbookPrecisionSamples(symbol);
       const recommendation = recommendOrderbookPrecision({
         samples,
-        options: actualOptions.length ? actualOptions : ORDERBOOK_PRECISION_CANDIDATE_OPTIONS
+        options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS
       });
       if (!recommendation) {
         orderbookPrecisionState = { ...orderbookPrecisionState, status: "样本不足" };
         scheduleRenderPanel();
         return false;
       }
-      const option = findVisibleOrderbookPrecisionOption(recommendation);
+      clickDomTarget(trigger.element);
+      const option = await waitForVisibleOrderbookPrecisionOption(recommendation);
       if (!option) {
         orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, status: `未找到 ${recommendation} 档` };
         scheduleRenderPanel();
@@ -1486,21 +1508,15 @@
         }
         if (getCurrentSymbol() !== symbol) return;
         const newSamples = tradeMoveSamples;
-        if (newSamples.length) {
-          const samples = mergePrecisionSamples(
-            readStoredOrderbookPrecisionSamples(symbol),
-            newSamples,
-            ORDERBOOK_PRECISION_SAMPLE_MAX
-          );
-          saveStoredOrderbookPrecisionSamples(symbol, samples);
-        }
+        const samples = saveStoredOrderbookPrecisionSamples(symbol, newSamples);
         const recommendation = recommendOrderbookPrecision({
-          samples: readStoredOrderbookPrecisionSamples(symbol),
+          samples,
           options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS
         });
         orderbookPrecisionState = {
           ...orderbookPrecisionState,
           symbol,
+          samples,
           recommendation,
           current: readCurrentOrderbookPrecisionValue(),
           status: recommendation ? "ready" : "样本不足"
@@ -3491,6 +3507,7 @@
         }
         const precisionRefreshBtn = target.closest("[data-orderbook-precision-refresh]");
         if (precisionRefreshBtn) {
+          if (precisionRefreshBtn.disabled || precisionRefreshBtn.getAttribute("aria-disabled") === "true") return;
           refreshOrderbookPrecisionSamplesNow();
           return;
         }
