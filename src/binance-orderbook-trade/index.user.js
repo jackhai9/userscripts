@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.19
+// @version      2.7.20
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1463,6 +1463,19 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
     return target;
   }
 
+  function clickDomTarget(target) {
+    if (!target || !target.isConnected || !isVisibleElement(target)) return false;
+    if (typeof target.click === 'function') {
+      target.click();
+      return true;
+    }
+    return target.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+    }));
+  }
+
   function getOpenOrderRowKey(cells, row) {
     const cellText = cells
       .slice(0, 10)
@@ -1589,7 +1602,9 @@ import { planBufferedMakerPrices } from './core/orderbook.js';
         throw new Error('当前币挂单撤单入口已失效，已停止重挂');
       }
       const dialogsBefore = new Set(getVisibleDialogs());
-      row.cancelButton.click();
+      if (!clickDomTarget(row.cancelButton)) {
+        throw new Error('当前币挂单撤单入口点击失败，已停止重挂');
+      }
       waitForTradeUiMutation({ timeoutMs: 800 });
       const dialog = await waitForNewVisibleDialog(dialogsBefore);
       if (dialog) {
