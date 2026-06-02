@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.12
+// @version      2.7.13
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -335,6 +335,11 @@
     if (feedbackType === "success") return { status: "success" };
     return { status: "pending" };
   }
+  function isReduceOnlyOpenOrdersConflictFeedback(text) {
+    if (!text) return false;
+    const normalized = String(text).replace(/\s+/g, "");
+    return normalized.includes("只减仓订单失败") && (normalized.includes("当前挂单") || normalized.includes("挂单后重试") || normalized.includes("未平仓头寸和挂单"));
+  }
 
   // src/shared/binance-futures-route.js
   var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([A-Z0-9_]{3,})\/?$/;
@@ -593,6 +598,7 @@
     const LADDER_ORDER_DELAY_MS = 520;
     const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
     const LADDER_SUBMIT_POLL_MS = 80;
+    const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
     const LADDER_OPEN_QTY_POLL_MS = 80;
@@ -1235,11 +1241,12 @@
         qtySource: display.qtySource
       };
     }
-    async function buildLadderPlan(actionType) {
+    async function buildLadderPlan(actionType, expectedSymbol = null) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec) throw new Error("未知阶梯动作");
       const startSymbol = getCurrentSymbol();
       if (!startSymbol) throw new Error("未识别当前交易对");
+      if (expectedSymbol && startSymbol !== expectedSymbol) throw new Error("重挂前交易对已变化，已停止");
       const modeReady = await activateTradeMode(spec.mode);
       if (!modeReady || getCurrentSymbol() !== startSymbol) throw new Error("切换开仓/平仓失败或交易对已变化");
       const postOnlyReady = await ensurePostOnlyOrderType();
@@ -1426,11 +1433,7 @@
       const spec = getLadderActionSpec2(actionType);
       setLadderStatus(`${spec?.label || "阶梯"} 准备中`);
       ladderTask = (async () => {
-        const plan = await buildLadderPlan(actionType);
-        const levelText = plan.levels === plan.requestedLevels ? `${plan.levels}档` : `${plan.levels}/${plan.requestedLevels}档`;
-        const stepText = plan.ladderStep > DEFAULT_LADDER_STEP ? `/幅${plan.ladderStep}` : "";
-        setLadderStatus(`${plan.spec.label} ${plan.percent}%/${levelText}${stepText}`);
-        const done = await executeLadderPlan(plan);
+        const { plan, done } = await runLadderPlanWithOpenOrderReplacement(actionType);
         setLadderStatus(ladderStopRequested ? `已停止 ${done}/${plan.orders.length}` : `完成 ${done}/${plan.orders.length}`);
       })().catch((e) => {
         err("Maker 阶梯执行失败:", e);
@@ -1608,6 +1611,131 @@
         cancelAllButton
       };
     }
+    async function waitForNoCurrentSymbolOpenOrders(root, symbol, symbolFilterOk) {
+      const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (getCurrentSymbol() !== symbol) return false;
+        const cancelAllButton2 = findCurrentSymbolCancelAllButton(root);
+        if (!hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton2)) return true;
+        await delay(120);
+      }
+      const cancelAllButton = findCurrentSymbolCancelAllButton(root);
+      return !hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton);
+    }
+    function getVisibleDirectChildren(el) {
+      return Array.from(el?.children || []).filter(isVisibleElement);
+    }
+    function findOpenOrderRowCells(row) {
+      const candidates = Array.from(row.querySelectorAll(
+        ".flex.items-center.typography-caption2.text-PrimaryText.w-full, .flex.items-center.typography-caption2.text-PrimaryText"
+      ));
+      const rowBody = candidates.find((el) => getVisibleDirectChildren(el).length >= 10) || row.firstElementChild;
+      return getVisibleDirectChildren(rowBody);
+    }
+    function findOpenOrderRowCancelButton(row) {
+      const icon = row.querySelector('svg[aria-label="撤销挂单"]');
+      if (!icon || !isVisibleElement(icon)) return null;
+      const target = icon.closest('button, [role="button"], a, [tabindex]') || icon.parentElement || icon;
+      if (!target || !row.contains(target) || !isVisibleElement(target)) return null;
+      if (target.disabled || target.getAttribute("aria-disabled") === "true") return null;
+      return target;
+    }
+    function getOpenOrderRowKey(cells, row) {
+      const cellText = cells.slice(0, 10).map((cell) => (cell.textContent || "").replace(/\s+/g, " ").trim()).join("|");
+      return cellText || (row.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    function readCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
+      if (!root || !symbol) return [];
+      return Array.from(root.querySelectorAll(".list-item-container")).filter(isVisibleElement).map((row) => {
+        const cells = findOpenOrderRowCells(row);
+        const symbolText = (cells[1]?.textContent || "").replace(/\s+/g, " ").trim();
+        const sideText = (cells[3]?.textContent || "").replace(/\s+/g, " ").trim();
+        const qty = normalizeDecimalString((cells[5]?.textContent || "").replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0] || "");
+        const cancelButton = findOpenOrderRowCancelButton(row);
+        return {
+          root,
+          row,
+          cells,
+          symbolText,
+          sideText,
+          qty,
+          cancelButton,
+          key: getOpenOrderRowKey(cells, row)
+        };
+      }).filter((row) => isOpenOrderRowCurrentSymbol(row.symbolText, symbol) && isOpenOrderRowForClosePlan(row.sideText, plan) && row.qty && isPositiveDecimalString(row.qty) && row.cancelButton);
+    }
+    function isOpenOrderRowCurrentSymbol(symbolText, symbol) {
+      const tokens = String(symbolText || "").toUpperCase().match(/[A-Z0-9_]+/g) || [];
+      return tokens.includes(String(symbol || "").toUpperCase());
+    }
+    function isOpenOrderRowForClosePlan(sideText, plan) {
+      if (!plan || plan.spec?.mode !== "CLOSE") return true;
+      const normalized = String(sideText || "").replace(/\s+/g, "").toUpperCase();
+      if (plan.spec.side === "LONG") return normalized.includes("平多") || normalized.includes("CLOSELONG");
+      if (plan.spec.side === "SHORT") return normalized.includes("平空") || normalized.includes("CLOSESHORT");
+      return false;
+    }
+    async function waitForCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
+      const deadline = Date.now() + 1600;
+      while (Date.now() < deadline) {
+        const rows = readCurrentSymbolOpenOrderRows(root, symbol, plan);
+        if (rows.length) return rows;
+        await delay(100);
+      }
+      return readCurrentSymbolOpenOrderRows(root, symbol, plan);
+    }
+    function selectOpenOrderRowsToCancelForPlan(plan, rows) {
+      const rowsToCancel = [];
+      let cancelQty = "0";
+      for (const row of rows) {
+        if (!isOpenOrderRowForClosePlan(row.sideText, plan)) continue;
+        rowsToCancel.push(row);
+        cancelQty = addDecimalStrings(cancelQty, row.qty);
+        if (compareDecimalStrings(cancelQty, plan.totalQty) >= 0) break;
+      }
+      return compareDecimalStrings(cancelQty, plan.totalQty) >= 0 ? rowsToCancel : [];
+    }
+    function countOpenOrderRowsByKey(root, symbol, key) {
+      return readCurrentSymbolOpenOrderRows(root, symbol).filter((row) => row.key === key).length;
+    }
+    async function waitForOpenOrderRowKeyCountBelow(root, symbol, key, previousCount) {
+      const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (getCurrentSymbol() !== symbol) return false;
+        if (countOpenOrderRowsByKey(root, symbol, key) < previousCount) return true;
+        await delay(120);
+      }
+      return countOpenOrderRowsByKey(root, symbol, key) < previousCount;
+    }
+    async function cancelOpenOrderRowsForPlan(root, plan) {
+      let cancelQty = "0";
+      while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
+        if (getCurrentSymbol() !== plan.symbol) throw new Error("逐行撤单前交易对已变化");
+        const remainingQty = subtractDecimalStrings(plan.totalQty, cancelQty);
+        const rows = readCurrentSymbolOpenOrderRows(root, plan.symbol, plan);
+        const row = selectOpenOrderRowsToCancelForPlan({ ...plan, totalQty: remainingQty }, rows)[0];
+        if (!row) throw new Error(`${plan.symbol} 当前币可撤挂单数量不足，已停止重挂`);
+        const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
+        if (!row.cancelButton?.isConnected || !isVisibleElement(row.cancelButton)) {
+          if (previousKeyCount === 0) continue;
+          throw new Error("当前币挂单撤单入口已失效，已停止重挂");
+        }
+        const dialogsBefore = new Set(getVisibleDialogs());
+        row.cancelButton.click();
+        waitForTradeUiMutation({ timeoutMs: 800 });
+        const dialog = await waitForNewVisibleDialog(dialogsBefore);
+        if (dialog) {
+          setLadderStatus(`${plan.symbol} 单行撤单确认弹窗已打开`);
+          await waitForDialogToClose(dialog);
+        } else {
+          await delay(260);
+        }
+        if (!await waitForOpenOrderRowKeyCountBelow(row.root, plan.symbol, row.key, previousKeyCount)) {
+          throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
+        }
+        cancelQty = addDecimalStrings(cancelQty, row.qty);
+      }
+    }
     async function setHideOtherSymbolChecked(root, desiredChecked) {
       const checkbox = findHideOtherSymbolCheckbox(root);
       if (!checkbox) return false;
@@ -1675,11 +1803,12 @@
         await delay(500);
       }
     }
-    async function cancelCurrentSymbolOpenOrders() {
+    async function cancelCurrentSymbolOpenOrders(options = null) {
+      const { waitUntilCleared = false } = options || {};
       const symbol = getCurrentSymbol();
       if (!symbol) {
         setLadderStatus("未识别当前交易对");
-        return;
+        return { ok: false, status: "no_symbol", message: "未识别当前交易对" };
       }
       const previousAccountOrdersTab = findSelectedAccountOrdersTab2();
       let openOrdersScope = null;
@@ -1689,52 +1818,79 @@
         setLadderStatus(`查找 ${symbol} 当前委托`);
         const tabReady = await activateOpenOrdersTab();
         if (!tabReady || getCurrentSymbol() !== symbol) {
-          setLadderStatus("当前委托页未就绪或交易对已变化");
-          return;
+          const message = "当前委托页未就绪或交易对已变化";
+          setLadderStatus(message);
+          return { ok: false, status: "tab_not_ready", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope();
         if (!openOrdersScope) {
-          setLadderStatus("未定位到当前委托面板");
-          return;
+          const message = "未定位到当前委托面板";
+          setLadderStatus(message);
+          return { ok: false, status: "scope_not_found", message };
         }
         const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
         previousOpenOrdersSubTab = basicSubTabState.previousSubTab;
         if (!basicSubTabState.ready) {
-          setLadderStatus("未定位到当前委托基础单");
-          return;
+          const message = "未定位到当前委托基础单";
+          setLadderStatus(message);
+          return { ok: false, status: "basic_tab_not_ready", message };
         }
         const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
         symbolFilterOriginalChecked = symbolFilter.originalChecked;
         if (!symbolFilter.ok) {
-          setLadderStatus("未确认只显示当前币挂单");
-          return;
+          const message = "未确认只显示当前币挂单";
+          setLadderStatus(message);
+          return { ok: false, status: "symbol_filter_not_confirmed", message };
         }
         const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
         if (!openOrdersEvidence.hasOrders) {
           setLadderStatus(`${symbol} 当前币无挂单`);
-          return;
+          return { ok: true, status: "no_orders" };
         }
         const { cancelAllButton } = openOrdersEvidence;
         if (!cancelAllButton) {
-          setLadderStatus("未找到当前委托全撤按钮");
-          return;
+          const message = "未找到当前委托全撤按钮";
+          setLadderStatus(message);
+          return { ok: false, status: "cancel_button_not_found", message };
         }
         const dialogsBefore = new Set(getVisibleDialogs());
         cancelAllButton.click();
         const dialog = await waitForNewVisibleDialog(dialogsBefore);
         if (getCurrentSymbol() !== symbol) {
-          setLadderStatus("确认撤单前交易对已变化");
-          return;
+          const message = "确认撤单前交易对已变化";
+          setLadderStatus(message);
+          return { ok: false, status: "symbol_changed", message };
         }
         if (dialog) {
           setLadderStatus(`${symbol} 撤单确认弹窗已打开`);
           waitForTradeUiMutation({ timeoutMs: 800 });
           await waitForDialogToClose(dialog);
+          if (waitUntilCleared) {
+            const cleared = await waitForNoCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
+            if (!cleared) {
+              const message = `${symbol} 当前币挂单仍存在，已停止重挂`;
+              setLadderStatus(message);
+              return { ok: false, status: "not_cleared", message };
+            }
+            setLadderStatus(`${symbol} 当前币挂单已撤，继续重挂`);
+            return { ok: true, status: "cleared" };
+          }
           setLadderStatus(`${symbol} 撤单流程结束，已恢复筛选状态`);
-          return;
+          return { ok: true, status: "dialog_closed" };
         }
         setLadderStatus(`${symbol} 撤单已点击，请核对当前委托`);
         waitForTradeUiMutation({ timeoutMs: 800 });
+        if (waitUntilCleared) {
+          const cleared = await waitForNoCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
+          if (!cleared) {
+            const message = `${symbol} 当前币挂单仍存在，已停止重挂`;
+            setLadderStatus(message);
+            return { ok: false, status: "not_cleared", message };
+          }
+          setLadderStatus(`${symbol} 当前币挂单已撤，继续重挂`);
+          return { ok: true, status: "cleared" };
+        }
+        return { ok: true, status: "cancel_clicked" };
       } finally {
         if (openOrdersScope && symbolFilterOriginalChecked === false) {
           const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked);
@@ -1745,6 +1901,103 @@
         }
         await restoreAccountOrdersTab(previousAccountOrdersTab);
       }
+    }
+    async function cancelCurrentSymbolOpenOrdersForPlan(plan) {
+      const symbol = getCurrentSymbol();
+      if (!symbol || symbol !== plan?.symbol) {
+        const message = "逐行撤单前交易对已变化";
+        setLadderStatus(message);
+        return { ok: false, status: "symbol_changed", message };
+      }
+      const previousAccountOrdersTab = findSelectedAccountOrdersTab2();
+      let openOrdersScope = null;
+      let previousOpenOrdersSubTab = null;
+      let symbolFilterOriginalChecked = null;
+      try {
+        setLadderStatus(`查找 ${symbol} 当前委托`);
+        const tabReady = await activateOpenOrdersTab();
+        if (!tabReady || getCurrentSymbol() !== symbol) {
+          const message = "当前委托页未就绪或交易对已变化";
+          setLadderStatus(message);
+          return { ok: false, status: "tab_not_ready", message };
+        }
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (!openOrdersScope) {
+          const message = "未定位到当前委托面板";
+          setLadderStatus(message);
+          return { ok: false, status: "scope_not_found", message };
+        }
+        const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
+        previousOpenOrdersSubTab = basicSubTabState.previousSubTab;
+        if (!basicSubTabState.ready) {
+          const message = "未定位到当前委托基础单";
+          setLadderStatus(message);
+          return { ok: false, status: "basic_tab_not_ready", message };
+        }
+        const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
+        symbolFilterOriginalChecked = symbolFilter.originalChecked;
+        if (!symbolFilter.ok) {
+          const message = "未确认只显示当前币挂单";
+          setLadderStatus(message);
+          return { ok: false, status: "symbol_filter_not_confirmed", message };
+        }
+        const rows = await waitForCurrentSymbolOpenOrderRows(openOrdersScope, symbol, plan);
+        if (!rows.length) {
+          const message = `未定位到 ${symbol} 当前币可逐行撤单的基础单`;
+          setLadderStatus(message);
+          return { ok: false, status: "rows_not_found", message };
+        }
+        const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
+        if (!rowsToCancel.length) {
+          const message = `未选中 ${symbol} 当前币待撤挂单`;
+          setLadderStatus(message);
+          return { ok: false, status: "rows_not_selected", message };
+        }
+        setLadderStatus(`${symbol} 撤销 ${rowsToCancel.length} 笔当前币挂单`);
+        await cancelOpenOrderRowsForPlan(openOrdersScope, plan);
+        setLadderStatus(`${symbol} 当前币挂单已替换，继续重挂`);
+        return { ok: true, status: "rows_cleared" };
+      } catch (e) {
+        const message = e?.message || "当前币挂单逐行撤销失败，已停止重挂";
+        setLadderStatus(message);
+        return { ok: false, status: "row_cancel_failed", message };
+      } finally {
+        if (openOrdersScope && symbolFilterOriginalChecked === false) {
+          const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked);
+          if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
+        }
+        if (previousOpenOrdersSubTab) {
+          await restoreOpenOrdersSubTab(previousOpenOrdersSubTab);
+        }
+        await restoreAccountOrdersTab(previousAccountOrdersTab);
+      }
+    }
+    function formatLadderPlanStatus(plan) {
+      const levelText = plan.levels === plan.requestedLevels ? `${plan.levels}档` : `${plan.levels}/${plan.requestedLevels}档`;
+      const stepText = plan.ladderStep > DEFAULT_LADDER_STEP ? `/幅${plan.ladderStep}` : "";
+      return `${plan.spec.label} ${plan.percent}%/${levelText}${stepText}`;
+    }
+    function isReplaceableCloseLadderOpenOrdersFailure(plan, error) {
+      if (plan?.spec?.mode !== "CLOSE") return false;
+      return isReduceOnlyOpenOrdersConflictFeedback(error?.message || "");
+    }
+    async function runLadderPlanWithOpenOrderReplacement(actionType) {
+      let plan = await buildLadderPlan(actionType);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        setLadderStatus(formatLadderPlanStatus(plan));
+        try {
+          const done = await executeLadderPlan(plan);
+          return { plan, done };
+        } catch (e) {
+          if (attempt > 0 || !isReplaceableCloseLadderOpenOrdersFailure(plan, e)) throw e;
+          setLadderStatus(`${plan.symbol} 当前挂单占用可平数量，准备替换`);
+          const replacementSymbol = plan.symbol;
+          const result = await cancelCurrentSymbolOpenOrdersForPlan(plan);
+          if (!result?.ok) throw new Error(result.message || "当前币挂单未替换，已停止重挂");
+          plan = await buildLadderPlan(actionType, replacementSymbol);
+        }
+      }
+      throw new Error("阶梯重挂流程异常");
     }
     function readQtyByDataTestId(testId) {
       const el = document.querySelector(`[data-testid="${testId}"]`);

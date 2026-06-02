@@ -24,3 +24,16 @@ export function evaluateOrderSubmitAcknowledgement({ feedback, isNewFeedback }) 
   if (feedbackType === 'success') return { status: 'success' };
   return { status: 'pending' };
 }
+
+export function isReduceOnlyOpenOrdersConflictFeedback(text) {
+  if (!text) return false;
+  const normalized = String(text).replace(/\s+/g, '');
+  return (
+    normalized.includes('只减仓订单失败') &&
+    (
+      normalized.includes('当前挂单') ||
+      normalized.includes('挂单后重试') ||
+      normalized.includes('未平仓头寸和挂单')
+    )
+  );
+}
