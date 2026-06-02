@@ -150,7 +150,15 @@ When selecting account-order tabs, scope to the bottom account-orders tab group.
 
 When a pane is found through `aria-controls`, confirm it contains current-orders controls such as `隐藏其他合约` or `全撤`. Binance may reuse pane ids in unrelated tab systems.
 
+SVG action controls need separate treatment from normal buttons. A visible Binance SVG can have `getClientRects()` dimensions without `offsetWidth` / `offsetHeight`, and the SVG itself may not expose a native `.click()` method. If no clickable ancestor exists, dispatch a bubbling `MouseEvent("click")` and verify the live page state changes.
+
 When orderbook depth is missing, infer missing maker prices from the current displayed orderbook step, not from exchange `tickSize`.
+
+Live Tampermonkey verification must prove the new userscript is actually active. Opening a raw GitHub URL or landing on Tampermonkey's `script_installation.php` intermediate page is not enough. Confirm through the extension update UI, the userscript panel behavior, or live DOM/status evidence.
+
+For live Binance tests, confirm the target symbol, order mode, script quantity multiplier, orderbook display precision, and far-away test prices before clicking trade controls. When the user says the zoom/precision should be `1` or max, that refers to the Binance orderbook price-display precision dropdown, not the script quantity multiplier. Set the orderbook precision to the largest/coarsest option, such as `1`, so test orders are placed farther from the live price. Do not treat another open futures tab or another symbol's orders as evidence for the current test.
+
+When browser clicking or navigation becomes unreliable, switch to state-based verification instead of repeatedly clicking: inspect the accessibility tree, DOM text, script status, open-order row count, and Binance toast/status changes. For replacement-order flows, useful evidence includes the old error disappearing, a cancel toast appearing, current-symbol rows changing, and the ladder task reaching a completion status.
 
 ## Manual Test Matrix
 
@@ -162,7 +170,10 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - verify rules-not-ready refuses to order
 - start ladder order, confirm start buttons are disabled while running
 - cancel current-symbol orders, verify only Binance native confirmation opens
+- replace close ladder orders when existing reduce-only close orders occupy the closeable quantity
+- verify SVG cancel controls work when the visible cancel target has no native `.click()` method
 - verify account-orders tab and hide-other-symbol state are restored
+- verify the userscript version or live behavior after a Tampermonkey update before continuing live tests
 - hide the tab and return, then verify the panel recovers
 
 If a path was not manually tested, state that in the final summary.
