@@ -144,6 +144,10 @@ Do not bump for docs-only changes.
 
 Do not infer trading semantics from stale DOM or old symbol state. Anything involving quantity rules must be derived from the current symbol.
 
+Before changing Binance UI automation behavior, collect current live evidence. This applies to DOM selectors, click targets, dropdown open/close behavior, tab selection, dialogs, button disabled state, input state, visibility checks, and event dispatch. Inspect the live DOM, accessibility tree or screenshot, and Binance's current frontend bundle/source for the relevant component structure and event path. Treat page labels, old notes, historical selectors, and prior memory as hypotheses until the current page/source confirms them.
+
+Every Binance UI automation change must report the evidence used: live DOM or state inspected, Binance source/chunk/selector/event evidence, verified click or state transition, and any paths not manually tested. If the live source or DOM was not inspected, say that explicitly and do not present the behavior as proven.
+
 Do not auto-confirm destructive Binance dialogs. The script may open Binance's native cancel confirmation, but final confirmation remains manual.
 
 When selecting account-order tabs, scope to the bottom account-orders tab group. Do not globally match `当前委托` or `Open Orders`.
