@@ -2,7 +2,7 @@
 // @name         【自写】Binance 订单簿单击下单
 // @namespace    binance.orderbook.trade
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      2.7.24
+// @version      2.7.25
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -234,39 +234,51 @@
   function sortedPositiveDecimals(values) {
     return (values || []).map((value) => normalizeDecimalString(value)).filter((value) => value && isPositiveDecimalString(value)).sort((a, b) => compareDecimalStrings(a, b));
   }
-  function percentileDecimal(values, percentile) {
-    const sorted = sortedPositiveDecimals(values);
-    if (!sorted.length) return null;
-    const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * percentile) - 1));
-    return sorted[index];
-  }
   function logDistance(a, b) {
     const left = Number(a);
     const right = Number(b);
     if (!Number.isFinite(left) || !Number.isFinite(right) || left <= 0 || right <= 0) return Number.POSITIVE_INFINITY;
     return Math.abs(Math.log10(left) - Math.log10(right));
   }
-  function recommendOrderbookPrecision({
-    samples,
-    options,
-    minSamples = 5,
-    percentile = 0.25
-  }) {
-    const usableSamples = sortedPositiveDecimals(samples);
-    const usableOptions = sortedPositiveDecimals(options);
-    if (!usableOptions.length) return null;
-    const movement = usableSamples.length >= minSamples ? percentileDecimal(usableSamples, percentile) : null;
-    if (!movement) return null;
+  function closestPrecisionOption(sample, options) {
     let bestOption = null;
     let bestDistance = Number.POSITIVE_INFINITY;
-    for (const option of usableOptions) {
-      const distance = logDistance(movement, option);
+    for (const option of options) {
+      const distance = logDistance(sample, option);
       if (distance < bestDistance) {
         bestDistance = distance;
         bestOption = option;
       }
     }
     return bestOption;
+  }
+  function recommendOrderbookPrecision({
+    samples,
+    options,
+    minSamples = 5,
+    minBucketShare = 0.25
+  }) {
+    const usableSamples = sortedPositiveDecimals(samples);
+    const usableOptions = sortedPositiveDecimals(options);
+    if (!usableOptions.length) return null;
+    if (usableSamples.length < minSamples) return null;
+    const bucketCounts = new Map(usableOptions.map((option) => [option, 0]));
+    for (const sample of usableSamples) {
+      const option = closestPrecisionOption(sample, usableOptions);
+      if (option) bucketCounts.set(option, (bucketCounts.get(option) || 0) + 1);
+    }
+    const minimumBucketCount = Math.max(minSamples, Math.ceil(usableSamples.length * minBucketShare));
+    let selectedOption = null;
+    let selectedCount = 0;
+    for (const option of usableOptions) {
+      const count = bucketCounts.get(option) || 0;
+      if (count < minimumBucketCount) continue;
+      if (count > selectedCount || count === selectedCount && selectedOption && compareDecimalStrings(option, selectedOption) < 0) {
+        selectedOption = option;
+        selectedCount = count;
+      }
+    }
+    return selectedOption;
   }
 
   // src/binance-orderbook-trade/core/quantity.js
@@ -714,6 +726,8 @@
     const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3e3;
     const ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6e3;
     const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
+    const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5e3;
+    const ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS = 6;
     const ORDERBOOK_PRECISION_SAMPLE_MAX = 96;
     const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
       "0.00000001",
@@ -1258,6 +1272,16 @@
     function getLatestTradePrices(limit = 20) {
       return Array.from(document.querySelectorAll(".tradew-tradelist .price.emit-price")).filter((node) => isVisibleElement(node)).map((node) => parsePrice(node)).filter(Boolean).slice(0, Math.max(1, Number(limit) || 20));
     }
+    async function waitForLatestTradePricesReady(symbol, timeoutMs = ORDERBOOK_PRECISION_READY_TIMEOUT_MS) {
+      const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+      while (!document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
+        const prices = getLatestTradePrices();
+        if (prices.length >= ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS) return prices;
+        if (Date.now() >= deadline) return prices;
+        await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);
+      }
+      return [];
+    }
     function orderbookPrecisionSamplesKey(symbol = getCurrentSymbol()) {
       const normalizedSymbol = String(symbol || "").toUpperCase();
       return normalizedSymbol ? `${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:${normalizedSymbol}` : null;
@@ -1450,8 +1474,12 @@
       orderbookPrecisionSampling = true;
       const tradeMoveSamples = [];
       const sampleDurationMs = Math.max(0, Number(durationMs) || ORDERBOOK_PRECISION_SAMPLE_DURATION_MS);
-      const deadline = Date.now() + sampleDurationMs;
       try {
+        const readyPrices = await waitForLatestTradePricesReady(symbol);
+        if (readyPrices.length >= ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS) {
+          tradeMoveSamples.push(...collectNonZeroPriceMoves(readyPrices));
+        }
+        const deadline = Date.now() + sampleDurationMs;
         while (Date.now() < deadline && !document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
           tradeMoveSamples.push(...collectNonZeroPriceMoves(getLatestTradePrices()));
           await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);

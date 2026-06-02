@@ -38,6 +38,17 @@ test('prefers the lower effective movement over larger trade jumps', () => {
   }), '0.01');
 });
 
+test('uses the dominant precision bucket instead of the smallest observed move', () => {
+  assert.equal(recommendOrderbookPrecision({
+    samples: [
+      '0.0001', '0.0001', '0.0002',
+      '0.0061', '0.0075', '0.0089', '0.0107', '0.0112', '0.0123', '0.014',
+      '0.036', '0.052',
+    ],
+    options: ['0.0001', '0.001', '0.01', '0.1', '1'],
+  }), '0.01');
+});
+
 test('does not recommend precision until enough multi-sample evidence exists', () => {
   assert.equal(recommendOrderbookPrecision({
     samples: ['0.0107', '0.0061'],

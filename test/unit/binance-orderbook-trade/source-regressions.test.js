@@ -231,6 +231,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   const sampleBody = readFunctionBody('runOrderbookPrecisionSampleRound');
   assert.match(sampleBody, /collectNonZeroPriceMoves/);
   assert.match(sampleBody, /mergePrecisionSamples/);
+  assert.match(sampleBody, /waitForLatestTradePricesReady/);
   assert.match(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
   assert.match(sampleBody, /getLatestTradePrices/);
   assert.doesNotMatch(sampleBody, /getCurrentOrderbookDisplayStep/);
