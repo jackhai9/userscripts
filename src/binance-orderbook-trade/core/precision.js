@@ -53,7 +53,7 @@ export function recommendOrderbookPrecision({
   samples,
   options,
   minSamples = 5,
-  percentile = 0.6,
+  percentile = 0.25,
 }) {
   const usableSamples = sortedPositiveDecimals(samples);
   const usableOptions = sortedPositiveDecimals(options);

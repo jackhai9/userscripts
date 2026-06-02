@@ -240,6 +240,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
 
   const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
   assert.match(refreshBody, /recommendOrderbookPrecision/);
+  assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
 
@@ -255,7 +256,12 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(initialBody, /orderbookPrecisionInitialSampledSymbols\.has\(symbol\)/);
 
   const triggerBody = readFunctionBody('findOrderbookPrecisionTrigger');
+  assert.match(triggerBody, /orderbook-tickSize/);
   assert.match(triggerBody, /node\.closest\(clickableSelector\) \|\| node\.parentElement \|\| node/);
+
+  const optionsBody = readFunctionBody('getVisibleOrderbookPrecisionOptionNodes');
+  assert.match(optionsBody, /popupSelector/);
+  assert.match(optionsBody, /ORDERBOOK_PRECISION_CANDIDATE_OPTIONS\.includes/);
 
   const startBody = readFunctionBody('startLadder');
   assert.doesNotMatch(startBody, /applyRecommendedOrderbookPrecision/);

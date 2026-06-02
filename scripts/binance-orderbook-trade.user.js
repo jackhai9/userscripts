@@ -250,7 +250,7 @@
     samples,
     options,
     minSamples = 5,
-    percentile = 0.6
+    percentile = 0.25
   }) {
     const usableSamples = sortedPositiveDecimals(samples);
     const usableOptions = sortedPositiveDecimals(options);
@@ -1288,10 +1288,23 @@
     function isInsideOrderbookPriceRow(node) {
       return !!node?.closest?.("#futuresOrderbook .row-content");
     }
+    function isInsideOwnPanel(node) {
+      return !!node?.closest?.(`#${PANEL_ID}`);
+    }
     function findOrderbookPrecisionTrigger() {
       const root = document.querySelector("#futuresOrderbook");
       if (!root) return null;
       const clickableSelector = 'button,[role="button"],[role="combobox"],[tabindex],.bn-sdd-value,.bn-select-field';
+      const tickSize = root.querySelector(".orderbook-tickSize");
+      if (tickSize && isVisibleElement(tickSize) && !isInsideOrderbookPriceRow(tickSize)) {
+        const text = (tickSize.textContent || "").trim();
+        if (isOrderbookPrecisionNumericText(text)) {
+          return {
+            element: tickSize,
+            value: normalizeDecimalString(text)
+          };
+        }
+      }
       const clickables = Array.from(root.querySelectorAll(clickableSelector));
       for (const candidate of clickables) {
         if (!isVisibleElement(candidate) || isInsideOrderbookPriceRow(candidate)) continue;
@@ -1320,14 +1333,29 @@
       return findOrderbookPrecisionTrigger()?.value || null;
     }
     function getVisibleOrderbookPrecisionOptionNodes() {
-      const selector = [
+      const optionSelector = [
         '[role="option"]',
         '[role="menuitem"]',
         ".bn-sdd-option",
         ".bn-select-option",
-        '[class*="option"]'
+        '[class*="option"]',
+        '[class*="Option"]'
       ].join(",");
-      return Array.from(document.querySelectorAll(selector)).filter((node) => isVisibleElement(node) && !isInsideOrderbookPriceRow(node)).filter((node) => isOrderbookPrecisionNumericText(node.textContent));
+      const popupSelector = [
+        '[role="listbox"]',
+        '[role="menu"]',
+        '[class*="dropdown"]',
+        '[class*="Dropdown"]',
+        '[class*="popup"]',
+        '[class*="Popup"]',
+        '[class*="menu"]',
+        '[class*="Menu"]'
+      ].join(",");
+      const candidates = [
+        ...Array.from(document.querySelectorAll(optionSelector)),
+        ...Array.from(document.querySelectorAll(popupSelector)).flatMap((popup) => Array.from(popup.querySelectorAll("div,span,li")))
+      ];
+      return candidates.filter((node, index, nodes) => nodes.indexOf(node) === index).filter((node) => isVisibleElement(node) && !isInsideOrderbookPriceRow(node) && !isInsideOwnPanel(node)).filter((node) => isOrderbookPrecisionNumericText(node.textContent)).filter((node) => ORDERBOOK_PRECISION_CANDIDATE_OPTIONS.includes(normalizeDecimalString(node.textContent)));
     }
     function readVisibleOrderbookPrecisionOptionValues() {
       const values = /* @__PURE__ */ new Set();
@@ -1370,13 +1398,11 @@
       const canApply = recommendation && current !== recommendation;
       const buttonStyle = canApply ? "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;" : `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`;
       const recommendationText = recommendation || "--";
-      const currentText = current || "--";
       const sampleText = samples.length ? `${samples.length}` : "0";
       const statusText = status === "ready" ? "" : `<span>${status}</span>`;
       el.innerHTML = [
         '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;color:#76808f;font-size:12px;">',
         `<span>缩放 推荐 ${recommendationText}</span>`,
-        `<span>当前 ${currentText}</span>`,
         `<span>样本 ${sampleText}</span>`,
         statusText,
         `<button type="button" data-orderbook-precision-apply="true"${canApply ? "" : ' disabled aria-disabled="true"'} style="height:24px;padding:0 8px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;${buttonStyle}">应用</button>`,
