@@ -39,6 +39,7 @@
 - 如果用户要求“发布”“上线”或“合并到 main”，默认流程是 push feature branch、创建 PR、等待检查通过，然后用 `gh pr merge` 合并。
 - 改 Binance API 相关逻辑时，只信官方文档和现网响应，不根据页面偶然行为猜语义。
 - 改 Binance 页面 DOM、事件、点击、下拉、tab、弹窗、按钮状态、输入框状态或可见性判断时，必须先核实现网 DOM/accessibility tree/截图和 Binance 当前前端 bundle/source 中的真实结构与触发路径；不得只凭页面文字、旧记忆、历史选择器或推测改代码。
+- 对可在页面上下文里验证的 Binance UI 操作，必须优先用 Chrome DevTools Console/Snippets 或等价调试入口在现网页面先调试通过最小 JS：确认选择器命中、事件触发、状态变化和失败形态；再把调通后的逻辑原样迁回 userscript。不能先在脚本里凭猜测改，再让用户线上试错。
 - 上述 Binance UI 自动化改动的交付说明必须列出依据：看过的现网 DOM/状态、相关 Binance source/chunk/selector/event 证据、已验证的点击或状态变化，以及未实测路径。
 - 涉及交易规则时，按当前 `symbol` 的确定性数据计算，不允许用旧 DOM 状态或无 symbol 语义的值去猜。
 - 涉及定时器、重试、缓存、前后台切换时，优先保证时间语义闭合，再考虑 UI 表现。
@@ -57,6 +58,7 @@
 这些经验来自 `scripts/binance-orderbook-trade.user.js` 的真实调试，后续改 Binance 页面自动化时优先套用：
 
 - DOM、事件、点击和状态逻辑必须先做现网证据收集。改选择器、点击目标、下拉打开/关闭逻辑、tab 定位、弹窗确认、按钮禁用、输入框读写或可见性判断前，先检查当前 Binance 页面 DOM、accessibility tree/截图，以及 Binance 前端 bundle/source 里对应组件的 class、事件触发和渲染路径；把证据写进最终说明或 PR。没有证据时只能把结论标为未验证，不能当作事实修改上线。
+- 能用 Chrome DevTools Console/Snippets 验证的页面 JS，不要跳过这一步。先在现网页面跑一个最小片段，证明点击、输入、下拉选择或状态读取真的生效；记录可观察结果，例如 DOM 变化、按钮状态、toast、面板文案或订单行变化；再把同一选择器、事件路径和状态校验写回脚本。
 - 页面文字不是语义证据。币安 UI 里“全撤”等可点击控件可能只是 `div/span + image`，不是 `button`、`a` 或 `[role="button"]`。先用截图、accessibility tree 或现网 DOM 确认真实结构，再写选择器。
 - Binance 的 SVG 操作图标可能有 `getClientRects()` 尺寸但没有 `offsetWidth/offsetHeight`；判断可见性时不要只依赖 offset 尺寸，否则“撤销挂单”等 SVG 会被误判为不可见。
 - Binance 的 SVG 操作图标也可能没有可点击祖先，且 `SVGElement` 本身没有 `.click()`。命中 SVG 后不要假设 `target.click()` 可用；要么找到真实可点击祖先，要么用冒泡的 `MouseEvent("click")` 触发，并用现网 DOM/状态验证这条路径。

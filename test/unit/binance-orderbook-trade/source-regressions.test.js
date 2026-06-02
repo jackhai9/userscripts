@@ -259,11 +259,23 @@ test('orderbook precision recommendation is sampled and manually applied only', 
 
   const applyBody = readFunctionBody('applyRecommendedOrderbookPrecision');
   assert.match(applyBody, /let option = findVisibleOrderbookPrecisionOption\(recommendation\)/);
-  assert.match(applyBody, /if \(!option\) \{\s*clickDomTarget\(trigger\.element\)/);
-  assert.match(applyBody, /clickDomTarget\(trigger\.element\)/);
+  assert.match(applyBody, /if \(!option\) \{\s*await openOrderbookPrecisionOptions\(trigger\.element\)/);
+  assert.doesNotMatch(applyBody, /clickDomTarget\(trigger\.element\)/);
   assert.match(applyBody, /waitForVisibleOrderbookPrecisionOption\(recommendation\)/);
   assert.doesNotMatch(applyBody, /readVisibleOrderbookPrecisionOptionValues/);
   assert.doesNotMatch(applyBody, /fallbackMovement/);
+
+  const openOptionsBody = readFunctionBody('openOrderbookPrecisionOptions');
+  assert.match(openOptionsBody, /mousedown/);
+  assert.match(openOptionsBody, /pointerdown/);
+
+  const openEventBody = readFunctionBody('dispatchOrderbookPrecisionOpenEvent');
+  assert.match(openEventBody, /PointerEvent/);
+  assert.match(openEventBody, /MouseEvent/);
+
+  const waitOptionsBody = readFunctionBody('waitForVisibleOrderbookPrecisionOptions');
+  assert.match(waitOptionsBody, /getVisibleOrderbookPrecisionOptionNodes\(\)\.length/);
+  assert.match(waitOptionsBody, /await delay\(50\)/);
 
   const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
   assert.match(scheduleBody, /force = false/);
