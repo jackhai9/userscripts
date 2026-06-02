@@ -220,18 +220,29 @@ test('cancel current-symbol open orders can wait until replacement orders are cl
 });
 
 test('orderbook precision recommendation is sampled and manually applied only', () => {
-  assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 4500/);
+  assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = 3000/);
+  assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS = 600000/);
   assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX/);
   assert.match(source, /data-orderbook-precision-apply/);
+  assert.match(source, /data-orderbook-precision-refresh/);
+  assert.match(source, /orderbookPrecisionResampleRequested/);
 
   const sampleBody = readFunctionBody('runOrderbookPrecisionSampleRound');
   assert.match(sampleBody, /collectNonZeroPriceMoves/);
   assert.match(sampleBody, /mergePrecisionSamples/);
   assert.match(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
+  assert.match(sampleBody, /getCurrentOrderbookDisplayStep/);
+  assert.match(sampleBody, /orderbookPrecisionResampleRequested/);
+  assert.match(sampleBody, /const nextDelayMs = shouldResampleImmediately/);
 
   const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
   assert.match(refreshBody, /recommendOrderbookPrecision/);
+  assert.match(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
+
+  const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
+  assert.match(scheduleBody, /force = false/);
+  assert.match(scheduleBody, /if \(force\) orderbookPrecisionResampleRequested = true/);
 
   const startBody = readFunctionBody('startLadder');
   assert.doesNotMatch(startBody, /applyRecommendedOrderbookPrecision/);
