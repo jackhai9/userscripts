@@ -152,6 +152,8 @@ Every Binance UI automation change must report the evidence used: live DOM or st
 
 Do not auto-confirm destructive Binance dialogs. The script may open Binance's native cancel confirmation, but final confirmation remains manual.
 
+Ladder replacement must stay scoped and direction-aware. Automatic replacement may cancel only visible basic open-order rows for the current symbol and the same plan direction (`开多`, `开空`, `平多`, or `平空`). It must not use current-symbol cancel-all for ladder replacement, must not touch conditional/protection orders, and must retry the ladder plan only after the replacement path is validated by current DOM rows.
+
 When selecting account-order tabs, scope to the bottom account-orders tab group. Do not globally match `当前委托` or `Open Orders`.
 
 When a pane is found through `aria-controls`, confirm it contains current-orders controls such as `隐藏其他合约` or `全撤`. Binance may reuse pane ids in unrelated tab systems.
@@ -186,6 +188,7 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - start ladder order, confirm start buttons are disabled while running
 - cancel current-symbol orders, verify only Binance native confirmation opens
 - replace close ladder orders when existing reduce-only close orders occupy the closeable quantity
+- replace open ladder orders only by current-symbol same-direction basic open-order rows; verify no cancel-all path or conditional/protection orders are used
 - verify SVG cancel controls work when the visible cancel target has no native `.click()` method
 - verify account-orders tab and hide-other-symbol state are restored
 - verify the userscript version or live behavior after a Tampermonkey update before continuing live tests

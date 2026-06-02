@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   classifyOrderFeedback,
   evaluateOrderSubmitAcknowledgement,
+  isOpenLadderOpenOrdersCapacityFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
 } from '../../../src/binance-orderbook-trade/core/order-feedback.js';
 
@@ -67,4 +68,14 @@ test('recognizes reduce-only failures caused by existing open orders', () => {
   assert.equal(isReduceOnlyOpenOrdersConflictFeedback('只减仓订单失败。如果您有该合约的未平仓头寸和挂单，请取消挂单后重试。如果您没有任何仓位，请取消只减仓选项后重试。'), true);
   assert.equal(isReduceOnlyOpenOrdersConflictFeedback('下单失败：余额不足'), false);
   assert.equal(isReduceOnlyOpenOrdersConflictFeedback('委托已提交'), false);
+});
+
+test('recognizes open ladder capacity failures that may be solved by same-side open orders', () => {
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('下单失败：余额不足'), true);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('可用余额不足'), true);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('可开数量不足'), true);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('Order failed: insufficient margin'), true);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('Order failed: not enough available balance'), true);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('只减仓订单失败。请取消此币种的当前挂单，然后重试。'), false);
+  assert.equal(isOpenLadderOpenOrdersCapacityFeedback('委托已提交'), false);
 });

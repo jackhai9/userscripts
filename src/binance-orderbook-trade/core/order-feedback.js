@@ -37,3 +37,21 @@ export function isReduceOnlyOpenOrdersConflictFeedback(text) {
     )
   );
 }
+
+export function isOpenLadderOpenOrdersCapacityFeedback(text) {
+  if (!text) return false;
+  const normalized = String(text).replace(/\s+/g, '').toLowerCase();
+  return (
+    normalized.includes('余额不足') ||
+    normalized.includes('可用余额不足') ||
+    normalized.includes('可用数量不足') ||
+    normalized.includes('可开数量不足') ||
+    normalized.includes('可用保证金不足') ||
+    normalized.includes('insufficientmargin') ||
+    normalized.includes('insufficientbalance') ||
+    normalized.includes('insufficientavailablebalance') ||
+    normalized.includes('notenoughmargin') ||
+    normalized.includes('notenoughbalance') ||
+    normalized.includes('notenoughavailablebalance')
+  );
+}
