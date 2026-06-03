@@ -43,7 +43,7 @@ Use three separate steps. Each step has a different responsibility:
 
 1. `m3u8-downloader.user.js` runs in the logged-in Brooks browser session and exports the current course video/subtitle list.
 2. `brooks-media-audit.mjs` runs locally and compares that exported list with a local media directory.
-3. A local download helper should download only the reviewed missing files. Downloading is intentionally separate from export and audit.
+3. `brooks-media-download.mjs` downloads only the reviewed missing subtitle files. Downloading is intentionally separate from export and audit.
 
 ### First-Time User With An Empty Local Directory
 
@@ -74,6 +74,17 @@ Use three separate steps. Each step has a different responsibility:
 
 8. For an empty directory, the audit should report every record as needing `video`, `enSubtitle`, and `zhSubtitle`.
 9. Review `downloadPlan` before downloading. Prefer downloading subtitles first, then videos only after confirming the candidate list.
+10. Start with a dry run, then a small subtitle sample:
+
+    ```bash
+    npm run download:brooks-media -- \
+      --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+      --only zhSubtitle \
+      --limit 3 \
+      --dry-run
+    ```
+
+    Remove `--dry-run` only after the candidate outputs look right.
 
 ### Existing Local Archive Incremental Update
 
@@ -85,16 +96,25 @@ Use three separate steps. Each step has a different responsibility:
    - `missingCurrentVideo`: current video files not found locally.
    - `withLocalVariants`: local same-series files exist but the current online filename differs, often because the online version now has `v2`, `v3`, or `version 2`.
 4. Start with the lowest-risk download set: missing current Chinese subtitles.
-5. Download a small sample first and verify that each file is a valid VTT file with expected timestamp cues.
+5. Download a small sample first and verify that each file is a valid VTT file with expected timestamp cues:
+
+   ```bash
+   npm run download:brooks-media -- \
+     --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+     --only zhSubtitle \
+     --limit 3
+   ```
+
 6. Batch-download the remaining missing Chinese subtitles only after the sample is verified.
 7. Re-run the audit after downloading. The `missingCurrentZh` count should drop.
-8. Handle English subtitles and videos as separate later passes. Do not assume a subtitle version change always means the video changed; compare m3u8 duration and local video duration before replacing or re-downloading large video files.
+8. If some Chinese subtitle downloads return HTTP 404 while the matching English subtitle URL returns 200, treat those rows as currently unavailable Chinese subtitles, not as downloaded files. Keep them in the audit report and retry after Brooks publishes more Chinese captions.
+9. Handle English subtitles and videos as separate later passes. Do not assume a subtitle version change always means the video changed; compare m3u8 duration and local video duration before replacing or re-downloading large video files.
 
 ### Script Responsibilities
 
 - `m3u8-downloader.user.js`: browser-only exporter. It discovers course pages, loads the authenticated Bunny embeds, detects m3u8 URLs, derives CN/EN subtitle URLs, and exports JSON. It should not read local directories or download files to the local archive.
 - `brooks-media-audit.mjs`: read-only local comparator. It matches exported online records against local files and produces `summary`, `items`, and `downloadPlan`. It should not download, overwrite, rename, or delete files.
-- Local download helper: write-capable downloader. It should support dry runs, small limits, language filters, retries, and staging output. This helper is the right place for future commands such as `--only zhSubtitle`, `--only enSubtitle`, or `--only video`.
+- `brooks-media-download.mjs`: write-capable subtitle downloader. It supports dry runs, small limits, language filters, existing-file skips, and VTT validation. It currently supports `--only zhSubtitle` and `--only enSubtitle`; video downloads remain manual review items because they are large and should be approved separately. HTTP errors are explicit failures and should be followed by a fresh audit rather than manual file creation.
 
 ## Local Inventory Audit
 
