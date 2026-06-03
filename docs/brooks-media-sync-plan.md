@@ -240,23 +240,19 @@ Reviewer verdict:
 
 `src/m3u8-downloader/` is the source of truth for `scripts/m3u8-downloader.user.js`.
 
-The first migration intentionally preserves behavior and only establishes the build path. It uses copy-mode generation while `src/m3u8-downloader/index.user.js` remains a single file. The generated `scripts/m3u8-downloader.user.js` must stay readable, non-minified, and suitable for Tampermonkey install/update.
+The module split preserves behavior while moving the install entry to an esbuild-generated bundle. The generated `scripts/m3u8-downloader.user.js` must stay readable, non-minified, and suitable for Tampermonkey install/update.
 
-Suggested module boundaries:
+Current module boundaries:
 
 ```text
 src/m3u8-downloader/
-  index.user.js
-  core/media-url.js
-  core/yt-dlp.js
-  core/captions.js
-  brooks/links.js
-  brooks/record.js
-  brooks/export-state.js
-  brooks/export-ui.js
-  brooks/export-runner.js
-  browser/intercept.js
-  browser/download.js
+  index.user.js       userscript metadata, generic m3u8 interception, media scanning, and startup glue
+  constants.js        message types, storage keys, timeouts, and blocked host suffixes
+  media-url.js        m3u8 cleanup, caption URL derivation, video IDs, yt-dlp output names, shell quoting
+  brooks-pages.js     Brooks host/page detection, course link extraction, page title and Bunny iframe parsing
+  brooks-record.js    Brooks media index record construction
+  brooks-status.js    export status text, active runtime accounting, reset/retry visibility, JSON payloads
+  brooks-exporter.js  Brooks export state machine, hidden iframe runner, localStorage state, panel DOM
 ```
 
 Migration checklist:
@@ -266,5 +262,5 @@ Migration checklist:
 - Keep generated output readable, non-compressed, and non-obfuscated.
 - After changing `src/m3u8-downloader/**`, run `npm run build:m3u8-downloader` and `npm run check:m3u8-downloader`.
 - Bump `@version` in `src/m3u8-downloader/index.user.js` before generating when behavior changes.
-- Convert focused tests to import source modules where practical instead of extracting function bodies from the generated userscript in a later refactor.
-- Split modules only after the build migration is stable; do not combine module extraction with behavior changes. When modules are introduced, switch the `m3u8-downloader` build target from copy-mode to bundling in the same mechanical module-split PR.
+- Focused Brooks unit tests should import source modules directly for pure logic and use the generated userscript only for browser/runtime integration checks.
+- Keep future behavior changes separate from mechanical module moves unless the behavior change is required to preserve existing semantics.

@@ -72,7 +72,9 @@
 - 旧 persisted state 如果没有 active timing 字段，不要用墙钟时间补一个看似准确但实际误导的耗时。
 - Bunny caption URL 必须从实际检测到的 m3u8 host/path 推导，不能硬编码某个 `vz-...b-cdn.net` host；保留非 `title` query 参数。
 - `m3u8-downloader` 已迁移到 `src/m3u8-downloader/`；后续不要直接改生成后的 `scripts/m3u8-downloader.user.js`，除非是验证生成产物。
-- 当前迁移第一版只做 source/build 迁移，build target 仍是 copy-mode，尚未拆模块；后续模块化或状态机重构必须单独 PR，并在模块拆分 PR 中再切到 bundle 模式。
+- `m3u8-downloader` 当前由 esbuild bundle 生成，不再是 copy-mode。`index.user.js` 只保留 userscript metadata、通用拦截/扫描 glue、下载面板入口和启动调用。
+- Brooks 相关边界：`brooks-pages.js` 处理页面/链接/iframe 解析，`brooks-record.js` 构建媒体索引记录，`brooks-status.js` 处理状态文案/耗时/payload 纯函数，`brooks-exporter.js` 持有 Brooks 导出状态机和 DOM 面板。
+- m3u8 纯函数边界：`constants.js` 放消息类型和 Brooks 状态常量，`media-url.js` 放 m3u8 清洗、caption URL、videoId、yt-dlp output 和 shell quote。
 
 ## Binance UI Automation Notes
 
