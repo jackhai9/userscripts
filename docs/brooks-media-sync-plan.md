@@ -37,6 +37,65 @@ The durable source of truth is a course media index exported from the logged-in 
 
 This index is the basis for later subtitle download, video duration comparison, local file matching, and candidate report generation.
 
+## User Workflow
+
+Use three separate steps. Each step has a different responsibility:
+
+1. `m3u8-downloader.user.js` runs in the logged-in Brooks browser session and exports the current course video/subtitle list.
+2. `brooks-media-audit.mjs` runs locally and compares that exported list with a local media directory.
+3. A local download helper should download only the reviewed missing files. Downloading is intentionally separate from export and audit.
+
+### First-Time User With An Empty Local Directory
+
+1. Install or update the Tampermonkey script from the repository raw install URL.
+2. Open the logged-in Brooks course index page, for example:
+
+   ```text
+   https://www.brookstradingcourse.com/main-course-videos/
+   ```
+
+3. In the `Brooks 视频与字幕清单` panel, click `开始` and let collection finish.
+4. If any item fails, click `重试失败`. If it still fails, export JSON and inspect the failure rows before downloading.
+5. Click `导出清单 JSON`. This downloads a file such as:
+
+   ```text
+   brooks-media-index-2026-06-03.json
+   ```
+
+6. Create or choose the local target media directory.
+7. Run the audit against that directory:
+
+   ```bash
+   npm run audit:brooks-media -- \
+     --index /Users/lizhenhai/Downloads/brooks-media-index-2026-06-03.json \
+     --local /Users/lizhenhai/PA/input_videos \
+     --output /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json
+   ```
+
+8. For an empty directory, the audit should report every record as needing `video`, `enSubtitle`, and `zhSubtitle`.
+9. Review `downloadPlan` before downloading. Prefer downloading subtitles first, then videos only after confirming the candidate list.
+
+### Existing Local Archive Incremental Update
+
+1. Export a fresh Brooks video/subtitle list from the logged-in browser. Do not reuse an old export when checking whether Brooks changed versions.
+2. Run the local audit against the existing archive directory.
+3. Read the summary counts first:
+   - `missingCurrentZh`: current Chinese subtitle files not found locally.
+   - `missingCurrentEn`: current English subtitle files not found locally.
+   - `missingCurrentVideo`: current video files not found locally.
+   - `withLocalVariants`: local same-series files exist but the current online filename differs, often because the online version now has `v2`, `v3`, or `version 2`.
+4. Start with the lowest-risk download set: missing current Chinese subtitles.
+5. Download a small sample first and verify that each file is a valid VTT file with expected timestamp cues.
+6. Batch-download the remaining missing Chinese subtitles only after the sample is verified.
+7. Re-run the audit after downloading. The `missingCurrentZh` count should drop.
+8. Handle English subtitles and videos as separate later passes. Do not assume a subtitle version change always means the video changed; compare m3u8 duration and local video duration before replacing or re-downloading large video files.
+
+### Script Responsibilities
+
+- `m3u8-downloader.user.js`: browser-only exporter. It discovers course pages, loads the authenticated Bunny embeds, detects m3u8 URLs, derives CN/EN subtitle URLs, and exports JSON. It should not read local directories or download files to the local archive.
+- `brooks-media-audit.mjs`: read-only local comparator. It matches exported online records against local files and produces `summary`, `items`, and `downloadPlan`. It should not download, overwrite, rename, or delete files.
+- Local download helper: write-capable downloader. It should support dry runs, small limits, language filters, retries, and staging output. This helper is the right place for future commands such as `--only zhSubtitle`, `--only enSubtitle`, or `--only video`.
+
 ## Local Inventory Audit
 
 After exporting a complete Brooks media index, run the read-only local inventory audit before downloading anything:
