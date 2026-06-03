@@ -2,30 +2,23 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { buildCaptionUrlFromM3u8 } from '../../src/m3u8-downloader/media-url.js';
+import {
+  buildBrooksMediaExportEmbedUrl,
+  extractBrooksMediaExportPageInfo,
+  getBrooksCourseVideoLinks,
+} from '../../src/m3u8-downloader/brooks-pages.js';
+import { buildBrooksMediaIndexRecord } from '../../src/m3u8-downloader/brooks-record.js';
+import {
+  buildBrooksMediaExportPayload,
+  formatBrooksMediaExportStatus,
+  markBrooksMediaExportRunStarted,
+  stopBrooksMediaExportRunTimer,
+} from '../../src/m3u8-downloader/brooks-status.js';
 
 const source = await readFile(new URL('../../scripts/m3u8-downloader.user.js', import.meta.url), 'utf8');
 
-function readFunctionSource(name) {
-  const start = source.indexOf(`function ${name}`);
-  assert.notEqual(start, -1, `${name} should exist`);
-  const braceStart = source.indexOf('{', start);
-  let depth = 0;
-  for (let index = braceStart; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === '{') depth += 1;
-    if (char === '}') depth -= 1;
-    if (depth === 0) return source.slice(start, index + 1);
-  }
-  assert.fail(`${name} source should be closed`);
-}
-
-function loadFunctions(names) {
-  const declarations = names.map(readFunctionSource).join('\n');
-  return Function(`${declarations}; return { ${names.join(', ')} };`)();
-}
-
 test('Brooks course exporter collects unique course video links from the index page', () => {
-  const { getBrooksCourseVideoLinks } = loadFunctions(['isBrooksHost', 'isBrooksMediaPageUrl', 'getBrooksCourseVideoLinks']);
   const dom = new JSDOM(`
     <a href="/trade-price-action/">Course index</a>
     <a href="/video-course-table-of-contents/">Table of contents</a>
@@ -44,13 +37,6 @@ test('Brooks course exporter collects unique course video links from the index p
 });
 
 test('Brooks media index records derive current m3u8, caption URLs, and yt-dlp output', () => {
-  const { buildBrooksMediaIndexRecord, buildCaptionUrlFromM3u8 } = loadFunctions([
-    'getCleanMediaUrl',
-    'getBrooksVideoIdFromM3u8',
-    'getYtDlpOutputName',
-    'buildCaptionUrlFromM3u8',
-    'buildBrooksMediaIndexRecord',
-  ]);
   const m3u8Url = 'https://vz-other.b-cdn.net/abc123/1920x1080/video.m3u8?token=keep&title=Video%2022A%20Major%20Trend%20Reversals';
 
   const record = buildBrooksMediaIndexRecord({
@@ -75,12 +61,6 @@ test('Brooks media index records derive current m3u8, caption URLs, and yt-dlp o
 });
 
 test('Brooks media export payload marks incomplete exports and missing indexes', () => {
-  const { buildBrooksMediaExportPayload } = loadFunctions([
-    'parseBrooksMediaExportTime',
-    'getBrooksMediaExportElapsedMs',
-    'formatBrooksMediaExportDuration',
-    'buildBrooksMediaExportPayload',
-  ]);
   const payload = buildBrooksMediaExportPayload({
     links: ['a', 'b', 'c', 'd'],
     index: 2,
@@ -101,12 +81,6 @@ test('Brooks media export payload marks incomplete exports and missing indexes',
 });
 
 test('Brooks media export payload includes elapsed runtime metadata', () => {
-  const { buildBrooksMediaExportPayload } = loadFunctions([
-    'parseBrooksMediaExportTime',
-    'getBrooksMediaExportElapsedMs',
-    'formatBrooksMediaExportDuration',
-    'buildBrooksMediaExportPayload',
-  ]);
   const payload = buildBrooksMediaExportPayload({
     links: ['a'],
     index: 1,
@@ -127,18 +101,6 @@ test('Brooks media export payload includes elapsed runtime metadata', () => {
 });
 
 test('Brooks media export elapsed runtime excludes paused wall-clock time', () => {
-  const {
-    markBrooksMediaExportRunStarted,
-    stopBrooksMediaExportRunTimer,
-    buildBrooksMediaExportPayload,
-  } = loadFunctions([
-    'parseBrooksMediaExportTime',
-    'getBrooksMediaExportElapsedMs',
-    'formatBrooksMediaExportDuration',
-    'markBrooksMediaExportRunStarted',
-    'stopBrooksMediaExportRunTimer',
-    'buildBrooksMediaExportPayload',
-  ]);
   const state = {
     links: ['a'],
     index: 1,
@@ -163,14 +125,6 @@ test('Brooks media export elapsed runtime excludes paused wall-clock time', () =
 });
 
 test('Brooks media export parses page HTML and builds a direct Bunny embed URL', () => {
-  const {
-    extractBrooksMediaExportPageInfo,
-    buildBrooksMediaExportEmbedUrl,
-  } = loadFunctions([
-    'normalizeBrooksTitle',
-    'extractBrooksMediaExportPageInfo',
-    'buildBrooksMediaExportEmbedUrl',
-  ]);
   const pageUrl = 'https://www.brookstradingcourse.com/price-action-fundamentals/video-04-setup/';
   const dom = new JSDOM(`
     <meta property="og:title" content="BTC PAF 04 My Setup">
@@ -250,14 +204,6 @@ test('Brooks media export accepts direct Bunny iframe m3u8 messages only for pen
 });
 
 test('Brooks media export status separates success, failures, current page, and elapsed time', () => {
-  const { formatBrooksMediaExportStatus } = loadFunctions([
-    'parseBrooksMediaExportTime',
-    'getBrooksMediaExportElapsedMs',
-    'formatBrooksMediaExportDuration',
-    'truncateBrooksMediaExportText',
-    'getBrooksMediaExportPageLabel',
-    'formatBrooksMediaExportStatus',
-  ]);
   const text = formatBrooksMediaExportStatus({
     state: {
       running: true,
@@ -286,14 +232,6 @@ test('Brooks media export status separates success, failures, current page, and 
 });
 
 test('Brooks media export status prompts failure recovery after collection finishes', () => {
-  const { formatBrooksMediaExportStatus } = loadFunctions([
-    'parseBrooksMediaExportTime',
-    'getBrooksMediaExportElapsedMs',
-    'formatBrooksMediaExportDuration',
-    'truncateBrooksMediaExportText',
-    'getBrooksMediaExportPageLabel',
-    'formatBrooksMediaExportStatus',
-  ]);
   const text = formatBrooksMediaExportStatus({
     state: {
       running: false,
@@ -312,14 +250,6 @@ test('Brooks media export status prompts failure recovery after collection finis
 });
 
 test('Brooks media export status truncates very long page labels', () => {
-  const { formatBrooksMediaExportStatus } = loadFunctions([
-    'parseBrooksMediaExportTime',
-    'getBrooksMediaExportElapsedMs',
-    'formatBrooksMediaExportDuration',
-    'truncateBrooksMediaExportText',
-    'getBrooksMediaExportPageLabel',
-    'formatBrooksMediaExportStatus',
-  ]);
   const text = formatBrooksMediaExportStatus({
     state: {
       running: true,

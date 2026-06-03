@@ -21,7 +21,9 @@ export const TARGETS = {
   'm3u8-downloader': {
     entry: 'src/m3u8-downloader/index.user.js',
     output: 'scripts/m3u8-downloader.user.js',
-    copy: true,
+    logOverride: {
+      'direct-eval': 'silent',
+    },
   },
 };
 
@@ -54,6 +56,7 @@ async function buildTarget(name) {
     charset: 'utf8',
     format: 'iife',
     legalComments: 'none',
+    logOverride: target.logOverride || {},
     minify: false,
     platform: 'browser',
     sourcemap: false,
