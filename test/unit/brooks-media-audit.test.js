@@ -94,6 +94,38 @@ test('Brooks media audit distinguishes current exact files from local variants',
   assert.deepEqual(audit.items[1].needs, []);
 });
 
+test('Brooks media audit matches records whose media title already ends with a video extension', () => {
+  const audit = auditBrooksMediaIndex({
+    index: {
+      records: [
+        {
+          index: 0,
+          output: 'BTC HTT 47C Trading in Trading Ranges.mp4.%(ext)s',
+          pageUrl: 'https://example.com/video-47c/',
+          m3u8: 'https://cdn.example.com/vid0/video.m3u8',
+          en: 'https://cdn.example.com/vid0/captions/EN.vtt',
+          cn: 'https://cdn.example.com/vid0/captions/CN.vtt',
+          referer: 'https://iframe.example.com/embed/vid0',
+        },
+      ],
+    },
+    indexPath: '/tmp/index.json',
+    localDir: '/videos',
+    localFiles: [
+      '/videos/BTC HTT 47C Trading in Trading Ranges.mp4',
+      '/videos/BTC HTT 47C Trading in Trading Ranges.mp4.zh.vtt',
+    ],
+  });
+
+  assert.deepEqual(audit.items[0].needs, ['enSubtitle']);
+  assert.deepEqual(audit.items[0].local.current.video.map(file => file.name), [
+    'BTC HTT 47C Trading in Trading Ranges.mp4',
+  ]);
+  assert.deepEqual(audit.items[0].local.current.zhSubtitle.map(file => file.name), [
+    'BTC HTT 47C Trading in Trading Ranges.mp4.zh.vtt',
+  ]);
+});
+
 test('Brooks media audit builds quoted yt-dlp commands', () => {
   assert.equal(
     buildYtDlpCommand({

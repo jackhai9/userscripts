@@ -163,7 +163,7 @@ export function auditBrooksMediaIndex({ index, indexPath, localDir, localFiles, 
   const records = index.records || [];
   const groups = groupLocalFiles(localFiles);
   const items = records.map(record => {
-    const base = stripOutputExtension(record.output || record.mediaTitle || record.title || '');
+    const base = removeTrailingMediaMarker(stripOutputExtension(record.output || record.mediaTitle || record.title || ''));
     const key = titleKey(base);
     const seriesKey = titleKey(stripVersionSuffix(base));
     const exactFiles = groups.byKey.get(key) || [];
