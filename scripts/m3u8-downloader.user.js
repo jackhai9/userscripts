@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.22
+// @version      0.10.23
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -423,7 +423,8 @@
 
     clearBrooksMediaExportFrame()
     brooksMediaExportFrame = document.createElement('iframe')
-    brooksMediaExportFrame.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0;pointer-events:none;'
+    brooksMediaExportFrame.style.cssText = 'position:fixed;right:20px;top:20px;width:640px;height:360px;opacity:.01;pointer-events:none;border:0;z-index:9998;background:white;'
+    brooksMediaExportFrame.setAttribute('aria-hidden', 'true')
     brooksMediaExportPending = {
       index,
       url,

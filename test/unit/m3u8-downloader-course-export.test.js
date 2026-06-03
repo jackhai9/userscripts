@@ -154,3 +154,36 @@ test('Brooks media export status refreshes elapsed time while waiting for a page
     window.document.querySelector('#brooks-media-export-stop').click();
   }
 });
+
+test('Brooks media export iframe uses an in-viewport player-sized frame for media detection', async () => {
+  const dom = new JSDOM(`
+    <body>
+      <a href="/price-action-fundamentals/video-04-setup/">Video 04</a>
+    </body>
+  `, {
+    url: 'https://www.brookstradingcourse.com/main-course-videos/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  window.requestAnimationFrame = callback => callback();
+  window.alert = () => {};
+  window.open = () => {};
+
+  window.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  window.document.querySelector('#brooks-media-export-start').click();
+
+  try {
+    const iframe = window.document.querySelector('iframe[src*="/price-action-fundamentals/video-04-setup/"]');
+    assert.equal(iframe?.style.position, 'fixed');
+    assert.equal(iframe?.style.width, '640px');
+    assert.equal(iframe?.style.height, '360px');
+    assert.equal(iframe?.style.right, '20px');
+    assert.equal(iframe?.style.top, '20px');
+    assert.equal(iframe?.style.pointerEvents, 'none');
+    assert.notEqual(iframe?.style.left, '-10000px');
+  } finally {
+    window.document.querySelector('#brooks-media-export-stop').click();
+  }
+});
