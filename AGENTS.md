@@ -24,8 +24,8 @@
   m3u8 下载增强脚本，核心风险在通用 m3u8 拦截、Brooks 媒体索引、失败重试、暂停/继续状态、active runtime 计时和 Bunny caption URL 推导。
 - `scripts/auto_refresh.user.js`
   定时刷新页面，核心风险在 URL 匹配、时间计算、启停行为。
-- `docs/brooks-media-sync-plan.md`
-  Brooks 媒体同步方案，记录索引导出、Bunny referer、Codex Chrome 限制、失败重试、active runtime 计时和未来 m3u8 source split 计划。
+- `docs/brooks-media-sync-workflow.md`
+  Brooks 媒体同步工作流，记录索引导出、Bunny referer、Codex Chrome 限制、失败重试、active runtime 计时和未来 m3u8 source split 计划。
 - `docs/binance-orderbook-trade-development.md`
   Binance 订单簿脚本开发手册，记录源码/产物关系、模块边界、测试、构建、发版和手测矩阵。
 - `skills/userscript-review/SKILL.md`

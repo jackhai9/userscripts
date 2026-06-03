@@ -27,7 +27,7 @@
 开发手册：
 
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
-- [Brooks media sync workflow](docs/brooks-media-sync-plan.md)
+- [Brooks media sync workflow](docs/brooks-media-sync-workflow.md)
 
 [install-binance-orderbook-trade]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
 [install-binance-trading-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-trading-data.user.js
