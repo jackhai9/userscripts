@@ -24,7 +24,10 @@
 5. 每次发布递增 `@version`，并保留 `@updateURL/@downloadURL` 指向真源 raw 地址。
 6. Tampermonkey 统一用安装链接重装，不在面板里手改代码。
 
-开发手册：[Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
+开发手册：
+
+- [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
+- [Brooks media sync workflow](docs/brooks-media-sync-plan.md)
 
 [install-binance-orderbook-trade]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
 [install-binance-trading-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-trading-data.user.js
