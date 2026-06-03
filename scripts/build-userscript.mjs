@@ -21,6 +21,7 @@ export const TARGETS = {
   'm3u8-downloader': {
     entry: 'src/m3u8-downloader/index.user.js',
     output: 'scripts/m3u8-downloader.user.js',
+    // The legacy injected downloader still evaluates fetched UI code; keep the bundle warning local to this target.
     logOverride: {
       'direct-eval': 'silent',
     },
