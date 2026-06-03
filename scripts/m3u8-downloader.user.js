@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.17
+// @version      0.10.18
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -158,6 +158,22 @@
       shellQuote(output),
       shellQuote(sourceUrl),
     ].join(' ')
+  }
+
+  function buildCaptionUrlFromM3u8(url, captionFile) {
+    const sourceUrl = new URL(url)
+    sourceUrl.searchParams.delete('title')
+    const pathParts = sourceUrl.pathname.split('/').filter(Boolean)
+    const videoIndex = pathParts.findIndex(part => part === 'video.m3u8' || part === 'playlist.m3u8')
+    if (videoIndex <= 0) {
+      throw new Error('Unable to infer caption path from m3u8 URL')
+    }
+    const baseIndex = pathParts[videoIndex] === 'video.m3u8' && videoIndex > 0 && /^\d+x\d+$/.test(pathParts[videoIndex - 1])
+      ? videoIndex - 1
+      : videoIndex
+    sourceUrl.pathname = '/' + pathParts.slice(0, baseIndex).concat(['captions', captionFile]).join('/')
+    sourceUrl.hash = ''
+    return sourceUrl.href
   }
 
   function sanitizeInjectedDownloader(section) {
@@ -560,24 +576,26 @@
     })
 
     m3u8Append.addEventListener('click', function () {
+      // Derive captions from the actual media host so Brooks videos keep working
+      // when Bunny serves different libraries from different CDN hostnames.
+      if (!m3u8Target) return;
 
-        // 获取视频 ID
-    const videoUrl = m3u8Target;
-    if (!videoUrl) return;
+      let cnUrl = ''
+      let enUrl = ''
+      try {
+        cnUrl = buildCaptionUrlFromM3u8(getCleanM3u8Target(), 'CN.vtt');
+        enUrl = buildCaptionUrlFromM3u8(getCleanM3u8Target(), 'EN.vtt');
+      } catch (error) {
+        console.error('Unable to infer caption URLs:', error);
+        alert('无法从当前 m3u8 地址推导字幕地址')
+        return
+      }
 
-    const videoId = videoUrl.split('/')[3];// 从 m3u8 URL 中提取视频 ID
-    console.log("视频 ID:", videoId);
+      console.log("尝试下载字幕:", cnUrl, enUrl);
 
-    // 构造字幕 URL
-    const baseUrl = `https://vz-9a847249-45e.b-cdn.net/${videoId}`;
-    const cnUrl = `${baseUrl}/captions/CN.vtt`;
-    const enUrl = `${baseUrl}/captions/EN.vtt`;
-
-    console.log("尝试下载字幕:", cnUrl, enUrl);
-
-    // 下载字幕
-    downloadCaption(cnUrl);
-    downloadCaption(enUrl);
+      // 下载字幕
+      downloadCaption(cnUrl);
+      downloadCaption(enUrl);
 
       ajax({
         url: 'https://blog.luckly-mjw.cn/tool-show/m3u8-downloader/index.html?t=' + new Date().getTime(),
