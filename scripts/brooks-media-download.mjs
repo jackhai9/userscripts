@@ -28,6 +28,7 @@ function parseArgs(argv) {
     only: 'zhSubtitle',
     dryRun: false,
     overwrite: false,
+    confirmVideoDownload: false,
     limit: null,
   };
 
@@ -55,6 +56,9 @@ function parseArgs(argv) {
     } else if (arg === '--overwrite') {
       parsed = parseBooleanFlag(argv, index);
       options.overwrite = parsed.value;
+    } else if (arg === '--confirm-video-download') {
+      parsed = parseBooleanFlag(argv, index);
+      options.confirmVideoDownload = parsed.value;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -62,7 +66,7 @@ function parseArgs(argv) {
   }
 
   if (!options.auditPath) {
-    throw new Error('Usage: node scripts/brooks-media-download.mjs --audit <audit.json> [--local <media-dir>] [--only zhSubtitle|enSubtitle|video] [--limit <n>] [--dry-run] [--overwrite]');
+    throw new Error('Usage: node scripts/brooks-media-download.mjs --audit <audit.json> [--local <media-dir>] [--only zhSubtitle|enSubtitle|video] [--limit <n>] [--dry-run] [--overwrite] [--confirm-video-download]');
   }
   if (!SUPPORTED_KINDS.has(options.only)) {
     throw new Error('--only currently supports zhSubtitle, enSubtitle, or video');
@@ -147,6 +151,18 @@ export function buildBrooksMediaDownloadTasks({
       continue;
     }
     const output = safeOutputName(download.output);
+    const targetPath = join(targetDir, output);
+    const ytDlpArgs = only === 'video'
+      ? [
+          '--referer',
+          download.referer || '',
+          '-N',
+          '16',
+          '-o',
+          targetPath,
+          sourceUrl,
+        ]
+      : null;
     if (!overwrite && existingNames.has(output)) {
       continue;
     }
@@ -167,7 +183,8 @@ export function buildBrooksMediaDownloadTasks({
             }
           : null,
       output,
-      targetPath: join(targetDir, output),
+      targetPath,
+      ytDlpArgs,
       ytDlpCommand: only === 'video'
         ? [
             'yt-dlp',
@@ -176,7 +193,7 @@ export function buildBrooksMediaDownloadTasks({
             '-N',
             '16',
             '-o',
-            shellQuote(join(targetDir, output)),
+            shellQuote(targetPath),
             shellQuote(sourceUrl),
           ].join(' ')
         : null,
@@ -202,6 +219,19 @@ export function getYtDlpAvailability({ commandExists = null } = {}) {
   return {
     available: result.status === 0,
     command,
+  };
+}
+
+export function downloadBrooksVideoTask(task, { spawnImpl = spawnSync } = {}) {
+  const result = spawnImpl('yt-dlp', task.ytDlpArgs, {
+    stdio: 'inherit',
+  });
+  if (result.status !== 0) {
+    throw new Error(`${task.output} video download failed with yt-dlp exit code ${result.status}`);
+  }
+  return {
+    status: 'downloaded',
+    output: task.output,
   };
 }
 
@@ -302,7 +332,22 @@ export async function runCli(argv = process.argv.slice(2)) {
     if (!ytDlp.available) {
       throw new Error('yt-dlp is required for video downloads. Install yt-dlp first, or run with --dry-run to inspect planned commands.');
     }
-    throw new Error('Video download execution is not enabled yet. Run with --dry-run, review the yt-dlp commands, then approve a small sample download.');
+    if (!options.confirmVideoDownload) {
+      throw new Error('Video download requires --confirm-video-download. Run with --dry-run first, then use --limit 1 --confirm-video-download for a sample.');
+    }
+    const results = [];
+    for (const task of tasks) {
+      const result = downloadBrooksVideoTask(task);
+      results.push(result);
+      console.log(`${result.status}: ${result.output}`);
+    }
+    console.log(JSON.stringify({
+      only: options.only,
+      total: results.length,
+      downloaded: results.length,
+      failed: 0,
+    }, null, 2));
+    return;
   }
 
   const results = [];

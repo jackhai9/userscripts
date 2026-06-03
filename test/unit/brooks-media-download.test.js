@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import {
   assertValidVtt,
   buildBrooksMediaDownloadTasks,
+  downloadBrooksVideoTask,
   getYtDlpAvailability,
   downloadBrooksMediaTask,
 } from '../../scripts/brooks-media-download.mjs';
@@ -163,6 +164,7 @@ test('Brooks media download builds video tasks for yt-dlp dry runs', () => {
     kind: task.kind,
     output: task.output,
     targetPath: task.targetPath,
+    ytDlpArgs: task.ytDlpArgs,
     ytDlpCommand: task.ytDlpCommand,
   })), [
     {
@@ -170,7 +172,45 @@ test('Brooks media download builds video tasks for yt-dlp dry runs', () => {
       kind: 'video',
       output: 'Video 03A Forex Basics.%(ext)s',
       targetPath: '/videos/Video 03A Forex Basics.%(ext)s',
+      ytDlpArgs: [
+        '--referer',
+        'https://iframe.example.com/embed/video-03a',
+        '-N',
+        '16',
+        '-o',
+        '/videos/Video 03A Forex Basics.%(ext)s',
+        'https://cdn.example.com/video-03a/video.m3u8',
+      ],
       ytDlpCommand: "yt-dlp --referer 'https://iframe.example.com/embed/video-03a' -N 16 -o '/videos/Video 03A Forex Basics.%(ext)s' 'https://cdn.example.com/video-03a/video.m3u8'",
+    },
+  ]);
+});
+
+test('Brooks media download executes one video task through yt-dlp args', () => {
+  const task = buildBrooksMediaDownloadTasks({
+    audit: createAudit(),
+    only: 'video',
+    existingNames: new Set(),
+    limit: 1,
+  })[0];
+  const calls = [];
+
+  const result = downloadBrooksVideoTask(task, {
+    spawnImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: 'downloaded',
+    output: 'Video 03A Forex Basics.%(ext)s',
+  });
+  assert.deepEqual(calls, [
+    {
+      command: 'yt-dlp',
+      args: task.ytDlpArgs,
+      options: { stdio: 'inherit' },
     },
   ]);
 });
