@@ -72,6 +72,32 @@ test('Brooks media index records derive current m3u8, caption URLs, and yt-dlp o
   assert.equal(buildCaptionUrlFromM3u8('https://vz-other.b-cdn.net/abc123/playlist.m3u8?token=keep&title=drop', 'CN.vtt'), 'https://vz-other.b-cdn.net/abc123/captions/CN.vtt?token=keep');
 });
 
+test('Brooks media export status separates success, failures, current page, and elapsed time', () => {
+  const { formatBrooksMediaExportStatus } = loadFunctions(['getBrooksMediaExportPageLabel', 'formatBrooksMediaExportStatus']);
+  const text = formatBrooksMediaExportStatus({
+    state: {
+      running: true,
+      stopped: false,
+      links: [
+        'https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/',
+        'https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/',
+        'https://www.brookstradingcourse.com/price-action-fundamentals/video-04-setup/',
+      ],
+      index: 2,
+      records: [{ ok: true }, { ok: true }],
+      failures: [{ ok: false, url: 'https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/', error: 'm3u8 detection timeout' }],
+    },
+    pending: {
+      index: 2,
+      url: 'https://www.brookstradingcourse.com/price-action-fundamentals/video-04-setup/',
+      startedAt: 1_000,
+    },
+    now: 13_400,
+  });
+
+  assert.equal(text, '采集中 3/3 | 成功 2 | 失败 1\n当前 3/3 video-04-setup | 等待 12s\n最近失败: m3u8 detection timeout');
+});
+
 test('Brooks course index page renders a media export panel without starting collection', async () => {
   const dom = new JSDOM(`
     <body>
@@ -95,4 +121,36 @@ test('Brooks course index page renders a media export panel without starting col
   assert.equal(window.document.querySelector('#brooks-media-export-start')?.textContent, '开始');
   assert.equal(window.document.querySelector('#brooks-media-export-status')?.textContent, '发现 2 个视频页');
   assert.equal(window.document.querySelectorAll('iframe').length, 0);
+});
+
+test('Brooks media export status refreshes elapsed time while waiting for a page', async () => {
+  const dom = new JSDOM(`
+    <body>
+      <a href="/price-action-fundamentals/video-04-setup/">Video 04</a>
+    </body>
+  `, {
+    url: 'https://www.brookstradingcourse.com/main-course-videos/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  let now = 1_000;
+  window.Date.now = () => now;
+  window.requestAnimationFrame = callback => callback();
+  window.alert = () => {};
+  window.open = () => {};
+
+  window.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  window.document.querySelector('#brooks-media-export-start').click();
+
+  try {
+    assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /等待 0s/);
+    now = 3_400;
+    await new Promise(resolve => setTimeout(resolve, 1100));
+
+    assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /等待 2s/);
+  } finally {
+    window.document.querySelector('#brooks-media-export-stop').click();
+  }
 });

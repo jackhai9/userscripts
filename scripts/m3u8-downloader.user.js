@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.21
+// @version      0.10.22
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -34,6 +34,7 @@
   var BROOKS_MEDIA_EXPORT_SCHEMA_VERSION = 2
   var BROOKS_MEDIA_EXPORT_TIMEOUT_MS = 45000
   var BROOKS_MEDIA_EXPORT_STEP_DELAY_MS = 500
+  var BROOKS_MEDIA_EXPORT_STATUS_INTERVAL_MS = 1000
   var brooksMediaExportState = null
   var brooksMediaExportFrame = null
   var brooksMediaExportPending = null
@@ -304,6 +305,51 @@
     }
   }
 
+  function getBrooksMediaExportPageLabel(url) {
+    try {
+      const parts = new URL(url).pathname.split('/').filter(Boolean)
+      return parts[parts.length - 1] || url
+    } catch (error) {
+      return url || ''
+    }
+  }
+
+  function formatBrooksMediaExportStatus(options) {
+    const state = options && options.state
+    if (!state) {
+      return ''
+    }
+    const links = state.links || []
+    const records = state.records || []
+    const failures = state.failures || []
+    const total = links.length
+    const done = records.length + failures.length
+    const stateText = state.running ? '采集中' : (state.stopped ? '已暂停' : '已完成')
+    const summaryParts = [
+      `${stateText} ${done}/${total}`,
+      `成功 ${records.length}`,
+      `失败 ${failures.length}`,
+    ]
+    const lines = [summaryParts.join(' | ')]
+
+    const pending = options && options.pending
+    if (pending && pending.url) {
+      const currentIndex = typeof pending.index === 'number' ? pending.index + 1 : (state.index || 0) + 1
+      const currentParts = [`当前 ${currentIndex}/${total} ${getBrooksMediaExportPageLabel(pending.url)}`]
+      if (pending.startedAt) {
+        const elapsedSeconds = Math.max(0, Math.floor(((options.now || Date.now()) - pending.startedAt) / 1000))
+        currentParts.push(`等待 ${elapsedSeconds}s`)
+      }
+      lines.push(currentParts.join(' | '))
+    }
+
+    const lastFailure = failures[failures.length - 1]
+    if (lastFailure && lastFailure.error) {
+      lines.push(`最近失败: ${lastFailure.error}`)
+    }
+    return lines.join('\n')
+  }
+
   function updateBrooksMediaExportStatus() {
     const statusEl = document.getElementById('brooks-media-export-status')
     if (!statusEl) {
@@ -314,15 +360,19 @@
       statusEl.textContent = `发现 ${getBrooksCourseVideoLinks(document).length} 个视频页`
       return
     }
-    const total = state.links ? state.links.length : 0
-    const done = (state.records ? state.records.length : 0) + (state.failures ? state.failures.length : 0)
-    const stateText = state.running ? '采集中' : (state.stopped ? '已暂停' : '已完成')
-    statusEl.textContent = `${stateText} ${done}/${total}`
+    statusEl.textContent = formatBrooksMediaExportStatus({
+      state,
+      pending: brooksMediaExportPending,
+      now: Date.now(),
+    })
   }
 
   function clearBrooksMediaExportFrame() {
     if (brooksMediaExportPending && brooksMediaExportPending.timeoutId) {
       clearTimeout(brooksMediaExportPending.timeoutId)
+    }
+    if (brooksMediaExportPending && brooksMediaExportPending.statusIntervalId) {
+      clearInterval(brooksMediaExportPending.statusIntervalId)
     }
     brooksMediaExportPending = null
     if (brooksMediaExportFrame && brooksMediaExportFrame.parentNode) {
@@ -377,11 +427,13 @@
     brooksMediaExportPending = {
       index,
       url,
+      startedAt: Date.now(),
       timeoutId: setTimeout(() => {
         recordBrooksMediaExportFailure(index, url, 'm3u8 detection timeout')
         processNextBrooksMediaExport()
       }, BROOKS_MEDIA_EXPORT_TIMEOUT_MS),
     }
+    brooksMediaExportPending.statusIntervalId = setInterval(updateBrooksMediaExportStatus, BROOKS_MEDIA_EXPORT_STATUS_INTERVAL_MS)
     brooksMediaExportFrame.src = url
     document.body.appendChild(brooksMediaExportFrame)
     updateBrooksMediaExportStatus()
@@ -480,10 +532,10 @@
     const links = getBrooksCourseVideoLinks(document)
     const section = document.createElement('section')
     section.id = 'brooks-media-export-dom'
-    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;padding:10px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.18);'
+    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;max-width:560px;padding:10px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.18);'
     section.innerHTML = `
       <div style="margin-bottom:6px;">Brooks 媒体索引</div>
-      <div id="brooks-media-export-status" style="margin-bottom:8px;">发现 ${links.length} 个视频页</div>
+      <div id="brooks-media-export-status" style="margin-bottom:8px;white-space:pre-wrap;">发现 ${links.length} 个视频页</div>
       <button id="brooks-media-export-start" type="button">开始</button>
       <button id="brooks-media-export-resume" type="button">继续</button>
       <button id="brooks-media-export-stop" type="button">停止</button>
