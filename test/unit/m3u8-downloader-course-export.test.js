@@ -10,6 +10,9 @@ import {
 } from '../../src/m3u8-downloader/brooks-pages.js';
 import { buildBrooksMediaIndexRecord } from '../../src/m3u8-downloader/brooks-record.js';
 import {
+  buildBrooksMediaIndexExportFilename,
+} from '../../src/m3u8-downloader/brooks-exporter.js';
+import {
   buildBrooksMediaExportPayload,
   formatBrooksMediaExportStatus,
   markBrooksMediaExportRunStarted,
@@ -98,6 +101,13 @@ test('Brooks media export payload includes elapsed runtime metadata', () => {
   assert.equal(payload.elapsedMs, 72_000);
   assert.equal(payload.elapsedSeconds, 72);
   assert.equal(payload.elapsedText, '1m12s');
+});
+
+test('Brooks media export filename includes a collision-resistant timestamp', () => {
+  assert.equal(
+    buildBrooksMediaIndexExportFilename('2026-06-03T10:42:15.123Z'),
+    'brooks-media-index-2026-06-03T104215Z.json',
+  );
 });
 
 test('Brooks media export elapsed runtime excludes paused wall-clock time', () => {
