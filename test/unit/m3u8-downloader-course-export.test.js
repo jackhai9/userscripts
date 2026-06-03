@@ -246,7 +246,7 @@ test('Brooks media export status prompts failure recovery after collection finis
     },
   });
 
-  assert.equal(text, '已完成 3/3 | 成功 2 | 失败 1\n耗时: 1m12s\n最近失败: m3u8 detection timeout\n请点“重试失败”；仍失败再导出 JSON');
+  assert.equal(text, '已完成 3/3 | 成功 2 | 失败 1\n耗时: 1m12s\n最近失败: m3u8 detection timeout\n请点“重试失败”；仍失败再导出清单 JSON');
 });
 
 test('Brooks media export status truncates very long page labels', () => {
@@ -290,12 +290,14 @@ test('Brooks course index page renders a media export panel without starting col
   await new Promise(resolve => setTimeout(resolve, 20));
 
   assert.equal(window.document.querySelector('#brooks-media-export-dom') !== null, true);
+  assert.match(window.document.querySelector('#brooks-media-export-dom')?.textContent || '', /Brooks 视频与字幕清单/);
   assert.equal(window.document.querySelector('#brooks-media-export-primary')?.textContent, '开始');
   assert.equal(window.document.querySelector('#brooks-media-export-resume'), null);
   assert.equal(window.document.querySelector('#brooks-media-export-pause'), null);
   assert.equal(window.document.querySelector('#brooks-media-export-reset')?.textContent, '重置');
+  assert.equal(window.document.querySelector('#brooks-media-export-download')?.textContent, '导出清单 JSON');
   assert.equal(window.document.querySelector('#brooks-media-export-reset')?.style.display, 'none');
-  assert.equal(window.document.querySelector('#brooks-media-export-status')?.textContent, '发现 2 个视频页');
+  assert.equal(window.document.querySelector('#brooks-media-export-status')?.textContent, '发现 2 个课程视频');
   assert.equal(window.document.querySelectorAll('iframe').length, 0);
 });
 
@@ -395,7 +397,7 @@ test('Brooks media export reset clears saved progress and returns to initial dis
 
     window.document.querySelector('#brooks-media-export-reset').click();
 
-    assert.equal(window.document.querySelector('#brooks-media-export-status')?.textContent, '发现 2 个视频页');
+    assert.equal(window.document.querySelector('#brooks-media-export-status')?.textContent, '发现 2 个课程视频');
     assert.equal(window.document.querySelector('#brooks-media-export-primary')?.textContent, '开始');
     assert.equal(window.localStorage.getItem('jh-userscripts:brooks-media-index-export'), null);
     assert.equal(window.document.querySelectorAll('iframe').length, 0);
