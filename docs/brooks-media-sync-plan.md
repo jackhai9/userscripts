@@ -130,6 +130,18 @@ npm run download:brooks-media -- \
 
 The dry run lists planned outputs, `yt-dlp` availability, and quoted `yt-dlp` commands. If `yt-dlp` is not installed, install it before requesting a video sample download. Do not use the JavaScript subtitle path for video segment downloads.
 
+After reviewing the dry run, download one video sample with an explicit confirmation flag:
+
+```bash
+npm run download:brooks-media -- \
+  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+  --only video \
+  --limit 1 \
+  --confirm-video-download
+```
+
+Keep `--limit 1` for the first run. Re-run the audit after the sample download and confirm that `missingCurrentVideo` drops by one before approving a larger batch.
+
 ## Local Inventory Audit
 
 After exporting a complete Brooks media index, run the read-only local inventory audit before downloading anything:
