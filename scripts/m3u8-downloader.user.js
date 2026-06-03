@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.18
+// @version      0.10.19
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -29,6 +29,13 @@
   var originXHR = window.XMLHttpRequest
   var windowOpen = window.open
   var M3U8_MESSAGE_TYPE = 'jh-userscripts:m3u8-detected'
+  var BROOKS_MEDIA_INDEX_MESSAGE_TYPE = 'jh-userscripts:brooks-media-index-record'
+  var BROOKS_MEDIA_INDEX_STATE_KEY = 'jh-userscripts:brooks-media-index-export'
+  var BROOKS_MEDIA_EXPORT_TIMEOUT_MS = 45000
+  var BROOKS_MEDIA_EXPORT_STEP_DELAY_MS = 500
+  var brooksMediaExportState = null
+  var brooksMediaExportFrame = null
+  var brooksMediaExportPending = null
   var EXTERNAL_DOWNLOADER_BLOCKED_HOST_SUFFIXES = [
     '.b-cdn.net',
     '.hshdkshd.com',
@@ -109,6 +116,7 @@
   function showM3u8Controls(url, referer) {
     m3u8Target = url
     m3u8Referer = referer || location.href
+    notifyBrooksMediaIndexDetected(url, m3u8Referer)
     appendDom()
 
     const m3u8Jump = document.getElementById('m3u8-jump')
@@ -147,7 +155,6 @@
   function buildYtDlpCommand() {
     const sourceUrl = getCleanM3u8Target()
     const title = new URL(m3u8Target).searchParams.get('title') || getTitle()
-    const output = title.replace(/[/:*?"<>|]/g, '_') + '.%(ext)s'
     return [
       'yt-dlp',
       '--referer',
@@ -155,7 +162,7 @@
       '-N',
       '16',
       '-o',
-      shellQuote(output),
+      shellQuote(getYtDlpOutputName(title)),
       shellQuote(sourceUrl),
     ].join(' ')
   }
@@ -174,6 +181,326 @@
     sourceUrl.pathname = '/' + pathParts.slice(0, baseIndex).concat(['captions', captionFile]).join('/')
     sourceUrl.hash = ''
     return sourceUrl.href
+  }
+
+  function getCleanMediaUrl(url) {
+    const sourceUrl = new URL(url)
+    sourceUrl.searchParams.delete('title')
+    return sourceUrl.href
+  }
+
+  function getBrooksVideoIdFromM3u8(url) {
+    const sourceUrl = new URL(url)
+    const pathParts = sourceUrl.pathname.split('/').filter(Boolean)
+    const videoIndex = pathParts.findIndex(part => part === 'video.m3u8' || part === 'playlist.m3u8')
+    if (videoIndex <= 0) {
+      return ''
+    }
+    const baseIndex = pathParts[videoIndex] === 'video.m3u8' && videoIndex > 0 && /^\d+x\d+$/.test(pathParts[videoIndex - 1])
+      ? videoIndex - 1
+      : videoIndex
+    return pathParts[baseIndex - 1] || ''
+  }
+
+  function getYtDlpOutputName(title) {
+    return title
+      .replace(/\s*\|\s*Brooks Trading Course\s*$/i, '')
+      .replace(/[/:*?"<>|]/g, '_')
+      .trim() + '.%(ext)s'
+  }
+
+  function buildBrooksMediaIndexRecord(options) {
+    const sourceUrl = new URL(options.m3u8Url)
+    const title = sourceUrl.searchParams.get('title') || options.title || ''
+    return {
+      ok: true,
+      url: options.pageUrl,
+      title: options.title || title,
+      pageUrl: options.pageUrl,
+      output: getYtDlpOutputName(title),
+      referer: options.referer || '',
+      m3u8: getCleanMediaUrl(options.m3u8Url),
+      videoId: getBrooksVideoIdFromM3u8(options.m3u8Url),
+      cn: buildCaptionUrlFromM3u8(options.m3u8Url, 'CN.vtt'),
+      en: buildCaptionUrlFromM3u8(options.m3u8Url, 'EN.vtt'),
+      index: options.index,
+    }
+  }
+
+  function isBrooksHost(hostname) {
+    return hostname === 'brookstradingcourse.com' || hostname.endsWith('.brookstradingcourse.com')
+  }
+
+  function isBrooksCourseIndexPage() {
+    return isBrooksHost(location.hostname) && location.pathname.replace(/\/+$/, '') === '/main-course-videos'
+  }
+
+  function getBrooksCourseVideoLinks(root) {
+    const seen = new Set()
+    const baseHref = root.defaultView?.location?.href || location.href
+    return Array.from(root.querySelectorAll('a[href]'))
+      .map(link => {
+        try {
+          const url = new URL(link.getAttribute('href'), baseHref)
+          url.hash = ''
+          return url
+        } catch (error) {
+          return null
+        }
+      })
+      .filter(url => url && isBrooksHost(url.hostname) && /\/video-[^/]+\/?$/.test(url.pathname))
+      .map(url => url.href)
+      .filter(href => {
+        if (seen.has(href)) {
+          return false
+        }
+        seen.add(href)
+        return true
+      })
+  }
+
+  function notifyBrooksMediaIndexDetected(url, referer) {
+    if (!isBrooksHost(location.hostname)) {
+      return
+    }
+    try {
+      const record = buildBrooksMediaIndexRecord({
+        pageUrl: location.href,
+        title: getTitle(),
+        referer,
+        m3u8Url: url,
+      })
+      window.top.postMessage({
+        type: BROOKS_MEDIA_INDEX_MESSAGE_TYPE,
+        record,
+      }, location.origin)
+    } catch (error) {
+      console.error('Unable to build Brooks media index record:', error)
+    }
+  }
+
+  function saveBrooksMediaExportState() {
+    if (!brooksMediaExportState) {
+      return
+    }
+    brooksMediaExportState.updatedAt = new Date().toISOString()
+    localStorage.setItem(BROOKS_MEDIA_INDEX_STATE_KEY, JSON.stringify(brooksMediaExportState))
+  }
+
+  function loadBrooksMediaExportState() {
+    try {
+      const raw = localStorage.getItem(BROOKS_MEDIA_INDEX_STATE_KEY)
+      return raw ? JSON.parse(raw) : null
+    } catch (error) {
+      console.error('Unable to load Brooks media export state:', error)
+      return null
+    }
+  }
+
+  function updateBrooksMediaExportStatus() {
+    const statusEl = document.getElementById('brooks-media-export-status')
+    if (!statusEl) {
+      return
+    }
+    const state = brooksMediaExportState || loadBrooksMediaExportState()
+    if (!state) {
+      statusEl.textContent = `发现 ${getBrooksCourseVideoLinks(document).length} 个视频页`
+      return
+    }
+    const total = state.links ? state.links.length : 0
+    const done = (state.records ? state.records.length : 0) + (state.failures ? state.failures.length : 0)
+    const stateText = state.running ? '采集中' : (state.stopped ? '已暂停' : '已完成')
+    statusEl.textContent = `${stateText} ${done}/${total}`
+  }
+
+  function clearBrooksMediaExportFrame() {
+    if (brooksMediaExportPending && brooksMediaExportPending.timeoutId) {
+      clearTimeout(brooksMediaExportPending.timeoutId)
+    }
+    brooksMediaExportPending = null
+    if (brooksMediaExportFrame && brooksMediaExportFrame.parentNode) {
+      brooksMediaExportFrame.remove()
+    }
+    brooksMediaExportFrame = null
+  }
+
+  function isSameBrooksVideoPage(left, right) {
+    try {
+      const leftUrl = new URL(left)
+      const rightUrl = new URL(right)
+      return leftUrl.origin === rightUrl.origin && leftUrl.pathname.replace(/\/+$/, '') === rightUrl.pathname.replace(/\/+$/, '')
+    } catch (error) {
+      return false
+    }
+  }
+
+  function recordBrooksMediaExportFailure(index, url, error) {
+    if (!brooksMediaExportState) {
+      return
+    }
+    brooksMediaExportState.failures.push({
+      ok: false,
+      index,
+      url,
+      error,
+    })
+    brooksMediaExportState.index = index + 1
+    saveBrooksMediaExportState()
+    updateBrooksMediaExportStatus()
+  }
+
+  function processNextBrooksMediaExport() {
+    if (!brooksMediaExportState || !brooksMediaExportState.running || brooksMediaExportState.stopped) {
+      updateBrooksMediaExportStatus()
+      return
+    }
+    const index = brooksMediaExportState.index || 0
+    const url = brooksMediaExportState.links[index]
+    if (!url) {
+      brooksMediaExportState.running = false
+      saveBrooksMediaExportState()
+      clearBrooksMediaExportFrame()
+      updateBrooksMediaExportStatus()
+      return
+    }
+
+    clearBrooksMediaExportFrame()
+    brooksMediaExportFrame = document.createElement('iframe')
+    brooksMediaExportFrame.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0;pointer-events:none;'
+    brooksMediaExportPending = {
+      index,
+      url,
+      timeoutId: setTimeout(() => {
+        recordBrooksMediaExportFailure(index, url, 'm3u8 detection timeout')
+        processNextBrooksMediaExport()
+      }, BROOKS_MEDIA_EXPORT_TIMEOUT_MS),
+    }
+    brooksMediaExportFrame.src = url
+    document.body.appendChild(brooksMediaExportFrame)
+    updateBrooksMediaExportStatus()
+  }
+
+  function startBrooksMediaExport() {
+    const links = getBrooksCourseVideoLinks(document)
+    brooksMediaExportState = {
+      running: true,
+      stopped: false,
+      links,
+      index: 0,
+      records: [],
+      failures: [],
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    saveBrooksMediaExportState()
+    processNextBrooksMediaExport()
+  }
+
+  function resumeBrooksMediaExport() {
+    brooksMediaExportState = loadBrooksMediaExportState()
+    if (!brooksMediaExportState || !brooksMediaExportState.links || !brooksMediaExportState.links.length) {
+      startBrooksMediaExport()
+      return
+    }
+    brooksMediaExportState.running = true
+    brooksMediaExportState.stopped = false
+    saveBrooksMediaExportState()
+    processNextBrooksMediaExport()
+  }
+
+  function stopBrooksMediaExport() {
+    if (!brooksMediaExportState) {
+      brooksMediaExportState = loadBrooksMediaExportState()
+    }
+    if (brooksMediaExportState) {
+      brooksMediaExportState.running = false
+      brooksMediaExportState.stopped = true
+      saveBrooksMediaExportState()
+    }
+    clearBrooksMediaExportFrame()
+    updateBrooksMediaExportStatus()
+  }
+
+  function exportBrooksMediaIndex() {
+    const state = brooksMediaExportState || loadBrooksMediaExportState()
+    if (!state) {
+      alert('没有可导出的 Brooks 媒体索引')
+      return
+    }
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      total: state.links ? state.links.length : 0,
+      records: state.records || [],
+      failures: state.failures || [],
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    downloadWithA(url, `brooks-media-index-${new Date().toISOString().slice(0, 10)}.json`)
+    URL.revokeObjectURL(url)
+  }
+
+  function handleBrooksMediaIndexMessage(event) {
+    const data = event.data || {}
+    if (event.origin !== location.origin || data.type !== BROOKS_MEDIA_INDEX_MESSAGE_TYPE || !data.record) {
+      return
+    }
+    if (!brooksMediaExportState || !brooksMediaExportPending) {
+      return
+    }
+    if (!isSameBrooksVideoPage(data.record.pageUrl, brooksMediaExportPending.url)) {
+      return
+    }
+
+    const record = {
+      ...data.record,
+      index: brooksMediaExportPending.index,
+      url: brooksMediaExportPending.url,
+      pageUrl: data.record.pageUrl,
+    }
+    brooksMediaExportState.records.push(record)
+    brooksMediaExportState.index = brooksMediaExportPending.index + 1
+    saveBrooksMediaExportState()
+    clearBrooksMediaExportFrame()
+    updateBrooksMediaExportStatus()
+    setTimeout(processNextBrooksMediaExport, BROOKS_MEDIA_EXPORT_STEP_DELAY_MS)
+  }
+
+  function appendBrooksMediaExporterDom() {
+    if (!isBrooksCourseIndexPage() || document.getElementById('brooks-media-export-dom') || !document.body) {
+      return
+    }
+    const links = getBrooksCourseVideoLinks(document)
+    const section = document.createElement('section')
+    section.id = 'brooks-media-export-dom'
+    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;padding:10px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.18);'
+    section.innerHTML = `
+      <div style="margin-bottom:6px;">Brooks 媒体索引</div>
+      <div id="brooks-media-export-status" style="margin-bottom:8px;">发现 ${links.length} 个视频页</div>
+      <button id="brooks-media-export-start" type="button">开始</button>
+      <button id="brooks-media-export-resume" type="button">继续</button>
+      <button id="brooks-media-export-stop" type="button">停止</button>
+      <button id="brooks-media-export-download" type="button">导出 JSON</button>
+    `
+    section.querySelectorAll('button').forEach(button => {
+      button.style.cssText = 'margin:2px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#2563eb;color:white;cursor:pointer;'
+    })
+    document.body.appendChild(section)
+    document.getElementById('brooks-media-export-start').addEventListener('click', startBrooksMediaExport)
+    document.getElementById('brooks-media-export-resume').addEventListener('click', resumeBrooksMediaExport)
+    document.getElementById('brooks-media-export-stop').addEventListener('click', stopBrooksMediaExport)
+    document.getElementById('brooks-media-export-download').addEventListener('click', exportBrooksMediaIndex)
+    brooksMediaExportState = loadBrooksMediaExportState()
+    updateBrooksMediaExportStatus()
+  }
+
+  function startBrooksMediaExporter() {
+    window.addEventListener('message', handleBrooksMediaIndexMessage)
+    const scheduleAppend = () => setTimeout(appendBrooksMediaExporterDom, 0)
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', scheduleAppend, { once: true })
+    } else {
+      scheduleAppend()
+    }
   }
 
   function sanitizeInjectedDownloader(section) {
@@ -703,4 +1030,5 @@
   resetAjax()
   listenForFrameM3u8()
   startMediaScan()
+  startBrooksMediaExporter()
 })();
