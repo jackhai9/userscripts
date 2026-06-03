@@ -1,8 +1,9 @@
 import { access, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SUPPORTED_KINDS = new Set(['zhSubtitle', 'enSubtitle']);
+const SUPPORTED_KINDS = new Set(['zhSubtitle', 'enSubtitle', 'video']);
 
 function parseBooleanFlag(args, index) {
   return {
@@ -61,12 +62,16 @@ function parseArgs(argv) {
   }
 
   if (!options.auditPath) {
-    throw new Error('Usage: node scripts/brooks-media-download.mjs --audit <audit.json> [--local <media-dir>] [--only zhSubtitle|enSubtitle] [--limit <n>] [--dry-run] [--overwrite]');
+    throw new Error('Usage: node scripts/brooks-media-download.mjs --audit <audit.json> [--local <media-dir>] [--only zhSubtitle|enSubtitle|video] [--limit <n>] [--dry-run] [--overwrite]');
   }
   if (!SUPPORTED_KINDS.has(options.only)) {
-    throw new Error('--only currently supports zhSubtitle or enSubtitle');
+    throw new Error('--only currently supports zhSubtitle, enSubtitle, or video');
   }
   return options;
+}
+
+function shellQuote(value) {
+  return "'" + String(value || '').replace(/'/g, "'\\''") + "'";
 }
 
 function safeOutputName(output) {
@@ -78,6 +83,10 @@ function safeOutputName(output) {
     throw new Error(`Unsafe download output: ${name}`);
   }
   return name;
+}
+
+function deriveEnglishCaptionUrl(url) {
+  return String(url || '').replace(/\/CN\.vtt(?:$|[?#])/i, match => match.replace(/CN\.vtt/i, 'EN.vtt'));
 }
 
 async function listExistingNames(localDir) {
@@ -120,7 +129,7 @@ export function buildBrooksMediaDownloadTasks({
   overwrite = false,
 }) {
   if (!SUPPORTED_KINDS.has(only)) {
-    throw new Error('only currently supports zhSubtitle or enSubtitle');
+    throw new Error('only currently supports zhSubtitle, enSubtitle, or video');
   }
   const targetDir = localDir || audit.localDir;
   if (!targetDir) {
@@ -133,7 +142,8 @@ export function buildBrooksMediaDownloadTasks({
       continue;
     }
     const download = item.downloads && item.downloads[only];
-    if (!download || !download.url) {
+    const sourceUrl = only === 'video' ? download && download.m3u8 : download && download.url;
+    if (!download || !sourceUrl) {
       continue;
     }
     const output = safeOutputName(download.output);
@@ -144,15 +154,55 @@ export function buildBrooksMediaDownloadTasks({
       index: item.index,
       base: item.base || '',
       kind: only,
-      url: download.url,
+      url: sourceUrl,
+      comparison: only === 'zhSubtitle' && item.downloads && item.downloads.enSubtitle && item.downloads.enSubtitle.url
+        ? {
+            kind: 'enSubtitle',
+            url: item.downloads.enSubtitle.url,
+          }
+        : only === 'zhSubtitle'
+          ? {
+              kind: 'enSubtitle',
+              url: deriveEnglishCaptionUrl(sourceUrl),
+            }
+          : null,
       output,
       targetPath: join(targetDir, output),
+      ytDlpCommand: only === 'video'
+        ? [
+            'yt-dlp',
+            '--referer',
+            shellQuote(download.referer || ''),
+            '-N',
+            '16',
+            '-o',
+            shellQuote(join(targetDir, output)),
+            shellQuote(sourceUrl),
+          ].join(' ')
+        : null,
     });
     if (limit && tasks.length >= limit) {
       break;
     }
   }
   return tasks;
+}
+
+export function getYtDlpAvailability({ commandExists = null } = {}) {
+  const command = 'yt-dlp';
+  if (commandExists) {
+    return {
+      available: !!commandExists(command),
+      command,
+    };
+  }
+  const result = spawnSync(command, ['--version'], {
+    stdio: 'ignore',
+  });
+  return {
+    available: result.status === 0,
+    command,
+  };
 }
 
 export async function downloadBrooksMediaTask(task, { fetchImpl = globalThis.fetch, overwrite = false } = {}) {
@@ -174,6 +224,26 @@ export async function downloadBrooksMediaTask(task, { fetchImpl = globalThis.fet
     },
   });
   if (!response.ok) {
+    if (task.kind === 'zhSubtitle' && response.status === 404 && task.comparison && task.comparison.url) {
+      const comparisonResponse = await fetchImpl(task.comparison.url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+          Accept: 'text/vtt,text/plain,*/*',
+        },
+      });
+      if (comparisonResponse.ok) {
+        return {
+          status: 'unavailable',
+          output: task.output,
+          reason: 'zhSubtitleNotPublished',
+          httpStatus: response.status,
+          comparison: {
+            kind: task.comparison.kind,
+            status: comparisonResponse.status,
+          },
+        };
+      }
+    }
     throw new Error(`${task.output} download failed with HTTP ${response.status}`);
   }
 
@@ -214,14 +284,25 @@ export async function runCli(argv = process.argv.slice(2)) {
   });
 
   if (options.dryRun) {
+    const ytDlp = options.only === 'video' ? getYtDlpAvailability() : null;
     console.log(JSON.stringify({
       dryRun: true,
       only: options.only,
       localDir,
       count: tasks.length,
       outputs: tasks.map(task => task.output),
+      ytDlp,
+      commands: options.only === 'video' ? tasks.map(task => task.ytDlpCommand) : undefined,
     }, null, 2));
     return;
+  }
+
+  if (options.only === 'video') {
+    const ytDlp = getYtDlpAvailability();
+    if (!ytDlp.available) {
+      throw new Error('yt-dlp is required for video downloads. Install yt-dlp first, or run with --dry-run to inspect planned commands.');
+    }
+    throw new Error('Video download execution is not enabled yet. Run with --dry-run, review the yt-dlp commands, then approve a small sample download.');
   }
 
   const results = [];
@@ -229,7 +310,11 @@ export async function runCli(argv = process.argv.slice(2)) {
     try {
       const result = await downloadBrooksMediaTask(task, { overwrite: options.overwrite });
       results.push(result);
-      console.log(`${result.status}: ${result.output}`);
+      if (result.status === 'unavailable' && result.reason === 'zhSubtitleNotPublished') {
+        console.log(`unavailable: ${result.output} (CN ${result.httpStatus}, EN ${result.comparison.status}; Chinese subtitle is not published yet)`);
+      } else {
+        console.log(`${result.status}: ${result.output}`);
+      }
     } catch (error) {
       results.push({
         status: 'failed',
@@ -246,6 +331,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     total: results.length,
     downloaded: results.filter(result => result.status === 'downloaded').length,
     skipped: results.filter(result => result.status === 'skipped').length,
+    unavailable: results.filter(result => result.status === 'unavailable').length,
     failed: failed.length,
   }, null, 2));
   if (failed.length) {
