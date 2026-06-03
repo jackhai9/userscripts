@@ -126,7 +126,7 @@ export function formatBrooksMediaExportStatus(options) {
   if (lastFailure && lastFailure.error) {
     lines.push(`最近失败: ${lastFailure.error}`)
     if (!state.running && failures.length) {
-      lines.push('请点“重试失败”；仍失败再导出 JSON')
+      lines.push('请点“重试失败”；仍失败再导出清单 JSON')
     }
   }
   return lines.join('\n')

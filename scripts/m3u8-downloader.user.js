@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.28
+// @version      0.10.29
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -304,7 +304,7 @@
     if (lastFailure && lastFailure.error) {
       lines.push(`最近失败: ${lastFailure.error}`);
       if (!state.running && failures.length) {
-        lines.push("请点“重试失败”；仍失败再导出 JSON");
+        lines.push("请点“重试失败”；仍失败再导出清单 JSON");
       }
     }
     return lines.join("\n");
@@ -482,7 +482,7 @@
       }
       const state = brooksMediaExportState || loadBrooksMediaExportState();
       if (!state) {
-        statusEl.textContent = `发现 ${getBrooksCourseVideoLinks(document).length} 个视频页`;
+        statusEl.textContent = `发现 ${getBrooksCourseVideoLinks(document).length} 个课程视频`;
         updateBrooksMediaExportControls(null);
         return;
       }
@@ -698,7 +698,7 @@
     function exportBrooksMediaIndex() {
       const state = brooksMediaExportState || loadBrooksMediaExportState();
       if (!state) {
-        alert("没有可导出的 Brooks 媒体索引");
+        alert("没有可导出的 Brooks 视频与字幕清单");
         return;
       }
       const payload = buildBrooksMediaExportPayload(state, (/* @__PURE__ */ new Date()).toISOString());
@@ -740,13 +740,13 @@
       section.id = "brooks-media-export-dom";
       section.style.cssText = "position:fixed;right:20px;bottom:88px;z-index:9999;width:380px;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px 12px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.35;box-shadow:0 4px 12px rgba(0,0,0,.18);";
       section.innerHTML = `
-      <div style="margin-bottom:4px;">Brooks 媒体索引</div>
-      <div id="brooks-media-export-status" style="height:82px;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;">发现 ${links.length} 个视频页</div>
+      <div style="margin-bottom:4px;">Brooks 视频与字幕清单</div>
+      <div id="brooks-media-export-status" style="height:82px;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;">发现 ${links.length} 个课程视频</div>
       <div id="brooks-media-export-actions" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:32px;">
         <button id="brooks-media-export-primary" type="button">开始</button>
         <button id="brooks-media-export-retry-failed" type="button" style="display:none;">重试失败</button>
         <button id="brooks-media-export-reset" type="button" style="display:none;">重置</button>
-        <button id="brooks-media-export-download" type="button">导出 JSON</button>
+        <button id="brooks-media-export-download" type="button">导出清单 JSON</button>
       </div>
       <div id="brooks-media-export-reset-help" style="display:none;margin-top:6px;color:#d1d5db;font-size:11px;line-height:1.35;">重置会清空当前进度和结果，不会自动开始；要放弃中断进度或失败记录时再点。</div>
     `;
