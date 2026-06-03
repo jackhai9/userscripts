@@ -476,6 +476,84 @@ test('Brooks media export reset clears saved progress and returns to initial dis
   }
 });
 
+test('Brooks media export hides reset after a complete successful collection', async () => {
+  const dom = new JSDOM(`
+    <body>
+      <a href="/price-action-fundamentals/video-01-terminology/">Video 01</a>
+      <a href="/price-action-fundamentals/video-02a-chart-basics-price-action/">Video 02A</a>
+    </body>
+  `, {
+    url: 'https://www.brookstradingcourse.com/main-course-videos/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  window.localStorage.setItem('jh-userscripts:brooks-media-index-export', JSON.stringify({
+    running: false,
+    stopped: false,
+    schemaVersion: 2,
+    links: [
+      'https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/',
+      'https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/',
+    ],
+    index: 2,
+    records: [
+      { ok: true, index: 0, url: 'https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/' },
+      { ok: true, index: 1, url: 'https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/' },
+    ],
+    failures: [],
+  }));
+  window.requestAnimationFrame = callback => callback();
+  window.alert = () => {};
+  window.open = () => {};
+
+  window.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /已完成 2\/2 \| 成功 2 \| 失败 0/);
+  assert.equal(window.document.querySelector('#brooks-media-export-reset')?.style.display, 'none');
+  assert.equal(window.document.querySelector('#brooks-media-export-reset-help')?.style.display, 'none');
+});
+
+test('Brooks media export explains reset only when discarding progress is useful', async () => {
+  const dom = new JSDOM(`
+    <body>
+      <a href="/price-action-fundamentals/video-01-terminology/">Video 01</a>
+      <a href="/price-action-fundamentals/video-02a-chart-basics-price-action/">Video 02A</a>
+    </body>
+  `, {
+    url: 'https://www.brookstradingcourse.com/main-course-videos/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  window.localStorage.setItem('jh-userscripts:brooks-media-index-export', JSON.stringify({
+    running: false,
+    stopped: true,
+    schemaVersion: 2,
+    links: [
+      'https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/',
+      'https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/',
+    ],
+    index: 1,
+    records: [
+      { ok: true, index: 0, url: 'https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/' },
+    ],
+    failures: [],
+  }));
+  window.requestAnimationFrame = callback => callback();
+  window.alert = () => {};
+  window.open = () => {};
+
+  window.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  const resetHelp = window.document.querySelector('#brooks-media-export-reset-help');
+  assert.equal(window.document.querySelector('#brooks-media-export-reset')?.style.display, '');
+  assert.equal(resetHelp?.style.display, '');
+  assert.equal(resetHelp?.textContent, '重置会清空当前进度和结果，不会自动开始；要放弃中断进度或失败记录时再点。');
+});
+
 test('Brooks media export retries only failed pages and keeps successful records', async () => {
   const dom = new JSDOM(`
     <body>
@@ -545,7 +623,11 @@ test('Brooks media export retries only failed pages and keeps successful records
   await new Promise(resolve => setTimeout(resolve, 20));
 
   const retryButton = window.document.querySelector('#brooks-media-export-retry-failed');
+  const resetButton = window.document.querySelector('#brooks-media-export-reset');
+  const resetHelp = window.document.querySelector('#brooks-media-export-reset-help');
   assert.equal(retryButton?.textContent, '重试失败');
+  assert.equal(resetButton?.style.display, '');
+  assert.equal(resetHelp?.style.display, '');
   retryButton.click();
   await new Promise(resolve => setTimeout(resolve, 20));
 

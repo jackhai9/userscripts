@@ -67,6 +67,8 @@
 - `重试失败` 只应在导出已完成、非运行、且存在 failures 时显示；暂停但未完成时应该继续原队列，不要进入 retry-only 流程。
 - 所有 Brooks 成功路径必须共用同一套队列推进逻辑，包括 direct Bunny iframe m3u8 message 和 same-origin Brooks record message。
 - Brooks 耗时语义是 active runtime，不是 `startedAt -> updatedAt` 墙钟时间。暂停、停止、页面空置时间不能计入 `elapsedMs`/`elapsedText`。
+- Brooks `重置` 是丢弃当前进度/结果的动作，不会自动开始；只在暂停/中断、未完成非运行状态、或完成但有失败时显示。完整成功后隐藏，避免用户误以为必须重置。
+- Brooks `重置` 可见时必须同时有简短说明；初始状态和完整成功状态不要显示重置说明。
 - 旧 persisted state 如果没有 active timing 字段，不要用墙钟时间补一个看似准确但实际误导的耗时。
 - Bunny caption URL 必须从实际检测到的 m3u8 host/path 推导，不能硬编码某个 `vz-...b-cdn.net` host；保留非 `title` query 参数。
 - `m3u8-downloader` 已迁移到 `src/m3u8-downloader/`；后续不要直接改生成后的 `scripts/m3u8-downloader.user.js`，除非是验证生成产物。
