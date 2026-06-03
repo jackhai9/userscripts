@@ -28,6 +28,7 @@ test('Brooks course exporter collects unique course video links from the index p
   const { getBrooksCourseVideoLinks } = loadFunctions(['isBrooksHost', 'getBrooksCourseVideoLinks']);
   const dom = new JSDOM(`
     <a href="/trade-price-action/">Course index</a>
+    <a href="/video-course-table-of-contents/">Table of contents</a>
     <a href="/price-action-fundamentals/video-01-terminology/">Video 01</a>
     <a href="https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/">Duplicate</a>
     <a href="https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/?ref=nav">Video 02A</a>

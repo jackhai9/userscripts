@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.19
+// @version      0.10.20
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -31,6 +31,7 @@
   var M3U8_MESSAGE_TYPE = 'jh-userscripts:m3u8-detected'
   var BROOKS_MEDIA_INDEX_MESSAGE_TYPE = 'jh-userscripts:brooks-media-index-record'
   var BROOKS_MEDIA_INDEX_STATE_KEY = 'jh-userscripts:brooks-media-index-export'
+  var BROOKS_MEDIA_EXPORT_SCHEMA_VERSION = 2
   var BROOKS_MEDIA_EXPORT_TIMEOUT_MS = 45000
   var BROOKS_MEDIA_EXPORT_STEP_DELAY_MS = 500
   var brooksMediaExportState = null
@@ -248,7 +249,7 @@
           return null
         }
       })
-      .filter(url => url && isBrooksHost(url.hostname) && /\/video-[^/]+\/?$/.test(url.pathname))
+      .filter(url => url && isBrooksHost(url.hostname) && /\/video-\d+[a-z]?-[^/]+\/?$/i.test(url.pathname))
       .map(url => url.href)
       .filter(href => {
         if (seen.has(href)) {
@@ -290,7 +291,8 @@
   function loadBrooksMediaExportState() {
     try {
       const raw = localStorage.getItem(BROOKS_MEDIA_INDEX_STATE_KEY)
-      return raw ? JSON.parse(raw) : null
+      const state = raw ? JSON.parse(raw) : null
+      return state && state.schemaVersion === BROOKS_MEDIA_EXPORT_SCHEMA_VERSION ? state : null
     } catch (error) {
       console.error('Unable to load Brooks media export state:', error)
       return null
@@ -385,6 +387,7 @@
     brooksMediaExportState = {
       running: true,
       stopped: false,
+      schemaVersion: BROOKS_MEDIA_EXPORT_SCHEMA_VERSION,
       links,
       index: 0,
       records: [],
