@@ -37,6 +37,27 @@ The durable source of truth is a course media index exported from the logged-in 
 
 This index is the basis for later subtitle download, video duration comparison, local file matching, and candidate report generation.
 
+## Local Inventory Audit
+
+After exporting a complete Brooks media index, run the read-only local inventory audit before downloading anything:
+
+```bash
+npm run audit:brooks-media -- \
+  --index /Users/lizhenhai/Downloads/brooks-media-index-2026-06-03.json \
+  --local /Users/lizhenhai/PA/input_videos \
+  --output /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json
+```
+
+The audit report compares the current online `output` base name against local videos and subtitles. It treats exact matches as current files and same-series non-exact matches as local variants, usually older or differently named files such as a no-version local file when the online index now ends in `v2`, `v3`, or `version 2`.
+
+The generated report includes:
+
+- `summary`: counts for complete current items, missing current videos, missing English subtitles, missing Chinese subtitles, and items with local variants.
+- `items`: all index rows with local exact matches, variants, and needed downloads.
+- `downloadPlan`: only rows that need at least one download.
+
+The audit is intentionally non-destructive: it does not download, rename, overwrite, or delete any local file. Use `downloadPlan` to review candidates before running any downloader.
+
 ## Page HTML And Rendered DOM
 
 Unauthenticated command-line HTTP reads of Brooks video page HTML did not expose `iframe.mediadelivery.net` or Bunny video IDs in tested pages. The media data is protected by the logged-in Brooks session.
