@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.23
+// @version      0.10.24
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -350,6 +350,23 @@
     return lines.join('\n')
   }
 
+  function getBrooksMediaExportPrimaryLabel(state) {
+    if (state && state.running && !state.stopped) {
+      return '暂停'
+    }
+    if (state && state.stopped) {
+      return '继续'
+    }
+    return '开始'
+  }
+
+  function updateBrooksMediaExportControls(state) {
+    const primaryButton = document.getElementById('brooks-media-export-primary')
+    if (primaryButton) {
+      primaryButton.textContent = getBrooksMediaExportPrimaryLabel(state)
+    }
+  }
+
   function updateBrooksMediaExportStatus() {
     const statusEl = document.getElementById('brooks-media-export-status')
     if (!statusEl) {
@@ -358,6 +375,7 @@
     const state = brooksMediaExportState || loadBrooksMediaExportState()
     if (!state) {
       statusEl.textContent = `发现 ${getBrooksCourseVideoLinks(document).length} 个视频页`
+      updateBrooksMediaExportControls(null)
       return
     }
     statusEl.textContent = formatBrooksMediaExportStatus({
@@ -365,6 +383,7 @@
       pending: brooksMediaExportPending,
       now: Date.now(),
     })
+    updateBrooksMediaExportControls(state)
   }
 
   function clearBrooksMediaExportFrame() {
@@ -469,7 +488,7 @@
     processNextBrooksMediaExport()
   }
 
-  function stopBrooksMediaExport() {
+  function pauseBrooksMediaExport() {
     if (!brooksMediaExportState) {
       brooksMediaExportState = loadBrooksMediaExportState()
     }
@@ -479,6 +498,28 @@
       saveBrooksMediaExportState()
     }
     clearBrooksMediaExportFrame()
+    updateBrooksMediaExportStatus()
+  }
+
+  function toggleBrooksMediaExportPrimaryAction() {
+    if (!brooksMediaExportState) {
+      brooksMediaExportState = loadBrooksMediaExportState()
+    }
+    if (brooksMediaExportState && brooksMediaExportState.running && !brooksMediaExportState.stopped) {
+      pauseBrooksMediaExport()
+      return
+    }
+    if (brooksMediaExportState && brooksMediaExportState.stopped) {
+      resumeBrooksMediaExport()
+      return
+    }
+    startBrooksMediaExport()
+  }
+
+  function resetBrooksMediaExport() {
+    clearBrooksMediaExportFrame()
+    brooksMediaExportState = null
+    localStorage.removeItem(BROOKS_MEDIA_INDEX_STATE_KEY)
     updateBrooksMediaExportStatus()
   }
 
@@ -533,22 +574,22 @@
     const links = getBrooksCourseVideoLinks(document)
     const section = document.createElement('section')
     section.id = 'brooks-media-export-dom'
-    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;max-width:560px;padding:10px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.18);'
+    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;width:760px;max-width:calc(100vw - 40px);min-height:210px;box-sizing:border-box;padding:14px 16px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.18);'
     section.innerHTML = `
       <div style="margin-bottom:6px;">Brooks 媒体索引</div>
-      <div id="brooks-media-export-status" style="margin-bottom:8px;white-space:pre-wrap;">发现 ${links.length} 个视频页</div>
-      <button id="brooks-media-export-start" type="button">开始</button>
-      <button id="brooks-media-export-resume" type="button">继续</button>
-      <button id="brooks-media-export-stop" type="button">停止</button>
-      <button id="brooks-media-export-download" type="button">导出 JSON</button>
+      <div id="brooks-media-export-status" style="height:82px;margin-bottom:10px;white-space:pre-wrap;overflow-wrap:anywhere;overflow-y:auto;">发现 ${links.length} 个视频页</div>
+      <div id="brooks-media-export-actions" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:52px;">
+        <button id="brooks-media-export-primary" type="button">开始</button>
+        <button id="brooks-media-export-reset" type="button">重置</button>
+        <button id="brooks-media-export-download" type="button">导出 JSON</button>
+      </div>
     `
     section.querySelectorAll('button').forEach(button => {
-      button.style.cssText = 'margin:2px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#2563eb;color:white;cursor:pointer;'
+      button.style.cssText = 'min-width:84px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#2563eb;color:white;cursor:pointer;'
     })
     document.body.appendChild(section)
-    document.getElementById('brooks-media-export-start').addEventListener('click', startBrooksMediaExport)
-    document.getElementById('brooks-media-export-resume').addEventListener('click', resumeBrooksMediaExport)
-    document.getElementById('brooks-media-export-stop').addEventListener('click', stopBrooksMediaExport)
+    document.getElementById('brooks-media-export-primary').addEventListener('click', toggleBrooksMediaExportPrimaryAction)
+    document.getElementById('brooks-media-export-reset').addEventListener('click', resetBrooksMediaExport)
     document.getElementById('brooks-media-export-download').addEventListener('click', exportBrooksMediaIndex)
     brooksMediaExportState = loadBrooksMediaExportState()
     updateBrooksMediaExportStatus()

@@ -118,9 +118,116 @@ test('Brooks course index page renders a media export panel without starting col
   await new Promise(resolve => setTimeout(resolve, 20));
 
   assert.equal(window.document.querySelector('#brooks-media-export-dom') !== null, true);
-  assert.equal(window.document.querySelector('#brooks-media-export-start')?.textContent, '开始');
+  assert.equal(window.document.querySelector('#brooks-media-export-primary')?.textContent, '开始');
+  assert.equal(window.document.querySelector('#brooks-media-export-resume'), null);
+  assert.equal(window.document.querySelector('#brooks-media-export-pause'), null);
+  assert.equal(window.document.querySelector('#brooks-media-export-reset')?.textContent, '重置');
   assert.equal(window.document.querySelector('#brooks-media-export-status')?.textContent, '发现 2 个视频页');
   assert.equal(window.document.querySelectorAll('iframe').length, 0);
+});
+
+test('Brooks media export panel keeps stable dimensions while status text changes', async () => {
+  const dom = new JSDOM(`
+    <body>
+      <a href="/price-action-fundamentals/video-01-terminology/">Video 01</a>
+    </body>
+  `, {
+    url: 'https://www.brookstradingcourse.com/main-course-videos/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  window.requestAnimationFrame = callback => callback();
+  window.alert = () => {};
+  window.open = () => {};
+
+  window.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  const panel = window.document.querySelector('#brooks-media-export-dom');
+  const status = window.document.querySelector('#brooks-media-export-status');
+  const actions = window.document.querySelector('#brooks-media-export-actions');
+
+  assert.equal(panel?.style.width, '760px');
+  assert.equal(panel?.style.minHeight, '210px');
+  assert.equal(status?.style.height, '82px');
+  assert.equal(status?.style.overflowWrap, 'anywhere');
+  assert.equal(status?.style.overflowY, 'auto');
+  assert.equal(actions?.style.display, 'flex');
+  assert.equal(actions?.style.minHeight, '52px');
+});
+
+test('Brooks media export primary button toggles start, pause, and resume labels', async () => {
+  const dom = new JSDOM(`
+    <body>
+      <a href="/price-action-fundamentals/video-01-terminology/">Video 01</a>
+    </body>
+  `, {
+    url: 'https://www.brookstradingcourse.com/main-course-videos/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  window.requestAnimationFrame = callback => callback();
+  window.alert = () => {};
+  window.open = () => {};
+
+  window.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const primary = window.document.querySelector('#brooks-media-export-primary');
+
+  primary.click();
+  assert.equal(primary.textContent, '暂停');
+  assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /采集中/);
+
+  primary.click();
+  assert.equal(primary.textContent, '继续');
+  assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /已暂停/);
+
+  primary.click();
+  assert.equal(primary.textContent, '暂停');
+  assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /采集中/);
+
+  primary.click();
+});
+
+test('Brooks media export reset clears saved progress and returns to initial discovered state', async () => {
+  const dom = new JSDOM(`
+    <body>
+      <a href="/price-action-fundamentals/video-01-terminology/">Video 01</a>
+      <a href="/price-action-fundamentals/video-02a-chart-basics-price-action/">Video 02A</a>
+    </body>
+  `, {
+    url: 'https://www.brookstradingcourse.com/main-course-videos/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  window.requestAnimationFrame = callback => callback();
+  window.alert = () => {};
+  window.open = () => {};
+
+  window.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  window.document.querySelector('#brooks-media-export-primary').click();
+
+  try {
+    window.document.querySelector('#brooks-media-export-primary').click();
+
+    assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /已暂停/);
+    assert.equal(window.document.querySelectorAll('iframe').length, 0);
+
+    window.document.querySelector('#brooks-media-export-reset').click();
+
+    assert.equal(window.document.querySelector('#brooks-media-export-status')?.textContent, '发现 2 个视频页');
+    assert.equal(window.document.querySelector('#brooks-media-export-primary')?.textContent, '开始');
+    assert.equal(window.localStorage.getItem('jh-userscripts:brooks-media-index-export'), null);
+    assert.equal(window.document.querySelectorAll('iframe').length, 0);
+  } finally {
+    if (window.document.querySelector('#brooks-media-export-primary')?.textContent === '暂停') {
+      window.document.querySelector('#brooks-media-export-primary')?.click();
+    }
+  }
 });
 
 test('Brooks media export status refreshes elapsed time while waiting for a page', async () => {
@@ -142,7 +249,7 @@ test('Brooks media export status refreshes elapsed time while waiting for a page
 
   window.eval(source);
   await new Promise(resolve => setTimeout(resolve, 20));
-  window.document.querySelector('#brooks-media-export-start').click();
+  window.document.querySelector('#brooks-media-export-primary').click();
 
   try {
     assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /等待 0s/);
@@ -151,7 +258,7 @@ test('Brooks media export status refreshes elapsed time while waiting for a page
 
     assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /等待 2s/);
   } finally {
-    window.document.querySelector('#brooks-media-export-stop').click();
+    window.document.querySelector('#brooks-media-export-primary').click();
   }
 });
 
@@ -172,7 +279,7 @@ test('Brooks media export iframe uses an in-viewport player-sized frame for medi
 
   window.eval(source);
   await new Promise(resolve => setTimeout(resolve, 20));
-  window.document.querySelector('#brooks-media-export-start').click();
+  window.document.querySelector('#brooks-media-export-primary').click();
 
   try {
     const iframe = window.document.querySelector('iframe[src*="/price-action-fundamentals/video-04-setup/"]');
@@ -184,6 +291,6 @@ test('Brooks media export iframe uses an in-viewport player-sized frame for medi
     assert.equal(iframe?.style.pointerEvents, 'none');
     assert.notEqual(iframe?.style.left, '-10000px');
   } finally {
-    window.document.querySelector('#brooks-media-export-stop').click();
+    window.document.querySelector('#brooks-media-export-primary').click();
   }
 });
