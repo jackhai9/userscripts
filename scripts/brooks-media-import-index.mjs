@@ -5,7 +5,11 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_DOWNLOADS_DIR = join(homedir(), 'Downloads');
-const DEFAULT_REPORTS_DIR = '/Users/lizhenhai/PA/_reports';
+const DEFAULT_REPORTS_DIR = getDefaultBrooksReportsDir();
+
+export function getDefaultBrooksReportsDir(home = homedir()) {
+  return join(home, 'PA', '_reports');
+}
 
 function parseArgs(argv) {
   const options = {
