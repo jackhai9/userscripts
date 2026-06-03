@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.25
+// @version      0.10.26
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -339,7 +339,7 @@
       url: brooksMediaExportPending.url,
       pageUrl: record.pageUrl,
     })
-    brooksMediaExportState.index = brooksMediaExportPending.index + 1
+    advanceBrooksMediaExportQueue(brooksMediaExportPending.index)
     saveBrooksMediaExportState()
     clearBrooksMediaExportFrame()
     updateBrooksMediaExportStatus()
@@ -407,6 +407,47 @@
     return value.slice(0, Math.max(0, maxLength - 1)) + '…'
   }
 
+  function parseBrooksMediaExportTime(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value
+    }
+    if (!value) {
+      return null
+    }
+    const timestamp = Date.parse(value)
+    return Number.isFinite(timestamp) ? timestamp : null
+  }
+
+  function getBrooksMediaExportElapsedMs(state, now) {
+    const startedAt = parseBrooksMediaExportTime(state && state.startedAt)
+    if (startedAt === null) {
+      return null
+    }
+    const fallbackNow = typeof now === 'number' ? now : Date.now()
+    const endedAt = state && state.running
+      ? fallbackNow
+      : (parseBrooksMediaExportTime(state && state.updatedAt) || fallbackNow)
+    return Math.max(0, endedAt - startedAt)
+  }
+
+  function formatBrooksMediaExportDuration(milliseconds) {
+    if (typeof milliseconds !== 'number' || !Number.isFinite(milliseconds)) {
+      return ''
+    }
+    const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
+    const seconds = totalSeconds % 60
+    const totalMinutes = Math.floor(totalSeconds / 60)
+    const minutes = totalMinutes % 60
+    const hours = Math.floor(totalMinutes / 60)
+    if (hours) {
+      return `${hours}h${String(minutes).padStart(2, '0')}m${String(seconds).padStart(2, '0')}s`
+    }
+    if (minutes) {
+      return `${minutes}m${String(seconds).padStart(2, '0')}s`
+    }
+    return `${seconds}s`
+  }
+
   function formatBrooksMediaExportStatus(options) {
     const state = options && options.state
     if (!state) {
@@ -424,6 +465,10 @@
       `失败 ${failures.length}`,
     ]
     const lines = [summaryParts.join(' | ')]
+    const elapsedText = formatBrooksMediaExportDuration(getBrooksMediaExportElapsedMs(state, options && options.now))
+    if (elapsedText) {
+      lines.push(`耗时: ${elapsedText}`)
+    }
 
     const pending = options && options.pending
     if (pending && pending.url) {
@@ -439,6 +484,9 @@
     const lastFailure = failures[failures.length - 1]
     if (lastFailure && lastFailure.error) {
       lines.push(`最近失败: ${lastFailure.error}`)
+      if (!state.running && failures.length) {
+        lines.push('请点“重试失败”；仍失败再导出 JSON')
+      }
     }
     return lines.join('\n')
   }
@@ -457,6 +505,15 @@
     const primaryButton = document.getElementById('brooks-media-export-primary')
     if (primaryButton) {
       primaryButton.textContent = getBrooksMediaExportPrimaryLabel(state)
+    }
+    const retryFailedButton = document.getElementById('brooks-media-export-retry-failed')
+    if (retryFailedButton) {
+      const canRetryFailures = canRetryFailedBrooksMediaExport(state)
+      retryFailedButton.style.display = canRetryFailures ? '' : 'none'
+    }
+    const resetButton = document.getElementById('brooks-media-export-reset')
+    if (resetButton) {
+      resetButton.style.display = state && !state.running ? '' : 'none'
     }
   }
 
@@ -513,9 +570,43 @@
       url,
       error,
     })
-    brooksMediaExportState.index = index + 1
+    advanceBrooksMediaExportQueue(index)
     saveBrooksMediaExportState()
     updateBrooksMediaExportStatus()
+  }
+
+  function getNextBrooksMediaExportIndex(state) {
+    if (state && state.retryQueue && state.retryQueue.length) {
+      return state.retryQueue[0]
+    }
+    return state && typeof state.index === 'number' ? state.index : 0
+  }
+
+  function isBrooksMediaExportComplete(state) {
+    if (!state || !state.links || !state.links.length) {
+      return false
+    }
+    const records = state.records || []
+    const failures = state.failures || []
+    return records.length + failures.length >= state.links.length
+  }
+
+  function canRetryFailedBrooksMediaExport(state) {
+    return !!(state && !state.running && isBrooksMediaExportComplete(state) && state.failures && state.failures.length)
+  }
+
+  function advanceBrooksMediaExportQueue(index) {
+    if (!brooksMediaExportState) {
+      return
+    }
+    if (brooksMediaExportState.retryQueue && brooksMediaExportState.retryQueue.length) {
+      brooksMediaExportState.retryQueue = brooksMediaExportState.retryQueue.filter(itemIndex => itemIndex !== index)
+      if (!brooksMediaExportState.retryQueue.length) {
+        delete brooksMediaExportState.retryQueue
+      }
+      return
+    }
+    brooksMediaExportState.index = index + 1
   }
 
   function isCurrentBrooksMediaExportPending(index, url) {
@@ -564,7 +655,7 @@
       updateBrooksMediaExportStatus()
       return
     }
-    const index = brooksMediaExportState.index || 0
+    const index = getNextBrooksMediaExportIndex(brooksMediaExportState)
     const url = brooksMediaExportState.links[index]
     if (!url) {
       brooksMediaExportState.running = false
@@ -664,10 +755,33 @@
     updateBrooksMediaExportStatus()
   }
 
+  function retryFailedBrooksMediaExport() {
+    if (!brooksMediaExportState) {
+      brooksMediaExportState = loadBrooksMediaExportState()
+    }
+    if (!canRetryFailedBrooksMediaExport(brooksMediaExportState)) {
+      return
+    }
+    const retryIndexes = (brooksMediaExportState.failures || [])
+      .map(failure => failure.index)
+      .filter(index => typeof index === 'number' && brooksMediaExportState.links[index])
+    if (!retryIndexes.length) {
+      return
+    }
+    clearBrooksMediaExportFrame()
+    brooksMediaExportState.retryQueue = [...new Set(retryIndexes)]
+    brooksMediaExportState.failures = []
+    brooksMediaExportState.running = true
+    brooksMediaExportState.stopped = false
+    saveBrooksMediaExportState()
+    processNextBrooksMediaExport()
+  }
+
   function buildBrooksMediaExportPayload(state, exportedAt) {
     const links = state && state.links ? state.links : []
     const records = state && state.records ? state.records : []
     const failures = state && state.failures ? state.failures : []
+    const elapsedMs = getBrooksMediaExportElapsedMs(state, parseBrooksMediaExportTime(exportedAt) || Date.now())
     const completedIndexes = new Set(records.concat(failures).map(item => item.index))
     const missingIndexes = links
       .map((url, index) => index)
@@ -675,6 +789,11 @@
     const done = records.length + failures.length
     return {
       exportedAt,
+      startedAt: state && state.startedAt ? state.startedAt : null,
+      updatedAt: state && state.updatedAt ? state.updatedAt : null,
+      elapsedMs,
+      elapsedSeconds: elapsedMs === null ? null : Math.floor(elapsedMs / 1000),
+      elapsedText: formatBrooksMediaExportDuration(elapsedMs),
       total: links.length,
       done,
       completed: links.length > 0 && done >= links.length,
@@ -719,7 +838,7 @@
       pageUrl: data.record.pageUrl,
     }
     brooksMediaExportState.records.push(record)
-    brooksMediaExportState.index = brooksMediaExportPending.index + 1
+    advanceBrooksMediaExportQueue(brooksMediaExportPending.index)
     saveBrooksMediaExportState()
     clearBrooksMediaExportFrame()
     updateBrooksMediaExportStatus()
@@ -733,13 +852,14 @@
     const links = getBrooksCourseVideoLinks(document)
     const section = document.createElement('section')
     section.id = 'brooks-media-export-dom'
-    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;width:520px;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px 12px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.35;box-shadow:0 4px 12px rgba(0,0,0,.18);'
+    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;width:380px;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px 12px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.35;box-shadow:0 4px 12px rgba(0,0,0,.18);'
     section.innerHTML = `
       <div style="margin-bottom:4px;">Brooks 媒体索引</div>
-      <div id="brooks-media-export-status" style="height:46px;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;">发现 ${links.length} 个视频页</div>
+      <div id="brooks-media-export-status" style="height:82px;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;">发现 ${links.length} 个视频页</div>
       <div id="brooks-media-export-actions" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:32px;">
         <button id="brooks-media-export-primary" type="button">开始</button>
-        <button id="brooks-media-export-reset" type="button">重置</button>
+        <button id="brooks-media-export-retry-failed" type="button" style="display:none;">重试失败</button>
+        <button id="brooks-media-export-reset" type="button" style="display:none;">重置</button>
         <button id="brooks-media-export-download" type="button">导出 JSON</button>
       </div>
     `
@@ -748,6 +868,7 @@
     })
     document.body.appendChild(section)
     document.getElementById('brooks-media-export-primary').addEventListener('click', toggleBrooksMediaExportPrimaryAction)
+    document.getElementById('brooks-media-export-retry-failed').addEventListener('click', retryFailedBrooksMediaExport)
     document.getElementById('brooks-media-export-reset').addEventListener('click', resetBrooksMediaExport)
     document.getElementById('brooks-media-export-download').addEventListener('click', exportBrooksMediaIndex)
     brooksMediaExportState = loadBrooksMediaExportState()
