@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.20
+// @version      0.10.21
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -236,6 +236,11 @@
     return isBrooksHost(location.hostname) && location.pathname.replace(/\/+$/, '') === '/main-course-videos'
   }
 
+  function isBrooksMediaPageUrl(url) {
+    const path = url.pathname
+    return /\/video-\d+[a-z]?-[^/]+\/?$/i.test(path) || /^\/bonus-videos\/[^/]+\/?$/i.test(path)
+  }
+
   function getBrooksCourseVideoLinks(root) {
     const seen = new Set()
     const baseHref = root.defaultView?.location?.href || location.href
@@ -249,7 +254,7 @@
           return null
         }
       })
-      .filter(url => url && isBrooksHost(url.hostname) && /\/video-\d+[a-z]?-[^/]+\/?$/i.test(url.pathname))
+      .filter(url => url && isBrooksHost(url.hostname) && isBrooksMediaPageUrl(url))
       .map(url => url.href)
       .filter(href => {
         if (seen.has(href)) {

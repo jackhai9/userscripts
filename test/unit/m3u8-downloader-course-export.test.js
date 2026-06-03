@@ -25,19 +25,21 @@ function loadFunctions(names) {
 }
 
 test('Brooks course exporter collects unique course video links from the index page', () => {
-  const { getBrooksCourseVideoLinks } = loadFunctions(['isBrooksHost', 'getBrooksCourseVideoLinks']);
+  const { getBrooksCourseVideoLinks } = loadFunctions(['isBrooksHost', 'isBrooksMediaPageUrl', 'getBrooksCourseVideoLinks']);
   const dom = new JSDOM(`
     <a href="/trade-price-action/">Course index</a>
     <a href="/video-course-table-of-contents/">Table of contents</a>
     <a href="/price-action-fundamentals/video-01-terminology/">Video 01</a>
     <a href="https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/">Duplicate</a>
     <a href="https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/?ref=nav">Video 02A</a>
+    <a href="https://www.brookstradingcourse.com/bonus-videos/trading-patterns-on-the-open/">Bonus video</a>
     <a href="https://example.com/price-action-fundamentals/video-99/">Other site</a>
   `, { url: 'https://www.brookstradingcourse.com/main-course-videos/' });
 
   assert.deepEqual(getBrooksCourseVideoLinks(dom.window.document), [
     'https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/',
     'https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/?ref=nav',
+    'https://www.brookstradingcourse.com/bonus-videos/trading-patterns-on-the-open/',
   ]);
 });
 
