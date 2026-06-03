@@ -144,13 +144,13 @@ function buildDownloads(record, base, needs) {
       }),
     };
   }
-  if (needs.includes('enSubtitle')) {
+  if (needs.includes('video') || needs.includes('enSubtitle')) {
     downloads.enSubtitle = {
       url: record.en || '',
       output: `${base}.en.vtt`,
     };
   }
-  if (needs.includes('zhSubtitle')) {
+  if (needs.includes('video') || needs.includes('zhSubtitle')) {
     downloads.zhSubtitle = {
       url: record.cn || '',
       output: `${base}.zh.vtt`,

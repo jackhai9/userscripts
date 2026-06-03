@@ -126,6 +126,45 @@ test('Brooks media audit matches records whose media title already ends with a v
   ]);
 });
 
+test('Brooks media audit keeps caption download metadata when only the current video is missing', () => {
+  const audit = auditBrooksMediaIndex({
+    index: {
+      records: [
+        {
+          index: 0,
+          output: 'Video 21B Reversals v4.%(ext)s',
+          pageUrl: 'https://example.com/video-21b/',
+          m3u8: 'https://cdn.example.com/vid21b/video.m3u8',
+          en: 'https://cdn.example.com/vid21b/captions/EN.vtt',
+          cn: 'https://cdn.example.com/vid21b/captions/CN.vtt',
+          referer: 'https://iframe.example.com/embed/vid21b',
+        },
+      ],
+    },
+    indexPath: '/tmp/index.json',
+    localDir: '/videos',
+    localFiles: [
+      '/videos/Video 21B Reversals v4.en.vtt',
+      '/videos/Video 21B Reversals v4.zh.vtt',
+    ],
+  });
+
+  assert.deepEqual(audit.items[0].needs, ['video']);
+  assert.deepEqual(Object.keys(audit.downloadPlan[0].downloads).sort(), [
+    'enSubtitle',
+    'video',
+    'zhSubtitle',
+  ]);
+  assert.equal(
+    audit.downloadPlan[0].downloads.enSubtitle.url,
+    'https://cdn.example.com/vid21b/captions/EN.vtt',
+  );
+  assert.equal(
+    audit.downloadPlan[0].downloads.zhSubtitle.url,
+    'https://cdn.example.com/vid21b/captions/CN.vtt',
+  );
+});
+
 test('Brooks media audit builds quoted yt-dlp commands', () => {
   assert.equal(
     buildYtDlpCommand({
