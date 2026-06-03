@@ -6,8 +6,8 @@
 - `src/binance-orderbook-trade/` 是 `scripts/binance-orderbook-trade.user.js` 的开发真源。
 - `src/binance-trading-data/` 是 `scripts/binance-trading-data.user.js` 的开发真源。
 - `src/binance-coinmarketcap-data/` 是 `scripts/binance-coinmarketcap-data.user.js` 的开发真源。
-- `scripts/m3u8-downloader.user.js` 当前仍是开发真源；迁移后应改为 `src/m3u8-downloader/` 真源并由 build 生成。
-- `scripts/binance-orderbook-trade.user.js`、`scripts/binance-trading-data.user.js`、`scripts/binance-coinmarketcap-data.user.js` 是生成后的单文件安装/更新入口，必须保持可读、非压缩、非混淆。
+- `src/m3u8-downloader/` 是 `scripts/m3u8-downloader.user.js` 的开发真源。
+- `scripts/binance-orderbook-trade.user.js`、`scripts/binance-trading-data.user.js`、`scripts/binance-coinmarketcap-data.user.js`、`scripts/m3u8-downloader.user.js` 是生成后的单文件安装/更新入口，必须保持可读、非压缩、非混淆。
 - 其它 userscript 在迁移前仍以 `scripts/*.user.js` 为真源。
 - `README.md` 只维护安装入口、真源说明和发布约束，不承载开发细节。
 - 非真源仓库不复制脚本源码，只放安装链接。
@@ -37,9 +37,9 @@
 
 - 修改 `src/binance-orderbook-trade/**` 后必须运行 `npm run build:binance-orderbook-trade` 生成 `scripts/binance-orderbook-trade.user.js`。
 - 修改 `src/binance-trading-data/**`、`src/binance-coinmarketcap-data/**` 或 `src/shared/**` 后必须运行 `npm run build:binance-userscripts` 或对应单脚本 build 命令生成 `scripts/*.user.js`。
-- 修改已迁移的 `src/binance-*` 或 `src/shared/**` 且改变行为时，必须同步 bump 对应生成 userscript 头部 `@version`。
+- 修改 `src/m3u8-downloader/**` 后必须运行 `npm run build:m3u8-downloader` 生成 `scripts/m3u8-downloader.user.js`。
+- 修改已迁移的 `src/binance-*`、`src/m3u8-downloader/**` 或 `src/shared/**` 且改变行为时，必须同步 bump 对应生成 userscript 头部 `@version`。
 - 修改尚未迁移的 `scripts/` 下任意 userscript，必须同步 bump 该文件头部 `@version`。
-- `m3u8-downloader` 迁移到 `src/m3u8-downloader/` 时必须单独做机械迁移 PR，不要和行为修复混在同一个 PR；迁移后修改 source 必须 build 生成 `scripts/m3u8-downloader.user.js`。
 - 保留 `@updateURL` 和 `@downloadURL` 指向真源 raw 地址。
 - 发布到 `main` 必须通过 GitHub PR 合并；不要在本地 merge 到 `main` 后直接 push `main`。
 - 如果用户要求“发布”“上线”或“合并到 main”，默认流程是 push feature branch、创建 PR、等待检查通过，然后用 `gh pr merge` 合并。
@@ -56,8 +56,8 @@
 
 - `binance-orderbook-trade` 最低门槛：`npm test`、`npm run build:binance-orderbook-trade`、`npm run check:binance-orderbook-trade`。
 - 已迁移 Binance userscript 共享逻辑最低门槛：`npm test`、`npm run build:binance-userscripts`、`npm run check:binance-userscripts`。
+- `m3u8-downloader` 最低门槛：`node --test test/unit/m3u8-downloader-course-export.test.js`、`npm run build:m3u8-downloader`、`npm run check:m3u8-downloader`、`git diff --check`；发布前默认跑 `npm test`。
 - 尚未迁移的 userscript 最低门槛：对改动过的 userscript 跑 `node --check <file>`。
-- `m3u8-downloader` Brooks 导出行为最低门槛：`node --test test/unit/m3u8-downloader-course-export.test.js`、`node --check scripts/m3u8-downloader.user.js`、`git diff --check`；发布前默认跑 `npm test`。
 - 如果改动触及 Binance 数据调度或下单规则，必须补手测结论；没测的路径要明确写出来。
 - review 输出优先列 findings，再给 summary。
 
@@ -69,7 +69,8 @@
 - Brooks 耗时语义是 active runtime，不是 `startedAt -> updatedAt` 墙钟时间。暂停、停止、页面空置时间不能计入 `elapsedMs`/`elapsedText`。
 - 旧 persisted state 如果没有 active timing 字段，不要用墙钟时间补一个看似准确但实际误导的耗时。
 - Bunny caption URL 必须从实际检测到的 m3u8 host/path 推导，不能硬编码某个 `vz-...b-cdn.net` host；保留非 `title` query 参数。
-- 未来拆分 `m3u8-downloader` 时，第一版只做 source/build 迁移，保持行为不变；再单独做模块化或状态机重构。
+- `m3u8-downloader` 已迁移到 `src/m3u8-downloader/`；后续不要直接改生成后的 `scripts/m3u8-downloader.user.js`，除非是验证生成产物。
+- 当前迁移第一版只做 source/build 迁移，build target 仍是 copy-mode，尚未拆模块；后续模块化或状态机重构必须单独 PR，并在模块拆分 PR 中再切到 bundle 模式。
 
 ## Binance UI Automation Notes
 
