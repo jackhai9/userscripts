@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.27
+// @version      0.10.28
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -546,8 +546,14 @@
       retryFailedButton.style.display = canRetryFailures ? '' : 'none'
     }
     const resetButton = document.getElementById('brooks-media-export-reset')
+    const resetHelp = document.getElementById('brooks-media-export-reset-help')
+    const showReset = shouldShowBrooksMediaExportReset(state)
     if (resetButton) {
-      resetButton.style.display = state && !state.running ? '' : 'none'
+      resetButton.style.display = showReset ? '' : 'none'
+      resetButton.title = '清空当前进度和结果，不会自动开始'
+    }
+    if (resetHelp) {
+      resetHelp.style.display = showReset ? '' : 'none'
     }
   }
 
@@ -627,6 +633,25 @@
 
   function canRetryFailedBrooksMediaExport(state) {
     return !!(state && !state.running && isBrooksMediaExportComplete(state) && state.failures && state.failures.length)
+  }
+
+  function shouldShowBrooksMediaExportReset(state) {
+    if (!state || state.running) {
+      return false
+    }
+    if (state.stopped) {
+      return true
+    }
+    const links = Array.isArray(state.links) ? state.links : []
+    const records = Array.isArray(state.records) ? state.records : []
+    const failures = Array.isArray(state.failures) ? state.failures : []
+    if (failures.length) {
+      return true
+    }
+    if (!links.length) {
+      return false
+    }
+    return records.length + failures.length < links.length
   }
 
   function advanceBrooksMediaExportQueue(index) {
@@ -904,6 +929,7 @@
         <button id="brooks-media-export-reset" type="button" style="display:none;">重置</button>
         <button id="brooks-media-export-download" type="button">导出 JSON</button>
       </div>
+      <div id="brooks-media-export-reset-help" style="display:none;margin-top:6px;color:#d1d5db;font-size:11px;line-height:1.35;">重置会清空当前进度和结果，不会自动开始；要放弃中断进度或失败记录时再点。</div>
     `
     section.querySelectorAll('button').forEach(button => {
       button.style.cssText = 'min-width:76px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#2563eb;color:white;cursor:pointer;'

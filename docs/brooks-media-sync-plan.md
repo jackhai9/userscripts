@@ -83,6 +83,9 @@ The Brooks exporter is a resumable state machine, not a fire-and-forget page scr
 - Do not offer `重试失败` for a paused partial run. If a partial run has failures and unprocessed links, the correct action is `继续`, not retry-only recovery.
 - All success paths must advance the same queue primitive. This includes both direct Bunny iframe `m3u8` messages and same-origin Brooks record messages. Do not manually set `index = pending.index + 1` in one path while retry uses `retryQueue`.
 - A completed retry should drain `retryQueue`, set `running` false when no queued item remains, and leave the original `links` intact.
+- `重置` is a discard action, not a start action. It should clear the saved export state and return to the initial panel, but it must not automatically start collection.
+- Hide `重置` when there is no saved state, while collection is running, and after a complete successful run. Show it only when discarding state is useful: paused/interrupted runs, incomplete non-running state, or completed runs with failures.
+- When `重置` is visible, show a short helper text that explains it clears current progress/results and does not auto-start. Do not show that helper in initial or complete-success states.
 
 Timeouts such as `m3u8 detection timeout` are recoverable per-item failures. The UI should guide users to `重试失败` first. If retry still fails, export JSON so the failing URLs and reasons are visible for manual inspection.
 
@@ -231,6 +234,7 @@ Reviewer verdict:
   - Retry failed drains only failed original indexes.
   - Partial paused exports do not expose retry-only recovery.
   - Elapsed runtime excludes paused/stopped wall-clock time.
+  - Complete successful exports hide `重置`; paused/interrupted or failed states show `重置` with helper text.
 
 ## Source Split Baseline
 
