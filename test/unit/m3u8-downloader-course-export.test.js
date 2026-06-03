@@ -63,6 +63,8 @@ test('Brooks media index records derive current m3u8, caption URLs, and yt-dlp o
 
   assert.equal(record.ok, true);
   assert.equal(record.index, 72);
+  assert.equal(record.title, 'Video 22A Major Trend Reversals | Brooks Trading Course');
+  assert.equal(record.mediaTitle, 'Video 22A Major Trend Reversals');
   assert.equal(record.videoId, 'abc123');
   assert.equal(record.output, 'Video 22A Major Trend Reversals.%(ext)s');
   assert.equal(record.m3u8, 'https://vz-other.b-cdn.net/abc123/1920x1080/video.m3u8?token=keep');
@@ -72,8 +74,116 @@ test('Brooks media index records derive current m3u8, caption URLs, and yt-dlp o
   assert.equal(buildCaptionUrlFromM3u8('https://vz-other.b-cdn.net/abc123/playlist.m3u8?token=keep&title=drop', 'CN.vtt'), 'https://vz-other.b-cdn.net/abc123/captions/CN.vtt?token=keep');
 });
 
+test('Brooks media export payload marks incomplete exports and missing indexes', () => {
+  const { buildBrooksMediaExportPayload } = loadFunctions(['buildBrooksMediaExportPayload']);
+  const payload = buildBrooksMediaExportPayload({
+    links: ['a', 'b', 'c', 'd'],
+    index: 2,
+    running: true,
+    stopped: false,
+    records: [{ index: 0 }, { index: 2 }],
+    failures: [{ index: 3 }],
+  }, '2026-06-03T00:00:00.000Z');
+
+  assert.equal(payload.exportedAt, '2026-06-03T00:00:00.000Z');
+  assert.equal(payload.total, 4);
+  assert.equal(payload.done, 3);
+  assert.equal(payload.completed, false);
+  assert.equal(payload.nextIndex, 2);
+  assert.deepEqual(payload.missingIndexes, [1]);
+  assert.equal(payload.records.length, 2);
+  assert.equal(payload.failures.length, 1);
+});
+
+test('Brooks media export parses page HTML and builds a direct Bunny embed URL', () => {
+  const {
+    extractBrooksMediaExportPageInfo,
+    buildBrooksMediaExportEmbedUrl,
+  } = loadFunctions([
+    'normalizeBrooksTitle',
+    'extractBrooksMediaExportPageInfo',
+    'buildBrooksMediaExportEmbedUrl',
+  ]);
+  const pageUrl = 'https://www.brookstradingcourse.com/price-action-fundamentals/video-04-setup/';
+  const dom = new JSDOM(`
+    <meta property="og:title" content="BTC PAF 04 My Setup">
+    <iframe src="https://iframe.mediadelivery.net/embed/155631/2e5c1767-6405-4d95-9d60-33238a4475c5?autoplay=false&loop=false&muted=false&preload=true"></iframe>
+  `, { url: pageUrl });
+
+  const info = extractBrooksMediaExportPageInfo(dom.window.document, pageUrl);
+  assert.equal(info.title, 'Video 04 My Setup');
+  assert.equal(info.pageUrl, pageUrl);
+  assert.equal(info.embedSrc, 'https://iframe.mediadelivery.net/embed/155631/2e5c1767-6405-4d95-9d60-33238a4475c5?autoplay=false&loop=false&muted=false&preload=true');
+
+  const embedUrl = new URL(buildBrooksMediaExportEmbedUrl(info));
+  assert.equal(embedUrl.origin, 'https://iframe.mediadelivery.net');
+  assert.equal(embedUrl.searchParams.get('jhBrooksPageUrl'), pageUrl);
+  assert.equal(embedUrl.searchParams.get('jhBrooksTitle'), 'Video 04 My Setup');
+});
+
+test('Brooks media export accepts direct Bunny iframe m3u8 messages only for pending page', async () => {
+  const dom = new JSDOM(`
+    <body>
+      <a href="/price-action-fundamentals/video-04-setup/">Video 04</a>
+    </body>
+  `, {
+    url: 'https://www.brookstradingcourse.com/main-course-videos/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  class FakeXHR {
+    open(method, url) {
+      this.url = url;
+    }
+
+    send() {
+      this.status = 200;
+      this.responseText = `
+        <meta property="og:title" content="BTC PAF 04 My Setup">
+        <iframe src="https://iframe.mediadelivery.net/embed/155631/2e5c1767-6405-4d95-9d60-33238a4475c5?autoplay=false&loop=false&muted=false&preload=true"></iframe>
+      `;
+      setTimeout(() => this.onload(), 0);
+    }
+  }
+  window.XMLHttpRequest = FakeXHR;
+  window.requestAnimationFrame = callback => callback();
+  window.alert = () => {};
+  window.open = () => {};
+
+  window.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  window.document.querySelector('#brooks-media-export-primary').click();
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  const frame = window.document.querySelector('iframe[src*="iframe.mediadelivery.net/embed/"]');
+  assert.equal(frame !== null, true);
+  assert.equal(new URL(frame.src).searchParams.get('jhBrooksPageUrl'), 'https://www.brookstradingcourse.com/price-action-fundamentals/video-04-setup/');
+
+  window.dispatchEvent(new window.MessageEvent('message', {
+    origin: 'https://iframe.mediadelivery.net',
+    source: frame.contentWindow,
+    data: {
+      type: 'jh-userscripts:m3u8-detected',
+      url: 'https://vz-9a847249-45e.b-cdn.net/2e5c1767-6405-4d95-9d60-33238a4475c5/1920x1080/video.m3u8?title=Video+04+My+Setup',
+      referer: frame.src,
+      brooksExport: {
+        pageUrl: 'https://www.brookstradingcourse.com/price-action-fundamentals/video-04-setup/',
+        title: 'Video 04 My Setup',
+      },
+    },
+  }));
+
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const exported = JSON.parse(window.localStorage.getItem('jh-userscripts:brooks-media-index-export'));
+  assert.equal(exported.records.length, 1);
+  assert.equal(exported.records[0].pageUrl, 'https://www.brookstradingcourse.com/price-action-fundamentals/video-04-setup/');
+  assert.equal(exported.records[0].mediaTitle, 'Video 04 My Setup');
+  assert.equal(exported.records[0].videoId, '2e5c1767-6405-4d95-9d60-33238a4475c5');
+});
+
 test('Brooks media export status separates success, failures, current page, and elapsed time', () => {
-  const { formatBrooksMediaExportStatus } = loadFunctions(['getBrooksMediaExportPageLabel', 'formatBrooksMediaExportStatus']);
+  const { formatBrooksMediaExportStatus } = loadFunctions(['truncateBrooksMediaExportText', 'getBrooksMediaExportPageLabel', 'formatBrooksMediaExportStatus']);
   const text = formatBrooksMediaExportStatus({
     state: {
       running: true,
@@ -96,6 +206,28 @@ test('Brooks media export status separates success, failures, current page, and 
   });
 
   assert.equal(text, '采集中 3/3 | 成功 2 | 失败 1\n当前 3/3 video-04-setup | 等待 12s\n最近失败: m3u8 detection timeout');
+});
+
+test('Brooks media export status truncates very long page labels', () => {
+  const { formatBrooksMediaExportStatus } = loadFunctions(['truncateBrooksMediaExportText', 'getBrooksMediaExportPageLabel', 'formatBrooksMediaExportStatus']);
+  const text = formatBrooksMediaExportStatus({
+    state: {
+      running: true,
+      stopped: false,
+      links: ['https://www.brookstradingcourse.com/price-action-fundamentals/video-999-this-title-is-way-too-long-for-the-compact-export-panel/'],
+      index: 0,
+      records: [],
+      failures: [],
+    },
+    pending: {
+      index: 0,
+      url: 'https://www.brookstradingcourse.com/price-action-fundamentals/video-999-this-title-is-way-too-long-for-the-compact-export-panel/',
+      startedAt: 1_000,
+    },
+    now: 2_000,
+  });
+
+  assert.equal(text, '采集中 0/1 | 成功 0 | 失败 0\n当前 1/1 video-999-this-title-is-way-too-long-fo… | 等待 1s');
 });
 
 test('Brooks course index page renders a media export panel without starting collection', async () => {
@@ -148,13 +280,13 @@ test('Brooks media export panel keeps stable dimensions while status text change
   const status = window.document.querySelector('#brooks-media-export-status');
   const actions = window.document.querySelector('#brooks-media-export-actions');
 
-  assert.equal(panel?.style.width, '760px');
-  assert.equal(panel?.style.minHeight, '210px');
-  assert.equal(status?.style.height, '82px');
+  assert.equal(panel?.style.width, '520px');
+  assert.equal(panel?.style.minHeight, '');
+  assert.equal(status?.style.height, '46px');
   assert.equal(status?.style.overflowWrap, 'anywhere');
-  assert.equal(status?.style.overflowY, 'auto');
+  assert.equal(status?.style.overflow, 'hidden');
   assert.equal(actions?.style.display, 'flex');
-  assert.equal(actions?.style.minHeight, '52px');
+  assert.equal(actions?.style.minHeight, '32px');
 });
 
 test('Brooks media export primary button toggles start, pause, and resume labels', async () => {
@@ -273,6 +405,21 @@ test('Brooks media export iframe uses an in-viewport player-sized frame for medi
     pretendToBeVisual: true,
   });
   const { window } = dom;
+  class FakeXHR {
+    open(method, url) {
+      this.url = url;
+    }
+
+    send() {
+      this.status = 200;
+      this.responseText = `
+        <meta property="og:title" content="BTC PAF 04 My Setup">
+        <iframe src="https://iframe.mediadelivery.net/embed/155631/2e5c1767-6405-4d95-9d60-33238a4475c5?autoplay=false&loop=false&muted=false&preload=true"></iframe>
+      `;
+      setTimeout(() => this.onload(), 0);
+    }
+  }
+  window.XMLHttpRequest = FakeXHR;
   window.requestAnimationFrame = callback => callback();
   window.alert = () => {};
   window.open = () => {};
@@ -280,9 +427,10 @@ test('Brooks media export iframe uses an in-viewport player-sized frame for medi
   window.eval(source);
   await new Promise(resolve => setTimeout(resolve, 20));
   window.document.querySelector('#brooks-media-export-primary').click();
+  await new Promise(resolve => setTimeout(resolve, 20));
 
   try {
-    const iframe = window.document.querySelector('iframe[src*="/price-action-fundamentals/video-04-setup/"]');
+    const iframe = window.document.querySelector('iframe[src*="iframe.mediadelivery.net/embed/"]');
     assert.equal(iframe?.style.position, 'fixed');
     assert.equal(iframe?.style.width, '640px');
     assert.equal(iframe?.style.height, '360px');
@@ -290,6 +438,7 @@ test('Brooks media export iframe uses an in-viewport player-sized frame for medi
     assert.equal(iframe?.style.top, '20px');
     assert.equal(iframe?.style.pointerEvents, 'none');
     assert.notEqual(iframe?.style.left, '-10000px');
+    assert.equal(new URL(iframe.src).searchParams.get('jhBrooksPageUrl'), 'https://www.brookstradingcourse.com/price-action-fundamentals/video-04-setup/');
   } finally {
     window.document.querySelector('#brooks-media-export-primary').click();
   }

@@ -44,6 +44,7 @@
 - 涉及交易规则时，按当前 `symbol` 的确定性数据计算，不允许用旧 DOM 状态或无 symbol 语义的值去猜。
 - 涉及定时器、重试、缓存、前后台切换时，优先保证时间语义闭合，再考虑 UI 表现。
 - 不要把“缓存命中”“回退成功”“页面没报错”误判成“拿到了最新数据”。
+- Codex Chrome automation 的 `evaluate` 环境可能比真实 DevTools Console/页面脚本受限；如果 `fetch`、`XMLHttpRequest`、`DOMParser`、`document.createElement`、`window.addEventListener` 等 API 在 automation 中不可用，不要直接判定目标页面不可运行。先用 live DOM/截图/console/page assets 取证，再用真实 DevTools、Tampermonkey、临时 helper extension 或带 referer 的命令行请求验证完整路径。
 
 ## Validation
 

@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.24
+// @version      0.10.25
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -98,10 +98,17 @@
   }
 
   function notifyParentM3u8Detected(url) {
+    const sourceUrl = new URL(location.href)
+    const brooksExportPageUrl = sourceUrl.searchParams.get('jhBrooksPageUrl')
+    const brooksExportTitle = sourceUrl.searchParams.get('jhBrooksTitle')
     window.parent.postMessage({
       type: M3U8_MESSAGE_TYPE,
       url,
       referer: location.href,
+      brooksExport: brooksExportPageUrl ? {
+        pageUrl: brooksExportPageUrl,
+        title: brooksExportTitle || '',
+      } : undefined,
     }, '*')
   }
 
@@ -109,6 +116,9 @@
     window.addEventListener('message', (event) => {
       const data = event.data || {}
       if (data.type !== M3U8_MESSAGE_TYPE || !data.url || data.url.indexOf('.m3u8') <= 0) {
+        return
+      }
+      if (handleBrooksDirectM3u8Message(event, data)) {
         return
       }
       showM3u8Controls(data.url, data.referer || location.href)
@@ -211,15 +221,23 @@
       .trim() + '.%(ext)s'
   }
 
+  function normalizeBrooksTitle(title) {
+    return (title || '')
+      .replace(/\s*\|\s*Brooks Trading Course\s*$/i, '')
+      .replace(/^BTC PAF/i, 'Video')
+      .trim()
+  }
+
   function buildBrooksMediaIndexRecord(options) {
     const sourceUrl = new URL(options.m3u8Url)
-    const title = sourceUrl.searchParams.get('title') || options.title || ''
+    const mediaTitle = sourceUrl.searchParams.get('title') || options.title || ''
     return {
       ok: true,
       url: options.pageUrl,
-      title: options.title || title,
+      title: options.title || mediaTitle,
+      mediaTitle,
       pageUrl: options.pageUrl,
-      output: getYtDlpOutputName(title),
+      output: getYtDlpOutputName(mediaTitle),
       referer: options.referer || '',
       m3u8: getCleanMediaUrl(options.m3u8Url),
       videoId: getBrooksVideoIdFromM3u8(options.m3u8Url),
@@ -266,6 +284,28 @@
       })
   }
 
+  function extractBrooksMediaExportPageInfo(root, pageUrl) {
+    const embed = Array.from(root.querySelectorAll('iframe[src*="iframe.mediadelivery.net/embed/"]'))[0]
+    const embedSrc = embed && embed.getAttribute('src')
+    if (!embedSrc) {
+      throw new Error('Bunny embed iframe not found')
+    }
+    const metaTitle = root.querySelector('meta[property="og:title"]')
+    const title = normalizeBrooksTitle((metaTitle && metaTitle.getAttribute('content')) || root.title || '')
+    return {
+      pageUrl,
+      title,
+      embedSrc: new URL(embedSrc, pageUrl).href,
+    }
+  }
+
+  function buildBrooksMediaExportEmbedUrl(info) {
+    const embedUrl = new URL(info.embedSrc)
+    embedUrl.searchParams.set('jhBrooksPageUrl', info.pageUrl)
+    embedUrl.searchParams.set('jhBrooksTitle', info.title || '')
+    return embedUrl.href
+  }
+
   function notifyBrooksMediaIndexDetected(url, referer) {
     if (!isBrooksHost(location.hostname)) {
       return
@@ -284,6 +324,52 @@
     } catch (error) {
       console.error('Unable to build Brooks media index record:', error)
     }
+  }
+
+  function recordBrooksMediaExportSuccess(record) {
+    if (!brooksMediaExportState || !brooksMediaExportPending) {
+      return
+    }
+    if (!isSameBrooksVideoPage(record.pageUrl, brooksMediaExportPending.url)) {
+      return
+    }
+    brooksMediaExportState.records.push({
+      ...record,
+      index: brooksMediaExportPending.index,
+      url: brooksMediaExportPending.url,
+      pageUrl: record.pageUrl,
+    })
+    brooksMediaExportState.index = brooksMediaExportPending.index + 1
+    saveBrooksMediaExportState()
+    clearBrooksMediaExportFrame()
+    updateBrooksMediaExportStatus()
+    setTimeout(processNextBrooksMediaExport, BROOKS_MEDIA_EXPORT_STEP_DELAY_MS)
+  }
+
+  function isBrooksMediaExportFrameMessage(event, data) {
+    return !!(
+      brooksMediaExportPending &&
+      brooksMediaExportFrame &&
+      event.source === brooksMediaExportFrame.contentWindow &&
+      data &&
+      data.brooksExport &&
+      data.brooksExport.pageUrl &&
+      isSameBrooksVideoPage(data.brooksExport.pageUrl, brooksMediaExportPending.url)
+    )
+  }
+
+  function handleBrooksDirectM3u8Message(event, data) {
+    if (!isBrooksMediaExportFrameMessage(event, data)) {
+      return false
+    }
+    const record = buildBrooksMediaIndexRecord({
+      pageUrl: data.brooksExport.pageUrl,
+      title: data.brooksExport.title || '',
+      referer: data.referer || '',
+      m3u8Url: data.url,
+    })
+    recordBrooksMediaExportSuccess(record)
+    return true
   }
 
   function saveBrooksMediaExportState() {
@@ -308,10 +394,17 @@
   function getBrooksMediaExportPageLabel(url) {
     try {
       const parts = new URL(url).pathname.split('/').filter(Boolean)
-      return parts[parts.length - 1] || url
+      return truncateBrooksMediaExportText(parts[parts.length - 1] || url, 40)
     } catch (error) {
-      return url || ''
+      return truncateBrooksMediaExportText(url || '', 40)
     }
+  }
+
+  function truncateBrooksMediaExportText(value, maxLength) {
+    if (!value || value.length <= maxLength) {
+      return value || ''
+    }
+    return value.slice(0, Math.max(0, maxLength - 1)) + '…'
   }
 
   function formatBrooksMediaExportStatus(options) {
@@ -425,6 +518,47 @@
     updateBrooksMediaExportStatus()
   }
 
+  function isCurrentBrooksMediaExportPending(index, url) {
+    return !!(
+      brooksMediaExportState &&
+      brooksMediaExportState.running &&
+      !brooksMediaExportState.stopped &&
+      brooksMediaExportPending &&
+      brooksMediaExportPending.index === index &&
+      isSameBrooksVideoPage(brooksMediaExportPending.url, url)
+    )
+  }
+
+  function fetchBrooksMediaExportPageInfo(url, onSuccess, onFailure) {
+    const xhr = new originXHR()
+    xhr.open('GET', url, true)
+    xhr.onload = function () {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        onFailure(`page fetch failed: ${xhr.status}`)
+        return
+      }
+      try {
+        const parser = new DOMParser()
+        const doc = parser.parseFromString(xhr.responseText || xhr.response || '', 'text/html')
+        onSuccess(extractBrooksMediaExportPageInfo(doc, url))
+      } catch (error) {
+        onFailure(error && error.message ? error.message : 'page parse failed')
+      }
+    }
+    xhr.onerror = function () {
+      onFailure('page fetch network error')
+    }
+    xhr.send()
+  }
+
+  function createBrooksMediaExportFrame(src) {
+    brooksMediaExportFrame = document.createElement('iframe')
+    brooksMediaExportFrame.style.cssText = 'position:fixed;right:20px;top:20px;width:640px;height:360px;opacity:.01;pointer-events:none;border:0;z-index:9998;background:white;'
+    brooksMediaExportFrame.setAttribute('aria-hidden', 'true')
+    brooksMediaExportFrame.src = src
+    document.body.appendChild(brooksMediaExportFrame)
+  }
+
   function processNextBrooksMediaExport() {
     if (!brooksMediaExportState || !brooksMediaExportState.running || brooksMediaExportState.stopped) {
       updateBrooksMediaExportStatus()
@@ -441,9 +575,6 @@
     }
 
     clearBrooksMediaExportFrame()
-    brooksMediaExportFrame = document.createElement('iframe')
-    brooksMediaExportFrame.style.cssText = 'position:fixed;right:20px;top:20px;width:640px;height:360px;opacity:.01;pointer-events:none;border:0;z-index:9998;background:white;'
-    brooksMediaExportFrame.setAttribute('aria-hidden', 'true')
     brooksMediaExportPending = {
       index,
       url,
@@ -454,9 +585,19 @@
       }, BROOKS_MEDIA_EXPORT_TIMEOUT_MS),
     }
     brooksMediaExportPending.statusIntervalId = setInterval(updateBrooksMediaExportStatus, BROOKS_MEDIA_EXPORT_STATUS_INTERVAL_MS)
-    brooksMediaExportFrame.src = url
-    document.body.appendChild(brooksMediaExportFrame)
     updateBrooksMediaExportStatus()
+    fetchBrooksMediaExportPageInfo(url, info => {
+      if (!isCurrentBrooksMediaExportPending(index, url)) {
+        return
+      }
+      createBrooksMediaExportFrame(buildBrooksMediaExportEmbedUrl(info))
+    }, error => {
+      if (!isCurrentBrooksMediaExportPending(index, url)) {
+        return
+      }
+      recordBrooksMediaExportFailure(index, url, error)
+      processNextBrooksMediaExport()
+    })
   }
 
   function startBrooksMediaExport() {
@@ -523,18 +664,36 @@
     updateBrooksMediaExportStatus()
   }
 
+  function buildBrooksMediaExportPayload(state, exportedAt) {
+    const links = state && state.links ? state.links : []
+    const records = state && state.records ? state.records : []
+    const failures = state && state.failures ? state.failures : []
+    const completedIndexes = new Set(records.concat(failures).map(item => item.index))
+    const missingIndexes = links
+      .map((url, index) => index)
+      .filter(index => !completedIndexes.has(index))
+    const done = records.length + failures.length
+    return {
+      exportedAt,
+      total: links.length,
+      done,
+      completed: links.length > 0 && done >= links.length,
+      nextIndex: state && typeof state.index === 'number' ? state.index : 0,
+      running: !!(state && state.running),
+      stopped: !!(state && state.stopped),
+      missingIndexes,
+      records,
+      failures,
+    }
+  }
+
   function exportBrooksMediaIndex() {
     const state = brooksMediaExportState || loadBrooksMediaExportState()
     if (!state) {
       alert('没有可导出的 Brooks 媒体索引')
       return
     }
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      total: state.links ? state.links.length : 0,
-      records: state.records || [],
-      failures: state.failures || [],
-    }
+    const payload = buildBrooksMediaExportPayload(state, new Date().toISOString())
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     downloadWithA(url, `brooks-media-index-${new Date().toISOString().slice(0, 10)}.json`)
@@ -574,18 +733,18 @@
     const links = getBrooksCourseVideoLinks(document)
     const section = document.createElement('section')
     section.id = 'brooks-media-export-dom'
-    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;width:760px;max-width:calc(100vw - 40px);min-height:210px;box-sizing:border-box;padding:14px 16px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.18);'
+    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;width:520px;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px 12px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.35;box-shadow:0 4px 12px rgba(0,0,0,.18);'
     section.innerHTML = `
-      <div style="margin-bottom:6px;">Brooks 媒体索引</div>
-      <div id="brooks-media-export-status" style="height:82px;margin-bottom:10px;white-space:pre-wrap;overflow-wrap:anywhere;overflow-y:auto;">发现 ${links.length} 个视频页</div>
-      <div id="brooks-media-export-actions" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:52px;">
+      <div style="margin-bottom:4px;">Brooks 媒体索引</div>
+      <div id="brooks-media-export-status" style="height:46px;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;">发现 ${links.length} 个视频页</div>
+      <div id="brooks-media-export-actions" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:32px;">
         <button id="brooks-media-export-primary" type="button">开始</button>
         <button id="brooks-media-export-reset" type="button">重置</button>
         <button id="brooks-media-export-download" type="button">导出 JSON</button>
       </div>
     `
     section.querySelectorAll('button').forEach(button => {
-      button.style.cssText = 'min-width:84px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#2563eb;color:white;cursor:pointer;'
+      button.style.cssText = 'min-width:76px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#2563eb;color:white;cursor:pointer;'
     })
     document.body.appendChild(section)
     document.getElementById('brooks-media-export-primary').addEventListener('click', toggleBrooksMediaExportPrimaryAction)
