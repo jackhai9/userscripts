@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import {
   assertValidVtt,
   buildBrooksMediaDownloadTasks,
+  getYtDlpAvailability,
   downloadBrooksMediaTask,
 } from '../../scripts/brooks-media-download.mjs';
 
@@ -46,7 +47,9 @@ function createAudit() {
         downloads: {
           video: {
             m3u8: 'https://cdn.example.com/video-03a/video.m3u8',
+            referer: 'https://iframe.example.com/embed/video-03a',
             output: 'Video 03A Forex Basics.%(ext)s',
+            ytDlpCommand: "yt-dlp --referer 'https://iframe.example.com/embed/video-03a' -N 16 -o 'Video 03A Forex Basics.%(ext)s' 'https://cdn.example.com/video-03a/video.m3u8'",
           },
         },
       },
@@ -102,9 +105,87 @@ test('Brooks media download validates VTT responses before writing final files',
   }
 });
 
+test('Brooks media download classifies missing Chinese captions when English captions exist', async () => {
+  const task = buildBrooksMediaDownloadTasks({
+    audit: createAudit(),
+    only: 'zhSubtitle',
+    limit: 1,
+  })[0];
+  const requestedUrls = [];
+
+  const result = await downloadBrooksMediaTask(task, {
+    fetchImpl: async url => {
+      requestedUrls.push(url);
+      if (url.endsWith('/CN.vtt')) {
+        return {
+          ok: false,
+          status: 404,
+          text: async () => 'not found',
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nEnglish\n',
+      };
+    },
+  });
+
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.reason, 'zhSubtitleNotPublished');
+  assert.equal(result.httpStatus, 404);
+  assert.deepEqual(result.comparison, {
+    kind: 'enSubtitle',
+    status: 200,
+  });
+  assert.deepEqual(requestedUrls, [
+    'https://cdn.example.com/video-01/captions/CN.vtt',
+    'https://cdn.example.com/video-01/captions/EN.vtt',
+  ]);
+});
+
 test('Brooks media download rejects non-VTT error pages', () => {
   assert.throws(
     () => assertValidVtt('<html><body>403 Forbidden</body></html>', 'Video 01 Terminology.zh.vtt'),
     /not a VTT file/,
   );
+});
+
+test('Brooks media download builds video tasks for yt-dlp dry runs', () => {
+  const tasks = buildBrooksMediaDownloadTasks({
+    audit: createAudit(),
+    only: 'video',
+    existingNames: new Set(),
+  });
+
+  assert.deepEqual(tasks.map(task => ({
+    index: task.index,
+    kind: task.kind,
+    output: task.output,
+    targetPath: task.targetPath,
+    ytDlpCommand: task.ytDlpCommand,
+  })), [
+    {
+      index: 2,
+      kind: 'video',
+      output: 'Video 03A Forex Basics.%(ext)s',
+      targetPath: '/videos/Video 03A Forex Basics.%(ext)s',
+      ytDlpCommand: "yt-dlp --referer 'https://iframe.example.com/embed/video-03a' -N 16 -o '/videos/Video 03A Forex Basics.%(ext)s' 'https://cdn.example.com/video-03a/video.m3u8'",
+    },
+  ]);
+});
+
+test('Brooks media download detects whether yt-dlp is available', () => {
+  assert.deepEqual(getYtDlpAvailability({
+    commandExists: () => true,
+  }), {
+    available: true,
+    command: 'yt-dlp',
+  });
+  assert.deepEqual(getYtDlpAvailability({
+    commandExists: () => false,
+  }), {
+    available: false,
+    command: 'yt-dlp',
+  });
 });
