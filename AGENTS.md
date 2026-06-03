@@ -6,6 +6,7 @@
 - `src/binance-orderbook-trade/` 是 `scripts/binance-orderbook-trade.user.js` 的开发真源。
 - `src/binance-trading-data/` 是 `scripts/binance-trading-data.user.js` 的开发真源。
 - `src/binance-coinmarketcap-data/` 是 `scripts/binance-coinmarketcap-data.user.js` 的开发真源。
+- `scripts/m3u8-downloader.user.js` 当前仍是开发真源；迁移后应改为 `src/m3u8-downloader/` 真源并由 build 生成。
 - `scripts/binance-orderbook-trade.user.js`、`scripts/binance-trading-data.user.js`、`scripts/binance-coinmarketcap-data.user.js` 是生成后的单文件安装/更新入口，必须保持可读、非压缩、非混淆。
 - 其它 userscript 在迁移前仍以 `scripts/*.user.js` 为真源。
 - `README.md` 只维护安装入口、真源说明和发布约束，不承载开发细节。
@@ -19,8 +20,12 @@
   Binance 合约交易数据面板，核心风险在 5 分钟调度、缓存回退、前后台切换。
 - `scripts/binance-coinmarketcap-data.user.js`
   Binance CoinMarketCap 数据面板，核心风险在 symbol 解析、CMC 资产映射、跨页误注入。
+- `scripts/m3u8-downloader.user.js`
+  m3u8 下载增强脚本，核心风险在通用 m3u8 拦截、Brooks 媒体索引、失败重试、暂停/继续状态、active runtime 计时和 Bunny caption URL 推导。
 - `scripts/auto_refresh.user.js`
   定时刷新页面，核心风险在 URL 匹配、时间计算、启停行为。
+- `docs/brooks-media-sync-plan.md`
+  Brooks 媒体同步方案，记录索引导出、Bunny referer、Codex Chrome 限制、失败重试、active runtime 计时和未来 m3u8 source split 计划。
 - `docs/binance-orderbook-trade-development.md`
   Binance 订单簿脚本开发手册，记录源码/产物关系、模块边界、测试、构建、发版和手测矩阵。
 - `skills/userscript-review/SKILL.md`
@@ -34,6 +39,7 @@
 - 修改 `src/binance-trading-data/**`、`src/binance-coinmarketcap-data/**` 或 `src/shared/**` 后必须运行 `npm run build:binance-userscripts` 或对应单脚本 build 命令生成 `scripts/*.user.js`。
 - 修改已迁移的 `src/binance-*` 或 `src/shared/**` 且改变行为时，必须同步 bump 对应生成 userscript 头部 `@version`。
 - 修改尚未迁移的 `scripts/` 下任意 userscript，必须同步 bump 该文件头部 `@version`。
+- `m3u8-downloader` 迁移到 `src/m3u8-downloader/` 时必须单独做机械迁移 PR，不要和行为修复混在同一个 PR；迁移后修改 source 必须 build 生成 `scripts/m3u8-downloader.user.js`。
 - 保留 `@updateURL` 和 `@downloadURL` 指向真源 raw 地址。
 - 发布到 `main` 必须通过 GitHub PR 合并；不要在本地 merge 到 `main` 后直接 push `main`。
 - 如果用户要求“发布”“上线”或“合并到 main”，默认流程是 push feature branch、创建 PR、等待检查通过，然后用 `gh pr merge` 合并。
@@ -51,8 +57,19 @@
 - `binance-orderbook-trade` 最低门槛：`npm test`、`npm run build:binance-orderbook-trade`、`npm run check:binance-orderbook-trade`。
 - 已迁移 Binance userscript 共享逻辑最低门槛：`npm test`、`npm run build:binance-userscripts`、`npm run check:binance-userscripts`。
 - 尚未迁移的 userscript 最低门槛：对改动过的 userscript 跑 `node --check <file>`。
+- `m3u8-downloader` Brooks 导出行为最低门槛：`node --test test/unit/m3u8-downloader-course-export.test.js`、`node --check scripts/m3u8-downloader.user.js`、`git diff --check`；发布前默认跑 `npm test`。
 - 如果改动触及 Binance 数据调度或下单规则，必须补手测结论；没测的路径要明确写出来。
 - review 输出优先列 findings，再给 summary。
+
+## M3U8 Downloader Notes
+
+- Brooks 媒体导出状态机必须保持 `links` 为原始完整列表，`records`/`failures` 用原始 index 记录结果，`retryQueue` 只能临时存失败原始 index。
+- `重试失败` 只应在导出已完成、非运行、且存在 failures 时显示；暂停但未完成时应该继续原队列，不要进入 retry-only 流程。
+- 所有 Brooks 成功路径必须共用同一套队列推进逻辑，包括 direct Bunny iframe m3u8 message 和 same-origin Brooks record message。
+- Brooks 耗时语义是 active runtime，不是 `startedAt -> updatedAt` 墙钟时间。暂停、停止、页面空置时间不能计入 `elapsedMs`/`elapsedText`。
+- 旧 persisted state 如果没有 active timing 字段，不要用墙钟时间补一个看似准确但实际误导的耗时。
+- Bunny caption URL 必须从实际检测到的 m3u8 host/path 推导，不能硬编码某个 `vz-...b-cdn.net` host；保留非 `title` query 参数。
+- 未来拆分 `m3u8-downloader` 时，第一版只做 source/build 迁移，保持行为不变；再单独做模块化或状态机重构。
 
 ## Binance UI Automation Notes
 

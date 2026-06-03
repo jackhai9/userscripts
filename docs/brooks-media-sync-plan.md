@@ -69,6 +69,43 @@ Recommended userscript flow:
 10. Export JSON and CSV.
 11. Record timeouts and failures instead of silently skipping pages.
 
+## Exporter State Model
+
+The Brooks exporter is a resumable state machine, not a fire-and-forget page scraper. Keep these fields and transitions explicit:
+
+- `links` must remain the original full course page list so totals and indexes stay stable.
+- `records` stores successful original indexes.
+- `failures` stores failed original indexes and failure reasons.
+- `index` is the next normal full-run index, not a retry-only queue cursor.
+- `retryQueue` is temporary and must contain only failed original indexes.
+- A retry flow must preserve existing successful `records`; it must not restart the full 208-item run.
+- `重试失败` should only be available after the export is complete, non-running, and still has failures.
+- Do not offer `重试失败` for a paused partial run. If a partial run has failures and unprocessed links, the correct action is `继续`, not retry-only recovery.
+- All success paths must advance the same queue primitive. This includes both direct Bunny iframe `m3u8` messages and same-origin Brooks record messages. Do not manually set `index = pending.index + 1` in one path while retry uses `retryQueue`.
+- A completed retry should drain `retryQueue`, set `running` false when no queued item remains, and leave the original `links` intact.
+
+Timeouts such as `m3u8 detection timeout` are recoverable per-item failures. The UI should guide users to `重试失败` first. If retry still fails, export JSON so the failing URLs and reasons are visible for manual inspection.
+
+## Runtime Timing Semantics
+
+Exporter runtime means active script runtime, not wall-clock time since the first start.
+
+Do not compute elapsed time as `startedAt -> updatedAt`; that incorrectly counts:
+
+- User-paused periods.
+- Time where the page stayed open but the exporter was stopped.
+- Long gaps between a previous run and a later resume.
+
+Use an active-run accumulator instead:
+
+- Start or resume sets `activeRunStartedAt`.
+- Pause or completion adds `now - activeRunStartedAt` into `activeElapsedMs` and clears `activeRunStartedAt`.
+- While running, displayed elapsed time is `activeElapsedMs + now - activeRunStartedAt`.
+- While paused or completed, displayed elapsed time is just `activeElapsedMs`.
+- Export JSON should include machine-readable `elapsedMs` / `elapsedSeconds` and human-readable `elapsedText`.
+
+Old persisted states that do not have active timing fields should not invent a wall-clock runtime from `startedAt` and `updatedAt`. Prefer showing no elapsed time over showing a misleading duration.
+
 If the userscript becomes unreliable, upgrade to a Chrome extension with:
 
 - A content script for page DOM extraction.
@@ -191,3 +228,39 @@ Reviewer verdict:
   - Timeout/failure count.
   - Duplicate video IDs.
   - Exported field completeness.
+  - Retry failed drains only failed original indexes.
+  - Partial paused exports do not expose retry-only recovery.
+  - Elapsed runtime excludes paused/stopped wall-clock time.
+
+## Future Source Split
+
+`scripts/m3u8-downloader.user.js` is still the source of truth until it is migrated. It has grown beyond a single-purpose downloader and should be moved to `src/m3u8-downloader/` in a separate mechanical migration PR.
+
+Do not mix that migration with behavior fixes. The first migration should preserve behavior and make the generated `scripts/m3u8-downloader.user.js` readable, non-minified, and suitable for Tampermonkey install/update.
+
+Suggested module boundaries:
+
+```text
+src/m3u8-downloader/
+  index.user.js
+  core/media-url.js
+  core/yt-dlp.js
+  core/captions.js
+  brooks/links.js
+  brooks/record.js
+  brooks/export-state.js
+  brooks/export-ui.js
+  brooks/export-runner.js
+  browser/intercept.js
+  browser/download.js
+```
+
+Migration checklist:
+
+- Add a `m3u8-downloader` target to `scripts/build-userscript.mjs`.
+- Add `build:m3u8-downloader` and `check:m3u8-downloader` package scripts.
+- Keep the metadata block in `src/m3u8-downloader/index.user.js`.
+- Preserve `@updateURL` and `@downloadURL`.
+- Keep generated output readable, non-compressed, and non-obfuscated.
+- Convert focused tests to import source modules where practical instead of extracting function bodies from the generated userscript.
+- After migration, changing `src/m3u8-downloader/**` must build `scripts/m3u8-downloader.user.js` and bump `@version` when behavior changes.
