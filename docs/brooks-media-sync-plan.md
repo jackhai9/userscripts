@@ -59,26 +59,34 @@ Use three separate steps. Each step has a different responsibility:
 5. Click `导出清单 JSON`. This downloads a file such as:
 
    ```text
-   brooks-media-index-2026-06-03.json
+   brooks-media-index-2026-06-03T104215Z.json
    ```
 
-6. Create or choose the local target media directory.
-7. Run the audit against that directory:
+6. Import the exported JSON out of `Downloads` into the flat report directory before running local tools:
+
+   ```bash
+   npm run import:brooks-media-index
+   ```
+
+   The import command moves the newest complete `brooks-media-index-*.json` from `~/Downloads` to `/Users/lizhenhai/PA/_reports/`. If the same export already exists in `_reports`, it removes the duplicate from `Downloads` instead of creating a second copy.
+
+7. Create or choose the local target media directory.
+8. Run the audit against that directory. Use the imported timestamped index path printed by the import command:
 
    ```bash
    npm run audit:brooks-media -- \
-     --index /Users/lizhenhai/Downloads/brooks-media-index-2026-06-03.json \
+     --index /Users/lizhenhai/PA/_reports/brooks-media-index-2026-06-03T104215Z.json \
      --local /Users/lizhenhai/PA/input_videos \
-     --output /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json
+     --output /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json
    ```
 
-8. For an empty directory, the audit should report every record as needing `video`, `enSubtitle`, and `zhSubtitle`.
-9. Review `downloadPlan` before downloading. Prefer downloading subtitles first, then videos only after confirming the candidate list.
-10. Start with a dry run, then a small subtitle sample:
+9. For an empty directory, the audit should report every record as needing `video`, `enSubtitle`, and `zhSubtitle`.
+10. Review `downloadPlan` before downloading. Prefer downloading subtitles first, then videos only after confirming the candidate list.
+11. Start with a dry run, then a small subtitle sample:
 
     ```bash
     npm run download:brooks-media -- \
-      --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+      --audit /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
       --only zhSubtitle \
       --limit 3 \
       --dry-run
@@ -89,7 +97,7 @@ Use three separate steps. Each step has a different responsibility:
 ### Existing Local Archive Incremental Update
 
 1. Export a fresh Brooks video/subtitle list from the logged-in browser. Do not reuse an old export when checking whether Brooks changed versions.
-2. Run the local audit against the existing archive directory.
+2. Run `npm run import:brooks-media-index`, then run the local audit against the existing archive directory.
 3. Read the summary counts first:
    - `missingCurrentZh`: current Chinese subtitle files not found locally.
    - `missingCurrentEn`: current English subtitle files not found locally.
@@ -100,7 +108,7 @@ Use three separate steps. Each step has a different responsibility:
 
    ```bash
    npm run download:brooks-media -- \
-     --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+     --audit /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
      --only zhSubtitle \
      --limit 3
    ```
@@ -116,8 +124,15 @@ Use three separate steps. Each step has a different responsibility:
 ### Script Responsibilities
 
 - `m3u8-downloader.user.js`: browser-only exporter. It discovers course pages, loads the authenticated Bunny embeds, detects m3u8 URLs, derives CN/EN subtitle URLs, and exports JSON. It should not read local directories or download files to the local archive.
+- `brooks-media-import-index.mjs`: local importer. It moves the newest complete `brooks-media-index-*.json` from `Downloads` into `/Users/lizhenhai/PA/_reports/`, normalizes the timestamped filename, and removes identical duplicate downloads.
 - `brooks-media-audit.mjs`: read-only local comparator. It matches exported online records against local files and produces `summary`, `items`, and `downloadPlan`. It should not download, overwrite, rename, or delete files. For rows that need a current video, it still keeps the exported EN/CN subtitle URLs in `downloads` so the downloader can refresh captions for that same new video.
 - `brooks-media-download.mjs`: write-capable subtitle downloader, video downloader wrapper, and old-variant archive runner. It supports dry runs, small limits, language filters, existing-file skips, VTT validation, video-associated caption refresh, and opt-in old-variant archiving. It supports `--only zhSubtitle`, `--only enSubtitle`, `--only video`, and `--only oldVariants`. Subtitle downloads use Node.js `fetch`; video dry runs generate `yt-dlp` commands and report whether `yt-dlp` is available locally. Video execution remains disabled until a small sample download is explicitly approved. When `--only video --with-captions` is used, each successfully downloaded video immediately overwrites that record's matching `.en.vtt` and `.zh.vtt` files. When `--archive-old-variants <dir>` is also used, old same-series files from `local.variants` move into that archive directory after the new video and both captions finish successfully. When the replacement set already exists, `--only oldVariants --archive-old-variants <dir>` performs the archive pass directly from `items[].local.variants` after a full preflight.
+
+### Report Retention
+
+Use the flat report directory `/Users/lizhenhai/PA/_reports/` for exported indexes, audits, and human-readable summaries. Do not use `Downloads` as the working directory; it should only be a temporary browser download landing zone. File names carry the Brooks prefix and timestamp, so an extra `brooks/YYYY-MM-DD/` directory layer is unnecessary.
+
+Keep the final online index, final audit, and any human-readable missing-caption summary when you need traceability for a sync run. Intermediate batch audits and refresh result files are only troubleshooting checkpoints; after the final audit is generated and verified, they can be deleted or moved out of the active report directory.
 
 ### Video Dry Run
 
@@ -125,7 +140,7 @@ Video files are large and should not be downloaded automatically after the subti
 
 ```bash
 npm run download:brooks-media -- \
-  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+  --audit /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
   --only video \
   --limit 5 \
   --dry-run
@@ -137,7 +152,7 @@ After reviewing the dry run, download one video sample with an explicit confirma
 
 ```bash
 npm run download:brooks-media -- \
-  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+  --audit /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
   --only video \
   --limit 1 \
   --with-captions \
@@ -150,7 +165,7 @@ For larger reviewed video batches, keep `--with-captions` enabled:
 
 ```bash
 npm run download:brooks-media -- \
-  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+  --audit /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
   --only video \
   --limit 5 \
   --with-captions \
@@ -163,7 +178,7 @@ If the new video batch has been reviewed and old same-series files should leave 
 
 ```bash
 npm run download:brooks-media -- \
-  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+  --audit /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
   --only video \
   --limit 5 \
   --with-captions \
@@ -177,7 +192,7 @@ If the current files were already downloaded and a latest audit shows `local.var
 
 ```bash
 npm run download:brooks-media -- \
-  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
+  --audit /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
   --only oldVariants \
   --archive-old-variants /Users/lizhenhai/PA/_archive \
   --dry-run
@@ -187,7 +202,7 @@ Then run the archive pass without `--dry-run`:
 
 ```bash
 npm run download:brooks-media -- \
-  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
+  --audit /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
   --only oldVariants \
   --archive-old-variants /Users/lizhenhai/PA/_archive
 ```
@@ -210,9 +225,9 @@ After exporting a complete Brooks media index, run the read-only local inventory
 
 ```bash
 npm run audit:brooks-media -- \
-  --index /Users/lizhenhai/Downloads/brooks-media-index-2026-06-03.json \
+  --index /Users/lizhenhai/PA/_reports/brooks-media-index-2026-06-03T104215Z.json \
   --local /Users/lizhenhai/PA/input_videos \
-  --output /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json
+  --output /Users/lizhenhai/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json
 ```
 
 The audit report compares the current online `output` base name against local videos and subtitles. It treats exact matches as current files and same-series non-exact matches as local variants, usually older or differently named files such as a no-version local file when the online index now ends in `v2`, `v3`, or `version 2`.

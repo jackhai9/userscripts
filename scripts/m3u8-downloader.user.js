@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.29
+// @version      0.10.30
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -379,6 +379,13 @@
   });
 
   // src/m3u8-downloader/brooks-exporter.js
+  function buildBrooksMediaIndexExportFilename(exportedAt) {
+    const date = new Date(exportedAt);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error(`Invalid Brooks media export timestamp: ${exportedAt}`);
+    }
+    return `brooks-media-index-${date.toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "")}.json`;
+  }
   function createBrooksMediaExporter({ originXHR: originXHR2, downloadWithA: downloadWithA2, getTitle: getTitle2 }) {
     var brooksMediaExportState = null;
     var brooksMediaExportFrame = null;
@@ -701,10 +708,11 @@
         alert("没有可导出的 Brooks 视频与字幕清单");
         return;
       }
-      const payload = buildBrooksMediaExportPayload(state, (/* @__PURE__ */ new Date()).toISOString());
+      const exportedAt = (/* @__PURE__ */ new Date()).toISOString();
+      const payload = buildBrooksMediaExportPayload(state, exportedAt);
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      downloadWithA2(url, `brooks-media-index-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`);
+      downloadWithA2(url, buildBrooksMediaIndexExportFilename(exportedAt));
       URL.revokeObjectURL(url);
     }
     function handleBrooksMediaIndexMessage(event) {

@@ -9,6 +9,7 @@
     "build:binance-coinmarketcap-data": "node scripts/build-userscript.mjs binance-coinmarketcap-data",
     "build:m3u8-downloader": "node scripts/build-userscript.mjs m3u8-downloader",
     "audit:brooks-media": "node scripts/brooks-media-audit.mjs",
+    "import:brooks-media-index": "node scripts/brooks-media-import-index.mjs",
     "download:brooks-media": "node scripts/brooks-media-download.mjs",
     "check:binance-userscripts": "node --check scripts/binance-orderbook-trade.user.js && node --check scripts/binance-trading-data.user.js && node --check scripts/binance-coinmarketcap-data.user.js",
     "check:binance-orderbook-trade": "node --check scripts/binance-orderbook-trade.user.js",

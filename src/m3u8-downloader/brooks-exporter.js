@@ -25,6 +25,14 @@ import {
   stopBrooksMediaExportRunTimer,
 } from './brooks-status.js'
 
+export function buildBrooksMediaIndexExportFilename(exportedAt) {
+  const date = new Date(exportedAt)
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid Brooks media export timestamp: ${exportedAt}`)
+  }
+  return `brooks-media-index-${date.toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/:/g, '')}.json`
+}
+
 export function createBrooksMediaExporter({ originXHR, downloadWithA, getTitle }) {
   var brooksMediaExportState = null
   var brooksMediaExportFrame = null
@@ -388,10 +396,11 @@ export function createBrooksMediaExporter({ originXHR, downloadWithA, getTitle }
       alert('没有可导出的 Brooks 视频与字幕清单')
       return
     }
-    const payload = buildBrooksMediaExportPayload(state, new Date().toISOString())
+    const exportedAt = new Date().toISOString()
+    const payload = buildBrooksMediaExportPayload(state, exportedAt)
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
-    downloadWithA(url, `brooks-media-index-${new Date().toISOString().slice(0, 10)}.json`)
+    downloadWithA(url, buildBrooksMediaIndexExportFilename(exportedAt))
     URL.revokeObjectURL(url)
   }
 
