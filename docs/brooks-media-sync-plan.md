@@ -43,7 +43,7 @@ Use three separate steps. Each step has a different responsibility:
 
 1. `m3u8-downloader.user.js` runs in the logged-in Brooks browser session and exports the current course video/subtitle list.
 2. `brooks-media-audit.mjs` runs locally and compares that exported list with a local media directory.
-3. `brooks-media-download.mjs` downloads only the reviewed missing subtitle files. Downloading is intentionally separate from export and audit.
+3. `brooks-media-download.mjs` downloads only the reviewed missing subtitle or video files. Downloading is intentionally separate from export and audit.
 
 ### First-Time User With An Empty Local Directory
 
@@ -109,12 +109,15 @@ Use three separate steps. Each step has a different responsibility:
 7. Re-run the audit after downloading. The `missingCurrentZh` count should drop.
 8. If some Chinese subtitle downloads return HTTP 404 while the matching English subtitle URL returns 200, the downloader reports them as `unavailable` with `zhSubtitleNotPublished`. Treat those rows as currently unavailable Chinese subtitles, not as downloaded files. Keep them in the audit report and retry after Brooks publishes more Chinese captions.
 9. Handle English subtitles and videos as separate later passes. Do not assume a subtitle version change always means the video changed; compare m3u8 duration and local video duration before replacing or re-downloading large video files.
+10. When downloading current videos, pass `--with-captions` so each newly downloaded video also refreshes its matching English and Chinese subtitle files. This avoids mixing a new video with stale local subtitles that happen to have the same output names.
+11. If you are ready to move old same-series files out of the active media directory during a video download batch, also pass `--archive-old-variants /Users/lizhenhai/PA/_archive`. This moves only the old variants for videos successfully downloaded in that command, after both matching captions refresh successfully.
+12. If the new videos and captions were already downloaded before archive handling was enabled, run the dedicated `--only oldVariants` archive pass against the latest audit file instead of writing a one-off move script.
 
 ### Script Responsibilities
 
 - `m3u8-downloader.user.js`: browser-only exporter. It discovers course pages, loads the authenticated Bunny embeds, detects m3u8 URLs, derives CN/EN subtitle URLs, and exports JSON. It should not read local directories or download files to the local archive.
-- `brooks-media-audit.mjs`: read-only local comparator. It matches exported online records against local files and produces `summary`, `items`, and `downloadPlan`. It should not download, overwrite, rename, or delete files.
-- `brooks-media-download.mjs`: write-capable subtitle downloader and video plan generator. It supports dry runs, small limits, language filters, existing-file skips, and VTT validation. It supports `--only zhSubtitle`, `--only enSubtitle`, and `--only video`. Subtitle downloads use Node.js `fetch`; video dry runs generate `yt-dlp` commands and report whether `yt-dlp` is available locally. Video execution remains disabled until a small sample download is explicitly approved.
+- `brooks-media-audit.mjs`: read-only local comparator. It matches exported online records against local files and produces `summary`, `items`, and `downloadPlan`. It should not download, overwrite, rename, or delete files. For rows that need a current video, it still keeps the exported EN/CN subtitle URLs in `downloads` so the downloader can refresh captions for that same new video.
+- `brooks-media-download.mjs`: write-capable subtitle downloader, video downloader wrapper, and old-variant archive runner. It supports dry runs, small limits, language filters, existing-file skips, VTT validation, video-associated caption refresh, and opt-in old-variant archiving. It supports `--only zhSubtitle`, `--only enSubtitle`, `--only video`, and `--only oldVariants`. Subtitle downloads use Node.js `fetch`; video dry runs generate `yt-dlp` commands and report whether `yt-dlp` is available locally. Video execution remains disabled until a small sample download is explicitly approved. When `--only video --with-captions` is used, each successfully downloaded video immediately overwrites that record's matching `.en.vtt` and `.zh.vtt` files. When `--archive-old-variants <dir>` is also used, old same-series files from `local.variants` move into that archive directory after the new video and both captions finish successfully. When the replacement set already exists, `--only oldVariants --archive-old-variants <dir>` performs the archive pass directly from `items[].local.variants` after a full preflight.
 
 ### Video Dry Run
 
@@ -130,17 +133,76 @@ npm run download:brooks-media -- \
 
 The dry run lists planned outputs, `yt-dlp` availability, and quoted `yt-dlp` commands. If `yt-dlp` is not installed, install it before requesting a video sample download. Do not use the JavaScript subtitle path for video segment downloads.
 
-After reviewing the dry run, download one video sample with an explicit confirmation flag:
+After reviewing the dry run, download one video sample with an explicit confirmation flag. Include `--with-captions` when the audit was generated by a version that keeps caption URLs for video rows:
 
 ```bash
 npm run download:brooks-media -- \
   --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
   --only video \
   --limit 1 \
+  --with-captions \
   --confirm-video-download
 ```
 
 Keep `--limit 1` for the first run. Re-run the audit after the sample download and confirm that `missingCurrentVideo` drops by one before approving a larger batch.
+
+For larger reviewed video batches, keep `--with-captions` enabled:
+
+```bash
+npm run download:brooks-media -- \
+  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+  --only video \
+  --limit 5 \
+  --with-captions \
+  --confirm-video-download
+```
+
+`--with-captions` is scoped to the videos downloaded in that command. It does not refresh every subtitle in the archive and does not make `brooks-media-audit.mjs` write files. If an older audit file does not contain subtitle URLs on video rows, export a fresh index and re-run the audit before using this mode.
+
+If the new video batch has been reviewed and old same-series files should leave the active media directory, use the archive flag in the same command:
+
+```bash
+npm run download:brooks-media -- \
+  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03.json \
+  --only video \
+  --limit 5 \
+  --with-captions \
+  --archive-old-variants /Users/lizhenhai/PA/_archive \
+  --confirm-video-download
+```
+
+The archive flag is intentionally opt-in and only works with `--only video --with-captions`. For each successfully downloaded video, it moves only that record's `local.variants` files. It skips archiving for that record if either caption is not refreshed, because moving old files before the replacement set is complete can leave users without a fallback.
+
+If the current files were already downloaded and a latest audit shows `local.variants`, run a direct archive dry run first:
+
+```bash
+npm run download:brooks-media -- \
+  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
+  --only oldVariants \
+  --archive-old-variants /Users/lizhenhai/PA/_archive \
+  --dry-run
+```
+
+Then run the archive pass without `--dry-run`:
+
+```bash
+npm run download:brooks-media -- \
+  --audit /Users/lizhenhai/Downloads/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
+  --only oldVariants \
+  --archive-old-variants /Users/lizhenhai/PA/_archive
+```
+
+This mode preflights the whole batch before moving anything: every source must exist, every archive target must be unused, and archive targets must be unique. It does not delete files.
+
+Archive layout:
+
+```text
+/Users/lizhenhai/PA/_archive/
+  videos/
+  subtitles-en/
+  subtitles-zh/
+  subtitles-unknown/
+```
 
 ## Local Inventory Audit
 
