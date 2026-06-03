@@ -333,7 +333,7 @@ test('Brooks media export panel keeps stable dimensions while status text change
   const status = window.document.querySelector('#brooks-media-export-status');
   const actions = window.document.querySelector('#brooks-media-export-actions');
 
-  assert.equal(panel?.style.width, '380px');
+  assert.equal(panel?.style.width, '440px');
   assert.equal(panel?.style.minHeight, '');
   assert.equal(status?.style.height, '82px');
   assert.equal(status?.style.overflowWrap, 'anywhere');

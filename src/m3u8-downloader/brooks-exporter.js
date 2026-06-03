@@ -441,7 +441,7 @@ export function createBrooksMediaExporter({ originXHR, downloadWithA, getTitle }
     const links = getBrooksCourseVideoLinks(document)
     const section = document.createElement('section')
     section.id = 'brooks-media-export-dom'
-    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;width:380px;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px 12px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.35;box-shadow:0 4px 12px rgba(0,0,0,.18);'
+    section.style.cssText = 'position:fixed;right:20px;bottom:88px;z-index:9999;width:440px;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px 12px;background:#1f2937;color:white;border:1px solid #d1d5db;border-radius:4px;font-size:13px;line-height:1.35;box-shadow:0 4px 12px rgba(0,0,0,.18);'
     section.innerHTML = `
       <div style="margin-bottom:4px;">Brooks 视频与字幕清单</div>
       <div id="brooks-media-export-status" style="height:82px;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;">发现 ${links.length} 个课程视频</div>
