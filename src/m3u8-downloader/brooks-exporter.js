@@ -133,6 +133,10 @@ export function createBrooksMediaExporter({ originXHR, downloadWithA, getTitle }
       const canRetryFailures = canRetryFailedBrooksMediaExport(state)
       retryFailedButton.style.display = canRetryFailures ? '' : 'none'
     }
+    const downloadButton = document.getElementById('brooks-media-export-download')
+    if (downloadButton) {
+      downloadButton.style.display = state && state.running && !state.stopped ? 'none' : ''
+    }
     const resetButton = document.getElementById('brooks-media-export-reset')
     const resetHelp = document.getElementById('brooks-media-export-reset-help')
     const showReset = shouldShowBrooksMediaExportReset(state)

@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { importLatestBrooksMediaIndex } from './brooks-media-import-index.mjs';
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.webm']);
 const SUBTITLE_EXTENSIONS = new Set(['.vtt', '.srt']);
@@ -238,6 +239,10 @@ function parseArgs(argv) {
       args.localDir = argv[++index];
     } else if (arg === '--output') {
       args.outputPath = argv[++index];
+    } else if (arg === '--downloads') {
+      args.downloadsDir = argv[++index];
+    } else if (arg === '--reports') {
+      args.reportsDir = argv[++index];
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -249,7 +254,12 @@ function parseArgs(argv) {
 }
 
 export async function runCli(argv = process.argv.slice(2)) {
-  const { indexPath, localDir, outputPath } = parseArgs(argv);
+  let { indexPath, localDir, outputPath, downloadsDir, reportsDir } = parseArgs(argv);
+  if (indexPath === 'latest') {
+    const imported = await importLatestBrooksMediaIndex({ downloadsDir, reportsDir });
+    indexPath = imported.targetPath;
+    console.log(`Imported latest Brooks media index: ${imported.status} ${indexPath}`);
+  }
   const index = JSON.parse(await readFile(indexPath, 'utf8'));
   const localFiles = await listLocalFiles(localDir);
   const audit = auditBrooksMediaIndex({

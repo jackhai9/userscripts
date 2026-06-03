@@ -361,19 +361,23 @@ test('Brooks media export primary button toggles start, pause, and resume labels
   await new Promise(resolve => setTimeout(resolve, 20));
   const primary = window.document.querySelector('#brooks-media-export-primary');
   const reset = window.document.querySelector('#brooks-media-export-reset');
+  const download = window.document.querySelector('#brooks-media-export-download');
 
   primary.click();
   assert.equal(primary.textContent, '暂停');
   assert.equal(reset.style.display, 'none');
+  assert.equal(download.style.display, 'none');
   assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /采集中/);
 
   primary.click();
   assert.equal(primary.textContent, '继续');
   assert.equal(reset.style.display, '');
+  assert.equal(download.style.display, '');
   assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /已暂停/);
 
   primary.click();
   assert.equal(primary.textContent, '暂停');
+  assert.equal(download.style.display, 'none');
   assert.match(window.document.querySelector('#brooks-media-export-status')?.textContent || '', /采集中/);
 
   primary.click();

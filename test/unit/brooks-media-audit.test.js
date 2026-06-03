@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   auditBrooksMediaIndex,
   buildYtDlpCommand,
   parseLocalMediaFile,
+  runCli,
   stripVersionSuffix,
   titleKey,
 } from '../../scripts/brooks-media-audit.mjs';
@@ -174,4 +178,56 @@ test('Brooks media audit builds quoted yt-dlp commands', () => {
     }),
     "yt-dlp --referer 'https://example.com/embed?id=1' -N 16 -o 'Video 01 Trader'\\''s Test.%(ext)s' 'https://cdn.example.com/video.m3u8?token=abc'",
   );
+});
+
+test('Brooks media audit can import the latest downloaded index before auditing', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'brooks-audit-latest-test-'));
+  try {
+    const downloadsDir = join(dir, 'Downloads');
+    const reportsDir = join(dir, 'reports');
+    const localDir = join(dir, 'videos');
+    const outputPath = join(reportsDir, 'brooks-media-audit-2026-06-03T104215Z.json');
+    await mkdir(downloadsDir);
+    await mkdir(reportsDir);
+    await mkdir(localDir);
+    await writeFile(join(downloadsDir, 'brooks-media-index-2026-06-03T104215Z.json'), JSON.stringify({
+      exportedAt: '2026-06-03T10:42:15.123Z',
+      completed: true,
+      records: [
+        {
+          index: 0,
+          output: 'Video 01 Terminology.%(ext)s',
+          m3u8: 'https://cdn.example.com/video-01/video.m3u8',
+          en: 'https://cdn.example.com/video-01/captions/EN.vtt',
+          cn: 'https://cdn.example.com/video-01/captions/CN.vtt',
+          referer: 'https://iframe.example.com/embed/video-01',
+        },
+      ],
+      failures: [],
+    }, null, 2));
+
+    await runCli([
+      '--index',
+      'latest',
+      '--downloads',
+      downloadsDir,
+      '--reports',
+      reportsDir,
+      '--local',
+      localDir,
+      '--output',
+      outputPath,
+    ]);
+
+    const importedPath = join(reportsDir, 'brooks-media-index-2026-06-03T104215Z.json');
+    const audit = JSON.parse(await readFile(outputPath, 'utf8'));
+    assert.equal(audit.indexPath, importedPath);
+    assert.equal(audit.summary.records, 1);
+    await assert.rejects(
+      readFile(join(downloadsDir, 'brooks-media-index-2026-06-03T104215Z.json'), 'utf8'),
+      /ENOENT/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

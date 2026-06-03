@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   buildBrooksMediaIndexReportName,
+  getDefaultBrooksReportsDir,
   importLatestBrooksMediaIndex,
 } from '../../scripts/brooks-media-import-index.mjs';
 
@@ -29,6 +30,13 @@ test('Brooks media index import builds a flat timestamped report filename', () =
   assert.equal(
     buildBrooksMediaIndexReportName(createIndex()),
     'brooks-media-index-2026-06-03T104215Z.json',
+  );
+});
+
+test('Brooks media index import derives the default report directory from the user home', () => {
+  assert.equal(
+    getDefaultBrooksReportsDir('/Users/alice'),
+    '/Users/alice/PA/_reports',
   );
 });
 
