@@ -2,7 +2,7 @@
 // @name         【改写】m3u8-downloader
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.10.26
+// @version      0.10.27
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -419,15 +419,49 @@
   }
 
   function getBrooksMediaExportElapsedMs(state, now) {
-    const startedAt = parseBrooksMediaExportTime(state && state.startedAt)
-    if (startedAt === null) {
+    if (!state) {
+      return null
+    }
+    const baseElapsedMs = typeof state.activeElapsedMs === 'number' && Number.isFinite(state.activeElapsedMs)
+      ? Math.max(0, state.activeElapsedMs)
+      : null
+    const activeRunStartedAt = parseBrooksMediaExportTime(state.activeRunStartedAt)
+    if (baseElapsedMs === null && activeRunStartedAt === null) {
       return null
     }
     const fallbackNow = typeof now === 'number' ? now : Date.now()
-    const endedAt = state && state.running
-      ? fallbackNow
-      : (parseBrooksMediaExportTime(state && state.updatedAt) || fallbackNow)
-    return Math.max(0, endedAt - startedAt)
+    const activeRunMs = state.running && activeRunStartedAt !== null
+      ? Math.max(0, fallbackNow - activeRunStartedAt)
+      : 0
+    return (baseElapsedMs || 0) + activeRunMs
+  }
+
+  function markBrooksMediaExportRunStarted(state, now) {
+    if (!state) {
+      return
+    }
+    if (typeof state.activeElapsedMs !== 'number' || !Number.isFinite(state.activeElapsedMs)) {
+      state.activeElapsedMs = 0
+    }
+    if (parseBrooksMediaExportTime(state.activeRunStartedAt) === null) {
+      state.activeRunStartedAt = new Date(typeof now === 'number' ? now : Date.now()).toISOString()
+    }
+  }
+
+  function stopBrooksMediaExportRunTimer(state, now) {
+    if (!state) {
+      return null
+    }
+    const activeRunStartedAt = parseBrooksMediaExportTime(state.activeRunStartedAt)
+    if (typeof state.activeElapsedMs !== 'number' || !Number.isFinite(state.activeElapsedMs)) {
+      state.activeElapsedMs = 0
+    }
+    if (activeRunStartedAt !== null) {
+      const endedAt = typeof now === 'number' ? now : Date.now()
+      state.activeElapsedMs += Math.max(0, endedAt - activeRunStartedAt)
+      delete state.activeRunStartedAt
+    }
+    return state.activeElapsedMs
   }
 
   function formatBrooksMediaExportDuration(milliseconds) {
@@ -658,6 +692,7 @@
     const index = getNextBrooksMediaExportIndex(brooksMediaExportState)
     const url = brooksMediaExportState.links[index]
     if (!url) {
+      stopBrooksMediaExportRunTimer(brooksMediaExportState)
       brooksMediaExportState.running = false
       saveBrooksMediaExportState()
       clearBrooksMediaExportFrame()
@@ -693,6 +728,8 @@
 
   function startBrooksMediaExport() {
     const links = getBrooksCourseVideoLinks(document)
+    const now = Date.now()
+    const nowIso = new Date(now).toISOString()
     brooksMediaExportState = {
       running: true,
       stopped: false,
@@ -701,8 +738,10 @@
       index: 0,
       records: [],
       failures: [],
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      startedAt: nowIso,
+      updatedAt: nowIso,
+      activeElapsedMs: 0,
+      activeRunStartedAt: nowIso,
     }
     saveBrooksMediaExportState()
     processNextBrooksMediaExport()
@@ -716,6 +755,7 @@
     }
     brooksMediaExportState.running = true
     brooksMediaExportState.stopped = false
+    markBrooksMediaExportRunStarted(brooksMediaExportState)
     saveBrooksMediaExportState()
     processNextBrooksMediaExport()
   }
@@ -725,6 +765,7 @@
       brooksMediaExportState = loadBrooksMediaExportState()
     }
     if (brooksMediaExportState) {
+      stopBrooksMediaExportRunTimer(brooksMediaExportState)
       brooksMediaExportState.running = false
       brooksMediaExportState.stopped = true
       saveBrooksMediaExportState()
@@ -773,6 +814,7 @@
     brooksMediaExportState.failures = []
     brooksMediaExportState.running = true
     brooksMediaExportState.stopped = false
+    markBrooksMediaExportRunStarted(brooksMediaExportState)
     saveBrooksMediaExportState()
     processNextBrooksMediaExport()
   }

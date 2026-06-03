@@ -116,6 +116,7 @@ test('Brooks media export payload includes elapsed runtime metadata', () => {
     failures: [],
     startedAt: '2026-06-03T00:00:00.000Z',
     updatedAt: '2026-06-03T00:01:12.000Z',
+    activeElapsedMs: 72_000,
   }, '2026-06-03T00:02:00.000Z');
 
   assert.equal(payload.startedAt, '2026-06-03T00:00:00.000Z');
@@ -123,6 +124,42 @@ test('Brooks media export payload includes elapsed runtime metadata', () => {
   assert.equal(payload.elapsedMs, 72_000);
   assert.equal(payload.elapsedSeconds, 72);
   assert.equal(payload.elapsedText, '1m12s');
+});
+
+test('Brooks media export elapsed runtime excludes paused wall-clock time', () => {
+  const {
+    markBrooksMediaExportRunStarted,
+    stopBrooksMediaExportRunTimer,
+    buildBrooksMediaExportPayload,
+  } = loadFunctions([
+    'parseBrooksMediaExportTime',
+    'getBrooksMediaExportElapsedMs',
+    'formatBrooksMediaExportDuration',
+    'markBrooksMediaExportRunStarted',
+    'stopBrooksMediaExportRunTimer',
+    'buildBrooksMediaExportPayload',
+  ]);
+  const state = {
+    links: ['a'],
+    index: 1,
+    running: false,
+    stopped: false,
+    records: [{ index: 0 }],
+    failures: [],
+    startedAt: '2026-06-03T00:00:00.000Z',
+    updatedAt: '2026-06-03T01:25:46.000Z',
+    activeElapsedMs: 0,
+  };
+
+  markBrooksMediaExportRunStarted(state, 1_000);
+  stopBrooksMediaExportRunTimer(state, 11_000);
+  markBrooksMediaExportRunStarted(state, 3_600_000);
+  stopBrooksMediaExportRunTimer(state, 3_605_000);
+
+  const payload = buildBrooksMediaExportPayload(state, '2026-06-03T01:25:46.000Z');
+  assert.equal(payload.elapsedMs, 15_000);
+  assert.equal(payload.elapsedSeconds, 15);
+  assert.equal(payload.elapsedText, '15s');
 });
 
 test('Brooks media export parses page HTML and builds a direct Bunny embed URL', () => {
@@ -226,6 +263,8 @@ test('Brooks media export status separates success, failures, current page, and 
       running: true,
       stopped: false,
       startedAt: '1970-01-01T00:00:01.000Z',
+      activeElapsedMs: 0,
+      activeRunStartedAt: '1970-01-01T00:00:01.000Z',
       links: [
         'https://www.brookstradingcourse.com/price-action-fundamentals/video-01-terminology/',
         'https://www.brookstradingcourse.com/price-action-fundamentals/video-02a-chart-basics-price-action/',
@@ -261,6 +300,7 @@ test('Brooks media export status prompts failure recovery after collection finis
       stopped: false,
       startedAt: '2026-06-03T00:00:00.000Z',
       updatedAt: '2026-06-03T00:01:12.000Z',
+      activeElapsedMs: 72_000,
       links: ['a', 'b', 'c'],
       index: 3,
       records: [{ ok: true }, { ok: true }],
