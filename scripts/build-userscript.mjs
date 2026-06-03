@@ -18,6 +18,11 @@ export const TARGETS = {
     entry: 'src/binance-coinmarketcap-data/index.user.js',
     output: 'scripts/binance-coinmarketcap-data.user.js',
   },
+  'm3u8-downloader': {
+    entry: 'src/m3u8-downloader/index.user.js',
+    output: 'scripts/m3u8-downloader.user.js',
+    copy: true,
+  },
 };
 
 async function buildTarget(name) {
@@ -33,6 +38,12 @@ async function buildTarget(name) {
 
   if (!metadata) {
     throw new Error(`Missing userscript metadata block in ${entry}`);
+  }
+
+  if (target.copy) {
+    await mkdir(dirname(output), { recursive: true });
+    await writeFile(output, source.endsWith('\n') ? source : `${source}\n`);
+    return;
   }
 
   const sourceWithoutMetadata = source.replace(metadata, '').trimStart();

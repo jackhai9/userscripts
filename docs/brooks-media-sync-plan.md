@@ -208,7 +208,7 @@ Reviewer verdict:
 
 ## Validation Checklist
 
-- Run `node --check scripts/m3u8-downloader.user.js` after userscript edits.
+- After changing `src/m3u8-downloader/**`, run `npm run build:m3u8-downloader` and `npm run check:m3u8-downloader`.
 - Run the focused Brooks media export tests when changing index/export behavior.
 - Test caption derivation for:
   - `/<id>/playlist.m3u8`
@@ -232,11 +232,11 @@ Reviewer verdict:
   - Partial paused exports do not expose retry-only recovery.
   - Elapsed runtime excludes paused/stopped wall-clock time.
 
-## Future Source Split
+## Source Split Baseline
 
-`scripts/m3u8-downloader.user.js` is still the source of truth until it is migrated. It has grown beyond a single-purpose downloader and should be moved to `src/m3u8-downloader/` in a separate mechanical migration PR.
+`src/m3u8-downloader/` is the source of truth for `scripts/m3u8-downloader.user.js`.
 
-Do not mix that migration with behavior fixes. The first migration should preserve behavior and make the generated `scripts/m3u8-downloader.user.js` readable, non-minified, and suitable for Tampermonkey install/update.
+The first migration intentionally preserves behavior and only establishes the build path. It uses copy-mode generation while `src/m3u8-downloader/index.user.js` remains a single file. The generated `scripts/m3u8-downloader.user.js` must stay readable, non-minified, and suitable for Tampermonkey install/update.
 
 Suggested module boundaries:
 
@@ -257,10 +257,10 @@ src/m3u8-downloader/
 
 Migration checklist:
 
-- Add a `m3u8-downloader` target to `scripts/build-userscript.mjs`.
-- Add `build:m3u8-downloader` and `check:m3u8-downloader` package scripts.
 - Keep the metadata block in `src/m3u8-downloader/index.user.js`.
 - Preserve `@updateURL` and `@downloadURL`.
 - Keep generated output readable, non-compressed, and non-obfuscated.
-- Convert focused tests to import source modules where practical instead of extracting function bodies from the generated userscript.
-- After migration, changing `src/m3u8-downloader/**` must build `scripts/m3u8-downloader.user.js` and bump `@version` when behavior changes.
+- After changing `src/m3u8-downloader/**`, run `npm run build:m3u8-downloader` and `npm run check:m3u8-downloader`.
+- Bump `@version` in `src/m3u8-downloader/index.user.js` before generating when behavior changes.
+- Convert focused tests to import source modules where practical instead of extracting function bodies from the generated userscript in a later refactor.
+- Split modules only after the build migration is stable; do not combine module extraction with behavior changes. When modules are introduced, switch the `m3u8-downloader` build target from copy-mode to bundling in the same mechanical module-split PR.
