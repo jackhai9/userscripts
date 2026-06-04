@@ -36,7 +36,7 @@ test('Brooks media index import builds a flat timestamped report filename', () =
 test('Brooks media index import derives the default report directory from the user home', () => {
   assert.equal(
     getDefaultBrooksReportsDir('/Users/alice'),
-    '/Users/alice/PA/_reports',
+    '/Users/alice/PA/brooks-media-sync/reports',
   );
 });
 
