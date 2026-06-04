@@ -8,7 +8,7 @@ const DEFAULT_DOWNLOADS_DIR = join(homedir(), 'Downloads');
 const DEFAULT_REPORTS_DIR = getDefaultBrooksReportsDir();
 
 export function getDefaultBrooksReportsDir(home = homedir()) {
-  return join(home, 'PA', '_reports');
+  return join(home, 'PA', 'brooks-media-sync', 'reports');
 }
 
 function parseArgs(argv) {

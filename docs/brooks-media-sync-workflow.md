@@ -69,10 +69,10 @@ Use three separate steps. Each step has a different responsibility:
    npm run audit:brooks-media -- \
      --index latest \
      --local ~/PA/input_videos \
-     --output ~/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json
+     --output ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03T104215Z.json
    ```
 
-   With `--index latest`, the audit command first moves the newest complete `brooks-media-index-*.json` from `~/Downloads` to `~/PA/_reports/`, then audits that imported file. If the same export already exists in `_reports`, it removes the duplicate from `Downloads` and audits the existing report file.
+   With `--index latest`, the audit command first moves the newest complete `brooks-media-index-*.json` from `~/Downloads` to `~/PA/brooks-media-sync/reports/`, then audits that imported file. If the same export already exists in `brooks-media-sync/reports`, it removes the duplicate from `Downloads` and audits the existing report file.
 
 8. For an empty directory, the audit should report every record as needing `video`, `enSubtitle`, and `zhSubtitle`.
 9. Review `downloadPlan` before downloading. Prefer downloading subtitles first, then videos only after confirming the candidate list.
@@ -80,7 +80,7 @@ Use three separate steps. Each step has a different responsibility:
 
     ```bash
     npm run download:brooks-media -- \
-      --audit ~/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
+      --audit ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03T104215Z.json \
       --only zhSubtitle \
       --limit 3 \
       --dry-run
@@ -102,7 +102,7 @@ Use three separate steps. Each step has a different responsibility:
 
    ```bash
    npm run download:brooks-media -- \
-     --audit ~/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
+     --audit ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03T104215Z.json \
      --only zhSubtitle \
      --limit 3
    ```
@@ -112,19 +112,19 @@ Use three separate steps. Each step has a different responsibility:
 8. If some Chinese subtitle downloads return HTTP 404 while the matching English subtitle URL returns 200, the downloader reports them as `unavailable` with `zhSubtitleNotPublished`. Treat those rows as currently unavailable Chinese subtitles, not as downloaded files. Keep them in the audit report and retry after Brooks publishes more Chinese captions.
 9. Handle English subtitles and videos as separate later passes. Do not assume a subtitle version change always means the video changed; compare m3u8 duration and local video duration before replacing or re-downloading large video files.
 10. When downloading current videos, pass `--with-captions` so each newly downloaded video also refreshes its matching English and Chinese subtitle files. This avoids mixing a new video with stale local subtitles that happen to have the same output names.
-11. If you are ready to move old same-series files out of the active media directory during a video download batch, also pass `--archive-old-variants ~/PA/_archive`. This moves only the old variants for videos successfully downloaded in that command, after both matching captions refresh successfully.
+11. If you are ready to move old same-series files out of the active media directory during a video download batch, also pass `--archive-old-variants ~/PA/brooks-media-sync/archive`. This moves only the old variants for videos successfully downloaded in that command, after both matching captions refresh successfully.
 12. If the new videos and captions were already downloaded before archive handling was enabled, run the dedicated `--only oldVariants` archive pass against the latest audit file instead of writing a one-off move script.
 
 ### Script Responsibilities
 
 - `m3u8-downloader.user.js`: browser-only exporter. It discovers course pages, loads the authenticated Bunny embeds, detects m3u8 URLs, derives CN/EN subtitle URLs, and exports JSON. It should not read local directories or download files to the local archive.
-- `brooks-media-import-index.mjs`: local importer used by the audit command. It moves the newest complete `brooks-media-index-*.json` from `Downloads` into `~/PA/_reports/`, normalizes the timestamped filename, and removes identical duplicate downloads. It can still be run directly for troubleshooting, but the normal workflow should use `npm run audit:brooks-media -- --index latest ...`.
+- `brooks-media-import-index.mjs`: local importer used by the audit command. It moves the newest complete `brooks-media-index-*.json` from `Downloads` into `~/PA/brooks-media-sync/reports/`, normalizes the timestamped filename, and removes identical duplicate downloads. It can still be run directly for troubleshooting, but the normal workflow should use `npm run audit:brooks-media -- --index latest ...`.
 - `brooks-media-audit.mjs`: read-only local comparator. It matches exported online records against local files and produces `summary`, `items`, and `downloadPlan`. With `--index latest`, it first imports the latest browser-exported index and then audits the imported report. It should not download, overwrite, rename, or delete media files. For rows that need a current video, it still keeps the exported EN/CN subtitle URLs in `downloads` so the downloader can refresh captions for that same new video.
 - `brooks-media-download.mjs`: write-capable subtitle downloader, video downloader wrapper, and old-variant archive runner. It supports dry runs, small limits, language filters, existing-file skips, VTT validation, video-associated caption refresh, and opt-in old-variant archiving. It supports `--only zhSubtitle`, `--only enSubtitle`, `--only video`, and `--only oldVariants`. Subtitle downloads use Node.js `fetch`; video dry runs generate `yt-dlp` commands and report whether `yt-dlp` is available locally. Video execution remains disabled until a small sample download is explicitly approved. When `--only video --with-captions` is used, each successfully downloaded video immediately overwrites that record's matching `.en.vtt` and `.zh.vtt` files. When `--archive-old-variants <dir>` is also used, old same-series files from `local.variants` move into that archive directory after the new video and both captions finish successfully. When the replacement set already exists, `--only oldVariants --archive-old-variants <dir>` performs the archive pass directly from `items[].local.variants` after a full preflight.
 
 ### Report Retention
 
-Use the flat report directory `~/PA/_reports/` for exported indexes, audits, and human-readable summaries. Do not use `Downloads` as the working directory; it should only be a temporary browser download landing zone. File names carry the Brooks prefix and timestamp, so an extra `brooks/YYYY-MM-DD/` directory layer is unnecessary.
+Use the Brooks workflow directory `~/PA/brooks-media-sync/`, with reports in `reports/` for exported indexes, audits, and human-readable summaries. Do not use `Downloads` as the working directory; it should only be a temporary browser download landing zone. File names carry the Brooks prefix and timestamp, so an extra `brooks/YYYY-MM-DD/` directory layer is unnecessary.
 
 Keep the final online index, final audit, and any human-readable missing-caption summary when you need traceability for a sync run. Intermediate batch audits and refresh result files are only troubleshooting checkpoints; after the final audit is generated and verified, they can be deleted or moved out of the active report directory.
 
@@ -134,7 +134,7 @@ Video files are large and should not be downloaded automatically after the subti
 
 ```bash
 npm run download:brooks-media -- \
-  --audit ~/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
+  --audit ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03T104215Z.json \
   --only video \
   --limit 5 \
   --dry-run
@@ -146,7 +146,7 @@ After reviewing the dry run, download one video sample with an explicit confirma
 
 ```bash
 npm run download:brooks-media -- \
-  --audit ~/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
+  --audit ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03T104215Z.json \
   --only video \
   --limit 1 \
   --with-captions \
@@ -159,7 +159,7 @@ For larger reviewed video batches, keep `--with-captions` enabled:
 
 ```bash
 npm run download:brooks-media -- \
-  --audit ~/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
+  --audit ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03T104215Z.json \
   --only video \
   --limit 5 \
   --with-captions \
@@ -172,11 +172,11 @@ If the new video batch has been reviewed and old same-series files should leave 
 
 ```bash
 npm run download:brooks-media -- \
-  --audit ~/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json \
+  --audit ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03T104215Z.json \
   --only video \
   --limit 5 \
   --with-captions \
-  --archive-old-variants ~/PA/_archive \
+  --archive-old-variants ~/PA/brooks-media-sync/archive \
   --confirm-video-download
 ```
 
@@ -186,9 +186,9 @@ If the current files were already downloaded and a latest audit shows `local.var
 
 ```bash
 npm run download:brooks-media -- \
-  --audit ~/PA/_reports/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
+  --audit ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
   --only oldVariants \
-  --archive-old-variants ~/PA/_archive \
+  --archive-old-variants ~/PA/brooks-media-sync/archive \
   --dry-run
 ```
 
@@ -196,9 +196,9 @@ Then run the archive pass without `--dry-run`:
 
 ```bash
 npm run download:brooks-media -- \
-  --audit ~/PA/_reports/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
+  --audit ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03-after-all-current-videos-captions-refreshed.json \
   --only oldVariants \
-  --archive-old-variants ~/PA/_archive
+  --archive-old-variants ~/PA/brooks-media-sync/archive
 ```
 
 This mode preflights the whole batch before moving anything: every source must exist, every archive target must be unused, and archive targets must be unique. It does not delete files.
@@ -206,7 +206,7 @@ This mode preflights the whole batch before moving anything: every source must e
 Archive layout:
 
 ```text
-~/PA/_archive/
+~/PA/brooks-media-sync/archive/
   videos/
   subtitles-en/
   subtitles-zh/
@@ -219,9 +219,9 @@ After exporting a complete Brooks media index, run the read-only local inventory
 
 ```bash
 npm run audit:brooks-media -- \
-  --index ~/PA/_reports/brooks-media-index-2026-06-03T104215Z.json \
+  --index ~/PA/brooks-media-sync/reports/brooks-media-index-2026-06-03T104215Z.json \
   --local ~/PA/input_videos \
-  --output ~/PA/_reports/brooks-media-audit-2026-06-03T104215Z.json
+  --output ~/PA/brooks-media-sync/reports/brooks-media-audit-2026-06-03T104215Z.json
 ```
 
 The audit report compares the current online `output` base name against local videos and subtitles. It treats exact matches as current files and same-series non-exact matches as local variants, usually older or differently named files such as a no-version local file when the online index now ends in `v2`, `v3`, or `version 2`.
