@@ -2,7 +2,7 @@
 // @name         【自写】Binance CoinMarketCap 数据面板
 // @namespace    binance.coinmarketcap.data
 // @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      0.1.9
+// @version      0.1.10
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -35,7 +35,7 @@ import {
   const PANEL_ID = 'jh-binance-cmc-data-panel';
   const STORAGE_POS_KEY = 'jh_binance_cmc_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_cmc_data_collapsed';
-  const PANEL_WIDTH = 320;
+  const PANEL_WIDTH = 240;
   const REFRESH_MS = 30 * 1000;
   const SYMBOL_CHECK_MS = 1_500;
   const CMC_BASE = 'https://coinmarketcap.com/zh/currencies/';
@@ -508,28 +508,28 @@ import {
     panel.innerHTML = [
       '<div id="', PANEL_ID, '-header" style="',
         'display:flex;align-items:center;justify-content:space-between;',
-        'padding:8px 12px;cursor:move;background:#fafafa;border-bottom:1px solid ', C.border, ';',
+        'padding:8px 10px;cursor:move;background:#fafafa;border-bottom:1px solid ', C.border, ';',
       '">',
-        '<div style="display:flex;align-items:center;gap:6px;min-width:0;">',
+        '<div style="display:flex;align-items:center;gap:5px;min-width:0;">',
           '<span style="font-size:15px;cursor:move;">&#9776;</span>',
           '<span style="font-weight:600;font-size:14px;white-space:nowrap;">CMC 数据</span>',
           '<span id="', PANEL_ID, '-symbol" style="color:', C.sub, ';font-size:13px;overflow:hidden;text-overflow:ellipsis;"></span>',
         '</div>',
-        '<div style="display:flex;gap:4px;flex:0 0 auto;">',
+        '<div style="display:flex;gap:2px;flex:0 0 auto;">',
           '<button id="', PANEL_ID, '-refresh" title="刷新" style="',
-            'background:none;border:none;cursor:pointer;font-size:14px;color:', C.sub, ';padding:0 4px;line-height:1;',
+            'background:none;border:none;cursor:pointer;font-size:14px;color:', C.sub, ';padding:0 3px;line-height:1;',
           '">&#8635;</button>',
           '<button id="', PANEL_ID, '-collapse" title="折叠/展开" style="',
-            'background:none;border:none;cursor:pointer;font-size:15px;color:', C.sub, ';padding:0 4px;line-height:1;',
+            'background:none;border:none;cursor:pointer;font-size:15px;color:', C.sub, ';padding:0 3px;line-height:1;',
           '">', collapsed ? '&#9633;' : '&#95;', '</button>',
           '<button id="', PANEL_ID, '-close" title="关闭" style="',
-            'background:none;border:none;cursor:pointer;font-size:15px;color:', C.sub, ';padding:0 4px;line-height:1;',
+            'background:none;border:none;cursor:pointer;font-size:15px;color:', C.sub, ';padding:0 3px;line-height:1;',
           '">&times;</button>',
         '</div>',
       '</div>',
       '<div id="', PANEL_ID, '-body" style="display:', collapsed ? 'none' : 'block', ';">',
-        '<div id="', PANEL_ID, '-rows" style="padding:8px 12px;"></div>',
-        '<div id="', PANEL_ID, '-footer" style="padding:6px 12px;color:', C.sub, ';font-size:12px;border-top:1px solid ', C.border, ';"></div>',
+        '<div id="', PANEL_ID, '-rows" style="padding:8px 10px;"></div>',
+        '<div id="', PANEL_ID, '-footer" style="padding:6px 10px;color:', C.sub, ';font-size:12px;border-top:1px solid ', C.border, ';"></div>',
       '</div>',
     ].join('');
 
@@ -594,9 +594,9 @@ import {
           ? 'background:linear-gradient(180deg, rgba(56,97,251,.055), rgba(22,199,132,.045));box-shadow:inset 0 0 0 1.5px rgba(56,97,251,.62);border-radius:6px;padding:5px 6px;margin:2px -6px;'
           : 'padding:4px 0;';
         return [
-          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;', cardStyle, '">',
-            '<span style="color:', C.sub, ';white-space:nowrap;">', escapeHtml(row.label), '</span>',
-            '<span style="font-weight:600;font-variant-numeric:tabular-nums;text-align:right;">',
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;', cardStyle, '">',
+            '<span style="color:', C.sub, ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;">', escapeHtml(row.label), '</span>',
+            '<span style="font-weight:600;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;flex:0 0 auto;">',
               escapeHtml(row.value), change,
             '</span>',
           '</div>',
@@ -609,9 +609,9 @@ import {
       const cmcClock = data.lastUpdated ? formatClock(Date.parse(data.lastUpdated)) : '--';
       const sourceLabel = data.source === 'page-snapshot' ? 'CMC 页面快照' : 'CMC data-api';
       footerEl.innerHTML = [
-        '<div style="display:flex;justify-content:space-between;gap:8px;">',
+        '<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;">',
           '<a href="', escapeHtml(data.url), '" target="_blank" style="color:', C.accent, ';text-decoration:none;">', sourceLabel, '</a>',
-          '<span>CMC ', cmcClock, ' / 拉取 ', formatClock(lastUpdateTs), '</span>',
+          '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right;">CMC ', cmcClock, ' / 拉取 ', formatClock(lastUpdateTs), '</span>',
         '</div>',
       ].join('');
     }

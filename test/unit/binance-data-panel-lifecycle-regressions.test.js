@@ -67,3 +67,14 @@ test('CMC data panel escapes the CoinMarketCap link href before writing innerHTM
   const renderDataBody = readFunctionBody(sources.cmc, 'renderData');
   assert.match(renderDataBody, /escapeHtml\(data\.url\)/);
 });
+
+test('CMC data panel keeps a compact fixed width without row overflow', () => {
+  assert.match(sources.cmc, /const PANEL_WIDTH = 240;/);
+
+  const ensurePanelBody = readFunctionBody(sources.cmc, 'ensurePanel');
+  assert.match(ensurePanelBody, /width: PANEL_WIDTH \+ 'px'/);
+
+  const renderDataBody = readFunctionBody(sources.cmc, 'renderData');
+  assert.match(renderDataBody, /overflow:hidden;text-overflow:ellipsis;min-width:0/);
+  assert.match(renderDataBody, /white-space:nowrap;flex:0 0 auto/);
+});
