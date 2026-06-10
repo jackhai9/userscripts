@@ -56,7 +56,7 @@ test('trading data panel invalidates async work on route pause and rejects stale
 });
 
 test('trading data panel keeps a narrower fixed width with stable row value space', () => {
-  assert.match(sources.trading, /const PANEL_WIDTH = 260;/);
+  assert.match(sources.trading, /const PANEL_WIDTH = 240;/);
 
   const ensurePanelBody = readFunctionBody(sources.trading, 'ensurePanel');
   assert.match(ensurePanelBody, /width:\s+PANEL_WIDTH \+ 'px'/);
