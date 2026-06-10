@@ -55,6 +55,17 @@ test('trading data panel invalidates async work on route pause and rejects stale
   assert.match(scheduleBody, /!isFuturesTradingPage\(\)/);
 });
 
+test('trading data panel keeps a narrower fixed width with stable row value space', () => {
+  assert.match(sources.trading, /const PANEL_WIDTH = 260;/);
+
+  const ensurePanelBody = readFunctionBody(sources.trading, 'ensurePanel');
+  assert.match(ensurePanelBody, /width:\s+PANEL_WIDTH \+ 'px'/);
+
+  const renderPanelBody = readFunctionBody(sources.trading, 'renderPanel');
+  assert.match(renderPanelBody, /min-width:90px/);
+  assert.match(renderPanelBody, /font-variant-numeric:tabular-nums;flex:1;text-align:right/);
+});
+
 test('CMC data panel stops business timers on non-trading routes but keeps a route watcher', () => {
   const pauseBody = readFunctionBody(sources.cmc, 'pauseForNonTradingPage');
   const startRouteBody = readFunctionBody(sources.cmc, 'startRouteWatcher');
