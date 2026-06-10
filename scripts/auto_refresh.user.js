@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         【自写】定时刷新指定页面
 // @namespace    daily-0805-refresh
-// @icon         https://avatars.githubusercontent.com/u/5935568?s=128
-// @version      1.0.6
+// @icon         data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Crect%20width=%2264%22%20height=%2264%22%20rx=%2214%22%20fill=%22%23f0b90b%22/%3E%3Cpath%20d=%22M18%2018h28v8H34v20h-8V26h-8z%22%20fill=%22%231e2329%22/%3E%3C/svg%3E
+// @icon64       data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Crect%20width=%2264%22%20height=%2264%22%20rx=%2214%22%20fill=%22%23f0b90b%22/%3E%3Cpath%20d=%22M18%2018h28v8H34v20h-8V26h-8z%22%20fill=%22%231e2329%22/%3E%3C/svg%3E
+// @version      1.0.7
 // @author       jackhai9
 // @description  ⚠️ 暂不推荐此方式，已改为 macOS launchd + AppleScript 定时打开页面，请参考 https://github.com/jackhai9/dotfiles 中的 home-configs/.local/bin/anyrouter-checkin.sh
 // @match        https://anyrouter.top/*
