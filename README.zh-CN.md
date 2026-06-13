@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a>
+  简体中文 | <a href="README.md">English</a>
 </p>
 
 ![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscripts-00485b)
