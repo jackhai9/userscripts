@@ -43,6 +43,11 @@
 - 保留 `@updateURL` 和 `@downloadURL` 指向真源 raw 地址。
 - 发布到 `main` 必须通过 GitHub PR 合并；不要在本地 merge 到 `main` 后直接 push `main`。
 - 如果用户要求“发布”“上线”或“合并到 main”，默认流程是 push feature branch、创建 PR、等待检查通过，然后用 `gh pr merge` 合并。
+- 本仓库默认不写兜底代码、不做防御性编程、不靠补丁式修改压住表面症状。修复前必须先定位 root cause，并让代码改动直接消除该原因。
+- 不要添加 silent default、best-effort 分支、宽泛 `try/catch`、兼容 shim、旧 DOM 选择器、旧 message payload、自动 retry、类型猜测转换或随手 null handling 来让脚本继续运行。
+- 页面 DOM、Binance API、Tampermonkey runtime、缓存、定时器、跨页 message 和下载状态遇到非法状态时应快速失败或明确提示；只有当前设计文档、代码契约或用户当轮明确要求迁移支持时，才允许保留 recovery 或兼容路径。
+- 如果页面结构、接口响应、缓存新鲜度、脚本运行时、下载状态或上游行为不确定，先用现网 DOM/source/console/测试事实收紧契约；不要用猜测出来的默认值、防御分支或兼容层覆盖不确定性。
+- recovery 代码只允许出现在已定义恢复语义的边界上，必须窄化捕获范围，写清预期失败模式，并用具体断言或手测证据验证恢复路径。
 - 改 Binance API 相关逻辑时，只信官方文档和现网响应，不根据页面偶然行为猜语义。
 - 改 Binance 页面 DOM、事件、点击、下拉、tab、弹窗、按钮状态、输入框状态或可见性判断时，必须先核实现网 DOM/accessibility tree/截图和 Binance 当前前端 bundle/source 中的真实结构与触发路径；不得只凭页面文字、旧记忆、历史选择器或推测改代码。
 - 对可在页面上下文里验证的 Binance UI 操作，必须优先用 Chrome DevTools Console/Snippets 或等价调试入口在现网页面先调试通过最小 JS：确认选择器命中、事件触发、状态变化和失败形态；再把调通后的逻辑原样迁回 userscript。不能先在脚本里凭猜测改，再让用户线上试错。
