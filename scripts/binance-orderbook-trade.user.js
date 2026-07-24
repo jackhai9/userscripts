@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.37
+// @version      2.7.38
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -793,6 +793,7 @@
     const PANEL_BOTTOM_TOOLTIP_GAP = 12;
     let lastTs = 0;
     let isEditingMultiplier = false;
+    let multiplierEditContext = null;
     let renderPanelQueued = false;
     let renderPanelFollowUpTimer = 0;
     let tradeUiMutationObserver = null;
@@ -805,6 +806,7 @@
     let closeGuard = null;
     let lastAppliedCacheSnapshot = "";
     let autoOpenLeverageTask = null;
+    let pendingAutoOpenLeverageReset = null;
     let lastAutoOpenLeverage = { symbol: null, at: 0 };
     let tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
     let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
@@ -814,8 +816,8 @@
     let ladderPanelBodySignature = "";
     let orderbookPrecisionSampling = false;
     let orderbookPrecisionSampleTimer = 0;
-    let orderbookPrecisionResampleRequested = false;
-    let orderbookPrecisionResampleDurationMs = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS;
+    let orderbookPrecisionActiveRequest = null;
+    let orderbookPrecisionPendingRequest = null;
     const orderbookPrecisionInitialSampledSymbols = /* @__PURE__ */ new Set();
     let orderbookPrecisionState = {
       symbol: null,
@@ -826,6 +828,7 @@
       sampleEndsAt: 0
     };
     const controlledNativeButtons = /* @__PURE__ */ new Set();
+    let lastObservedSymbol = getCurrentSymbol();
     const MODE_HINT_ID = "jh-binance-trade-mode-hint";
     const NATIVE_ACTION_DISABLED_ATTR = "data-jh-native-action-disabled";
     const PREFIX = "[订单簿下单]";
@@ -1308,7 +1311,7 @@
     }
     async function waitForLatestTradePricesReady(symbol, timeoutMs = ORDERBOOK_PRECISION_READY_TIMEOUT_MS) {
       const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
-      while (!document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
+      while (!document.hidden && isFuturesTradingPage() && isCurrentObservedSymbol(symbol)) {
         const prices = getLatestTradePrices();
         if (prices.length >= ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS) return prices;
         if (Date.now() >= deadline) return prices;
@@ -1552,6 +1555,7 @@
     }
     async function applyRecommendedOrderbookPrecision() {
       const symbol = getCurrentSymbol();
+      if (!isCurrentObservedSymbol(symbol)) return false;
       const trigger = findOrderbookPrecisionTrigger();
       if (!symbol || !trigger?.element) {
         orderbookPrecisionState = { ...orderbookPrecisionState, status: "未定位到缩放下拉" };
@@ -1571,28 +1575,34 @@
       let option = findVisibleOrderbookPrecisionOption(recommendation);
       if (!option) {
         await openOrderbookPrecisionOptions(trigger.element);
+        if (!isCurrentObservedSymbol(symbol)) return false;
         option = await waitForVisibleOrderbookPrecisionOption(recommendation);
       }
+      if (!isCurrentObservedSymbol(symbol)) return false;
       if (!option) {
         orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, status: `未找到 ${recommendation} 档` };
         scheduleRenderPanel();
         return false;
       }
+      if (!isCurrentObservedSymbol(symbol)) return false;
       clickDomTarget(option);
+      if (!isCurrentObservedSymbol(symbol)) return false;
       orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, current: recommendation, status: "已应用" };
       scheduleRenderPanel({ followUpMs: 350 });
       return true;
     }
-    async function runOrderbookPrecisionSampleRound(durationMs = ORDERBOOK_PRECISION_SAMPLE_DURATION_MS) {
+    async function runOrderbookPrecisionSampleRound(request) {
       orderbookPrecisionSampleTimer = 0;
       if (orderbookPrecisionSampling || document.hidden || !isFuturesTradingPage()) return;
-      const symbol = getCurrentSymbol();
-      if (!symbol) return;
+      const symbol = request.symbol;
+      if (!isCurrentObservedSymbol(symbol)) return false;
       orderbookPrecisionSampling = true;
+      orderbookPrecisionActiveRequest = request;
       const tradeMoveSamples = [];
-      const sampleDurationMs = Math.max(0, Number(durationMs) || ORDERBOOK_PRECISION_SAMPLE_DURATION_MS);
+      const sampleDurationMs = Math.max(0, Number(request.durationMs) || ORDERBOOK_PRECISION_SAMPLE_DURATION_MS);
       try {
         const readyPrices = await waitForLatestTradePricesReady(symbol);
+        if (!isCurrentObservedSymbol(symbol)) return false;
         if (readyPrices.length >= ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS) {
           tradeMoveSamples.push(...collectNonZeroPriceMoves(readyPrices));
         }
@@ -1603,11 +1613,11 @@
           sampleEndsAt: deadline
         };
         scheduleRenderPanel({ followUpMs: 1e3 });
-        while (Date.now() < deadline && !document.hidden && isFuturesTradingPage() && getCurrentSymbol() === symbol) {
+        while (Date.now() < deadline && !document.hidden && isFuturesTradingPage() && isCurrentObservedSymbol(symbol)) {
           tradeMoveSamples.push(...collectNonZeroPriceMoves(getLatestTradePrices()));
           await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);
         }
-        if (getCurrentSymbol() !== symbol) return;
+        if (!isCurrentObservedSymbol(symbol)) return false;
         const newSamples = tradeMoveSamples;
         const samples = saveStoredOrderbookPrecisionSamples(symbol, newSamples);
         const recommendation = recommendOrderbookPrecision({
@@ -1623,44 +1633,52 @@
           status: recommendation ? "ready" : "数据不足",
           sampleEndsAt: 0
         };
+        if (request.initial) orderbookPrecisionInitialSampledSymbols.add(symbol);
         refreshOrderbookPrecisionRecommendation();
         scheduleRenderPanel();
+        return true;
       } finally {
-        const shouldResampleImmediately = orderbookPrecisionResampleRequested;
-        const resampleDurationMs = orderbookPrecisionResampleDurationMs;
-        orderbookPrecisionResampleRequested = false;
         orderbookPrecisionSampling = false;
-        if (shouldResampleImmediately) {
-          scheduleOrderbookPrecisionSampleRound(0, { force: true, durationMs: resampleDurationMs });
+        orderbookPrecisionActiveRequest = null;
+        const pending = orderbookPrecisionPendingRequest;
+        orderbookPrecisionPendingRequest = null;
+        if (pending && isCurrentObservedSymbol(pending.symbol)) {
+          scheduleOrderbookPrecisionSampleRound(0, { ...pending, force: true });
         }
       }
     }
     function scheduleOrderbookPrecisionSampleRound(delayMs = 0, options) {
       const {
         force = false,
-        durationMs = ORDERBOOK_PRECISION_SAMPLE_DURATION_MS
+        durationMs = ORDERBOOK_PRECISION_SAMPLE_DURATION_MS,
+        initial = false
       } = options || {};
       if (document.hidden || !isFuturesTradingPage()) return;
+      const symbol = getCurrentSymbol();
+      if (!isCurrentObservedSymbol(symbol)) return;
+      const request = { symbol, durationMs, initial };
       if (orderbookPrecisionSampling) {
-        if (force) orderbookPrecisionResampleRequested = true;
-        if (force) orderbookPrecisionResampleDurationMs = durationMs;
+        const sameInitialIsActive = initial && orderbookPrecisionActiveRequest?.initial && orderbookPrecisionActiveRequest?.symbol === symbol;
+        const sameInitialIsPending = initial && orderbookPrecisionPendingRequest?.initial && orderbookPrecisionPendingRequest?.symbol === symbol;
+        if (force && !sameInitialIsActive && !sameInitialIsPending) {
+          orderbookPrecisionPendingRequest = request;
+        }
         return;
       }
       if (orderbookPrecisionSampling || orderbookPrecisionSampleTimer) return;
       orderbookPrecisionSampleTimer = window.setTimeout(
-        () => runOrderbookPrecisionSampleRound(durationMs),
+        () => runOrderbookPrecisionSampleRound(request),
         Math.max(0, Number(delayMs) || 0)
       );
     }
     function stopOrderbookPrecisionSampler() {
       window.clearTimeout(orderbookPrecisionSampleTimer);
       orderbookPrecisionSampleTimer = 0;
-      orderbookPrecisionResampleRequested = false;
+      orderbookPrecisionPendingRequest = null;
     }
     function startInitialOrderbookPrecisionSample() {
       const symbol = getCurrentSymbol();
-      if (!symbol || orderbookPrecisionInitialSampledSymbols.has(symbol)) return;
-      orderbookPrecisionInitialSampledSymbols.add(symbol);
+      if (!isCurrentObservedSymbol(symbol) || orderbookPrecisionInitialSampledSymbols.has(symbol)) return;
       orderbookPrecisionState = {
         ...orderbookPrecisionState,
         symbol,
@@ -1669,7 +1687,8 @@
       };
       scheduleOrderbookPrecisionSampleRound(0, {
         force: true,
-        durationMs: ORDERBOOK_PRECISION_SAMPLE_DURATION_MS
+        durationMs: ORDERBOOK_PRECISION_SAMPLE_DURATION_MS,
+        initial: true
       });
     }
     function refreshOrderbookPrecisionSamplesNow() {
@@ -1952,7 +1971,7 @@
       }
     }
     function assertLadderExecutionContext(plan) {
-      if (getCurrentSymbol() !== plan.symbol) throw new Error("执行中交易对变化，已停止");
+      if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("执行中交易对变化，已停止");
       if (getActiveTradeMode() !== plan.spec.mode) throw new Error("执行中开仓/平仓模式变化，已停止");
       if (!isPostOnlyOrderTypeActive()) throw new Error("执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试");
     }
@@ -2068,6 +2087,10 @@
       return done;
     }
     async function startLadder(actionType) {
+      if (!isCurrentObservedSymbol(getCurrentSymbol())) {
+        setLadderStatus("交易对正在切换");
+        return;
+      }
       if (ladderTask) {
         setLadderStatus("正在执行，先点停止");
         return;
@@ -2141,11 +2164,14 @@
       const activeTab = findOpenOrdersTab2();
       return activeTab?.getAttribute("aria-selected") === "true";
     }
-    async function restoreAccountOrdersTab(previousTab) {
+    async function restoreAccountOrdersTab(previousTab, symbol = null) {
+      if (symbol && !isCurrentObservedSymbol(symbol)) return false;
       if (!previousTab || !previousTab.isConnected || !isVisibleElement(previousTab)) return true;
       if (previousTab.getAttribute("aria-selected") === "true") return true;
+      if (symbol && !isCurrentObservedSymbol(symbol)) return false;
       previousTab.click();
       await delay(250);
+      if (symbol && !isCurrentObservedSymbol(symbol)) return false;
       return previousTab.getAttribute("aria-selected") === "true";
     }
     function getActiveOpenOrdersScope2() {
@@ -2192,11 +2218,14 @@
         previousSubTab
       };
     }
-    async function restoreOpenOrdersSubTab(previousSubTab) {
+    async function restoreOpenOrdersSubTab(previousSubTab, symbol = null) {
+      if (symbol && !isCurrentObservedSymbol(symbol)) return false;
       if (!previousSubTab || !previousSubTab.isConnected || !isVisibleElement(previousSubTab)) return true;
       if (previousSubTab.getAttribute("aria-selected") === "true") return true;
+      if (symbol && !isCurrentObservedSymbol(symbol)) return false;
       previousSubTab.click();
       await delay(250);
+      if (symbol && !isCurrentObservedSymbol(symbol)) return false;
       return previousSubTab.getAttribute("aria-selected") === "true";
     }
     function findCurrentSymbolCancelAllButton(root) {
@@ -2242,12 +2271,14 @@
     async function waitForCurrentSymbolOpenOrders(root, symbol, symbolFilterOk) {
       const deadline = Date.now() + 1600;
       while (Date.now() < deadline) {
+        if (!isCurrentObservedSymbol(symbol)) return { hasOrders: false, cancelAllButton: null };
         const cancelAllButton2 = findCurrentSymbolCancelAllButton(root);
         if (hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton2)) {
           return { hasOrders: true, cancelAllButton: cancelAllButton2 };
         }
         await delay(100);
       }
+      if (!isCurrentObservedSymbol(symbol)) return { hasOrders: false, cancelAllButton: null };
       const cancelAllButton = findCurrentSymbolCancelAllButton(root);
       return {
         hasOrders: hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton),
@@ -2257,11 +2288,12 @@
     async function waitForNoCurrentSymbolOpenOrders(root, symbol, symbolFilterOk) {
       const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
       while (Date.now() < deadline) {
-        if (getCurrentSymbol() !== symbol) return false;
+        if (!isCurrentObservedSymbol(symbol)) return false;
         const cancelAllButton2 = findCurrentSymbolCancelAllButton(root);
         if (!hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton2)) return true;
         await delay(120);
       }
+      if (!isCurrentObservedSymbol(symbol)) return false;
       const cancelAllButton = findCurrentSymbolCancelAllButton(root);
       return !hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton);
     }
@@ -2379,7 +2411,7 @@
     async function waitForOpenOrderRowKeyCountBelow(root, symbol, key, previousCount) {
       const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
       while (Date.now() < deadline) {
-        if (getCurrentSymbol() !== symbol) return false;
+        if (!isCurrentObservedSymbol(symbol)) return false;
         if (countOpenOrderRowsByKey(root, symbol, key) < previousCount) return true;
         await delay(120);
       }
@@ -2389,7 +2421,7 @@
       let cancelQty = "0";
       let currentRoot = root;
       while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
-        if (getCurrentSymbol() !== plan.symbol) throw new Error("逐行撤单前交易对已变化");
+        if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("逐行撤单前交易对已变化");
         const remainingQty = subtractDecimalStrings(plan.totalQty, cancelQty);
         const refreshedRoot = getActiveOpenOrdersScope2();
         if (refreshedRoot) currentRoot = refreshedRoot;
@@ -2427,16 +2459,19 @@
       }
       return { ok: true, cancelQty };
     }
-    async function setHideOtherSymbolChecked(root, desiredChecked) {
+    async function setHideOtherSymbolChecked(root, desiredChecked, symbol = getCurrentSymbol()) {
+      if (!isCurrentObservedSymbol(symbol)) return false;
       const checkbox = findHideOtherSymbolCheckbox(root);
       if (!checkbox) return false;
       const currentChecked = getCheckboxCheckedState(checkbox);
       if (currentChecked === desiredChecked) return true;
       if (currentChecked === null) return false;
+      if (!isCurrentObservedSymbol(symbol)) return false;
       checkbox.click();
       const deadline = Date.now() + 1e3;
       while (Date.now() < deadline) {
         await delay(80);
+        if (!isCurrentObservedSymbol(symbol)) return false;
         const nextChecked = getCheckboxCheckedState(findHideOtherSymbolCheckbox(root));
         if (nextChecked === desiredChecked) return true;
       }
@@ -2457,15 +2492,15 @@
           originalChecked
         };
       }
-      const ok = originalChecked || await setHideOtherSymbolChecked(root, true);
+      const ok = originalChecked || await setHideOtherSymbolChecked(root, true, symbol);
       return {
         ok: ok || isOpenOrdersScopeLimitedToSymbol(root, symbol),
         originalChecked
       };
     }
-    async function restoreOpenOrdersSymbolFilter(root, originalChecked) {
+    async function restoreOpenOrdersSymbolFilter(root, originalChecked, symbol = getCurrentSymbol()) {
       if (originalChecked !== false) return true;
-      return setHideOtherSymbolChecked(root, false);
+      return setHideOtherSymbolChecked(root, false, symbol);
     }
     function getVisibleDialogs() {
       return Array.from(document.querySelectorAll(
@@ -2501,6 +2536,11 @@
         setLadderStatus("未识别当前交易对");
         return { ok: false, status: "no_symbol", message: "未识别当前交易对" };
       }
+      if (!isCurrentObservedSymbol(symbol)) {
+        const message = "交易对正在切换";
+        setLadderStatus(message);
+        return { ok: false, status: "symbol_changing", message };
+      }
       const previousAccountOrdersTab = findSelectedAccountOrdersTab2();
       let openOrdersScope = null;
       let previousOpenOrdersSubTab = null;
@@ -2508,32 +2548,37 @@
       try {
         setLadderStatus(`查找 ${symbol} 当前委托`);
         const tabReady = await activateOpenOrdersTab();
-        if (!tabReady || getCurrentSymbol() !== symbol) {
+        if (!tabReady || !isCurrentObservedSymbol(symbol)) {
           const message = "当前委托页未就绪或交易对已变化";
           setLadderStatus(message);
           return { ok: false, status: "tab_not_ready", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope();
-        if (!openOrdersScope) {
+        if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
           const message = "未定位到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
         const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
         previousOpenOrdersSubTab = basicSubTabState.previousSubTab;
-        if (!basicSubTabState.ready) {
+        if (!basicSubTabState.ready || !isCurrentObservedSymbol(symbol)) {
           const message = "未定位到当前委托基础单";
           setLadderStatus(message);
           return { ok: false, status: "basic_tab_not_ready", message };
         }
         const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
         symbolFilterOriginalChecked = symbolFilter.originalChecked;
-        if (!symbolFilter.ok) {
+        if (!symbolFilter.ok || !isCurrentObservedSymbol(symbol)) {
           const message = "未确认只显示当前币挂单";
           setLadderStatus(message);
           return { ok: false, status: "symbol_filter_not_confirmed", message };
         }
         const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
+        if (!isCurrentObservedSymbol(symbol)) {
+          const message = "读取当前币挂单时交易对已变化";
+          setLadderStatus(message);
+          return { ok: false, status: "symbol_changed", message };
+        }
         if (!openOrdersEvidence.hasOrders) {
           setLadderStatus(`${symbol} 当前币无挂单`);
           return { ok: true, status: "no_orders" };
@@ -2544,10 +2589,15 @@
           setLadderStatus(message);
           return { ok: false, status: "cancel_button_not_found", message };
         }
+        if (!isCurrentObservedSymbol(symbol)) {
+          const message = "撤单前交易对已变化";
+          setLadderStatus(message);
+          return { ok: false, status: "symbol_changed", message };
+        }
         const dialogsBefore = new Set(getVisibleDialogs());
         cancelAllButton.click();
         const dialog = await waitForNewVisibleDialog(dialogsBefore);
-        if (getCurrentSymbol() !== symbol) {
+        if (!isCurrentObservedSymbol(symbol)) {
           const message = "确认撤单前交易对已变化";
           setLadderStatus(message);
           return { ok: false, status: "symbol_changed", message };
@@ -2583,19 +2633,23 @@
         }
         return { ok: true, status: "cancel_clicked" };
       } finally {
-        if (openOrdersScope && symbolFilterOriginalChecked === false) {
-          const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked);
-          if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
+        if (isCurrentObservedSymbol(symbol)) {
+          if (openOrdersScope && symbolFilterOriginalChecked === false) {
+            const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
+            if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
+          }
+          if (previousOpenOrdersSubTab) {
+            await restoreOpenOrdersSubTab(previousOpenOrdersSubTab, symbol);
+          }
+          if (isCurrentObservedSymbol(symbol)) {
+            await restoreAccountOrdersTab(previousAccountOrdersTab, symbol);
+          }
         }
-        if (previousOpenOrdersSubTab) {
-          await restoreOpenOrdersSubTab(previousOpenOrdersSubTab);
-        }
-        await restoreAccountOrdersTab(previousAccountOrdersTab);
       }
     }
     async function cancelCurrentSymbolOpenOrdersForPlan(plan) {
       const symbol = getCurrentSymbol();
-      if (!symbol || symbol !== plan?.symbol) {
+      if (!isCurrentObservedSymbol(symbol) || symbol !== plan?.symbol) {
         const message = "逐行撤单前交易对已变化";
         setLadderStatus(message);
         return { ok: false, status: "symbol_changed", message };
@@ -2607,7 +2661,7 @@
       try {
         setLadderStatus(`查找 ${symbol} 当前委托`);
         const tabReady = await activateOpenOrdersTab();
-        if (!tabReady || getCurrentSymbol() !== symbol) {
+        if (!tabReady || !isCurrentObservedSymbol(symbol)) {
           const message = "当前委托页未就绪或交易对已变化";
           setLadderStatus(message);
           return { ok: false, status: "tab_not_ready", message };
@@ -2669,14 +2723,18 @@
         setLadderStatus(message);
         return { ok: false, status: "row_cancel_failed", message };
       } finally {
-        if (openOrdersScope && symbolFilterOriginalChecked === false) {
-          const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked);
-          if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
+        if (isCurrentObservedSymbol(symbol)) {
+          if (openOrdersScope && symbolFilterOriginalChecked === false) {
+            const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
+            if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
+          }
+          if (previousOpenOrdersSubTab) {
+            await restoreOpenOrdersSubTab(previousOpenOrdersSubTab, symbol);
+          }
+          if (isCurrentObservedSymbol(symbol)) {
+            await restoreAccountOrdersTab(previousAccountOrdersTab, symbol);
+          }
         }
-        if (previousOpenOrdersSubTab) {
-          await restoreOpenOrdersSubTab(previousOpenOrdersSubTab);
-        }
-        await restoreAccountOrdersTab(previousAccountOrdersTab);
       }
     }
     function formatLadderPlanStatus(plan) {
@@ -2845,15 +2903,40 @@
       saveOpenSide(value);
       scheduleRenderPanel();
     }
-    function readCloseContext() {
+    function readCloseContext(expectedSymbol = getCurrentSymbol()) {
+      const pending = {
+        symbol: expectedSymbol,
+        closeLongBtn: null,
+        closeShortBtn: null,
+        longQty: null,
+        shortQty: null,
+        qtySource: null,
+        knowsLong: false,
+        knowsShort: false,
+        hasLong: false,
+        hasShort: false
+      };
+      if (!isCurrentObservedSymbol(expectedSymbol)) return pending;
       const closeLongBtn = findCloseLongButton();
       const closeShortBtn = findCloseShortButton();
       const { longQty, shortQty, qtySource } = readCloseableQty(closeLongBtn, closeShortBtn);
+      if (!isCurrentObservedSymbol(expectedSymbol)) return pending;
       const knowsLong = longQty != null;
       const knowsShort = shortQty != null;
       const hasLong = longQty > 0;
       const hasShort = shortQty > 0;
-      return { closeLongBtn, closeShortBtn, longQty, shortQty, qtySource, knowsLong, knowsShort, hasLong, hasShort };
+      return {
+        symbol: expectedSymbol,
+        closeLongBtn,
+        closeShortBtn,
+        longQty,
+        shortQty,
+        qtySource,
+        knowsLong,
+        knowsShort,
+        hasLong,
+        hasShort
+      };
     }
     function resolveDisplayCloseState(rawCloseContext, symbol) {
       const cache = symbol && lastConfirmedCloseState?.symbol === symbol ? lastConfirmedCloseState : null;
@@ -2892,7 +2975,7 @@
       const knowsShort = shortQty != null;
       const hasLong = longQty > 0;
       const hasShort = shortQty > 0;
-      if (symbol && getActiveTradeMode() === "CLOSE" && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
+      if (symbol && rawCloseContext.symbol === symbol && isCurrentObservedSymbol(symbol) && getActiveTradeMode() === "CLOSE" && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
         const closeMode = hasLong && hasShort ? "dual" : hasLong ? "single_long" : hasShort ? "single_short" : "unknown";
         lastConfirmedCloseState = {
           symbol,
@@ -2927,8 +3010,7 @@
       );
       for (const row of rows) {
         if (!isVisibleElement(row)) continue;
-        const text = (row.textContent || "").toUpperCase();
-        if (text.includes(symbol)) return true;
+        if (isOpenOrderRowCurrentSymbol(row.textContent, symbol)) return true;
       }
       return false;
     }
@@ -2963,7 +3045,7 @@
       };
     }
     function isStableOpenContext(symbol) {
-      return getActiveTradeMode() === "OPEN" && getCurrentSymbol() === symbol;
+      return getActiveTradeMode() === "OPEN" && isCurrentObservedSymbol(symbol);
     }
     async function autoResetOpenLeverageToDefault(symbol, positionState, triggerSource) {
       await delay(AUTO_OPEN_LEVERAGE_DELAY_MS);
@@ -3005,23 +3087,34 @@
     }
     function queueAutoOpenLeverageReset(triggerSource) {
       const symbol = getCurrentSymbol();
-      if (!symbol) return;
+      if (!isCurrentObservedSymbol(symbol)) return;
+      if (autoOpenLeverageTask) {
+        pendingAutoOpenLeverageReset = { symbol, triggerSource };
+        return;
+      }
       const positionState = getCachedPositionState(symbol);
       if (positionState.status === "has_position") return;
       if (positionState.status !== "flat") return;
       if (!isStableOpenContext(symbol) && triggerSource === "mutation") return;
       const now = Date.now();
-      if (autoOpenLeverageTask) return;
       if (lastAutoOpenLeverage.symbol === symbol && now - lastAutoOpenLeverage.at < AUTO_OPEN_LEVERAGE_DEDUPE_MS) {
         return;
       }
       lastAutoOpenLeverage = { symbol, at: now };
-      autoOpenLeverageTask = autoResetOpenLeverageToDefault(symbol, positionState, triggerSource).catch((e) => {
+      let task = null;
+      task = autoResetOpenLeverageToDefault(symbol, positionState, triggerSource).catch((e) => {
         err("自动重置开仓杠杆失败:", e);
         return false;
       }).finally(() => {
+        if (autoOpenLeverageTask !== task) return;
         autoOpenLeverageTask = null;
+        const pending = pendingAutoOpenLeverageReset;
+        pendingAutoOpenLeverageReset = null;
+        if (pending && isCurrentObservedSymbol(pending.symbol)) {
+          queueAutoOpenLeverageReset(pending.triggerSource);
+        }
       });
+      autoOpenLeverageTask = task;
     }
     function applyCachedNativeCloseButtonState() {
       if (getActiveTradeMode() !== "CLOSE") return false;
@@ -3099,6 +3192,9 @@
     }
     function getCurrentSymbol() {
       return parseFuturesTradingSymbolFromPathname(location.pathname);
+    }
+    function isCurrentObservedSymbol(symbol) {
+      return !!symbol && getCurrentSymbol() === symbol && lastObservedSymbol === symbol;
     }
     let appDataCache = { text: "", parsed: null };
     let rulesCache = {};
@@ -3226,13 +3322,30 @@
     function sanitizeMultiplier(value) {
       return isValidMultiplier(value) ? String(value).trim() : DEFAULT_MULTIPLIER;
     }
-    function updateMultiplier(nextValue) {
+    function beginMultiplierEdit() {
+      multiplierEditContext = {
+        symbol: getCurrentSymbol(),
+        mode: getActiveTradeMode()
+      };
+      isEditingMultiplier = true;
+    }
+    function isMultiplierEditContextCurrent(context = multiplierEditContext) {
+      return !!context && isCurrentObservedSymbol(context.symbol) && getActiveTradeMode() === context.mode;
+    }
+    function stopMultiplierEdit() {
+      multiplierEditContext = null;
+      isEditingMultiplier = false;
+    }
+    function updateMultiplier(nextValue, context) {
+      if (!context) return false;
+      if (!isCurrentObservedSymbol(context.symbol) || getActiveTradeMode() !== context.mode) return false;
       const input = document.getElementById(INPUT_ID);
       const normalized = sanitizeMultiplier(nextValue);
-      isEditingMultiplier = false;
-      saveMultiplier(normalized, getActiveTradeMode(), getCurrentSymbol());
+      stopMultiplierEdit();
+      saveMultiplier(normalized, context.mode, context.symbol);
       if (input) input.value = normalized;
       renderPanel();
+      return true;
     }
     function setNativeActionButtonDisabled(button, disabled) {
       if (!button) return;
@@ -3575,26 +3688,37 @@
       if (input) {
         input.value = loadMultiplier(getActiveTradeMode(), getCurrentSymbol());
         input.addEventListener("focus", () => {
-          isEditingMultiplier = true;
+          beginMultiplierEdit();
           applyInputVisualState(input, input.value);
           input.select();
         });
         input.addEventListener("input", () => {
+          if (!isMultiplierEditContextCurrent()) {
+            stopMultiplierEdit();
+            renderPanel();
+            return;
+          }
           const value = String(input.value || "").replace(/[^\d]/g, "");
           if (input.value !== value) input.value = value;
           if (isValidMultiplier(value)) {
-            saveMultiplier(value, getActiveTradeMode(), getCurrentSymbol());
+            saveMultiplier(value, multiplierEditContext.mode, multiplierEditContext.symbol);
           }
-          const symbol = getCurrentSymbol() || "-";
-          const qtyRuleContext = getQtyRuleContext(symbol !== "-" ? symbol : null, getActiveTradeMode());
+          const symbol = multiplierEditContext.symbol || "-";
+          const qtyRuleContext = getQtyRuleContext(symbol !== "-" ? symbol : null, multiplierEditContext.mode);
           refreshComputedInfo(panel, value, qtyRuleContext);
           applyInputVisualState(input, value);
         });
         input.addEventListener("blur", () => {
+          const editContext = multiplierEditContext;
+          if (!isMultiplierEditContextCurrent(editContext)) {
+            stopMultiplierEdit();
+            renderPanel();
+            return;
+          }
           const value = String(input.value || "").trim();
           const normalized = sanitizeMultiplier(value);
-          isEditingMultiplier = false;
-          saveMultiplier(normalized, getActiveTradeMode(), getCurrentSymbol());
+          stopMultiplierEdit();
+          saveMultiplier(normalized, editContext.mode, editContext.symbol);
           input.value = normalized;
           applyInputVisualState(input, normalized);
           renderPanel();
@@ -3603,14 +3727,18 @@
       }
       if (decBtn) {
         decBtn.addEventListener("click", () => {
-          const current = Number(loadMultiplier(getActiveTradeMode(), getCurrentSymbol()));
-          updateMultiplier(String(Math.max(1, current - 1)));
+          const context = { symbol: getCurrentSymbol(), mode: getActiveTradeMode() };
+          if (!isCurrentObservedSymbol(context.symbol)) return;
+          const current = Number(loadMultiplier(context.mode, context.symbol));
+          updateMultiplier(String(Math.max(1, current - 1)), context);
         });
       }
       if (incBtn) {
         incBtn.addEventListener("click", () => {
-          const current = Number(loadMultiplier(getActiveTradeMode(), getCurrentSymbol()));
-          updateMultiplier(String(current + 1));
+          const context = { symbol: getCurrentSymbol(), mode: getActiveTradeMode() };
+          if (!isCurrentObservedSymbol(context.symbol)) return;
+          const current = Number(loadMultiplier(context.mode, context.symbol));
+          updateMultiplier(String(current + 1), context);
         });
       }
       if (sideLongBtn) {
@@ -3799,6 +3927,7 @@
     }
     function handleTradeModeTabTransition(tab, isEnteringClose, isEnteringOpen, source) {
       if (!isEnteringClose && !isEnteringOpen) return false;
+      stopMultiplierEdit();
       if (isEnteringClose) {
         invalidateTradeButtonCache();
         closeGuard = {
@@ -3904,6 +4033,11 @@
         const priceNode = findClickedPriceNode(e.target);
         if (!priceNode) return;
         if (!e.isTrusted) return;
+        const clickedSymbol = getCurrentSymbol();
+        if (!isCurrentObservedSymbol(clickedSymbol)) {
+          warn("交易对正在切换，已忽略本次点击");
+          return;
+        }
         if (CFG.DEBUG) {
           log("命中订单簿价格 click", {
             targetClass: e.target?.className || "",
@@ -3948,7 +4082,7 @@
         const submittedPriceInput = findPriceInput() || priceInput;
         assertSubmittedPriceMatchesClickedPrice(clickedPrice, submittedPriceInput.value);
         const currentSymbol = getCurrentSymbol();
-        if (currentSymbol !== qtyPlan.symbol) {
+        if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
           throw new Error(`交易对已变化，点击时 ${qtyPlan.symbol}，当前 ${currentSymbol || "-"}`);
         }
         if (getActiveTradeMode() !== action.mode) {
@@ -3989,6 +4123,9 @@
           warn(`SAFE_MODE=true，仅填价格/数量，不点击${action.side}`);
           return;
         }
+        if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
+          throw new Error("提交前交易对已变化，已停止");
+        }
         currentAction.button.click();
         scheduleRenderPanel();
         waitForTradeUiMutation({ timeoutMs: 400 });
@@ -4002,21 +4139,28 @@
       if (event.key?.startsWith(`${LOCAL_QTY_MULTIPLIER_PREFIX}:`) || isSymbolScopedSideStorageKey(event.key, [LOCAL_CLOSE_SIDE_KEY, LOCAL_OPEN_SIDE_KEY]) || event.key === LOCAL_LADDER_EXPANDED_KEY || event.key?.startsWith(`${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:`) || isLadderOptionStorageKey(event.key)) scheduleRenderPanel();
     });
     installUiSyncObservers();
-    let lastObservedSymbol = getCurrentSymbol();
-    function checkSymbolChangeForLeverage() {
-      const symbol = getCurrentSymbol();
-      if (!symbol || symbol === lastObservedSymbol) return;
-      lastObservedSymbol = symbol;
-      isEditingMultiplier = false;
+    function clearSymbolOwnedRuntimeState(symbol) {
+      stopMultiplierEdit();
+      lastConfirmedCloseState = null;
+      lastDisplayCloseState = null;
+      closeGuard = null;
+      lastAppliedCacheSnapshot = "";
       invalidateTradeButtonCache();
+      stopOrderbookPrecisionSampler();
       orderbookPrecisionState = {
         symbol,
         samples: readStoredOrderbookPrecisionSamples(symbol),
         recommendation: getOrderbookPrecisionRecommendation(symbol),
         current: readCurrentOrderbookPrecisionValue(),
-        status: "采样中"
+        status: "采样中",
+        sampleEndsAt: 0
       };
-      stopOrderbookPrecisionSampler();
+    }
+    function checkSymbolChangeForLeverage() {
+      const symbol = getCurrentSymbol();
+      if (!symbol || symbol === lastObservedSymbol) return;
+      lastObservedSymbol = symbol;
+      clearSymbolOwnedRuntimeState(symbol);
       startInitialOrderbookPrecisionSample();
       scheduleRenderPanel();
       if (getActiveTradeMode() === "OPEN") {
@@ -4074,8 +4218,7 @@
       routeWasTrading = true;
       if (!wasTrading) {
         lastObservedSymbol = getCurrentSymbol();
-        isEditingMultiplier = false;
-        invalidateTradeButtonCache();
+        clearSymbolOwnedRuntimeState(lastObservedSymbol);
       } else {
         checkSymbolChangeForLeverage();
       }

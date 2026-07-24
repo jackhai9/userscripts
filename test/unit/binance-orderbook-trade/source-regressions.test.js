@@ -40,7 +40,7 @@ test('cancel-symbol flow restores temporary symbol filter through cleanup path',
   const cancelBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /finally\s*\{/);
   assert.match(cancelBody, /await waitForNewVisibleDialog\(dialogsBefore\)/);
-  assert.match(cancelBody, /restoreOpenOrdersSymbolFilter\(openOrdersScope,\s*symbolFilterOriginalChecked\)/);
+  assert.match(cancelBody, /restoreOpenOrdersSymbolFilter\(openOrdersScope,\s*symbolFilterOriginalChecked,\s*symbol\)/);
 });
 
 test('expanded ladder panel avoids rebuilding unchanged body markup', () => {
@@ -222,6 +222,7 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.doesNotMatch(cancelOpenOrderRowsBody, /for \(const row of rowsToCancel\)/);
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
+  assert.match(cancelRowsBody, /if \(!isCurrentObservedSymbol\(symbol\) \|\| symbol !== plan\?\.symbol\)/);
   assert.match(cancelRowsBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
   assert.match(cancelRowsBody, /activateOpenOrdersBasicSubTab\(openOrdersScope\)[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(\)/);
   assert.match(cancelRowsBody, /if \(!openOrdersScope\) \{\s*const message = '未定位到当前委托面板'/);
@@ -247,7 +248,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3'/);
   assert.match(source, /data-orderbook-precision-apply/);
   assert.match(source, /data-orderbook-precision-refresh/);
-  assert.match(source, /orderbookPrecisionResampleRequested/);
+  assert.match(source, /orderbookPrecisionPendingRequest/);
 
   const sampleBody = readFunctionBody('runOrderbookPrecisionSampleRound');
   assert.match(sampleBody, /collectNonZeroPriceMoves/);
@@ -258,7 +259,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(sampleBody, /getLatestTradePrices/);
   assert.doesNotMatch(sampleBody, /getCurrentOrderbookDisplayStep/);
   assert.doesNotMatch(sampleBody, /fallbackMovement/);
-  assert.match(sampleBody, /orderbookPrecisionResampleRequested/);
+  assert.match(sampleBody, /orderbookPrecisionPendingRequest/);
   assert.doesNotMatch(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
   assert.match(sampleBody, /orderbookPrecisionState[\s\S]*sampleEndsAt: deadline/);
   assert.match(sampleBody, /scheduleRenderPanel\(\{ followUpMs: 1000 \}\)/);
@@ -309,7 +310,8 @@ test('orderbook precision recommendation is sampled and manually applied only', 
 
   const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
   assert.match(scheduleBody, /force = false/);
-  assert.match(scheduleBody, /if \(force\) orderbookPrecisionResampleRequested = true/);
+  assert.match(scheduleBody, /if \(force && !sameInitialIsActive && !sameInitialIsPending\)/);
+  assert.match(scheduleBody, /orderbookPrecisionPendingRequest = request/);
   assert.match(scheduleBody, /durationMs/);
 
   const initialBody = readFunctionBody('startInitialOrderbookPrecisionSample');
@@ -341,4 +343,73 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   const startBody = readFunctionBody('startLadder');
   assert.doesNotMatch(startBody, /applyRecommendedOrderbookPrecision/);
   assert.doesNotMatch(startBody, /runOrderbookPrecisionSampleRound/);
+});
+
+test('close state is committed only for the currently observed symbol', () => {
+  const readBody = readFunctionBody('readCloseContext');
+  assert.match(readBody, /isCurrentObservedSymbol\(expectedSymbol\)/);
+
+  const resolveBody = readFunctionBody('resolveDisplayCloseState');
+  assert.match(resolveBody, /rawCloseContext\.symbol === symbol/);
+  assert.match(resolveBody, /isCurrentObservedSymbol\(symbol\)/);
+
+  const symbolChangeBody = readFunctionBody('checkSymbolChangeForLeverage');
+  assert.match(symbolChangeBody, /clearSymbolOwnedRuntimeState\(symbol\)/);
+});
+
+test('cancel flow rechecks the captured symbol before destructive click and cleanup', () => {
+  const waitBody = readFunctionBody('waitForCurrentSymbolOpenOrders');
+  assert.match(waitBody, /isCurrentObservedSymbol\(symbol\)/);
+
+  const cancelBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
+  assert.ok(
+    cancelBody.indexOf('if (!isCurrentObservedSymbol(symbol))') < cancelBody.indexOf('const previousAccountOrdersTab'),
+    'cancel flow should reject an unobserved symbol before changing tabs'
+  );
+  assert.match(cancelBody, /if \(!isCurrentObservedSymbol\(symbol\)\)[\s\S]*cancelAllButton\.click\(\)/);
+  assert.match(cancelBody, /finally\s*\{\s*if \(isCurrentObservedSymbol\(symbol\)\) \{/);
+  assert.match(cancelBody, /restoreOpenOrdersSubTab\(previousOpenOrdersSubTab, symbol\)/);
+  assert.match(cancelBody, /restoreAccountOrdersTab\(previousAccountOrdersTab, symbol\)/);
+});
+
+test('multiplier edits retain their captured symbol and mode', () => {
+  assert.match(source, /let multiplierEditContext = null/);
+  assert.match(source, /function beginMultiplierEdit\(/);
+  assert.match(source, /function isMultiplierEditContextCurrent\(/);
+  assert.match(source, /saveMultiplier\(value, multiplierEditContext\.mode, multiplierEditContext\.symbol\)/);
+  assert.match(source, /saveMultiplier\(normalized, editContext\.mode, editContext\.symbol\)/);
+  const updateBody = readFunctionBody('updateMultiplier');
+  assert.match(updateBody, /isCurrentObservedSymbol\(context\.symbol\)/);
+  assert.match(updateBody, /saveMultiplier\(normalized, context\.mode, context\.symbol\)/);
+  assert.match(source, /updateMultiplier\([^\n]+, context\)/);
+});
+
+test('precision apply and sampling do not commit after a symbol switch', () => {
+  const applyBody = readFunctionBody('applyRecommendedOrderbookPrecision');
+  assert.match(applyBody, /const symbol = getCurrentSymbol\(\)/);
+  assert.match(applyBody, /if \(!isCurrentObservedSymbol\(symbol\)\) return false/);
+  assert.match(applyBody, /if \(!isCurrentObservedSymbol\(symbol\)\) return false;\s*clickDomTarget\(option\)/);
+
+  const roundBody = readFunctionBody('runOrderbookPrecisionSampleRound');
+  assert.match(roundBody, /request\.symbol/);
+  assert.match(roundBody, /orderbookPrecisionInitialSampledSymbols\.add\(symbol\)/);
+  const initialBody = readFunctionBody('startInitialOrderbookPrecisionSample');
+  assert.doesNotMatch(initialBody, /orderbookPrecisionInitialSampledSymbols\.add\(symbol\)/);
+  const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
+  assert.match(scheduleBody, /orderbookPrecisionActiveRequest\?\.symbol === symbol/);
+  assert.match(scheduleBody, /orderbookPrecisionPendingRequest\?\.symbol === symbol/);
+});
+
+test('busy leverage reset retains and replays the latest symbol request', () => {
+  assert.match(source, /let pendingAutoOpenLeverageReset = null/);
+  const queueBody = readFunctionBody('queueAutoOpenLeverageReset');
+  assert.match(queueBody, /pendingAutoOpenLeverageReset = \{ symbol, triggerSource \}/);
+  assert.match(queueBody, /autoOpenLeverageTask !== task/);
+  assert.match(queueBody, /queueAutoOpenLeverageReset\(pending\.triggerSource\)/);
+});
+
+test('position rows use exact symbol tokens instead of substring matching', () => {
+  const positionBody = readFunctionBody('hasPositionInDom');
+  assert.match(positionBody, /isOpenOrderRowCurrentSymbol\(row\.textContent, symbol\)/);
+  assert.doesNotMatch(positionBody, /text\.includes\(symbol\)/);
 });
