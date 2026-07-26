@@ -24,3 +24,33 @@ export function saveSymbolSide(storage, baseKey, symbol, value) {
 export function isSymbolScopedSideStorageKey(key, baseKeys) {
   return !!key && baseKeys.some((baseKey) => key.startsWith(`${baseKey}:`));
 }
+
+export function modeSymbolOptionStorageKey(modeKeys, mode, symbol) {
+  if (mode !== 'OPEN' && mode !== 'CLOSE') {
+    throw new Error(`Unknown trade mode: ${mode}`);
+  }
+  const baseKey = modeKeys[mode];
+  if (!baseKey) throw new Error(`Missing storage key for trade mode: ${mode}`);
+  const normalizedSymbol = String(symbol || '').toUpperCase();
+  return normalizedSymbol ? `${baseKey}:${normalizedSymbol}` : null;
+}
+
+export function loadModeSymbolNumberOption(storage, modeKeys, mode, symbol, options, fallback) {
+  const storageKey = modeSymbolOptionStorageKey(modeKeys, mode, symbol);
+  if (!storageKey) return fallback;
+  const stored = Number(storage.getItem(storageKey));
+  return options.includes(stored) ? stored : fallback;
+}
+
+export function saveModeSymbolNumberOption(storage, modeKeys, mode, symbol, value, options) {
+  const numericValue = Number(value);
+  if (!options.includes(numericValue)) return false;
+  const storageKey = modeSymbolOptionStorageKey(modeKeys, mode, symbol);
+  if (!storageKey) return false;
+  storage.setItem(storageKey, String(numericValue));
+  return true;
+}
+
+export function isModeSymbolOptionStorageKey(key, baseKeys) {
+  return !!key && baseKeys.some((baseKey) => key.startsWith(`${baseKey}:`));
+}

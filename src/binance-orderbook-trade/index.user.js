@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.38
+// @version      2.7.39
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -74,8 +74,11 @@ import {
   planBufferedMakerPrices,
 } from './core/orderbook.js';
 import {
+  isModeSymbolOptionStorageKey,
   isSymbolScopedSideStorageKey,
+  loadModeSymbolNumberOption,
   loadSymbolSide,
+  saveModeSymbolNumberOption,
   saveSymbolSide,
 } from './core/panel-options.js';
 
@@ -101,8 +104,10 @@ import {
   const LOCAL_LADDER_EXPANDED_KEY = 'jh_binance_ladder_expanded';
   const LOCAL_LADDER_OPEN_PERCENT_KEY = 'jh_binance_ladder_open_percent';
   const LOCAL_LADDER_CLOSE_PERCENT_KEY = 'jh_binance_ladder_close_percent';
-  const LOCAL_LADDER_LEVELS_KEY = 'jh_binance_ladder_levels';
-  const LOCAL_LADDER_STEP_KEY = 'jh_binance_ladder_step';
+  const LOCAL_LADDER_OPEN_LEVELS_KEY = 'jh_binance_ladder_open_levels';
+  const LOCAL_LADDER_CLOSE_LEVELS_KEY = 'jh_binance_ladder_close_levels';
+  const LOCAL_LADDER_OPEN_STEP_KEY = 'jh_binance_ladder_open_step';
+  const LOCAL_LADDER_CLOSE_STEP_KEY = 'jh_binance_ladder_close_step';
   const LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3';
   const BINANCE_PERSIST_KEY = 'persist:futures-trade-ui';
   const BINANCE_POST_ONLY_ORDER_TYPE = 'POST_ONLY';
@@ -130,6 +135,27 @@ import {
   const LADDER_LEVEL_OPTIONS = [3, 5, 7, 9];
   const LADDER_STEP_MIN = 1;
   const LADDER_STEP_MAX = 5;
+  const LADDER_STEP_OPTIONS = [1, 2, 3, 4, 5];
+  const LADDER_PERCENT_STORAGE_KEYS = {
+    OPEN: LOCAL_LADDER_OPEN_PERCENT_KEY,
+    CLOSE: LOCAL_LADDER_CLOSE_PERCENT_KEY,
+  };
+  const LADDER_LEVELS_STORAGE_KEYS = {
+    OPEN: LOCAL_LADDER_OPEN_LEVELS_KEY,
+    CLOSE: LOCAL_LADDER_CLOSE_LEVELS_KEY,
+  };
+  const LADDER_STEP_STORAGE_KEYS = {
+    OPEN: LOCAL_LADDER_OPEN_STEP_KEY,
+    CLOSE: LOCAL_LADDER_CLOSE_STEP_KEY,
+  };
+  const LADDER_OPTION_STORAGE_KEYS = [
+    LOCAL_LADDER_OPEN_PERCENT_KEY,
+    LOCAL_LADDER_CLOSE_PERCENT_KEY,
+    LOCAL_LADDER_OPEN_LEVELS_KEY,
+    LOCAL_LADDER_CLOSE_LEVELS_KEY,
+    LOCAL_LADDER_OPEN_STEP_KEY,
+    LOCAL_LADDER_CLOSE_STEP_KEY,
+  ];
   const LADDER_ORDER_DELAY_MS = 520;
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
   const LADDER_SUBMIT_POLL_MS = 80;
@@ -348,40 +374,6 @@ import {
     });
   }
 
-  function isValidOption(value, options) {
-    const num = Number(value);
-    return options.includes(num);
-  }
-
-  function ladderOptionStorageKey(baseKey, symbol = getCurrentSymbol()) {
-    const normalizedSymbol = String(symbol || '').toUpperCase();
-    return normalizedSymbol ? `${baseKey}:${normalizedSymbol}` : null;
-  }
-
-  function isLadderOptionStorageKey(key) {
-    if (!key) return false;
-    return (
-      key.startsWith(`${LOCAL_LADDER_OPEN_PERCENT_KEY}:`) ||
-      key.startsWith(`${LOCAL_LADDER_CLOSE_PERCENT_KEY}:`) ||
-      key.startsWith(`${LOCAL_LADDER_LEVELS_KEY}:`) ||
-      key.startsWith(`${LOCAL_LADDER_STEP_KEY}:`)
-    );
-  }
-
-  function loadNumberOption(key, options, fallback, symbol) {
-    const storageKey = ladderOptionStorageKey(key, symbol);
-    if (!storageKey) return fallback;
-    const stored = localStorage.getItem(storageKey);
-    return isValidOption(stored, options) ? Number(stored) : fallback;
-  }
-
-  function saveNumberOption(key, value, options, symbol) {
-    if (!isValidOption(value, options)) return;
-    const storageKey = ladderOptionStorageKey(key, symbol);
-    if (!storageKey) return;
-    localStorage.setItem(storageKey, String(Number(value)));
-  }
-
   function isLadderExpanded() {
     return localStorage.getItem(LOCAL_LADDER_EXPANDED_KEY) === 'true';
   }
@@ -391,47 +383,98 @@ import {
     scheduleRenderPanel();
   }
 
-  function getLadderOpenPercent() {
-    return loadNumberOption(LOCAL_LADDER_OPEN_PERCENT_KEY, LADDER_OPEN_PERCENTS, DEFAULT_LADDER_OPEN_PERCENT, getCurrentSymbol());
+  function getLadderOpenPercent(symbol = getCurrentSymbol()) {
+    return loadModeSymbolNumberOption(
+      localStorage,
+      LADDER_PERCENT_STORAGE_KEYS,
+      'OPEN',
+      symbol,
+      LADDER_OPEN_PERCENTS,
+      DEFAULT_LADDER_OPEN_PERCENT
+    );
   }
 
-  function setLadderOpenPercent(value) {
-    saveNumberOption(LOCAL_LADDER_OPEN_PERCENT_KEY, value, LADDER_OPEN_PERCENTS, getCurrentSymbol());
+  function setLadderOpenPercent(value, symbol = getCurrentSymbol()) {
+    saveModeSymbolNumberOption(
+      localStorage,
+      LADDER_PERCENT_STORAGE_KEYS,
+      'OPEN',
+      symbol,
+      value,
+      LADDER_OPEN_PERCENTS
+    );
     scheduleRenderPanel();
   }
 
-  function getLadderClosePercent() {
-    return loadNumberOption(LOCAL_LADDER_CLOSE_PERCENT_KEY, LADDER_CLOSE_PERCENTS, DEFAULT_LADDER_CLOSE_PERCENT, getCurrentSymbol());
+  function getLadderClosePercent(symbol = getCurrentSymbol()) {
+    return loadModeSymbolNumberOption(
+      localStorage,
+      LADDER_PERCENT_STORAGE_KEYS,
+      'CLOSE',
+      symbol,
+      LADDER_CLOSE_PERCENTS,
+      DEFAULT_LADDER_CLOSE_PERCENT
+    );
   }
 
-  function setLadderClosePercent(value) {
-    saveNumberOption(LOCAL_LADDER_CLOSE_PERCENT_KEY, value, LADDER_CLOSE_PERCENTS, getCurrentSymbol());
+  function setLadderClosePercent(value, symbol = getCurrentSymbol()) {
+    saveModeSymbolNumberOption(
+      localStorage,
+      LADDER_PERCENT_STORAGE_KEYS,
+      'CLOSE',
+      symbol,
+      value,
+      LADDER_CLOSE_PERCENTS
+    );
     scheduleRenderPanel();
   }
 
-  function getLadderLevels() {
-    return loadNumberOption(LOCAL_LADDER_LEVELS_KEY, LADDER_LEVEL_OPTIONS, DEFAULT_LADDER_LEVELS, getCurrentSymbol());
+  function getLadderLevels(mode = getActiveTradeMode(), symbol = getCurrentSymbol()) {
+    return loadModeSymbolNumberOption(
+      localStorage,
+      LADDER_LEVELS_STORAGE_KEYS,
+      mode,
+      symbol,
+      LADDER_LEVEL_OPTIONS,
+      DEFAULT_LADDER_LEVELS
+    );
   }
 
-  function setLadderLevels(value) {
-    saveNumberOption(LOCAL_LADDER_LEVELS_KEY, value, LADDER_LEVEL_OPTIONS, getCurrentSymbol());
+  function setLadderLevels(value, mode = getActiveTradeMode(), symbol = getCurrentSymbol()) {
+    saveModeSymbolNumberOption(
+      localStorage,
+      LADDER_LEVELS_STORAGE_KEYS,
+      mode,
+      symbol,
+      value,
+      LADDER_LEVEL_OPTIONS
+    );
     scheduleRenderPanel();
   }
 
-  function getLadderStep() {
-    const storageKey = ladderOptionStorageKey(LOCAL_LADDER_STEP_KEY, getCurrentSymbol());
-    if (!storageKey) return DEFAULT_LADDER_STEP;
-    const value = Number(localStorage.getItem(storageKey) || DEFAULT_LADDER_STEP);
-    if (!Number.isInteger(value)) return DEFAULT_LADDER_STEP;
-    return Math.max(LADDER_STEP_MIN, Math.min(value, LADDER_STEP_MAX));
+  function getLadderStep(mode = getActiveTradeMode(), symbol = getCurrentSymbol()) {
+    return loadModeSymbolNumberOption(
+      localStorage,
+      LADDER_STEP_STORAGE_KEYS,
+      mode,
+      symbol,
+      LADDER_STEP_OPTIONS,
+      DEFAULT_LADDER_STEP
+    );
   }
 
-  function setLadderStep(value) {
-    const num = Number(value);
-    if (!Number.isInteger(num)) return;
-    const storageKey = ladderOptionStorageKey(LOCAL_LADDER_STEP_KEY, getCurrentSymbol());
-    if (!storageKey) return;
-    localStorage.setItem(storageKey, String(Math.max(LADDER_STEP_MIN, Math.min(num, LADDER_STEP_MAX))));
+  function setLadderStep(value, mode = getActiveTradeMode(), symbol = getCurrentSymbol()) {
+    const numericValue = Number(value);
+    if (!Number.isInteger(numericValue)) return;
+    const normalizedValue = Math.max(LADDER_STEP_MIN, Math.min(numericValue, LADDER_STEP_MAX));
+    saveModeSymbolNumberOption(
+      localStorage,
+      LADDER_STEP_STORAGE_KEYS,
+      mode,
+      symbol,
+      normalizedValue,
+      LADDER_STEP_OPTIONS
+    );
     scheduleRenderPanel();
   }
 
@@ -1470,8 +1513,8 @@ import {
     const postOnlyReady = await ensurePostOnlyOrderType();
     if (!postOnlyReady) throw new Error('请刷新页面让只做Maker (Post Only) 生效后重试，脚本不会用普通限价继续');
 
-    const levels = getLadderLevels();
-    const ladderStep = getLadderStep();
+    const levels = getLadderLevels(spec.mode, startSymbol);
+    const ladderStep = getLadderStep(spec.mode, startSymbol);
     const prices = getBufferedMakerPrices(spec.priceSide, levels, ladderStep);
     if (prices.length < levels) {
       throw new Error(`订单簿${spec.priceSide === 'BID' ? '买盘' : '卖盘'}不足 ${levels} 档，档幅 ${ladderStep}`);
@@ -1506,7 +1549,11 @@ import {
       throw new Error(`未读取到可用${spec.mode === 'OPEN' ? '可开' : '可平'}数量`);
     }
 
-    let percent = getLadderPercentForMode(spec.mode, getLadderOpenPercent(), getLadderClosePercent());
+    let percent = getLadderPercentForMode(
+      spec.mode,
+      getLadderOpenPercent(startSymbol),
+      getLadderClosePercent(startSymbol)
+    );
     if (percent == null) throw new Error('未知阶梯模式');
     const totalQty = multiplyDecimalByRatio(baseQty, percent, 100);
     let allocation = allocateLadderQuantities(totalQty, levels, ruleContext.stepSize, minRequiredQty);
@@ -3306,8 +3353,8 @@ import {
     ].join('');
   }
 
-  function ladderStepRow() {
-    const value = getLadderStep();
+  function ladderStepRow(mode, symbol) {
+    const value = getLadderStep(mode, symbol);
     const decDisabled = value <= LADDER_STEP_MIN;
     const incDisabled = value >= LADDER_STEP_MAX;
     const stepButton = (action, label, disabled) => {
@@ -3336,13 +3383,13 @@ import {
     return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${color};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${disabled ? 'not-allowed' : 'pointer'};opacity:${disabled ? DISABLED_CONTROL_OPACITY : '1'};">${label}</button>`;
   }
 
-  function getLadderActionRows(tradeMode, closeContext) {
+  function getLadderActionRows(tradeMode, closeContext, symbol) {
     const ladderRunning = !!ladderTask;
     if (tradeMode === 'OPEN') {
       return [
-        ladderOptionRow('开', LADDER_OPEN_PERCENTS, getLadderOpenPercent(), 'openPercent', '%'),
-        ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
-        ladderStepRow(),
+        ladderOptionRow('开', LADDER_OPEN_PERCENTS, getLadderOpenPercent(symbol), 'percent', '%'),
+        ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol), 'levels', ''),
+        ladderStepRow(tradeMode, symbol),
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
         ladderActionButton('OPEN_LONG', '阶梯开多', 'BUY', ladderRunning),
         ladderActionButton('OPEN_SHORT', '阶梯开空', 'SELL', ladderRunning),
@@ -3353,9 +3400,9 @@ import {
     const closeLongDisabled = ladderRunning || (closeContext?.knowsLong ? !closeContext.hasLong : false);
     const closeShortDisabled = ladderRunning || (closeContext?.knowsShort ? !closeContext.hasShort : false);
     return [
-      ladderOptionRow('平', LADDER_CLOSE_PERCENTS, getLadderClosePercent(), 'closePercent', '%'),
-      ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(), 'levels', ''),
-      ladderStepRow(),
+      ladderOptionRow('平', LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol), 'percent', '%'),
+      ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol), 'levels', ''),
+      ladderStepRow(tradeMode, symbol),
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
       ladderActionButton('CLOSE_SHORT', '阶梯平空', 'BUY', closeShortDisabled),
       ladderActionButton('CLOSE_LONG', '阶梯平多', 'SELL', closeLongDisabled),
@@ -3369,6 +3416,7 @@ import {
     const status = panel.querySelector(`#${LADDER_STATUS_ID}`);
     const expanded = isLadderExpanded();
     const mode = tradeMode === 'OPEN' ? 'OPEN' : 'CLOSE';
+    const symbol = getCurrentSymbol();
     if (toggle) {
       toggle.textContent = `Maker 阶梯 ${expanded ? '▾' : '▸'}`;
     }
@@ -3381,7 +3429,7 @@ import {
           ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`
           : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;';
         const bodyHtml = [
-          ...getLadderActionRows(mode, closeContext),
+          ...getLadderActionRows(mode, closeContext, symbol),
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
           `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${stopStyle}">停止阶梯挂单</button>`,
           `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#5e6673;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">撤本币挂单</button>`,
@@ -3726,18 +3774,26 @@ import {
       if (!target) return;
       const optionBtn = target.closest('[data-ladder-group][data-ladder-value]');
       if (optionBtn) {
+        const optionContext = { mode: getActiveTradeMode(), symbol: getCurrentSymbol() };
+        if (!optionContext.symbol || !['OPEN', 'CLOSE'].includes(optionContext.mode)) return;
         const group = optionBtn.getAttribute('data-ladder-group');
         const value = Number(optionBtn.getAttribute('data-ladder-value'));
-        if (group === 'openPercent') setLadderOpenPercent(value);
-        if (group === 'closePercent') setLadderClosePercent(value);
-        if (group === 'levels') setLadderLevels(value);
+        if (group === 'percent' && optionContext.mode === 'OPEN') {
+          setLadderOpenPercent(value, optionContext.symbol);
+        }
+        if (group === 'percent' && optionContext.mode === 'CLOSE') {
+          setLadderClosePercent(value, optionContext.symbol);
+        }
+        if (group === 'levels') setLadderLevels(value, optionContext.mode, optionContext.symbol);
         return;
       }
       const stepBtn = target.closest('[data-ladder-step-action]');
       if (stepBtn) {
         if (stepBtn.disabled || stepBtn.getAttribute('aria-disabled') === 'true') return;
+        const optionContext = { mode: getActiveTradeMode(), symbol: getCurrentSymbol() };
+        if (!optionContext.symbol || !['OPEN', 'CLOSE'].includes(optionContext.mode)) return;
         const delta = stepBtn.getAttribute('data-ladder-step-action') === 'inc' ? 1 : -1;
-        setLadderStep(getLadderStep() + delta);
+        setLadderStep(getLadderStep(optionContext.mode, optionContext.symbol) + delta, optionContext.mode, optionContext.symbol);
         return;
       }
       const precisionApplyBtn = target.closest('[data-orderbook-precision-apply]');
@@ -4152,7 +4208,7 @@ import {
       isSymbolScopedSideStorageKey(event.key, [LOCAL_CLOSE_SIDE_KEY, LOCAL_OPEN_SIDE_KEY]) ||
       event.key === LOCAL_LADDER_EXPANDED_KEY ||
       event.key?.startsWith(`${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:`) ||
-      isLadderOptionStorageKey(event.key)
+      isModeSymbolOptionStorageKey(event.key, LADDER_OPTION_STORAGE_KEYS)
     ) scheduleRenderPanel();
   });
 
