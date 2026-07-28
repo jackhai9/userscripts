@@ -266,7 +266,8 @@ test('orderbook precision recommendation is sampled and manually applied only', 
 
   const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
   assert.match(refreshBody, /recommendOrderbookPrecision/);
-  assert.match(refreshBody, /isOrderbookPrecisionBusy/);
+  assert.match(refreshBody, /resolveOrderbookPrecisionSampleState/);
+  assert.match(refreshBody, /scheduled: Boolean\(orderbookPrecisionSampleTimer\)/);
   assert.match(refreshBody, /formatOrderbookPrecisionBusyStatus/);
   assert.match(refreshBody, /data-orderbook-precision-refresh="true"[\s\S]*disabled/);
   assert.doesNotMatch(refreshBody, /样本/);
@@ -398,6 +399,10 @@ test('precision apply and sampling do not commit after a symbol switch', () => {
   const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
   assert.match(scheduleBody, /orderbookPrecisionActiveRequest\?\.symbol === symbol/);
   assert.match(scheduleBody, /orderbookPrecisionPendingRequest\?\.symbol === symbol/);
+
+  const clearBody = readFunctionBody('clearSymbolOwnedRuntimeState');
+  assert.match(clearBody, /status: recommendation \? 'ready' : '数据不足'/);
+  assert.doesNotMatch(clearBody, /status: '采样中'/);
 });
 
 test('busy leverage reset retains and replays the latest symbol request', () => {

@@ -28,6 +28,28 @@ export function mergePrecisionSamples(existingSamples, newSamples, maxSamples = 
   return merged.slice(Math.max(0, merged.length - maxSamples));
 }
 
+export function resolveOrderbookPrecisionSampleState({
+  sampling,
+  scheduled,
+  status,
+  recommendation,
+}) {
+  const busy = Boolean(sampling || scheduled);
+  if (busy) {
+    return {
+      busy,
+      status: status === '刷新中' ? '刷新中' : '采样中',
+    };
+  }
+  if (status && /^(未定位|未找到|数据不足)/.test(status)) {
+    return { busy, status };
+  }
+  return {
+    busy,
+    status: recommendation ? 'ready' : '数据不足',
+  };
+}
+
 function sortedPositiveDecimals(values) {
   return (values || [])
     .map((value) => normalizeDecimalString(value))
