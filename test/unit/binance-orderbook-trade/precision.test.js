@@ -5,6 +5,7 @@ import {
   collectNonZeroPriceMoves,
   mergePrecisionSamples,
   recommendOrderbookPrecision,
+  resolveOrderbookPrecisionSampleState,
 } from '../../../src/binance-orderbook-trade/core/precision.js';
 
 test('collects only non-zero price moves from consecutive observations', () => {
@@ -62,4 +63,48 @@ test('does not treat display precision fallback as a recommendation', () => {
     fallbackMovement: '0.0061',
     options: ['0.0001', '0.001', '0.01', '0.1', '1'],
   }), null);
+});
+
+test('does not keep a stale sampling label busy after the sampler has stopped', () => {
+  assert.deepEqual(resolveOrderbookPrecisionSampleState({
+    sampling: false,
+    scheduled: false,
+    status: '采样中',
+    recommendation: '0.00001',
+  }), {
+    busy: false,
+    status: 'ready',
+  });
+
+  assert.deepEqual(resolveOrderbookPrecisionSampleState({
+    sampling: false,
+    scheduled: false,
+    status: '采样中',
+    recommendation: null,
+  }), {
+    busy: false,
+    status: '数据不足',
+  });
+});
+
+test('keeps precision controls busy only for an active or scheduled sample', () => {
+  assert.deepEqual(resolveOrderbookPrecisionSampleState({
+    sampling: true,
+    scheduled: false,
+    status: '采样中',
+    recommendation: null,
+  }), {
+    busy: true,
+    status: '采样中',
+  });
+
+  assert.deepEqual(resolveOrderbookPrecisionSampleState({
+    sampling: false,
+    scheduled: true,
+    status: '刷新中',
+    recommendation: '0.00001',
+  }), {
+    busy: true,
+    status: '刷新中',
+  });
 });
