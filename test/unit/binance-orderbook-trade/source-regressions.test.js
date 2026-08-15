@@ -406,6 +406,7 @@ test('precision apply and sampling do not commit after a symbol switch', () => {
 });
 
 test('busy leverage reset retains and replays the latest symbol request', () => {
+  assert.match(source, /const DEFAULT_OPEN_LEVERAGE = 2;/);
   assert.match(source, /let pendingAutoOpenLeverageReset = null/);
   const queueBody = readFunctionBody('queueAutoOpenLeverageReset');
   assert.match(queueBody, /pendingAutoOpenLeverageReset = \{ symbol, triggerSource \}/);
