@@ -108,9 +108,24 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(retryBody, /error\?\.binanceCode === BINANCE_GTX_ORDER_REJECT_CODE/);
 
   const interceptBody = readFunctionBody('installFetchInterceptor');
-  assert.match(interceptBody, /activeLadderSubmitCaptureId/);
-  assert.match(interceptBody, /observeLadderSubmitResponse/);
+  assert.match(interceptBody, /activeLadderSubmitCapture/);
+  assert.match(interceptBody, /trackLadderSubmitResponse/);
+  assert.match(interceptBody, /getFetchRequestMethod\(args\) === 'POST'/);
   assert.doesNotMatch(interceptBody, /Post Only|未作为Maker|不会记录/);
+
+  const observeBody = readFunctionBody('observeLadderSubmitResponse');
+  assert.match(observeBody, /capture\.apiErrors\.push\(\{ requestUrl, code \}\)/);
+
+  const observationBody = readFunctionBody('waitForLadderSubmitResponseObservations');
+  assert.match(observationBody, /capture\.responseObservations\.slice\(\)/);
+  assert.match(observationBody, /Promise\.race\(\[/);
+  assert.match(observationBody, /delay\(timeoutMs\)/);
+
+  const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
+  assert.match(acknowledgementBody, /await waitForLadderSubmitResponseObservations\(/);
+  assert.match(acknowledgementBody, /capturedApiErrors\.length === 1/);
+  assert.match(acknowledgementBody, /capturedApiErrors\[0\]\.code === BINANCE_GTX_ORDER_REJECT_CODE/);
+  assert.doesNotMatch(source, /LADDER_SUBMIT_API_CODE_GRACE_MS/);
 
   const repriceBody = readFunctionBody('refreshRemainingCloseLadderOrders');
   assert.match(repriceBody, /assertLadderExecutionContext\(plan\)/);
@@ -124,11 +139,14 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(executeBody, /beginLadderSubmitResponseCapture\(\)/);
   assert.match(executeBody, /endLadderSubmitResponseCapture\(submitCaptureId\)/);
   assert.match(executeBody, /refreshRemainingCloseLadderOrders\(plan,\s*done\)/);
+  assert.match(executeBody, /lastRepriceApiErrorCode/);
+  assert.match(executeBody, /return \{ done, repriceAttempts, lastRepriceApiErrorCode \}/);
   assert.match(executeBody, /盘口连续移动/);
   assert.doesNotMatch(executeBody, /isPostOnlyMakerRejectionFeedback/);
 
   assert.match(generatedSource, /BINANCE_GTX_ORDER_REJECT_CODE/);
   assert.match(generatedSource, /beginLadderSubmitResponseCapture/);
+  assert.match(generatedSource, /自动刷新盘口/);
   assert.doesNotMatch(generatedSource, /isPostOnlyMakerRejectionFeedback/);
 });
 

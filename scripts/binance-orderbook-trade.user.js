@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.44
+// @version      2.7.45
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -838,7 +838,6 @@
     const LADDER_ORDER_DELAY_MS = 520;
     const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
     const LADDER_SUBMIT_POLL_MS = 80;
-    const LADDER_SUBMIT_API_CODE_GRACE_MS = 240;
     const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_CLOSE_REPRICE_MAX_ATTEMPTS = 3;
@@ -908,8 +907,7 @@
     let ladderStatusText = "空闲";
     let ladderPanelBodySignature = "";
     let ladderSubmitCaptureSequence = 0;
-    let activeLadderSubmitCaptureId = 0;
-    let lastLadderSubmitApiError = null;
+    let activeLadderSubmitCapture = null;
     let orderbookPrecisionSampling = false;
     let orderbookPrecisionSampleTimer = 0;
     let orderbookPrecisionActiveRequest = null;
@@ -1349,25 +1347,45 @@
     function getFetchRequestUrl(args) {
       return typeof args[0] === "string" ? args[0] : args[0] instanceof Request ? args[0].url : args[0]?.url || "";
     }
+    function getFetchRequestMethod(args) {
+      const method = args[1]?.method || (args[0] instanceof Request ? args[0].method : null) || "GET";
+      return String(method).toUpperCase();
+    }
     function beginLadderSubmitResponseCapture() {
       ladderSubmitCaptureSequence += 1;
-      activeLadderSubmitCaptureId = ladderSubmitCaptureSequence;
-      lastLadderSubmitApiError = null;
-      return activeLadderSubmitCaptureId;
+      activeLadderSubmitCapture = {
+        captureId: ladderSubmitCaptureSequence,
+        apiErrors: [],
+        responseObservations: []
+      };
+      return activeLadderSubmitCapture.captureId;
     }
     function endLadderSubmitResponseCapture(captureId) {
-      if (activeLadderSubmitCaptureId === captureId) activeLadderSubmitCaptureId = 0;
+      if (activeLadderSubmitCapture?.captureId === captureId) activeLadderSubmitCapture = null;
     }
-    async function observeLadderSubmitResponse(response, captureId) {
+    async function observeLadderSubmitResponse(response, capture, requestUrl) {
       const contentType = response.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) return;
       const payload = await response.clone().json();
       const code = getBinanceApiErrorCode(payload);
-      if (code !== BINANCE_GTX_ORDER_REJECT_CODE) return;
-      lastLadderSubmitApiError = { captureId, code };
+      if (code == null) return;
+      capture.apiErrors.push({ requestUrl, code });
     }
-    function readLadderSubmitApiErrorCode(captureId) {
-      return lastLadderSubmitApiError?.captureId === captureId ? lastLadderSubmitApiError.code : null;
+    function trackLadderSubmitResponse(request, capture, requestUrl) {
+      const observation = request.then((response) => observeLadderSubmitResponse(response, capture, requestUrl)).catch(() => null);
+      capture.responseObservations.push(observation);
+    }
+    async function waitForLadderSubmitResponseObservations(captureId, timeoutMs) {
+      const capture = activeLadderSubmitCapture?.captureId === captureId ? activeLadderSubmitCapture : null;
+      if (!capture) throw new Error("下单响应捕获上下文丢失");
+      const observations = capture.responseObservations.slice();
+      if (observations.length > 0 && timeoutMs > 0) {
+        await Promise.race([
+          Promise.all(observations),
+          delay(timeoutMs)
+        ]);
+      }
+      return capture.apiErrors.slice();
     }
     (function installFetchInterceptor() {
       const originalFetch = window.fetch;
@@ -1377,12 +1395,12 @@
           if (snapshot) cachedBncHeaders = snapshot;
         } catch (_e) {
         }
-        const captureId = activeLadderSubmitCaptureId;
-        const shouldObserveResponse = captureId > 0 && getFetchRequestUrl(args).includes("/bapi/");
+        const capture = activeLadderSubmitCapture;
+        const requestUrl = getFetchRequestUrl(args);
+        const shouldObserveResponse = capture && getFetchRequestMethod(args) === "POST" && requestUrl.includes("/bapi/");
         const request = originalFetch.apply(this, args);
         if (shouldObserveResponse) {
-          request.then((response) => observeLadderSubmitResponse(response, captureId)).catch(() => {
-          });
+          trackLadderSubmitResponse(request, capture, requestUrl);
         }
         return request;
       };
@@ -2138,6 +2156,17 @@
       if (error?.ladderFailureKind === "maker_price_conflict") return error.safeNoSubmit === true;
       return error?.binanceCode === BINANCE_GTX_ORDER_REJECT_CODE && error.safeNoSubmit === true;
     }
+    function createLadderSubmitApiError(apiErrorCode) {
+      const error = new Error(`Binance 下单失败 (${apiErrorCode})`);
+      error.binanceCode = apiErrorCode;
+      error.safeNoSubmit = true;
+      return error;
+    }
+    function formatLadderRepriceDiagnostics(repriceAttempts, lastRepriceApiErrorCode) {
+      if (repriceAttempts <= 0) return "";
+      const codeText = lastRepriceApiErrorCode == null ? "" : `，错误码 ${lastRepriceApiErrorCode}`;
+      return `（自动刷新盘口 ${repriceAttempts} 次${codeText}）`;
+    }
     function refreshRemainingCloseLadderOrders(plan, completedCount) {
       assertLadderExecutionContext(plan);
       if (plan.spec.mode !== "CLOSE") throw new Error("仅平仓阶梯允许自动刷新盘口");
@@ -2217,23 +2246,26 @@
       let sawBusy = isSubmitButtonBusy(button);
       let pendingFailure = null;
       while (Date.now() - startedAt < LADDER_SUBMIT_ACK_TIMEOUT_MS) {
-        const apiErrorCode = readLadderSubmitApiErrorCode(submitCaptureId);
-        if (apiErrorCode === BINANCE_GTX_ORDER_REJECT_CODE) {
-          const error = new Error(`Binance 下单失败 (${apiErrorCode})`);
-          error.binanceCode = apiErrorCode;
-          error.safeNoSubmit = true;
-          throw error;
-        }
         const feedback = readNewVisibleOrderFeedbackText(previousFeedbackSnapshot);
         const acknowledgement = evaluateOrderSubmitAcknowledgement({
           feedback,
           isNewFeedback: Boolean(feedback)
         });
         if (acknowledgement.status === "failure" && !pendingFailure) {
-          pendingFailure = { message: acknowledgement.message, observedAt: Date.now() };
+          pendingFailure = { message: acknowledgement.message };
         }
-        if (pendingFailure && Date.now() - pendingFailure.observedAt >= LADDER_SUBMIT_API_CODE_GRACE_MS) {
-          throw new Error(pendingFailure.message);
+        if (pendingFailure) {
+          const remainingAckMs = Math.max(0, LADDER_SUBMIT_ACK_TIMEOUT_MS - (Date.now() - startedAt));
+          const capturedApiErrors = await waitForLadderSubmitResponseObservations(
+            submitCaptureId,
+            remainingAckMs
+          );
+          if (capturedApiErrors.length === 1 && capturedApiErrors[0].code === BINANCE_GTX_ORDER_REJECT_CODE) {
+            throw createLadderSubmitApiError(capturedApiErrors[0].code);
+          }
+          const capturedCodes = [...new Set(capturedApiErrors.map(({ code }) => code))];
+          const diagnostic = capturedCodes.length === 0 ? "未捕获错误码" : `错误码 ${capturedCodes.join(", ")}`;
+          throw new Error(`${pendingFailure.message}（${diagnostic}）`);
         }
         if (acknowledgement.status === "success") return;
         const busy = isSubmitButtonBusy(button);
@@ -2249,6 +2281,7 @@
       if (!priceInput || !qtyInput) throw new Error("未找到价格或数量输入框");
       let done = 0;
       let repriceAttempts = 0;
+      let lastRepriceApiErrorCode = null;
       while (done < plan.orders.length) {
         if (ladderStopRequested) break;
         const order = plan.orders[done];
@@ -2287,8 +2320,12 @@
           }
         } catch (e) {
           if (!isRetryableCloseLadderMakerPriceFailure(plan, e)) throw e;
+          if (e?.binanceCode === BINANCE_GTX_ORDER_REJECT_CODE) {
+            lastRepriceApiErrorCode = e.binanceCode;
+          }
           if (repriceAttempts >= LADDER_CLOSE_REPRICE_MAX_ATTEMPTS) {
-            throw new Error(`盘口连续移动，已自动刷新 ${repriceAttempts} 次；已完成 ${done}/${plan.orders.length}，已停止`);
+            const codeText = lastRepriceApiErrorCode == null ? "" : `（错误码 ${lastRepriceApiErrorCode}）`;
+            throw new Error(`盘口连续移动，已自动刷新 ${repriceAttempts} 次${codeText}；已完成 ${done}/${plan.orders.length}，已停止`);
           }
           repriceAttempts += 1;
           setLadderStatus(`盘口已移动，刷新剩余 ${plan.orders.length - done} 档 (${repriceAttempts}/${LADDER_CLOSE_REPRICE_MAX_ATTEMPTS})`);
@@ -2301,7 +2338,7 @@
         setLadderStatus(`${plan.spec.label} ${done}/${plan.orders.length}`);
         await delay(LADDER_ORDER_DELAY_MS);
       }
-      return done;
+      return { done, repriceAttempts, lastRepriceApiErrorCode };
     }
     async function startLadder(actionType) {
       if (!isCurrentObservedSymbol(getCurrentSymbol())) {
@@ -2316,8 +2353,16 @@
       const spec = getLadderActionSpec2(actionType);
       setLadderStatus(`${spec?.label || "阶梯"} 准备中`);
       ladderTask = (async () => {
-        const { plan, done } = await runLadderPlanWithOpenOrderReplacement(actionType);
-        setLadderStatus(ladderStopRequested ? `已停止 ${done}/${plan.orders.length}` : `完成 ${done}/${plan.orders.length}`);
+        const {
+          plan,
+          done,
+          repriceAttempts,
+          lastRepriceApiErrorCode
+        } = await runLadderPlanWithOpenOrderReplacement(actionType);
+        const diagnostics = formatLadderRepriceDiagnostics(repriceAttempts, lastRepriceApiErrorCode);
+        setLadderStatus(
+          ladderStopRequested ? `已停止 ${done}/${plan.orders.length}${diagnostics}` : `完成 ${done}/${plan.orders.length}${diagnostics}`
+        );
       })().catch((e) => {
         err("Maker 阶梯执行失败:", e);
         setLadderStatus(e?.message || "执行失败", e?.statusTitle);
@@ -2990,8 +3035,8 @@
         try {
           plan = await buildLadderPlan(actionType, replacementSymbol);
           setLadderStatus(formatLadderPlanStatus(plan));
-          const done = await executeLadderPlan(plan);
-          return { plan, done };
+          const execution = await executeLadderPlan(plan);
+          return { plan, ...execution };
         } catch (e) {
           const replacementPlan = getReplaceableLadderOpenOrdersPlan(plan, e);
           if (attempt > 0 || !replacementPlan) throw e;
