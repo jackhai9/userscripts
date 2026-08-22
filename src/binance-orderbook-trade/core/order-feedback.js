@@ -84,9 +84,16 @@ export function isPostOnlyMakerRejectionFeedback(text) {
   return hasPostOnlyOrder && hasMakerExecutionConflict && hasRejection;
 }
 
+const BINANCE_POST_ONLY_MAKER_REJECT_CODES = new Set([-5022, 90805022]);
+
+export function isBinancePostOnlyMakerRejectCode(code) {
+  return BINANCE_POST_ONLY_MAKER_REJECT_CODES.has(code);
+}
+
 export function getBinanceApiErrorCode(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  if (Number.isInteger(payload.code) && payload.code < 0) return payload.code;
-  if (typeof payload.code !== 'string' || !/^-\d+$/.test(payload.code)) return null;
-  return Number(payload.code);
+  if (Number.isSafeInteger(payload.code)) return payload.code === 0 ? null : payload.code;
+  if (typeof payload.code !== 'string' || !/^-?\d+$/.test(payload.code)) return null;
+  const code = Number(payload.code);
+  return Number.isSafeInteger(code) && code !== 0 ? code : null;
 }
