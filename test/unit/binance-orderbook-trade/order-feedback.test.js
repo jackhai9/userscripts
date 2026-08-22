@@ -6,6 +6,7 @@ import {
   evaluateOrderSubmitAcknowledgement,
   getBinanceApiErrorCode,
   isOpenLadderOpenOrdersCapacityFeedback,
+  isPostOnlyMakerRejectionFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
 } from '../../../src/binance-orderbook-trade/core/order-feedback.js';
 
@@ -90,4 +91,28 @@ test('reads Binance API error codes without depending on localized messages', ()
   assert.equal(getBinanceApiErrorCode({ code: -2019, msg: 'insufficient margin' }), -2019);
   assert.equal(getBinanceApiErrorCode({ message: 'Post Only order rejected' }), null);
   assert.equal(getBinanceApiErrorCode({ data: { code: -5022 } }), null);
+});
+
+test('recognizes Post Only maker-execution rejection feedback without exact-message matching', () => {
+  assert.equal(isPostOnlyMakerRejectionFeedback(
+    '由于该只做Maker订单(Post Only)未作为Maker执行，因此将被拒绝。该订单不会记录在订单历史记录中。'
+  ), true);
+  assert.equal(isPostOnlyMakerRejectionFeedback(
+    '只做 Maker 订单无法作为 Maker 成交，已被拒绝。'
+  ), true);
+  assert.equal(isPostOnlyMakerRejectionFeedback(
+    'Due to the order could not be executed as maker, the Post Only order will be rejected.'
+  ), true);
+  assert.equal(isPostOnlyMakerRejectionFeedback(
+    'The Post-Only order cannot execute as a maker and was rejected without being recorded.'
+  ), true);
+});
+
+test('does not infer maker-price conflicts from generic or unrelated rejection feedback', () => {
+  assert.equal(isPostOnlyMakerRejectionFeedback('Order rejected'), false);
+  assert.equal(isPostOnlyMakerRejectionFeedback('只做Maker (Post Only) 状态丢失'), false);
+  assert.equal(isPostOnlyMakerRejectionFeedback('Post Only order rejected'), false);
+  assert.equal(isPostOnlyMakerRejectionFeedback('订单未作为Maker执行，因此将被拒绝'), false);
+  assert.equal(isPostOnlyMakerRejectionFeedback('FOK order could not be filled immediately and was rejected'), false);
+  assert.equal(isPostOnlyMakerRejectionFeedback('只减仓订单失败，请取消当前挂单后重试'), false);
 });

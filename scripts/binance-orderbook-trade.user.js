@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.45
+// @version      2.7.46
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -485,6 +485,14 @@
     const hasCapacityFailure = normalized.includes("余额不足") || normalized.includes("可用余额不足") || normalized.includes("可用数量不足") || normalized.includes("可开数量不足") || normalized.includes("可用保证金不足") || normalized.includes("insufficientmargin") || normalized.includes("insufficientbalance") || normalized.includes("insufficientavailablebalance") || normalized.includes("notenoughmargin") || normalized.includes("notenoughbalance") || normalized.includes("notenoughavailablebalance");
     const hasOpenOrdersHint = normalized.includes("当前挂单") || normalized.includes("取消挂单") || normalized.includes("挂单后重试") || normalized.includes("openorders") || normalized.includes("existingopenorders");
     return hasCapacityFailure && hasOpenOrdersHint;
+  }
+  function isPostOnlyMakerRejectionFeedback(text) {
+    if (!text) return false;
+    const normalized = String(text).replace(/[\s-]+/g, "").toLowerCase();
+    const hasPostOnlyOrder = normalized.includes("postonly") || normalized.includes("只做maker") || normalized.includes("仅做maker");
+    const hasMakerExecutionConflict = /(未|无法|不能|未能).{0,8}作为maker.{0,8}(执行|成交)/.test(normalized) || /(couldnot|cannot|wasnot|isnot).{0,12}(executed|execute|filled|fill).{0,8}as(?:a)?maker/.test(normalized);
+    const hasRejection = /拒绝|驳回|reject/.test(normalized);
+    return hasPostOnlyOrder && hasMakerExecutionConflict && hasRejection;
   }
   function getBinanceApiErrorCode(payload) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
@@ -2241,7 +2249,7 @@
       }
       return "";
     }
-    async function waitForOrderSubmitAcknowledgement(button, label, previousFeedbackSnapshot, submitCaptureId) {
+    async function waitForOrderSubmitAcknowledgement(button, label, previousFeedbackSnapshot, submitCaptureId, mode) {
       const startedAt = Date.now();
       let sawBusy = isSubmitButtonBusy(button);
       let pendingFailure = null;
@@ -2262,6 +2270,9 @@
           );
           if (capturedApiErrors.length === 1 && capturedApiErrors[0].code === BINANCE_GTX_ORDER_REJECT_CODE) {
             throw createLadderSubmitApiError(capturedApiErrors[0].code);
+          }
+          if (capturedApiErrors.length === 0 && mode === "CLOSE" && isPostOnlyMakerRejectionFeedback(pendingFailure.message)) {
+            throw createLadderMakerPriceConflictError(pendingFailure.message);
           }
           const capturedCodes = [...new Set(capturedApiErrors.map(({ code }) => code))];
           const diagnostic = capturedCodes.length === 0 ? "未捕获错误码" : `错误码 ${capturedCodes.join(", ")}`;
@@ -2313,7 +2324,13 @@
               button.click();
               setLadderStatus(`${plan.spec.label} ${done + 1}/${plan.orders.length} 确认中`);
               waitForTradeUiMutation({ timeoutMs: 500 });
-              await waitForOrderSubmitAcknowledgement(button, plan.spec.label, previousFeedback, submitCaptureId);
+              await waitForOrderSubmitAcknowledgement(
+                button,
+                plan.spec.label,
+                previousFeedback,
+                submitCaptureId,
+                plan.spec.mode
+              );
             } finally {
               endLadderSubmitResponseCapture(submitCaptureId);
             }
