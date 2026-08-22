@@ -63,3 +63,10 @@ export function isOpenLadderOpenOrdersCapacityFeedback(text) {
   );
   return hasCapacityFailure && hasOpenOrdersHint;
 }
+
+export function getBinanceApiErrorCode(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  if (Number.isInteger(payload.code) && payload.code < 0) return payload.code;
+  if (typeof payload.code !== 'string' || !/^-\d+$/.test(payload.code)) return null;
+  return Number(payload.code);
+}

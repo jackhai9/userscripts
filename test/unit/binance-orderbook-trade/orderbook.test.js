@@ -5,6 +5,7 @@ import {
   calculateDisplayStepPrice,
   inferOrderbookDisplayStep,
   planBufferedMakerPrices,
+  repriceRemainingLadderOrders,
 } from '../../../src/binance-orderbook-trade/core/orderbook.js';
 
 test('infers orderbook display step from adjacent visible prices', () => {
@@ -45,4 +46,45 @@ test('uses UI display step instead of exchange tick size assumptions', () => {
     ladderStep: 2,
     bufferLevels: 1,
   }), ['99.5', '98.5']);
+});
+
+test('reprices only remaining ladder orders and preserves quantities', () => {
+  const orders = [
+    { price: '100', qty: '0.01' },
+    { price: '101', qty: '0.02' },
+    { price: '102', qty: '0.03' },
+  ];
+
+  assert.deepEqual(repriceRemainingLadderOrders({
+    orders,
+    completedCount: 1,
+    prices: ['103', '104'],
+  }), [
+    { price: '100', qty: '0.01' },
+    { price: '103', qty: '0.02' },
+    { price: '104', qty: '0.03' },
+  ]);
+  assert.deepEqual(orders, [
+    { price: '100', qty: '0.01' },
+    { price: '101', qty: '0.02' },
+    { price: '102', qty: '0.03' },
+  ]);
+});
+
+test('remaining ladder repricing rejects incomplete or invalid progress', () => {
+  const orders = [
+    { price: '100', qty: '0.01' },
+    { price: '101', qty: '0.02' },
+  ];
+
+  assert.throws(() => repriceRemainingLadderOrders({
+    orders,
+    completedCount: 1,
+    prices: [],
+  }), /Expected 1 replacement prices/);
+  assert.throws(() => repriceRemainingLadderOrders({
+    orders,
+    completedCount: 3,
+    prices: [],
+  }), /Invalid completed ladder count/);
 });

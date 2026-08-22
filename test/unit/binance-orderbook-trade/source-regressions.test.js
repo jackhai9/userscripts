@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const source = await readFile(new URL('../../../src/binance-orderbook-trade/index.user.js', import.meta.url), 'utf8');
+const generatedSource = await readFile(new URL('../../../scripts/binance-orderbook-trade.user.js', import.meta.url), 'utf8');
 const ladderPlanSource = await readFile(new URL('../../../src/binance-orderbook-trade/core/ladder-plan.js', import.meta.url), 'utf8');
 
 function readFunctionBody(name, sourceText = source) {
@@ -98,6 +99,37 @@ test('ladder retries with restricted open-order replacement after supported feed
   assert.match(startBody, /const spec = getLadderActionSpec\(actionType\)/);
   assert.doesNotMatch(startBody, /cancelCurrentSymbolOpenOrders\(\{\s*waitUntilCleared: true\s*\}\)/);
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(actionType\)/);
+});
+
+test('close ladder reprices only remaining orders after explicit maker conflicts', () => {
+  const retryBody = readFunctionBody('isRetryableCloseLadderMakerPriceFailure');
+  assert.match(retryBody, /plan\?\.spec\?\.mode !== 'CLOSE'/);
+  assert.match(retryBody, /error\?\.ladderFailureKind === 'maker_price_conflict'/);
+  assert.match(retryBody, /error\?\.binanceCode === BINANCE_GTX_ORDER_REJECT_CODE/);
+
+  const interceptBody = readFunctionBody('installFetchInterceptor');
+  assert.match(interceptBody, /activeLadderSubmitCaptureId/);
+  assert.match(interceptBody, /observeLadderSubmitResponse/);
+  assert.doesNotMatch(interceptBody, /Post Only|未作为Maker|不会记录/);
+
+  const repriceBody = readFunctionBody('refreshRemainingCloseLadderOrders');
+  assert.match(repriceBody, /assertLadderExecutionContext\(plan\)/);
+  assert.match(repriceBody, /getBufferedMakerPrices\(plan\.spec\.priceSide,\s*remainingCount,\s*plan\.ladderStep\)/);
+  assert.match(repriceBody, /repriceRemainingLadderOrders\(\{/);
+  assert.doesNotMatch(repriceBody, /buildLadderPlan\(/);
+  assert.doesNotMatch(repriceBody, /cancelCurrentSymbolOpenOrders/);
+
+  const executeBody = readFunctionBody('executeLadderPlan');
+  assert.match(executeBody, /LADDER_CLOSE_REPRICE_MAX_ATTEMPTS/);
+  assert.match(executeBody, /beginLadderSubmitResponseCapture\(\)/);
+  assert.match(executeBody, /endLadderSubmitResponseCapture\(submitCaptureId\)/);
+  assert.match(executeBody, /refreshRemainingCloseLadderOrders\(plan,\s*done\)/);
+  assert.match(executeBody, /盘口连续移动/);
+  assert.doesNotMatch(executeBody, /isPostOnlyMakerRejectionFeedback/);
+
+  assert.match(generatedSource, /BINANCE_GTX_ORDER_REJECT_CODE/);
+  assert.match(generatedSource, /beginLadderSubmitResponseCapture/);
+  assert.doesNotMatch(generatedSource, /isPostOnlyMakerRejectionFeedback/);
 });
 
 test('ladder minimum quantity failure explains safe manual options', () => {
