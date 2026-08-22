@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.42
+// @version      2.7.43
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3398,8 +3398,8 @@ import {
       ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol), 'levels', ''),
       ladderStepRow(tradeMode, symbol),
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
-      ladderActionButton('CLOSE_SHORT', '阶梯平空', 'BUY', closeShortDisabled),
       ladderActionButton('CLOSE_LONG', '阶梯平多', 'SELL', closeLongDisabled),
+      ladderActionButton('CLOSE_SHORT', '阶梯平空', 'BUY', closeShortDisabled),
       '</div>',
     ];
   }
@@ -3514,7 +3514,7 @@ import {
         ? openSide === 'LONG'
         : closeMode === 'single_long' || (closeMode !== 'single_short' && closeSide === 'LONG');
       sideLongBtn.textContent = isOpenMode ? '开多' : '平多';
-      sideLongBtn.style.order = isOpenMode ? '0' : '1';
+      sideLongBtn.style.order = '0';
       sideLongBtn.disabled = isDisabled;
       sideLongBtn.style.borderColor = isDisabled ? DISABLED_CONTROL_BORDER : isActive
         ? isOpenMode ? 'var(--color-Buy)' : 'var(--color-Sell)'
@@ -3535,7 +3535,7 @@ import {
         ? openSide === 'SHORT'
         : closeMode === 'single_short' || (closeMode !== 'single_long' && closeSide === 'SHORT');
       sideShortBtn.textContent = isOpenMode ? '开空' : '平空';
-      sideShortBtn.style.order = isOpenMode ? '1' : '0';
+      sideShortBtn.style.order = '1';
       sideShortBtn.disabled = isDisabled;
       sideShortBtn.style.borderColor = isDisabled ? DISABLED_CONTROL_BORDER : isActive
         ? isOpenMode ? 'var(--color-Sell)' : 'var(--color-Buy)'
@@ -3665,8 +3665,8 @@ import {
       '<span id="jh-binance-close-qty-final" style="font-weight:600;color:#1e2329;"></span>',
       '</div>',
       `<div style="display:flex;align-items:center;gap:4px;margin-top:6px;">` +
-        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平空</button>` +
         `<button id="${SIDE_LONG_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平多</button>` +
+        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平空</button>` +
       '</div>',
       `<div id="${MODE_HINT_ID}" style="margin-top:6px;color:#76808f;"></div>`,
       `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}"></div>`,

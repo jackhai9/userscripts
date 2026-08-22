@@ -136,3 +136,23 @@ test('ladder execution and UI updates use one captured mode-symbol context', () 
   assert.match(source, /setLadderStep\([^\n]+, optionContext\.mode, optionContext\.symbol\)/);
   assert.match(source, /plan\.ladderStep === DEFAULT_LADDER_STEP \? '' : `\/幅\$\{plan\.ladderStep\}`/);
 });
+
+test('close ladder buttons match the Binance native long-short order', () => {
+  const closeLongButton = "ladderActionButton('CLOSE_LONG', '阶梯平多', 'SELL', closeLongDisabled)";
+  const closeShortButton = "ladderActionButton('CLOSE_SHORT', '阶梯平空', 'BUY', closeShortDisabled)";
+
+  assert.notEqual(source.indexOf(closeLongButton), -1);
+  assert.notEqual(source.indexOf(closeShortButton), -1);
+  assert.ok(source.indexOf(closeLongButton) < source.indexOf(closeShortButton));
+});
+
+test('close side buttons match the Binance native long-short order', () => {
+  const closeLongButton = `<button id="\${SIDE_LONG_ID}"`;
+  const closeShortButton = `<button id="\${SIDE_SHORT_ID}"`;
+
+  assert.notEqual(source.indexOf(closeLongButton), -1);
+  assert.notEqual(source.indexOf(closeShortButton), -1);
+  assert.ok(source.indexOf(closeLongButton) < source.indexOf(closeShortButton));
+  assert.match(source, /sideLongBtn\.style\.order = '0'/);
+  assert.match(source, /sideShortBtn\.style\.order = '1'/);
+});
