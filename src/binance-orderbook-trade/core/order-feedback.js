@@ -64,6 +64,26 @@ export function isOpenLadderOpenOrdersCapacityFeedback(text) {
   return hasCapacityFailure && hasOpenOrdersHint;
 }
 
+/**
+ * Binance localizes and may revise GTX rejection messages, so retry only when
+ * the three stable semantics all remain present instead of matching one phrase.
+ */
+export function isPostOnlyMakerRejectionFeedback(text) {
+  if (!text) return false;
+  const normalized = String(text).replace(/[\s-]+/g, '').toLowerCase();
+  const hasPostOnlyOrder = (
+    normalized.includes('postonly') ||
+    normalized.includes('只做maker') ||
+    normalized.includes('仅做maker')
+  );
+  const hasMakerExecutionConflict = (
+    /(未|无法|不能|未能).{0,8}作为maker.{0,8}(执行|成交)/.test(normalized) ||
+    /(couldnot|cannot|wasnot|isnot).{0,12}(executed|execute|filled|fill).{0,8}as(?:a)?maker/.test(normalized)
+  );
+  const hasRejection = /拒绝|驳回|reject/.test(normalized);
+  return hasPostOnlyOrder && hasMakerExecutionConflict && hasRejection;
+}
+
 export function getBinanceApiErrorCode(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   if (Number.isInteger(payload.code) && payload.code < 0) return payload.code;

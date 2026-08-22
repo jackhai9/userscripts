@@ -125,6 +125,10 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(acknowledgementBody, /await waitForLadderSubmitResponseObservations\(/);
   assert.match(acknowledgementBody, /capturedApiErrors\.length === 1/);
   assert.match(acknowledgementBody, /capturedApiErrors\[0\]\.code === BINANCE_GTX_ORDER_REJECT_CODE/);
+  assert.match(acknowledgementBody, /capturedApiErrors\.length === 0/);
+  assert.match(acknowledgementBody, /mode === 'CLOSE'/);
+  assert.match(acknowledgementBody, /isPostOnlyMakerRejectionFeedback\(pendingFailure\.message\)/);
+  assert.match(acknowledgementBody, /createLadderMakerPriceConflictError\(pendingFailure\.message\)/);
   assert.doesNotMatch(source, /LADDER_SUBMIT_API_CODE_GRACE_MS/);
 
   const repriceBody = readFunctionBody('refreshRemainingCloseLadderOrders');
@@ -138,16 +142,17 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(executeBody, /LADDER_CLOSE_REPRICE_MAX_ATTEMPTS/);
   assert.match(executeBody, /beginLadderSubmitResponseCapture\(\)/);
   assert.match(executeBody, /endLadderSubmitResponseCapture\(submitCaptureId\)/);
+  assert.match(executeBody, /waitForOrderSubmitAcknowledgement\([\s\S]*plan\.spec\.mode/);
   assert.match(executeBody, /refreshRemainingCloseLadderOrders\(plan,\s*done\)/);
   assert.match(executeBody, /lastRepriceApiErrorCode/);
   assert.match(executeBody, /return \{ done, repriceAttempts, lastRepriceApiErrorCode \}/);
   assert.match(executeBody, /盘口连续移动/);
-  assert.doesNotMatch(executeBody, /isPostOnlyMakerRejectionFeedback/);
+  assert.doesNotMatch(executeBody, /binanceCode\s*=\s*BINANCE_GTX_ORDER_REJECT_CODE/);
 
   assert.match(generatedSource, /BINANCE_GTX_ORDER_REJECT_CODE/);
   assert.match(generatedSource, /beginLadderSubmitResponseCapture/);
   assert.match(generatedSource, /自动刷新盘口/);
-  assert.doesNotMatch(generatedSource, /isPostOnlyMakerRejectionFeedback/);
+  assert.match(generatedSource, /isPostOnlyMakerRejectionFeedback/);
 });
 
 test('ladder minimum quantity failure explains safe manual options', () => {
