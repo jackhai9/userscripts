@@ -55,3 +55,21 @@ export function planBufferedMakerPrices({
   }
   return result;
 }
+
+export function repriceRemainingLadderOrders({ orders, completedCount, prices }) {
+  if (!Array.isArray(orders) || !Number.isInteger(completedCount) || completedCount < 0 || completedCount > orders.length) {
+    throw new Error('Invalid completed ladder count');
+  }
+  const remainingCount = orders.length - completedCount;
+  if (!Array.isArray(prices) || prices.length !== remainingCount) {
+    throw new Error(`Expected ${remainingCount} replacement prices`);
+  }
+  if (prices.some((price) => !isPositiveDecimalString(normalizeDecimalString(price)))) {
+    throw new Error('Invalid replacement ladder price');
+  }
+  return orders.map((order, index) => (
+    index < completedCount
+      ? { ...order }
+      : { ...order, price: normalizeDecimalString(prices[index - completedCount]) }
+  ));
+}

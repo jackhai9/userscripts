@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   classifyOrderFeedback,
   evaluateOrderSubmitAcknowledgement,
+  getBinanceApiErrorCode,
   isOpenLadderOpenOrdersCapacityFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
 } from '../../../src/binance-orderbook-trade/core/order-feedback.js';
@@ -80,4 +81,13 @@ test('recognizes open ladder capacity failures only when feedback points to open
   assert.equal(isOpenLadderOpenOrdersCapacityFeedback('Order failed: not enough available balance'), false);
   assert.equal(isOpenLadderOpenOrdersCapacityFeedback('只减仓订单失败。请取消此币种的当前挂单，然后重试。'), false);
   assert.equal(isOpenLadderOpenOrdersCapacityFeedback('委托已提交'), false);
+});
+
+test('reads Binance API error codes without depending on localized messages', () => {
+  assert.equal(getBinanceApiErrorCode({ code: -5022, msg: 'any text' }), -5022);
+  assert.equal(getBinanceApiErrorCode({ code: '-5022', message: '任意文案' }), -5022);
+  assert.equal(getBinanceApiErrorCode({ code: '000000', success: true }), null);
+  assert.equal(getBinanceApiErrorCode({ code: -2019, msg: 'insufficient margin' }), -2019);
+  assert.equal(getBinanceApiErrorCode({ message: 'Post Only order rejected' }), null);
+  assert.equal(getBinanceApiErrorCode({ data: { code: -5022 } }), null);
 });
