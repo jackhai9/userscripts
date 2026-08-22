@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.46
+// @version      2.7.47
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -494,11 +494,16 @@
     const hasRejection = /拒绝|驳回|reject/.test(normalized);
     return hasPostOnlyOrder && hasMakerExecutionConflict && hasRejection;
   }
+  var BINANCE_POST_ONLY_MAKER_REJECT_CODES = /* @__PURE__ */ new Set([-5022, 90805022]);
+  function isBinancePostOnlyMakerRejectCode(code) {
+    return BINANCE_POST_ONLY_MAKER_REJECT_CODES.has(code);
+  }
   function getBinanceApiErrorCode(payload) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-    if (Number.isInteger(payload.code) && payload.code < 0) return payload.code;
-    if (typeof payload.code !== "string" || !/^-\d+$/.test(payload.code)) return null;
-    return Number(payload.code);
+    if (Number.isSafeInteger(payload.code)) return payload.code === 0 ? null : payload.code;
+    if (typeof payload.code !== "string" || !/^-?\d+$/.test(payload.code)) return null;
+    const code = Number(payload.code);
+    return Number.isSafeInteger(code) && code !== 0 ? code : null;
   }
 
   // src/shared/binance-futures-route.js
@@ -850,7 +855,7 @@
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_CLOSE_REPRICE_MAX_ATTEMPTS = 3;
     const LADDER_CLOSE_REPRICE_DELAY_MS = 180;
-    const BINANCE_GTX_ORDER_REJECT_CODE = -5022;
+    const BINANCE_PLACE_ORDER_BAPI_PATH = "/bapi/futures/v1/private/future/order/place-order";
     const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
     const LADDER_OPEN_QTY_POLL_MS = 80;
     const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
@@ -1355,6 +1360,10 @@
     function getFetchRequestUrl(args) {
       return typeof args[0] === "string" ? args[0] : args[0] instanceof Request ? args[0].url : args[0]?.url || "";
     }
+    function isBinancePlaceOrderRequestUrl(rawUrl) {
+      const requestUrl = new URL(rawUrl, window.location.href);
+      return requestUrl.origin === window.location.origin && requestUrl.pathname === BINANCE_PLACE_ORDER_BAPI_PATH;
+    }
     function getFetchRequestMethod(args) {
       const method = args[1]?.method || (args[0] instanceof Request ? args[0].method : null) || "GET";
       return String(method).toUpperCase();
@@ -1405,7 +1414,7 @@
         }
         const capture = activeLadderSubmitCapture;
         const requestUrl = getFetchRequestUrl(args);
-        const shouldObserveResponse = capture && getFetchRequestMethod(args) === "POST" && requestUrl.includes("/bapi/");
+        const shouldObserveResponse = capture && getFetchRequestMethod(args) === "POST" && isBinancePlaceOrderRequestUrl(requestUrl);
         const request = originalFetch.apply(this, args);
         if (shouldObserveResponse) {
           trackLadderSubmitResponse(request, capture, requestUrl);
@@ -2162,7 +2171,7 @@
     function isRetryableCloseLadderMakerPriceFailure(plan, error) {
       if (plan?.spec?.mode !== "CLOSE") return false;
       if (error?.ladderFailureKind === "maker_price_conflict") return error.safeNoSubmit === true;
-      return error?.binanceCode === BINANCE_GTX_ORDER_REJECT_CODE && error.safeNoSubmit === true;
+      return isBinancePostOnlyMakerRejectCode(error?.binanceCode) && error.safeNoSubmit === true;
     }
     function createLadderSubmitApiError(apiErrorCode) {
       const error = new Error(`Binance 下单失败 (${apiErrorCode})`);
@@ -2268,7 +2277,7 @@
             submitCaptureId,
             remainingAckMs
           );
-          if (capturedApiErrors.length === 1 && capturedApiErrors[0].code === BINANCE_GTX_ORDER_REJECT_CODE) {
+          if (capturedApiErrors.length === 1 && isBinancePostOnlyMakerRejectCode(capturedApiErrors[0].code)) {
             throw createLadderSubmitApiError(capturedApiErrors[0].code);
           }
           if (capturedApiErrors.length === 0 && mode === "CLOSE" && isPostOnlyMakerRejectionFeedback(pendingFailure.message)) {
@@ -2337,7 +2346,7 @@
           }
         } catch (e) {
           if (!isRetryableCloseLadderMakerPriceFailure(plan, e)) throw e;
-          if (e?.binanceCode === BINANCE_GTX_ORDER_REJECT_CODE) {
+          if (isBinancePostOnlyMakerRejectCode(e?.binanceCode)) {
             lastRepriceApiErrorCode = e.binanceCode;
           }
           if (repriceAttempts >= LADDER_CLOSE_REPRICE_MAX_ATTEMPTS) {

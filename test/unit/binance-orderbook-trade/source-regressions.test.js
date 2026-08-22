@@ -105,13 +105,19 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   const retryBody = readFunctionBody('isRetryableCloseLadderMakerPriceFailure');
   assert.match(retryBody, /plan\?\.spec\?\.mode !== 'CLOSE'/);
   assert.match(retryBody, /error\?\.ladderFailureKind === 'maker_price_conflict'/);
-  assert.match(retryBody, /error\?\.binanceCode === BINANCE_GTX_ORDER_REJECT_CODE/);
+  assert.match(retryBody, /isBinancePostOnlyMakerRejectCode\(error\?\.binanceCode\)/);
 
   const interceptBody = readFunctionBody('installFetchInterceptor');
   assert.match(interceptBody, /activeLadderSubmitCapture/);
   assert.match(interceptBody, /trackLadderSubmitResponse/);
   assert.match(interceptBody, /getFetchRequestMethod\(args\) === 'POST'/);
+  assert.match(interceptBody, /isBinancePlaceOrderRequestUrl\(requestUrl\)/);
+  assert.doesNotMatch(interceptBody, /requestUrl\.includes\('\/bapi\/'\)/);
   assert.doesNotMatch(interceptBody, /Post Only|未作为Maker|不会记录/);
+
+  const requestUrlBody = readFunctionBody('isBinancePlaceOrderRequestUrl');
+  assert.match(requestUrlBody, /requestUrl\.origin === window\.location\.origin/);
+  assert.match(requestUrlBody, /requestUrl\.pathname === BINANCE_PLACE_ORDER_BAPI_PATH/);
 
   const observeBody = readFunctionBody('observeLadderSubmitResponse');
   assert.match(observeBody, /capture\.apiErrors\.push\(\{ requestUrl, code \}\)/);
@@ -124,7 +130,7 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
   assert.match(acknowledgementBody, /await waitForLadderSubmitResponseObservations\(/);
   assert.match(acknowledgementBody, /capturedApiErrors\.length === 1/);
-  assert.match(acknowledgementBody, /capturedApiErrors\[0\]\.code === BINANCE_GTX_ORDER_REJECT_CODE/);
+  assert.match(acknowledgementBody, /isBinancePostOnlyMakerRejectCode\(capturedApiErrors\[0\]\.code\)/);
   assert.match(acknowledgementBody, /capturedApiErrors\.length === 0/);
   assert.match(acknowledgementBody, /mode === 'CLOSE'/);
   assert.match(acknowledgementBody, /isPostOnlyMakerRejectionFeedback\(pendingFailure\.message\)/);
@@ -149,7 +155,8 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(executeBody, /盘口连续移动/);
   assert.doesNotMatch(executeBody, /binanceCode\s*=\s*BINANCE_GTX_ORDER_REJECT_CODE/);
 
-  assert.match(generatedSource, /BINANCE_GTX_ORDER_REJECT_CODE/);
+  assert.match(generatedSource, /90805022/);
+  assert.match(generatedSource, /isBinancePostOnlyMakerRejectCode/);
   assert.match(generatedSource, /beginLadderSubmitResponseCapture/);
   assert.match(generatedSource, /自动刷新盘口/);
   assert.match(generatedSource, /isPostOnlyMakerRejectionFeedback/);

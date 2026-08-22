@@ -5,6 +5,7 @@ import {
   classifyOrderFeedback,
   evaluateOrderSubmitAcknowledgement,
   getBinanceApiErrorCode,
+  isBinancePostOnlyMakerRejectCode,
   isOpenLadderOpenOrdersCapacityFeedback,
   isPostOnlyMakerRejectionFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
@@ -87,10 +88,25 @@ test('recognizes open ladder capacity failures only when feedback points to open
 test('reads Binance API error codes without depending on localized messages', () => {
   assert.equal(getBinanceApiErrorCode({ code: -5022, msg: 'any text' }), -5022);
   assert.equal(getBinanceApiErrorCode({ code: '-5022', message: '任意文案' }), -5022);
+  assert.equal(getBinanceApiErrorCode({ code: 90805022, message: '任意文案' }), 90805022);
+  assert.equal(getBinanceApiErrorCode({ code: '90805022', message: '任意文案' }), 90805022);
+  assert.equal(getBinanceApiErrorCode({ code: 0, success: true }), null);
   assert.equal(getBinanceApiErrorCode({ code: '000000', success: true }), null);
   assert.equal(getBinanceApiErrorCode({ code: -2019, msg: 'insufficient margin' }), -2019);
+  assert.equal(getBinanceApiErrorCode({ code: 1.5, msg: 'invalid numeric code' }), null);
+  assert.equal(getBinanceApiErrorCode({ code: '1.5', msg: 'invalid numeric code' }), null);
+  assert.equal(getBinanceApiErrorCode({ code: Number.MAX_SAFE_INTEGER + 1 }), null);
   assert.equal(getBinanceApiErrorCode({ message: 'Post Only order rejected' }), null);
   assert.equal(getBinanceApiErrorCode({ data: { code: -5022 } }), null);
+});
+
+test('recognizes only verified Binance Post Only maker rejection codes', () => {
+  assert.equal(isBinancePostOnlyMakerRejectCode(-5022), true);
+  assert.equal(isBinancePostOnlyMakerRejectCode(90805022), true);
+  assert.equal(isBinancePostOnlyMakerRejectCode('90805022'), false);
+  assert.equal(isBinancePostOnlyMakerRejectCode(0), false);
+  assert.equal(isBinancePostOnlyMakerRejectCode(-2019), false);
+  assert.equal(isBinancePostOnlyMakerRejectCode(90805021), false);
 });
 
 test('recognizes Post Only maker-execution rejection feedback without exact-message matching', () => {
