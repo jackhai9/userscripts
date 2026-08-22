@@ -15,6 +15,10 @@ const MODE_KEYS = {
   OPEN: 'jh_binance_ladder_open_levels',
   CLOSE: 'jh_binance_ladder_close_levels',
 };
+const STEP_KEYS = {
+  OPEN: 'jh_binance_ladder_open_step',
+  CLOSE: 'jh_binance_ladder_close_step',
+};
 
 function createStorage() {
   const values = new Map();
@@ -53,11 +57,24 @@ test('ladder default percents are available options', () => {
   assert.equal(readConstArray('LADDER_CLOSE_PERCENTS').includes(readConstNumber('DEFAULT_LADDER_CLOSE_PERCENT')), true);
 });
 
-test('ladder default values match the conservative per-symbol presets', () => {
+test('ladder default values match the per-symbol presets', () => {
   assert.equal(readConstNumber('DEFAULT_LADDER_OPEN_PERCENT'), 2);
   assert.equal(readConstNumber('DEFAULT_LADDER_CLOSE_PERCENT'), 0.3);
   assert.equal(readConstNumber('DEFAULT_LADDER_LEVELS'), 5);
-  assert.equal(readConstNumber('DEFAULT_LADDER_STEP'), 1);
+  assert.equal(readConstNumber('DEFAULT_LADDER_STEP'), 5);
+});
+
+test('new symbols default open and close ladder step to five without replacing saved values', () => {
+  const storage = createStorage();
+  const options = [1, 2, 3, 4, 5];
+
+  assert.equal(loadModeSymbolNumberOption(storage, STEP_KEYS, 'OPEN', 'ETHUSDT', options, 5), 5);
+  assert.equal(loadModeSymbolNumberOption(storage, STEP_KEYS, 'CLOSE', 'ETHUSDT', options, 5), 5);
+
+  saveModeSymbolNumberOption(storage, STEP_KEYS, 'OPEN', 'BTCUSDT', 1, options);
+  saveModeSymbolNumberOption(storage, STEP_KEYS, 'CLOSE', 'BTCUSDT', 3, options);
+  assert.equal(loadModeSymbolNumberOption(storage, STEP_KEYS, 'OPEN', 'BTCUSDT', options, 5), 1);
+  assert.equal(loadModeSymbolNumberOption(storage, STEP_KEYS, 'CLOSE', 'BTCUSDT', options, 5), 3);
 });
 
 test('ladder option persistence is scoped by the current symbol', () => {
@@ -117,4 +134,5 @@ test('ladder execution and UI updates use one captured mode-symbol context', () 
   assert.match(source, /setLadderLevels\(value, optionContext\.mode, optionContext\.symbol\)/);
   assert.match(source, /getLadderStep\(optionContext\.mode, optionContext\.symbol\)/);
   assert.match(source, /setLadderStep\([^\n]+, optionContext\.mode, optionContext\.symbol\)/);
+  assert.match(source, /plan\.ladderStep === DEFAULT_LADDER_STEP \? '' : `\/幅\$\{plan\.ladderStep\}`/);
 });
