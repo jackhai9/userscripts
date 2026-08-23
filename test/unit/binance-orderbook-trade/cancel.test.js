@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 
 import {
   hasCurrentSymbolOpenOrdersEvidence,
+  isCurrentSymbolOpenOrdersClearCandidate,
   isOpenOrdersScopeConfirmedForSymbolText,
   isOpenOrdersScopeLimitedToSymbolText,
   isOpenOrdersTabText,
   normalizeText,
   parseOpenOrdersTabCount,
   readVisibleOpenOrderSymbolsText,
+  updateOpenOrdersClearStability,
 } from '../../../src/binance-orderbook-trade/core/cancel-orders.js';
 
 test('normalizes text and recognizes open-orders tab labels', () => {
@@ -119,4 +121,70 @@ test('checked current-symbol filter rejects transient rows from another symbol',
   assert.equal(isOpenOrdersScopeConfirmedForSymbolText('HYPEUSDT 永续', 'HYPEUSDT', false), true);
   assert.equal(isOpenOrdersScopeConfirmedForSymbolText('隐藏其他合约', 'HYPEUSDT', true), true);
   assert.equal(isOpenOrdersScopeConfirmedForSymbolText('隐藏其他合约', 'HYPEUSDT', false), false);
+});
+
+test('clear candidate accepts account zero despite stale current rows', () => {
+  assert.equal(isCurrentSymbolOpenOrdersClearCandidate({
+    scopeText: 'HYPEUSDT 永续 全撤',
+    symbol: 'HYPEUSDT',
+    openOrdersCount: 0,
+  }), true);
+  assert.equal(isCurrentSymbolOpenOrdersClearCandidate({
+    scopeText: 'HYPEUSDT 永续 全撤',
+    symbol: 'HYPEUSDT',
+    openOrdersCount: 1,
+  }), false);
+});
+
+test('clear candidate isolates current symbol when other account orders remain', () => {
+  assert.equal(isCurrentSymbolOpenOrdersClearCandidate({
+    scopeText: '隐藏其他合约 当前委托',
+    symbol: 'HYPEUSDT',
+    openOrdersCount: 3,
+  }), true);
+  assert.equal(isCurrentSymbolOpenOrdersClearCandidate({
+    scopeText: 'BTCUSDT 永续',
+    symbol: 'HYPEUSDT',
+    openOrdersCount: 0,
+  }), false);
+});
+
+test('clear candidate must remain stable and resets when orders reappear', () => {
+  let state = updateOpenOrdersClearStability({
+    clearCandidate: true,
+    clearCandidateSince: null,
+    nowMs: 1_000,
+    settleMs: 1_200,
+  });
+  assert.deepEqual(state, { clearCandidateSince: 1_000, cleared: false });
+
+  state = updateOpenOrdersClearStability({
+    clearCandidate: true,
+    clearCandidateSince: state.clearCandidateSince,
+    nowMs: 2_199,
+    settleMs: 1_200,
+  });
+  assert.deepEqual(state, { clearCandidateSince: 1_000, cleared: false });
+
+  state = updateOpenOrdersClearStability({
+    clearCandidate: false,
+    clearCandidateSince: state.clearCandidateSince,
+    nowMs: 2_200,
+    settleMs: 1_200,
+  });
+  assert.deepEqual(state, { clearCandidateSince: null, cleared: false });
+
+  state = updateOpenOrdersClearStability({
+    clearCandidate: true,
+    clearCandidateSince: state.clearCandidateSince,
+    nowMs: 2_300,
+    settleMs: 1_200,
+  });
+  state = updateOpenOrdersClearStability({
+    clearCandidate: true,
+    clearCandidateSince: state.clearCandidateSince,
+    nowMs: 3_500,
+    settleMs: 1_200,
+  });
+  assert.deepEqual(state, { clearCandidateSince: 2_300, cleared: true });
 });

@@ -75,6 +75,34 @@ export function isOpenOrdersScopeConfirmedForSymbolText(text, symbol, filterChec
   return filterChecked === true;
 }
 
+/**
+ * The active scope must already be confirmed for the current symbol. A zero
+ * account count is stronger than stale rendered rows, while a non-zero count
+ * may belong entirely to other symbols hidden by the active filter.
+ */
+export function isCurrentSymbolOpenOrdersClearCandidate({ scopeText, symbol, openOrdersCount }) {
+  const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
+  if (visibleSymbols.length > 0 && !isOpenOrdersScopeLimitedToSymbolText(scopeText, symbol)) {
+    return false;
+  }
+  if (openOrdersCount === 0) return true;
+  return visibleSymbols.length === 0;
+}
+
+export function updateOpenOrdersClearStability({
+  clearCandidate,
+  clearCandidateSince,
+  nowMs,
+  settleMs,
+}) {
+  if (!clearCandidate) return { clearCandidateSince: null, cleared: false };
+  const nextCandidateSince = clearCandidateSince ?? nowMs;
+  return {
+    clearCandidateSince: nextCandidateSince,
+    cleared: nowMs - nextCandidateSince >= settleMs,
+  };
+}
+
 export function hasCurrentSymbolOpenOrdersEvidence({
   scopeText,
   symbol,

@@ -43,6 +43,7 @@
 - 保留 `@updateURL` 和 `@downloadURL` 指向真源 raw 地址。
 - 发布到 `main` 必须通过 GitHub PR 合并；不要在本地 merge 到 `main` 后直接 push `main`。
 - 如果用户要求“发布”“上线”或“合并到 main”，默认流程是 push feature branch、创建 PR、等待检查通过，然后用 `gh pr merge` 合并。
+- Binance userscript 修复在实现、审查和发布门槛全部通过，且下一步需要 Tampermonkey 线上验证时，默认立即提交 feature branch、创建并合并 PR 到 `main`、核验 raw 更新版本；不要停在未提交状态等待用户再次提醒。只有发布检查失败、存在未解决的高风险 finding 或缺少 GitHub 权限时才停止并报告。
 - 本仓库默认不写兜底代码、不做防御性编程、不靠补丁式修改压住表面症状。修复前必须先定位 root cause，并让代码改动直接消除该原因。
 - 不要添加 silent default、best-effort 分支、宽泛 `try/catch`、兼容 shim、旧 DOM 选择器、旧 message payload、自动 retry、类型猜测转换或随手 null handling 来让脚本继续运行。
 - 页面 DOM、Binance API、Tampermonkey runtime、缓存、定时器、跨页 message 和下载状态遇到非法状态时应快速失败或明确提示；只有当前设计文档、代码契约或用户当轮明确要求迁移支持时，才允许保留 recovery 或兼容路径。

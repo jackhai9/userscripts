@@ -373,7 +373,13 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   const waitBody = readFunctionBody('waitForCurrentSymbolOpenOrdersCleared');
   assert.match(waitBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
   assert.match(waitBody, /isOpenOrdersScopeConfirmedForSymbol\(currentRoot,\s*symbol\)/);
-  assert.match(waitBody, /hasCurrentSymbolOpenOrders\(currentRoot,\s*symbol,\s*true,\s*cancelAllButton\)/);
+  assert.match(source, /CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200/);
+  assert.match(waitBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
+  assert.match(waitBody, /isCurrentSymbolOpenOrdersClearCandidate\(\{/);
+  assert.match(waitBody, /updateOpenOrdersClearStability\(\{/);
+  assert.match(waitBody, /clearCandidateSince = stability\.clearCandidateSince/);
+  assert.match(waitBody, /if \(stability\.cleared\)/);
+  assert.doesNotMatch(waitBody, /hasCurrentSymbolOpenOrders\(/);
 
   const clearWaitIndex = cancelBody.indexOf('waitForCurrentSymbolOpenOrdersCleared(openOrdersScope, symbol)');
   const successIndex = cancelBody.indexOf("return { ok: true, status: 'cleared'");
