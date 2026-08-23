@@ -356,8 +356,56 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelRowsBody, /restoreTemporaryUiState = false/);
   assert.match(cancelRowsBody, /status = e\?\.name === 'DialogNotClosedError' \? 'dialog_not_closed' : 'row_cancel_failed'/);
   assert.match(cancelRowsBody, /finally\s*\{\s*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
+  assert.doesNotMatch(cancelRowsBody, /TradingView|tradingView|hideTradingViewOrders/);
   assert.doesNotMatch(cancelRowsBody, /allowPartialEnd/);
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
+});
+
+test('bulk cancel hides TradingView orders before opening the native dialog and restores them independently', () => {
+  assert.match(source, /BINANCE_TRADINGVIEW_IFRAME_SELECTOR/);
+
+  const hideBody = readFunctionBody('hideTradingViewOrdersForBulkCancel');
+  assert.match(hideBody, /hideTradingViewOrders\(target\.tradingViewApi, state\)/);
+  assert.match(hideBody, /await waitForTwoAnimationFrames\(\)/);
+  assert.match(hideBody, /assertTradingViewOrdersVisibility\(target, false\)/);
+
+  const restoreBody = readFunctionBody('restoreTradingViewOrdersAfterBulkCancel');
+  assert.match(restoreBody, /assertSameTradingViewOrdersTarget\(target, getBinanceTradingViewTarget\(\)\)/);
+  assert.match(restoreBody, /restoreTradingViewOrders\(target\.tradingViewApi, state\)/);
+  assert.match(restoreBody, /assertTradingViewOrdersVisibility\(target, state\.originalVisible\)/);
+
+  const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
+  const captureIndex = cancelBody.indexOf(
+    'captureTradingViewOrdersVisibility(tradingViewOrdersTarget.tradingViewApi)'
+  );
+  const hideIndex = cancelBody.indexOf(
+    'await hideTradingViewOrdersForBulkCancel(tradingViewOrdersTarget, tradingViewOrdersState)'
+  );
+  const destructiveClickIndex = cancelBody.indexOf('cancelAllButton.click()');
+  const chartRestoreIndex = cancelBody.indexOf('await restoreTradingViewOrdersAfterBulkCancel(');
+  const symbolGuardedRestoreIndex = cancelBody.indexOf('if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol))');
+  const postHideBody = cancelBody.slice(hideIndex);
+  const freshScopeIndex = postHideBody.indexOf('openOrdersScope = await waitForActiveOpenOrdersScope()');
+  const freshFilterIndex = postHideBody.indexOf('isOpenOrdersScopeConfirmedForSymbol(openOrdersScope, symbol)');
+  const freshButtonIndex = postHideBody.indexOf(
+    'cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope)'
+  );
+  const postHideClickIndex = postHideBody.indexOf('cancelAllButton.click()');
+
+  assert.ok(captureIndex !== -1 && hideIndex !== -1 && destructiveClickIndex !== -1);
+  assert.ok(captureIndex < hideIndex && hideIndex < destructiveClickIndex);
+  assert.ok(freshScopeIndex !== -1 && freshFilterIndex !== -1 && freshButtonIndex !== -1);
+  assert.ok(
+    freshScopeIndex < freshFilterIndex && freshFilterIndex < freshButtonIndex && freshButtonIndex < postHideClickIndex,
+    'the active scope, symbol filter, and cancel button must be reacquired after hiding'
+  );
+  assert.match(cancelBody, /status: 'chart_orders_not_hidden'/);
+  assert.match(cancelBody, /restoreTradingViewOrdersState = false[\s\S]*status: 'dialog_not_closed'/);
+  assert.ok(chartRestoreIndex !== -1 && symbolGuardedRestoreIndex !== -1);
+  assert.ok(
+    chartRestoreIndex < symbolGuardedRestoreIndex,
+    'chart visibility restoration must not depend on the captured Binance symbol'
+  );
 });
 
 test('cancel current-symbol open orders wait for confirmed clearing before restoring page state', () => {
@@ -410,8 +458,9 @@ test('cancel current-symbol open orders are single-flight and dialog timeout doe
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /restoreTemporaryUiState = false/);
+  assert.match(cancelBody, /restoreTradingViewOrdersState = false/);
   assert.match(cancelBody, /status: 'dialog_not_closed'/);
-  assert.match(cancelBody, /finally\s*\{\s*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
+  assert.match(cancelBody, /finally\s*\{[\s\S]*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
 
   const panelBody = readFunctionBody('refreshLadderPanel');
   assert.match(panelBody, /cancelCurrentSymbolOpenOrdersTask/);
@@ -570,7 +619,7 @@ test('cancel flow rechecks the captured symbol before destructive click and clea
     'cancel flow should reject an unobserved symbol before changing tabs'
   );
   assert.match(cancelBody, /if \(!isCurrentObservedSymbol\(symbol\)\)[\s\S]*cancelAllButton\.click\(\)/);
-  assert.match(cancelBody, /finally\s*\{\s*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\) \{/);
+  assert.match(cancelBody, /finally\s*\{[\s\S]*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\) \{/);
   assert.match(cancelBody, /restoreOpenOrdersSubTab\(previousOpenOrdersSubTab, symbol\)/);
   assert.match(cancelBody, /restoreAccountOrdersTab\(previousAccountOrdersTab, symbol\)/);
 });
