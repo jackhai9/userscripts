@@ -54,7 +54,7 @@ test('chart target discovery rejects missing or ambiguous structural contracts',
   const missingDom = loadFixtureDom('<div></div>');
   assert.throws(
     () => getBinanceChartOrdersTarget(missingDom.window.document),
-    /Expected one Binance chart iframe, found 0/,
+    /Binance chart orders target is unavailable/,
   );
 
   const duplicateDom = loadFixtureDom(`${createChartMarkup()}${createChartMarkup()}`);

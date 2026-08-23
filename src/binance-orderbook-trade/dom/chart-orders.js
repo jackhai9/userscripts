@@ -10,19 +10,21 @@ function normalizeLabel(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
-export function getBinanceChartOrdersTarget(document) {
+export function findBinanceChartOrdersTarget(document) {
   const frames = Array.from(document.querySelectorAll(BINANCE_CHART_IFRAME_SELECTOR));
-  if (frames.length !== 1) {
+  if (!frames.length) return null;
+  if (frames.length > 1) {
     throw new Error(`Expected one Binance chart iframe, found ${frames.length}`);
   }
 
   const frame = frames[0];
   const chartRoot = frame.closest('.chart-widget-root');
-  if (!chartRoot) throw new Error('Binance chart root is unavailable');
+  if (!chartRoot) return null;
 
   const panels = Array.from(chartRoot.querySelectorAll(CHART_PANEL_SELECTOR))
     .filter((panel) => panel.children.length >= 2 && panel.children[1].contains(frame));
-  if (panels.length !== 1) {
+  if (!panels.length) return null;
+  if (panels.length > 1) {
     throw new Error(`Expected one Binance chart panel, found ${panels.length}`);
   }
 
@@ -36,7 +38,8 @@ export function getBinanceChartOrdersTarget(document) {
       return trigger.matches('.bn-tooltips-wrap.bn-tooltips-web')
         && latestPriceSlot.matches('.contents');
     });
-  if (toolbars.length !== 1) {
+  if (!toolbars.length) return null;
+  if (toolbars.length > 1) {
     throw new Error(`Expected one Binance chart toolbar, found ${toolbars.length}`);
   }
 
@@ -44,6 +47,12 @@ export function getBinanceChartOrdersTarget(document) {
   const trigger = toolbar.children[toolbar.children.length - 2];
   if (!trigger) throw new Error('Binance chart orders menu trigger is unavailable');
   return { frame, chartRoot, trigger };
+}
+
+export function getBinanceChartOrdersTarget(document) {
+  const target = findBinanceChartOrdersTarget(document);
+  if (!target) throw new Error('Binance chart orders target is unavailable');
+  return target;
 }
 
 export function assertSameBinanceChartOrdersTarget(capturedTarget, currentTarget) {

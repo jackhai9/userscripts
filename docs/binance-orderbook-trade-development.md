@@ -187,6 +187,8 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - verify the precision apply button changes Binance orderbook precision only after an explicit user click
 - start ladder order, confirm start buttons are disabled while running
 - cancel current-symbol orders, verify only Binance native confirmation opens
+- cancel the native cancel-all dialog through its secondary button, Escape, and backdrop; verify chart and account-order UI state restores immediately without waiting for order clearing
+- reload while the native cancel-all dialog is open; verify the next page load restores the original chart OpenOrders setting from the same-tab recovery journal
 - replace close ladder orders when existing reduce-only close orders occupy the closeable quantity
 - replace open ladder orders only by current-symbol same-direction basic open-order rows; verify no cancel-all path or conditional/protection orders are used
 - verify SVG cancel controls work when the visible cancel target has no native `.click()` method
