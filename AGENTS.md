@@ -55,7 +55,7 @@
 - 涉及交易规则时，按当前 `symbol` 的确定性数据计算，不允许用旧 DOM 状态或无 symbol 语义的值去猜。
 - 涉及定时器、重试、缓存、前后台切换时，优先保证时间语义闭合，再考虑 UI 表现。
 - 不要把“缓存命中”“回退成功”“页面没报错”误判成“拿到了最新数据”。
-- Codex Chrome automation 的 `evaluate` 环境可能比真实 DevTools Console/页面脚本受限；如果 `fetch`、`XMLHttpRequest`、`DOMParser`、`document.createElement`、`window.addEventListener` 等 API 在 automation 中不可用，不要直接判定目标页面不可运行。先用 live DOM/截图/console/page assets 取证，再用真实 DevTools、Tampermonkey、临时 helper extension 或带 referer 的命令行请求验证完整路径。
+- Codex Chrome 的 Playwright `evaluate` sandbox 和 raw CDP 是不同执行面。需要验证页面内 `fetch`、`XMLHttpRequest`、`DOMParser`、DOM mutation、事件或 `postMessage` 时，有 raw CDP 就优先直接用 `Runtime.evaluate` 和 Network events；只有 raw CDP 不可用或目标浏览器没有所需登录态时，才改用 live DOM/截图/console/page assets、真实 DevTools、Tampermonkey、临时 helper extension 或带 referer 的命令行请求。某个受限 evaluation surface 缺少 API，不代表目标页面不能运行该代码。
 
 ## Validation
 
