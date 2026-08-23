@@ -89,6 +89,14 @@ export function isCurrentSymbolOpenOrdersClearCandidate({ scopeText, symbol, ope
   return visibleSymbols.length === 0;
 }
 
+export function isCurrentSymbolOpenOrdersDefinitivelyClear({ scopeText, symbol, openOrdersCount }) {
+  return openOrdersCount === 0 && isCurrentSymbolOpenOrdersClearCandidate({
+    scopeText,
+    symbol,
+    openOrdersCount,
+  });
+}
+
 export function updateOpenOrdersClearStability({
   clearCandidate,
   clearCandidateSince,

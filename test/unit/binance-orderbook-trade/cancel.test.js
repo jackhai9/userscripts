@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   hasCurrentSymbolOpenOrdersEvidence,
   isCurrentSymbolOpenOrdersClearCandidate,
+  isCurrentSymbolOpenOrdersDefinitivelyClear,
   isOpenOrdersScopeConfirmedForSymbolText,
   isOpenOrdersScopeLimitedToSymbolText,
   isOpenOrdersTabText,
@@ -134,6 +135,24 @@ test('clear candidate accepts account zero despite stale current rows', () => {
     scopeText: 'HYPEUSDT 永续 全撤',
     symbol: 'HYPEUSDT',
     openOrdersCount: 1,
+  }), false);
+});
+
+test('account zero is definitive while filtered empty state still settles', () => {
+  assert.equal(isCurrentSymbolOpenOrdersDefinitivelyClear({
+    scopeText: 'HYPEUSDT 永续 全撤',
+    symbol: 'HYPEUSDT',
+    openOrdersCount: 0,
+  }), true);
+  assert.equal(isCurrentSymbolOpenOrdersDefinitivelyClear({
+    scopeText: '隐藏其他合约 当前委托',
+    symbol: 'HYPEUSDT',
+    openOrdersCount: 3,
+  }), false);
+  assert.equal(isCurrentSymbolOpenOrdersDefinitivelyClear({
+    scopeText: 'BTCUSDT 永续',
+    symbol: 'HYPEUSDT',
+    openOrdersCount: 0,
   }), false);
 });
 

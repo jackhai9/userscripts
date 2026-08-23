@@ -376,6 +376,7 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   assert.match(source, /CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200/);
   assert.match(waitBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
   assert.match(waitBody, /isCurrentSymbolOpenOrdersClearCandidate\(\{/);
+  assert.match(waitBody, /isCurrentSymbolOpenOrdersDefinitivelyClear\(\{[\s\S]*return \{ ok: true, status: 'cleared'/);
   assert.match(waitBody, /updateOpenOrdersClearStability\(\{/);
   assert.match(waitBody, /clearCandidateSince = stability\.clearCandidateSince/);
   assert.match(waitBody, /if \(stability\.cleared\)/);
