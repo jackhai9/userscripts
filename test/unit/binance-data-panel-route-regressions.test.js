@@ -42,7 +42,8 @@ for (const script of scripts) {
     const source = await readScript(script.path);
     assert.match(source, /\b(?:const|var) FUTURES_TRADING_PATH_RE = \/\^\\\/\(\?:\[a-z\]\{2\}/);
     assert.match(source, /function isFuturesTradingPage\(\)/);
-    assert.match(source, /if \(!isFuturesTradingPage\(\)\) return;/);
+    const startupPrefix = source.slice(0, source.indexOf('const PANEL_ID'));
+    assert.doesNotMatch(startupPrefix, /if \(!isFuturesTradingPage\(\)\) return;/);
 
     const getSymbolBody = readFunctionBody(source, 'getCurrentSymbol');
     assert.match(getSymbolBody, /parseFuturesTradingSymbolFromPathname\(location\.pathname\)/);

@@ -74,6 +74,33 @@ test('CMC data panel stops business timers on non-trading routes but keeps a rou
   assert.match(startRouteBody, /setInterval/);
 });
 
+test('CMC data panel invalidates superseded and paused refreshes with a monotonic epoch', () => {
+  const refreshBody = readFunctionBody(sources.cmc, 'refreshForCurrentSymbol');
+  const stopDataBody = readFunctionBody(sources.cmc, 'stopDataLoop');
+  assert.match(sources.cmc, /let refreshEpoch = 0;/);
+  assert.match(refreshBody, /const myEpoch = \+\+refreshEpoch/);
+  assert.match(refreshBody, /myEpoch !== refreshEpoch/);
+  assert.match(refreshBody, /document\.hidden/);
+  assert.match(stopDataBody, /refreshEpoch\+\+/);
+  assert.match(stopDataBody, /inFlightSymbol = null/);
+});
+
+for (const [name, source] of Object.entries(sources)) {
+  test(`${name} data panel installs route watching from a matched non-trading cold start`, () => {
+    const startupPrefix = source.slice(0, source.indexOf('const PANEL_ID'));
+    assert.doesNotMatch(startupPrefix, /if \(!isFuturesTradingPage\(\)\) return;/);
+    assert.match(source, /startRouteWatcher\(\)/);
+  });
+}
+
+test('trading data server-time interval follows the business lifecycle', () => {
+  const stopBusinessBody = readFunctionBody(sources.trading, 'stopBusinessLoop');
+  const startServerBody = readFunctionBody(sources.trading, 'startServerTimeLoop');
+  assert.match(sources.trading, /let serverTimeTimer = null;/);
+  assert.match(startServerBody, /serverTimeTimer = setInterval/);
+  assert.match(stopBusinessBody, /clearInterval\(serverTimeTimer\)/);
+});
+
 test('CMC data panel escapes the CoinMarketCap link href before writing innerHTML', () => {
   const renderDataBody = readFunctionBody(sources.cmc, 'renderData');
   assert.match(renderDataBody, /escapeHtml\(data\.url\)/);

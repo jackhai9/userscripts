@@ -1,7 +1,15 @@
 import { EXTERNAL_DOWNLOADER_BLOCKED_HOST_SUFFIXES } from './constants.js'
 
 export function buildExternalDownloaderUrl(sourceUrl) {
-  return 'https://blog.luckly-mjw.cn/tool-show/m3u8-downloader/index.html?source=' + sourceUrl
+  const target = new URL('https://blog.luckly-mjw.cn/tool-show/m3u8-downloader/index.html')
+  target.searchParams.set('source', sourceUrl)
+  return target.href
+}
+
+export function getParentMessageTargetOrigin({ brooksExportPageUrl, referrer }) {
+  const parentUrl = brooksExportPageUrl || referrer
+  if (!parentUrl) throw new Error('Unable to determine parent origin for m3u8 message')
+  return new URL(parentUrl).origin
 }
 
 export function isExternalDownloaderBlocked(url) {

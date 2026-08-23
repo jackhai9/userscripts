@@ -333,8 +333,14 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelOpenOrderRowsBody, /currentRoot = refreshedRoot/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = row\.root \|\| currentRoot/);
   assert.match(cancelOpenOrderRowsBody, /clickDomTarget\(row\.cancelButton\)/);
+  assert.match(cancelOpenOrderRowsBody, /waitForOpenOrderRowKeyCountBelow\(plan\.symbol,\s*row\.key,\s*previousKeyCount\)/);
+  assert.doesNotMatch(cancelOpenOrderRowsBody, /waitForOpenOrderRowKeyCountBelow\(row\.root/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /row\.cancelButton\.click\(\)/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /for \(const row of rowsToCancel\)/);
+
+  const waitForRowRemovalBody = readFunctionBody('waitForOpenOrderRowKeyCountBelow');
+  assert.match(waitForRowRemovalBody, /const activeRoot = getActiveOpenOrdersScope\(\)/);
+  assert.match(waitForRowRemovalBody, /activeRoot && countOpenOrderRowsByKey\(activeRoot,\s*symbol,\s*key\) < previousCount/);
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   assert.match(cancelRowsBody, /if \(!isCurrentObservedSymbol\(symbol\) \|\| symbol !== plan\?\.symbol\)/);
@@ -344,6 +350,7 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(openOrdersScope,\s*symbol,\s*plan,\s*\{\s*openOrdersCount,\s*\}\)/);
   assert.match(cancelRowsBody, /getPlanDirectionLabel\(plan\)/);
   assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows\)/);
+  assert.match(cancelRowsBody, /finally\s*\{[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(\)[\s\S]*restoreOpenOrdersSymbolFilter\(openOrdersScope/);
   assert.doesNotMatch(cancelRowsBody, /allowPartialEnd/);
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
 });
@@ -352,6 +359,8 @@ test('cancel current-symbol open orders can wait until replacement orders are cl
   const cancelBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /waitUntilCleared = false/);
   assert.match(cancelBody, /waitForNoCurrentSymbolOpenOrders\(openOrdersScope,\s*symbol,\s*symbolFilter\.ok\)/);
+  const scopeRefreshes = cancelBody.match(/openOrdersScope = await waitForActiveOpenOrdersScope\(\)/g) || [];
+  assert.ok(scopeRefreshes.length >= 4, 'cancel flow should reacquire active scope after each Binance rerender boundary');
   assert.match(cancelBody, /return \{ ok: true, status: 'cleared'/);
   assert.match(cancelBody, /return \{ ok: false, status: 'not_cleared'/);
 });
@@ -472,6 +481,23 @@ test('close state is committed only for the currently observed symbol', () => {
 
   const symbolChangeBody = readFunctionBody('checkSymbolChangeForLeverage');
   assert.match(symbolChangeBody, /clearSymbolOwnedRuntimeState\(symbol\)/);
+});
+
+test('close execution and close-ladder sizing reject display cache', () => {
+  const actionBody = readFunctionBody('resolveCloseAction');
+  assert.match(actionBody, /const rawCloseContext = readCloseContext\(\)/);
+  assert.match(actionBody, /resolveConfirmedCloseDirection\(rawCloseContext/);
+  assert.doesNotMatch(actionBody, /lastDisplayCloseState/);
+
+  const closeBaseBody = readFunctionBody('readCloseBaseQtyForLadder');
+  assert.match(closeBaseBody, /const raw = readCloseContext\(\)/);
+  assert.match(closeBaseBody, /raw\.knowsLong && raw\.knowsShort/);
+  assert.doesNotMatch(closeBaseBody, /resolveDisplayCloseState/);
+
+  const refreshBody = readFunctionBody('refreshComputedInfo');
+  assert.match(refreshBody, /const rawCloseContext = readCloseContext\(\)/);
+  assert.match(refreshBody, /syncNativeCloseButtons\(tradeMode, rawCloseContext\)/);
+  assert.doesNotMatch(source, /applyCachedNativeCloseButtonState/);
 });
 
 test('cancel flow rechecks the captured symbol before destructive click and cleanup', () => {

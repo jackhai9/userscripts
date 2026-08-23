@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.50
+// @version      2.7.51
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -23,6 +23,7 @@ import {
   parseOpenOrdersTabCount,
   readVisibleOpenOrderSymbolsText,
 } from './core/cancel-orders.js';
+import { resolveConfirmedCloseDirection } from './core/close-action.js';
 import {
   addDecimalStrings,
   ceilQtyByNotional,
@@ -222,9 +223,8 @@ import {
   let tradeModeTabObserver = null;
   let tradeModeTabObserverRoot = null;
   let lastConfirmedCloseState = null;  // 第三层：已确认的稳定缓存（仅 CLOSE 模式下写入）
-  let lastDisplayCloseState = null;   // 第二层：渲染路径产出的显示态（UI 和执行共用）
+  let lastDisplayCloseState = null;   // 第二层：仅供脚本面板展示的缓存态
   let closeGuard = null;              // 切 tab 保护状态机（OPEN→CLOSE 时创建，500ms 后过期）
-  let lastAppliedCacheSnapshot = '';  // applyCachedNativeCloseButtonState 去重用
   let autoOpenLeverageTask = null;
   let pendingAutoOpenLeverageReset = null;
   let lastAutoOpenLeverage = { symbol: null, at: 0 };
@@ -1565,11 +1565,11 @@ import {
 
   function readCloseBaseQtyForLadder(spec) {
     const raw = readCloseContext();
-    const display = resolveDisplayCloseState(raw, getCurrentSymbol());
-    const qty = spec.side === 'LONG' ? display.longQty : display.shortQty;
+    const hasConfirmedContext = raw.knowsLong && raw.knowsShort;
+    const qty = hasConfirmedContext ? (spec.side === 'LONG' ? raw.longQty : raw.shortQty) : null;
     return {
       qty: qty != null ? normalizeDecimalString(String(qty)) : null,
-      qtySource: display.qtySource,
+      qtySource: raw.qtySource,
     };
   }
 
@@ -2406,14 +2406,16 @@ import {
     return readCurrentSymbolOpenOrderRows(root, symbol).filter((row) => row.key === key).length;
   }
 
-  async function waitForOpenOrderRowKeyCountBelow(root, symbol, key, previousCount) {
+  async function waitForOpenOrderRowKeyCountBelow(symbol, key, previousCount) {
     const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (!isCurrentObservedSymbol(symbol)) return false;
-      if (countOpenOrderRowsByKey(root, symbol, key) < previousCount) return true;
+      const activeRoot = getActiveOpenOrdersScope();
+      if (activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount) return true;
       await delay(120);
     }
-    return countOpenOrderRowsByKey(root, symbol, key) < previousCount;
+    const activeRoot = getActiveOpenOrdersScope();
+    return Boolean(activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount);
   }
 
   async function cancelOpenOrderRowsForPlan(root, plan) {
@@ -2451,7 +2453,7 @@ import {
       } else {
         await delay(260);
       }
-      if (!(await waitForOpenOrderRowKeyCountBelow(row.root, plan.symbol, row.key, previousKeyCount))) {
+      if (!(await waitForOpenOrderRowKeyCountBelow(plan.symbol, row.key, previousKeyCount))) {
         throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
       }
       cancelQty = addDecimalStrings(cancelQty, row.qty);
@@ -2576,12 +2578,24 @@ import {
         setLadderStatus(message);
         return { ok: false, status: 'basic_tab_not_ready', message };
       }
+      openOrdersScope = await waitForActiveOpenOrdersScope();
+      if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+        const message = '未定位到当前委托面板';
+        setLadderStatus(message);
+        return { ok: false, status: 'scope_not_found', message };
+      }
       const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
       symbolFilterOriginalChecked = symbolFilter.originalChecked;
       if (!symbolFilter.ok || !isCurrentObservedSymbol(symbol)) {
         const message = '未确认只显示当前币挂单';
         setLadderStatus(message);
         return { ok: false, status: 'symbol_filter_not_confirmed', message };
+      }
+      openOrdersScope = await waitForActiveOpenOrdersScope();
+      if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+        const message = '未定位到当前委托面板';
+        setLadderStatus(message);
+        return { ok: false, status: 'scope_not_found', message };
       }
       const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
       if (!isCurrentObservedSymbol(symbol)) {
@@ -2620,6 +2634,12 @@ import {
         waitForTradeUiMutation({ timeoutMs: 800 });
         await waitForDialogToClose(dialog);
         if (waitUntilCleared) {
+          openOrdersScope = await waitForActiveOpenOrdersScope();
+          if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+            const message = '未定位到当前委托面板';
+            setLadderStatus(message);
+            return { ok: false, status: 'scope_not_found', message };
+          }
           const cleared = await waitForNoCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
           if (!cleared) {
             const message = `${symbol} 当前币挂单仍存在，已停止重挂`;
@@ -2636,6 +2656,12 @@ import {
       setLadderStatus(`${symbol} 撤单已点击，请核对当前委托`);
       waitForTradeUiMutation({ timeoutMs: 800 });
       if (waitUntilCleared) {
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+          const message = '未定位到当前委托面板';
+          setLadderStatus(message);
+          return { ok: false, status: 'scope_not_found', message };
+        }
         const cleared = await waitForNoCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
         if (!cleared) {
           const message = `${symbol} 当前币挂单仍存在，已停止重挂`;
@@ -2648,6 +2674,7 @@ import {
       return { ok: true, status: 'cancel_clicked' };
     } finally {
       if (isCurrentObservedSymbol(symbol)) {
+        openOrdersScope = await waitForActiveOpenOrdersScope();
         if (openOrdersScope && symbolFilterOriginalChecked === false) {
           const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
           if (!restored) setLadderStatus('未能恢复隐藏其他合约状态');
@@ -2749,8 +2776,11 @@ import {
       return { ok: false, status: 'row_cancel_failed', message };
     } finally {
       if (isCurrentObservedSymbol(symbol)) {
-        if (openOrdersScope && symbolFilterOriginalChecked === false) {
-          const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (symbolFilterOriginalChecked === false) {
+          const restored = openOrdersScope
+            ? await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol)
+            : false;
           if (!restored) setLadderStatus('未能恢复隐藏其他合约状态');
         }
         if (previousOpenOrdersSubTab) {
@@ -3229,70 +3259,25 @@ import {
     autoOpenLeverageTask = task;
   }
 
-  function applyCachedNativeCloseButtonState() {
-    if (getActiveTradeMode() !== 'CLOSE') return false;
-    const cache = getCachedCloseState(getCurrentSymbol());
-    if (!cache) return false;
-
-    const closeLongBtn = findCloseLongButton();
-    const closeShortBtn = findCloseShortButton();
-    if (!closeLongBtn && !closeShortBtn) return false;
-
-    // 仅在状态实际变化时打印日志，避免热路径刷屏
-    const snapshot = `${cache.closeMode}|${cache.longQty}|${cache.shortQty}`;
-    if (snapshot !== lastAppliedCacheSnapshot) {
-      lastAppliedCacheSnapshot = snapshot;
-      const activeGuard = closeGuard && Date.now() < closeGuard.expiresAt ? closeGuard : null;
-      log('应用缓存按钮状态', cache.closeMode,
-        'long=', cache.longQty, cache.longDisabled ? '(禁)' : '(启)',
-        'short=', cache.shortQty, cache.shortDisabled ? '(禁)' : '(启)',
-        activeGuard ? `guard:${activeGuard.expiresAt - Date.now()}ms L0x${activeGuard.longZeroStreak} S0x${activeGuard.shortZeroStreak} raw=${activeGuard.lastRawLong}/${activeGuard.lastRawShort}` : 'no-guard');
-    }
-
-    if (closeLongBtn) {
-      setNativeActionButtonDisabled(closeLongBtn, !!cache.longDisabled);
-    }
-    if (closeShortBtn) {
-      setNativeActionButtonDisabled(closeShortBtn, !!cache.shortDisabled);
-    }
-    return true;
-  }
-
   function applyCachedCloseUiState() {
     if (getActiveTradeMode() !== 'CLOSE') return false;
     const cache = getCachedCloseState(getCurrentSymbol());
     if (!cache) return false;
-    applyCachedNativeCloseButtonState();
     renderPanel();
     return true;
   }
 
   function resolveCloseAction() {
-    // 消费渲染路径已产出的 display state，不重新调用 resolver（避免重复推进 guard streak）
-    const display = lastDisplayCloseState;
+    const rawCloseContext = readCloseContext();
     const currentSymbol = getCurrentSymbol();
-    if (!display || display.symbol !== currentSymbol) return null;
-    const { longQty, shortQty, qtySource, hasLong, hasShort } = display;
-
-    // 取新鲜的按钮引用（DOM 元素可能被 React 重建）
-    const closeLongBtn = findCloseLongButton();
-    const closeShortBtn = findCloseShortButton();
-
-    // 双向持仓时按面板当前选择执行
-    if (hasLong && hasShort) {
-      const sideCfg = loadCloseSide();
-      if (sideCfg === 'SHORT') {
-        return { side: '平空', button: closeShortBtn, by: 'dual_panel', longQty, shortQty, qtySource };
-      }
-      return { side: '平多', button: closeLongBtn, by: 'dual_panel', longQty, shortQty, qtySource };
-    }
-
-    // 单向持仓时按当前有仓侧执行
-    if (hasLong) return { side: '平多', button: closeLongBtn, by: 'single_long', longQty, shortQty, qtySource };
-    if (hasShort) return { side: '平空', button: closeShortBtn, by: 'single_short', longQty, shortQty, qtySource };
-
-    // 仓位信息读取失败时不执行，避免误平错误方向
-    return null;
+    if (!isCurrentObservedSymbol(currentSymbol) || rawCloseContext.symbol !== currentSymbol) return null;
+    const direction = resolveConfirmedCloseDirection(rawCloseContext, loadCloseSide());
+    if (!direction) return null;
+    const { longQty, shortQty, qtySource, hasLong, hasShort, closeLongBtn, closeShortBtn } = rawCloseContext;
+    const dual = hasLong && hasShort;
+    return direction === 'SHORT'
+      ? { side: '平空', button: closeShortBtn, by: dual ? 'dual_panel' : 'single_short', longQty, shortQty, qtySource }
+      : { side: '平多', button: closeLongBtn, by: dual ? 'dual_panel' : 'single_long', longQty, shortQty, qtySource };
   }
 
   function resolveOpenAction() {
@@ -3670,7 +3655,8 @@ import {
     const finalQty = effectiveMinQty ? multiplyDecimalByInt(effectiveMinQty, multiplier) : null;
     const closeSide = loadCloseSide();
     const openSide = loadOpenSide();
-    const closeContext = resolveDisplayCloseState(readCloseContext(), getCurrentSymbol());
+    const rawCloseContext = readCloseContext();
+    const closeContext = resolveDisplayCloseState(rawCloseContext, getCurrentSymbol());
     const { knowsLong, knowsShort, hasLong, hasShort, isPending, isUsingCache } = closeContext;
     const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
 
@@ -3765,7 +3751,7 @@ import {
       sideShortBtn.style.cursor = isDisabled ? 'not-allowed' : 'pointer';
     }
 
-    syncNativeCloseButtons(tradeMode, closeContext);
+    syncNativeCloseButtons(tradeMode, rawCloseContext);
     refreshOrderbookPrecisionRecommendation(panel);
     refreshLadderPanel(panel, tradeMode, closeContext);
   }
@@ -4053,7 +4039,6 @@ import {
     stopTradingTimers();
     invalidateTradeButtonCache();
     lastDisplayCloseState = null;
-    lastAppliedCacheSnapshot = '';
     stopOrderbookPrecisionSampler();
   }
 
@@ -4135,11 +4120,6 @@ import {
       if (!matched) return;
       invalidateTradeButtonCache();
       panelPositionSignature = '';
-
-      // 每次匹配到 trade UI 变化时立即应用缓存状态，
-      // 确保 data 属性在下一帧绘制前就位。
-      // 不会死循环：setNativeActionButtonDisabled 内部状态没变时不操作 DOM。
-      applyCachedNativeCloseButtonState();
 
       // 防抖：React 可能短时间内触发多批 mutation，
       // 合并为一次 scheduleRenderPanel 调用。
@@ -4436,7 +4416,6 @@ import {
     lastConfirmedCloseState = null;
     lastDisplayCloseState = null;
     closeGuard = null;
-    lastAppliedCacheSnapshot = '';
     invalidateTradeButtonCache();
     stopOrderbookPrecisionSampler();
     const recommendation = getOrderbookPrecisionRecommendation(symbol);
