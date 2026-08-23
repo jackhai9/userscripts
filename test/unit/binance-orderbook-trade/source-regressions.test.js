@@ -356,33 +356,38 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelRowsBody, /restoreTemporaryUiState = false/);
   assert.match(cancelRowsBody, /status = e\?\.name === 'DialogNotClosedError' \? 'dialog_not_closed' : 'row_cancel_failed'/);
   assert.match(cancelRowsBody, /finally\s*\{\s*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
-  assert.doesNotMatch(cancelRowsBody, /TradingView|tradingView|hideTradingViewOrders/);
+  assert.doesNotMatch(cancelRowsBody, /BinanceChartOrders|chartOrders|ChartOrders/);
   assert.doesNotMatch(cancelRowsBody, /allowPartialEnd/);
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
 });
 
-test('bulk cancel hides TradingView orders before opening the native dialog and restores them independently', () => {
-  assert.match(source, /BINANCE_TRADINGVIEW_IFRAME_SELECTOR/);
+test('bulk cancel hides Binance OpenOrders before opening the native dialog and restores it independently', () => {
+  assert.doesNotMatch(source, /tradingViewApi|applyOverrides|tradingProperties\.showOrders/);
 
-  const hideBody = readFunctionBody('hideTradingViewOrdersForBulkCancel');
-  assert.match(hideBody, /hideTradingViewOrders\(target\.tradingViewApi, state\)/);
-  assert.match(hideBody, /await waitForTwoAnimationFrames\(\)/);
-  assert.match(hideBody, /assertTradingViewOrdersVisibility\(target, false\)/);
+  const hideBody = readFunctionBody('hideBinanceChartOrdersForBulkCancel');
+  assert.match(hideBody, /const current = await openBinanceChartOrdersPopover\(target\)/);
+  assert.match(hideBody, /state\.originalChecked = current\.checked/);
+  assert.match(hideBody, /state\.changed = true[\s\S]*current\.checkbox\.click\(\)/);
+  assert.match(hideBody, /await waitForBinanceChartOrdersPopover\(false\)/);
+  assert.match(hideBody, /await closeBinanceChartOrdersPopover\(target\)/);
 
-  const restoreBody = readFunctionBody('restoreTradingViewOrdersAfterBulkCancel');
-  assert.match(restoreBody, /assertSameTradingViewOrdersTarget\(target, getBinanceTradingViewTarget\(\)\)/);
-  assert.match(restoreBody, /restoreTradingViewOrders\(target\.tradingViewApi, state\)/);
-  assert.match(restoreBody, /assertTradingViewOrdersVisibility\(target, state\.originalVisible\)/);
+  const closeBody = readFunctionBody('closeBinanceChartOrdersPopover');
+  assert.match(closeBody, /throw new Error\('Binance chart OpenOrders popover did not close'\)/);
+
+  const restoreBody = readFunctionBody('restoreBinanceChartOrdersAfterBulkCancel');
+  assert.match(restoreBody, /assertSameBinanceChartOrdersTarget\(target, getBinanceChartOrdersTarget\(\)\)/);
+  assert.match(restoreBody, /const current = await openBinanceChartOrdersPopover\(target\)/);
+  assert.match(restoreBody, /current\.checked !== state\.originalChecked/);
+  assert.match(restoreBody, /await waitForBinanceChartOrdersPopover\(state\.originalChecked\)/);
+  assert.match(restoreBody, /await closeBinanceChartOrdersPopover\(target\)/);
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
-  const captureIndex = cancelBody.indexOf(
-    'captureTradingViewOrdersVisibility(tradingViewOrdersTarget.tradingViewApi)'
-  );
+  const captureIndex = cancelBody.indexOf('chartOrdersTarget = getBinanceChartOrdersTarget()');
   const hideIndex = cancelBody.indexOf(
-    'await hideTradingViewOrdersForBulkCancel(tradingViewOrdersTarget, tradingViewOrdersState)'
+    'await hideBinanceChartOrdersForBulkCancel(chartOrdersTarget, chartOrdersState)'
   );
   const destructiveClickIndex = cancelBody.indexOf('cancelAllButton.click()');
-  const chartRestoreIndex = cancelBody.indexOf('await restoreTradingViewOrdersAfterBulkCancel(');
+  const chartRestoreIndex = cancelBody.indexOf('await restoreBinanceChartOrdersAfterBulkCancel(');
   const symbolGuardedRestoreIndex = cancelBody.indexOf('if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol))');
   const postHideBody = cancelBody.slice(hideIndex);
   const freshScopeIndex = postHideBody.indexOf('openOrdersScope = await waitForActiveOpenOrdersScope()');
@@ -400,11 +405,11 @@ test('bulk cancel hides TradingView orders before opening the native dialog and 
     'the active scope, symbol filter, and cancel button must be reacquired after hiding'
   );
   assert.match(cancelBody, /status: 'chart_orders_not_hidden'/);
-  assert.match(cancelBody, /restoreTradingViewOrdersState = false[\s\S]*status: 'dialog_not_closed'/);
+  assert.match(cancelBody, /restoreChartOrdersState = false[\s\S]*status: 'dialog_not_closed'/);
   assert.ok(chartRestoreIndex !== -1 && symbolGuardedRestoreIndex !== -1);
   assert.ok(
     chartRestoreIndex < symbolGuardedRestoreIndex,
-    'chart visibility restoration must not depend on the captured Binance symbol'
+    'chart OpenOrders restoration must not depend on the captured Binance symbol'
   );
 });
 
@@ -458,7 +463,7 @@ test('cancel current-symbol open orders are single-flight and dialog timeout doe
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /restoreTemporaryUiState = false/);
-  assert.match(cancelBody, /restoreTradingViewOrdersState = false/);
+  assert.match(cancelBody, /restoreChartOrdersState = false/);
   assert.match(cancelBody, /status: 'dialog_not_closed'/);
   assert.match(cancelBody, /finally\s*\{[\s\S]*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
 
