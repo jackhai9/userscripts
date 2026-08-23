@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.48
+// @version      2.7.49
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -166,8 +166,8 @@ import {
   const LADDER_SUBMIT_POLL_MS = 80;
   const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
   const LADDER_MAKER_BUFFER_LEVELS = 1;
-  const LADDER_CLOSE_REPRICE_MAX_ATTEMPTS = 5;
-  const LADDER_CLOSE_REPRICE_DELAY_MS = 180;
+  const LADDER_REPRICE_MAX_ATTEMPTS = 5;
+  const LADDER_REPRICE_DELAY_MS = 180;
   const BINANCE_PLACE_ORDER_BAPI_PATH = '/bapi/futures/v1/private/future/order/place-order';
   const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
   const LADDER_OPEN_QTY_POLL_MS = 80;
@@ -849,6 +849,14 @@ import {
         delay(timeoutMs),
       ]);
     }
+    return capture.apiErrors.slice();
+  }
+
+  function readLadderSubmitApiErrors(captureId) {
+    const capture = activeLadderSubmitCapture?.captureId === captureId
+      ? activeLadderSubmitCapture
+      : null;
+    if (!capture) throw new Error('下单响应捕获上下文丢失');
     return capture.apiErrors.slice();
   }
 
@@ -1758,14 +1766,14 @@ import {
     return error;
   }
 
-  function isRetryableCloseLadderMakerPriceFailure(plan, error) {
-    if (plan?.spec?.mode !== 'CLOSE') return false;
+  function isRetryableLadderMakerPriceFailure(plan, error) {
+    if (plan?.spec?.mode !== 'OPEN' && plan?.spec?.mode !== 'CLOSE') return false;
     if (error?.ladderFailureKind === 'maker_price_conflict') return error.safeNoSubmit === true;
     return isBinancePostOnlyMakerRejectCode(error?.binanceCode) && error.safeNoSubmit === true;
   }
 
   function createLadderSubmitApiError(apiErrorCode) {
-    const error = new Error(`Binance 下单失败 (${apiErrorCode})`);
+    const error = new Error(`Maker 挂单被拒绝（错误码 ${apiErrorCode}）`);
     error.binanceCode = apiErrorCode;
     error.safeNoSubmit = true;
     return error;
@@ -1777,20 +1785,34 @@ import {
     return `（自动刷新盘口 ${repriceAttempts} 次${codeText}）`;
   }
 
-  function refreshRemainingCloseLadderOrders(plan, completedCount) {
+  function refreshRemainingLadderOrders(plan, completedCount) {
     assertLadderExecutionContext(plan);
-    if (plan.spec.mode !== 'CLOSE') throw new Error('仅平仓阶梯允许自动刷新盘口');
     const remainingCount = plan.orders.length - completedCount;
     if (remainingCount <= 0) throw new Error('没有待重定价的阶梯订单');
     const prices = getBufferedMakerPrices(plan.spec.priceSide, remainingCount, plan.ladderStep);
     if (prices.length !== remainingCount) {
       throw new Error(`刷新后订单簿${plan.spec.priceSide === 'BID' ? '买盘' : '卖盘'}不足 ${remainingCount} 档`);
     }
-    plan.orders = repriceRemainingLadderOrders({
+    const repricedOrders = repriceRemainingLadderOrders({
       orders: plan.orders,
       completedCount,
       prices,
     });
+    if (plan.spec.mode === 'OPEN') {
+      for (let index = completedCount; index < repricedOrders.length; index += 1) {
+        const order = repricedOrders[index];
+        const ruleContext = getQtyRuleContext(plan.symbol, 'OPEN', order.price);
+        if (ruleContext.status !== 'ready' || !ruleContext.effectiveMinQty) {
+          throw new Error('刷新盘口后最小下单量未就绪，已停止');
+        }
+        const comparison = compareDecimalStrings(order.qty, ruleContext.effectiveMinQty);
+        if (comparison == null) throw new Error('刷新盘口后数量校验失败，已停止');
+        if (comparison < 0) {
+          throw new Error(`刷新盘口后第 ${index + 1} 档数量 ${order.qty} 低于最小下单量 ${ruleContext.effectiveMinQty}，已停止`);
+        }
+      }
+    }
+    plan.orders = repricedOrders;
     return remainingCount;
   }
 
@@ -1880,6 +1902,13 @@ import {
       });
       if (acknowledgement.status === 'failure' && !pendingFailure) {
         pendingFailure = { message: acknowledgement.message };
+      }
+      const capturedApiErrorsNow = readLadderSubmitApiErrors(submitCaptureId);
+      if (
+        capturedApiErrorsNow.length === 1
+        && isBinancePostOnlyMakerRejectCode(capturedApiErrorsNow[0].code)
+      ) {
+        throw createLadderSubmitApiError(capturedApiErrorsNow[0].code);
       }
       if (pendingFailure) {
         const remainingAckMs = Math.max(0, LADDER_SUBMIT_ACK_TIMEOUT_MS - (Date.now() - startedAt));
@@ -1973,19 +2002,19 @@ import {
           }
         }
       } catch (e) {
-        if (!isRetryableCloseLadderMakerPriceFailure(plan, e)) throw e;
+        if (!isRetryableLadderMakerPriceFailure(plan, e)) throw e;
         if (isBinancePostOnlyMakerRejectCode(e?.binanceCode)) {
           lastRepriceApiErrorCode = e.binanceCode;
         }
-        if (repriceAttempts >= LADDER_CLOSE_REPRICE_MAX_ATTEMPTS) {
+        if (repriceAttempts >= LADDER_REPRICE_MAX_ATTEMPTS) {
           const codeText = lastRepriceApiErrorCode == null ? '' : `（错误码 ${lastRepriceApiErrorCode}）`;
           throw new Error(`盘口连续移动，已自动刷新 ${repriceAttempts} 次${codeText}；已完成 ${done}/${plan.orders.length}，已停止`);
         }
         repriceAttempts += 1;
-        setLadderStatus(`盘口已移动，刷新剩余 ${plan.orders.length - done} 档 (${repriceAttempts}/${LADDER_CLOSE_REPRICE_MAX_ATTEMPTS})`);
-        await delay(LADDER_CLOSE_REPRICE_DELAY_MS);
+        setLadderStatus(`盘口已移动，刷新剩余 ${plan.orders.length - done} 档 (${repriceAttempts}/${LADDER_REPRICE_MAX_ATTEMPTS})`);
+        await delay(LADDER_REPRICE_DELAY_MS);
         if (ladderStopRequested) break;
-        refreshRemainingCloseLadderOrders(plan, done);
+        refreshRemainingLadderOrders(plan, done);
         continue;
       }
       done++;
