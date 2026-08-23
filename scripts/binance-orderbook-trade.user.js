@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.55
+// @version      2.7.56
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -830,6 +830,61 @@
     return !!key && baseKeys.some((baseKey) => key.startsWith(`${baseKey}:`));
   }
 
+  // src/binance-orderbook-trade/core/tradingview-orders.js
+  function getTradingViewOrdersContract(tradingViewApi) {
+    if (!tradingViewApi || typeof tradingViewApi.activeChart !== "function") {
+      throw new Error("TradingView API is unavailable");
+    }
+    const chart = tradingViewApi.activeChart();
+    if (!chart || typeof chart.properties !== "function" || typeof chart.applyOverrides !== "function") {
+      throw new Error("TradingView active chart API is unavailable");
+    }
+    const showOrders = chart.properties()?.tradingProperties?.showOrders;
+    if (!showOrders || typeof showOrders.value !== "function") {
+      throw new Error("TradingView showOrders property is unavailable");
+    }
+    const visible = showOrders.value();
+    if (typeof visible !== "boolean") {
+      throw new Error("TradingView showOrders property is not boolean");
+    }
+    return { chart, showOrders, visible };
+  }
+  function captureTradingViewOrdersVisibility(tradingViewApi) {
+    const { visible } = getTradingViewOrdersContract(tradingViewApi);
+    return { originalVisible: visible, changed: false };
+  }
+  function assertSameTradingViewOrdersTarget(capturedTarget, currentTarget) {
+    if (!capturedTarget || !currentTarget || capturedTarget.frame !== currentTarget.frame || capturedTarget.contentWindow !== currentTarget.contentWindow || capturedTarget.tradingViewApi !== currentTarget.tradingViewApi || capturedTarget.chart !== currentTarget.chart) {
+      throw new Error("Binance TradingView target changed");
+    }
+  }
+  function applyTradingViewOrdersVisibility(tradingViewApi, visible) {
+    if (typeof visible !== "boolean") {
+      throw new Error("TradingView showOrders target is not boolean");
+    }
+    const { chart } = getTradingViewOrdersContract(tradingViewApi);
+    chart.applyOverrides({ "tradingProperties.showOrders": visible });
+    const applied = getTradingViewOrdersContract(tradingViewApi).visible;
+    if (applied !== visible) {
+      throw new Error(`TradingView showOrders remained ${applied}`);
+    }
+  }
+  function hideTradingViewOrders(tradingViewApi, state) {
+    if (!state || typeof state.originalVisible !== "boolean" || typeof state.changed !== "boolean") {
+      throw new Error("TradingView showOrders state is invalid");
+    }
+    if (!state.originalVisible) return;
+    state.changed = true;
+    applyTradingViewOrdersVisibility(tradingViewApi, false);
+  }
+  function restoreTradingViewOrders(tradingViewApi, state) {
+    if (!state || typeof state.originalVisible !== "boolean" || typeof state.changed !== "boolean") {
+      throw new Error("TradingView showOrders state is invalid");
+    }
+    if (!state.changed) return;
+    applyTradingViewOrdersVisibility(tradingViewApi, state.originalVisible);
+  }
+
   // src/binance-orderbook-trade/index.user.js
   (function() {
     "use strict";
@@ -908,6 +963,7 @@
     const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
     const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
     const CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 6e4;
+    const BINANCE_TRADINGVIEW_IFRAME_SELECTOR = 'iframe[id^="tradingview_"][src*="/static/chart/tradingview/"][src*="/sameorigin.html"]';
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_REPRICE_MAX_ATTEMPTS = 5;
     const LADDER_REPRICE_DELAY_MS = 180;
@@ -2964,6 +3020,42 @@
       if (dialog.isConnected && isVisibleElement(dialog)) return false;
       return true;
     }
+    function getBinanceTradingViewTarget() {
+      const frames = Array.from(document.querySelectorAll(BINANCE_TRADINGVIEW_IFRAME_SELECTOR));
+      if (frames.length !== 1) {
+        throw new Error(`Expected one Binance TradingView iframe, found ${frames.length}`);
+      }
+      const frame = frames[0];
+      const contentWindow = frame.contentWindow;
+      const tradingViewApi = contentWindow?.tradingViewApi;
+      if (!tradingViewApi) throw new Error("Binance TradingView API is unavailable");
+      const chart = tradingViewApi.activeChart?.();
+      if (!chart) throw new Error("Binance TradingView active chart is unavailable");
+      return { frame, contentWindow, tradingViewApi, chart };
+    }
+    async function waitForTwoAnimationFrames() {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }
+    function assertTradingViewOrdersVisibility(target, expectedVisible) {
+      assertSameTradingViewOrdersTarget(target, getBinanceTradingViewTarget());
+      const currentState = captureTradingViewOrdersVisibility(target.tradingViewApi);
+      if (currentState.originalVisible !== expectedVisible) {
+        throw new Error(`TradingView showOrders is ${currentState.originalVisible}`);
+      }
+    }
+    async function hideTradingViewOrdersForBulkCancel(target, state) {
+      hideTradingViewOrders(target.tradingViewApi, state);
+      if (!state.changed) return;
+      await waitForTwoAnimationFrames();
+      assertTradingViewOrdersVisibility(target, false);
+    }
+    async function restoreTradingViewOrdersAfterBulkCancel(target, state) {
+      assertSameTradingViewOrdersTarget(target, getBinanceTradingViewTarget());
+      restoreTradingViewOrders(target.tradingViewApi, state);
+      if (!state.changed) return;
+      await waitForTwoAnimationFrames();
+      assertTradingViewOrdersVisibility(target, state.originalVisible);
+    }
     async function runCancelCurrentSymbolOpenOrders(options = null) {
       const { waitUntilCleared = false } = options || {};
       const symbol = getCurrentSymbol();
@@ -2981,6 +3073,9 @@
       let previousOpenOrdersSubTab = null;
       let symbolFilterOriginalChecked = null;
       let restoreTemporaryUiState = true;
+      let tradingViewOrdersTarget = null;
+      let tradingViewOrdersState = null;
+      let restoreTradingViewOrdersState = true;
       let successStatusMessage = null;
       try {
         setLadderStatus(`查找 ${symbol} 当前委托`);
@@ -3032,7 +3127,7 @@
           setLadderStatus(`${symbol} 当前币无挂单`);
           return { ok: true, status: "no_orders" };
         }
-        const { cancelAllButton } = openOrdersEvidence;
+        let cancelAllButton = openOrdersEvidence.cancelAllButton;
         if (!cancelAllButton) {
           const message = "未找到当前委托全撤按钮";
           setLadderStatus(message);
@@ -3042,6 +3137,39 @@
           const message = "撤单前交易对已变化";
           setLadderStatus(message);
           return { ok: false, status: "symbol_changed", message };
+        }
+        try {
+          tradingViewOrdersTarget = getBinanceTradingViewTarget();
+          tradingViewOrdersState = captureTradingViewOrdersVisibility(tradingViewOrdersTarget.tradingViewApi);
+          setLadderStatus(`正在隐藏 ${symbol} 图表当前委托`);
+          await hideTradingViewOrdersForBulkCancel(tradingViewOrdersTarget, tradingViewOrdersState);
+        } catch (e) {
+          emit("ERR", "撤单前隐藏图表当前委托失败", e);
+          const message = "未能确认图表当前委托已隐藏，未打开撤单确认框";
+          setLadderStatus(message);
+          return { ok: false, status: "chart_orders_not_hidden", message };
+        }
+        if (!isCurrentObservedSymbol(symbol)) {
+          const message = "隐藏图表当前委托后交易对已变化";
+          setLadderStatus(message);
+          return { ok: false, status: "symbol_changed", message };
+        }
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+          const message = "隐藏图表当前委托后，未定位到当前委托面板";
+          setLadderStatus(message);
+          return { ok: false, status: "scope_not_found", message };
+        }
+        if (!isOpenOrdersScopeConfirmedForSymbol(openOrdersScope, symbol)) {
+          const message = "隐藏图表当前委托后，未确认只显示当前币挂单";
+          setLadderStatus(message);
+          return { ok: false, status: "symbol_filter_not_confirmed", message };
+        }
+        cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope);
+        if (!cancelAllButton) {
+          const message = "隐藏图表当前委托后，未找到当前委托全撤按钮";
+          setLadderStatus(message);
+          return { ok: false, status: "cancel_button_not_found", message };
         }
         const dialogsBefore = new Set(getVisibleDialogs());
         cancelAllButton.click();
@@ -3057,7 +3185,8 @@
           const dialogClosed = await waitForDialogToClose(dialog);
           if (!dialogClosed) {
             restoreTemporaryUiState = false;
-            const message = `${symbol} 撤单确认弹窗仍未关闭，未恢复页面状态`;
+            restoreTradingViewOrdersState = false;
+            const message = `${symbol} 撤单确认弹窗仍未关闭，图表当前委托保持隐藏`;
             setLadderStatus(message);
             return { ok: false, status: "dialog_not_closed", message };
           }
@@ -3097,6 +3226,19 @@
         successStatusMessage = waitUntilCleared ? `${symbol} 当前币挂单已撤，继续重挂` : `${symbol} 撤单流程结束，已恢复筛选状态`;
         return { ok: true, status: "cleared" };
       } finally {
+        let tradingViewRestoreSucceeded = true;
+        if (restoreTradingViewOrdersState && tradingViewOrdersState?.changed) {
+          try {
+            await restoreTradingViewOrdersAfterBulkCancel(
+              tradingViewOrdersTarget,
+              tradingViewOrdersState
+            );
+          } catch (e) {
+            tradingViewRestoreSucceeded = false;
+            emit("ERR", "恢复图表当前委托显示失败", e);
+            setLadderStatus("未能恢复图表当前委托显示");
+          }
+        }
         if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol)) {
           let restoreSucceeded = true;
           openOrdersScope = await waitForActiveOpenOrdersScope();
@@ -3113,7 +3255,9 @@
           if (isCurrentObservedSymbol(symbol)) {
             await restoreAccountOrdersTab(previousAccountOrdersTab, symbol);
           }
-          if (restoreSucceeded && successStatusMessage) setLadderStatus(successStatusMessage);
+          if (tradingViewRestoreSucceeded && restoreSucceeded && successStatusMessage) {
+            setLadderStatus(successStatusMessage);
+          }
         }
       }
     }
