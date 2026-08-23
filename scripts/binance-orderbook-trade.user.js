@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.50
+// @version      2.7.51
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -35,7 +35,7 @@
   function normalizeContractCandidate(candidate, separator) {
     const normalized = String(candidate || "").toUpperCase();
     if (separator === ":") {
-      const timeJoinedMatch = /^\d{1,2}([A-Z][A-Z0-9]*USDT)$/.exec(normalized);
+      const timeJoinedMatch = /^\d{1,2}([A-Z][A-Z0-9]*(?:USDT|USDC))$/.exec(normalized);
       if (timeJoinedMatch) return timeJoinedMatch[1];
     }
     return normalized;
@@ -58,7 +58,7 @@
   function readVisibleOpenOrderSymbolsText(text) {
     const normalized = String(text || "").toUpperCase();
     const symbols = /* @__PURE__ */ new Set();
-    const pattern = /([A-Z0-9]{2,30}USDT)\s*永续/g;
+    const pattern = /([A-Z0-9]{2,30}(?:USDT|USDC))\s*永续/g;
     let match = pattern.exec(normalized);
     while (match) {
       const separator = normalized[match.index - 1] || "";
@@ -88,6 +88,17 @@
     if (visibleSymbols.some((visibleSymbol) => visibleSymbol === normalizedSymbol || hasVisibleContractText(scopeText, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol))) return true;
     if (visibleSymbols.length > 0) return false;
     return Boolean(symbolFilterOk && (openOrdersCount !== null && openOrdersCount > 0 || cancelAllAvailable));
+  }
+
+  // src/binance-orderbook-trade/core/close-action.js
+  function resolveConfirmedCloseDirection(closeContext, selectedSide) {
+    if (!closeContext?.knowsLong || !closeContext?.knowsShort) return null;
+    if (closeContext.hasLong && closeContext.hasShort) {
+      return selectedSide === "SHORT" ? "SHORT" : "LONG";
+    }
+    if (closeContext.hasLong) return "LONG";
+    if (closeContext.hasShort) return "SHORT";
+    return null;
   }
 
   // src/binance-orderbook-trade/core/decimal.js
@@ -510,7 +521,7 @@
   }
 
   // src/shared/binance-futures-route.js
-  var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([A-Z0-9_]{3,})\/?$/;
+  var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([A-Za-z0-9_]{3,})\/?$/;
   function parseFuturesTradingSymbolFromPathname(pathname) {
     const normalized = String(pathname || "").split(/[?#]/, 1)[0];
     const match = normalized.match(FUTURES_TRADING_PATH_RE);
@@ -912,7 +923,6 @@
     let lastConfirmedCloseState = null;
     let lastDisplayCloseState = null;
     let closeGuard = null;
-    let lastAppliedCacheSnapshot = "";
     let autoOpenLeverageTask = null;
     let pendingAutoOpenLeverageReset = null;
     let lastAutoOpenLeverage = { symbol: null, at: 0 };
@@ -2010,11 +2020,11 @@
     }
     function readCloseBaseQtyForLadder(spec) {
       const raw = readCloseContext();
-      const display = resolveDisplayCloseState(raw, getCurrentSymbol());
-      const qty = spec.side === "LONG" ? display.longQty : display.shortQty;
+      const hasConfirmedContext = raw.knowsLong && raw.knowsShort;
+      const qty = hasConfirmedContext ? spec.side === "LONG" ? raw.longQty : raw.shortQty : null;
       return {
         qty: qty != null ? normalizeDecimalString(String(qty)) : null,
-        qtySource: display.qtySource
+        qtySource: raw.qtySource
       };
     }
     async function buildLadderPlan(actionType, expectedSymbol = null) {
@@ -2710,14 +2720,16 @@
     function countOpenOrderRowsByKey(root, symbol, key) {
       return readCurrentSymbolOpenOrderRows(root, symbol).filter((row) => row.key === key).length;
     }
-    async function waitForOpenOrderRowKeyCountBelow(root, symbol, key, previousCount) {
+    async function waitForOpenOrderRowKeyCountBelow(symbol, key, previousCount) {
       const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
       while (Date.now() < deadline) {
         if (!isCurrentObservedSymbol(symbol)) return false;
-        if (countOpenOrderRowsByKey(root, symbol, key) < previousCount) return true;
+        const activeRoot2 = getActiveOpenOrdersScope2();
+        if (activeRoot2 && countOpenOrderRowsByKey(activeRoot2, symbol, key) < previousCount) return true;
         await delay(120);
       }
-      return countOpenOrderRowsByKey(root, symbol, key) < previousCount;
+      const activeRoot = getActiveOpenOrdersScope2();
+      return Boolean(activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount);
     }
     async function cancelOpenOrderRowsForPlan(root, plan) {
       let cancelQty = "0";
@@ -2754,7 +2766,7 @@
         } else {
           await delay(260);
         }
-        if (!await waitForOpenOrderRowKeyCountBelow(row.root, plan.symbol, row.key, previousKeyCount)) {
+        if (!await waitForOpenOrderRowKeyCountBelow(plan.symbol, row.key, previousKeyCount)) {
           throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
         }
         cancelQty = addDecimalStrings(cancelQty, row.qty);
@@ -2868,12 +2880,24 @@
           setLadderStatus(message);
           return { ok: false, status: "basic_tab_not_ready", message };
         }
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+          const message = "未定位到当前委托面板";
+          setLadderStatus(message);
+          return { ok: false, status: "scope_not_found", message };
+        }
         const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
         symbolFilterOriginalChecked = symbolFilter.originalChecked;
         if (!symbolFilter.ok || !isCurrentObservedSymbol(symbol)) {
           const message = "未确认只显示当前币挂单";
           setLadderStatus(message);
           return { ok: false, status: "symbol_filter_not_confirmed", message };
+        }
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+          const message = "未定位到当前委托面板";
+          setLadderStatus(message);
+          return { ok: false, status: "scope_not_found", message };
         }
         const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
         if (!isCurrentObservedSymbol(symbol)) {
@@ -2909,6 +2933,12 @@
           waitForTradeUiMutation({ timeoutMs: 800 });
           await waitForDialogToClose(dialog);
           if (waitUntilCleared) {
+            openOrdersScope = await waitForActiveOpenOrdersScope();
+            if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+              const message = "未定位到当前委托面板";
+              setLadderStatus(message);
+              return { ok: false, status: "scope_not_found", message };
+            }
             const cleared = await waitForNoCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
             if (!cleared) {
               const message = `${symbol} 当前币挂单仍存在，已停止重挂`;
@@ -2924,6 +2954,12 @@
         setLadderStatus(`${symbol} 撤单已点击，请核对当前委托`);
         waitForTradeUiMutation({ timeoutMs: 800 });
         if (waitUntilCleared) {
+          openOrdersScope = await waitForActiveOpenOrdersScope();
+          if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
+            const message = "未定位到当前委托面板";
+            setLadderStatus(message);
+            return { ok: false, status: "scope_not_found", message };
+          }
           const cleared = await waitForNoCurrentSymbolOpenOrders(openOrdersScope, symbol, symbolFilter.ok);
           if (!cleared) {
             const message = `${symbol} 当前币挂单仍存在，已停止重挂`;
@@ -2936,6 +2972,7 @@
         return { ok: true, status: "cancel_clicked" };
       } finally {
         if (isCurrentObservedSymbol(symbol)) {
+          openOrdersScope = await waitForActiveOpenOrdersScope();
           if (openOrdersScope && symbolFilterOriginalChecked === false) {
             const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
             if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
@@ -3026,8 +3063,9 @@
         return { ok: false, status: "row_cancel_failed", message };
       } finally {
         if (isCurrentObservedSymbol(symbol)) {
-          if (openOrdersScope && symbolFilterOriginalChecked === false) {
-            const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
+          openOrdersScope = await waitForActiveOpenOrdersScope();
+          if (symbolFilterOriginalChecked === false) {
+            const restored = openOrdersScope ? await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol) : false;
             if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
           }
           if (previousOpenOrdersSubTab) {
@@ -3418,62 +3456,22 @@
       });
       autoOpenLeverageTask = task;
     }
-    function applyCachedNativeCloseButtonState() {
-      if (getActiveTradeMode() !== "CLOSE") return false;
-      const cache = getCachedCloseState(getCurrentSymbol());
-      if (!cache) return false;
-      const closeLongBtn = findCloseLongButton();
-      const closeShortBtn = findCloseShortButton();
-      if (!closeLongBtn && !closeShortBtn) return false;
-      const snapshot = `${cache.closeMode}|${cache.longQty}|${cache.shortQty}`;
-      if (snapshot !== lastAppliedCacheSnapshot) {
-        lastAppliedCacheSnapshot = snapshot;
-        const activeGuard = closeGuard && Date.now() < closeGuard.expiresAt ? closeGuard : null;
-        log(
-          "应用缓存按钮状态",
-          cache.closeMode,
-          "long=",
-          cache.longQty,
-          cache.longDisabled ? "(禁)" : "(启)",
-          "short=",
-          cache.shortQty,
-          cache.shortDisabled ? "(禁)" : "(启)",
-          activeGuard ? `guard:${activeGuard.expiresAt - Date.now()}ms L0x${activeGuard.longZeroStreak} S0x${activeGuard.shortZeroStreak} raw=${activeGuard.lastRawLong}/${activeGuard.lastRawShort}` : "no-guard"
-        );
-      }
-      if (closeLongBtn) {
-        setNativeActionButtonDisabled(closeLongBtn, !!cache.longDisabled);
-      }
-      if (closeShortBtn) {
-        setNativeActionButtonDisabled(closeShortBtn, !!cache.shortDisabled);
-      }
-      return true;
-    }
     function applyCachedCloseUiState() {
       if (getActiveTradeMode() !== "CLOSE") return false;
       const cache = getCachedCloseState(getCurrentSymbol());
       if (!cache) return false;
-      applyCachedNativeCloseButtonState();
       renderPanel();
       return true;
     }
     function resolveCloseAction() {
-      const display = lastDisplayCloseState;
+      const rawCloseContext = readCloseContext();
       const currentSymbol = getCurrentSymbol();
-      if (!display || display.symbol !== currentSymbol) return null;
-      const { longQty, shortQty, qtySource, hasLong, hasShort } = display;
-      const closeLongBtn = findCloseLongButton();
-      const closeShortBtn = findCloseShortButton();
-      if (hasLong && hasShort) {
-        const sideCfg = loadCloseSide();
-        if (sideCfg === "SHORT") {
-          return { side: "平空", button: closeShortBtn, by: "dual_panel", longQty, shortQty, qtySource };
-        }
-        return { side: "平多", button: closeLongBtn, by: "dual_panel", longQty, shortQty, qtySource };
-      }
-      if (hasLong) return { side: "平多", button: closeLongBtn, by: "single_long", longQty, shortQty, qtySource };
-      if (hasShort) return { side: "平空", button: closeShortBtn, by: "single_short", longQty, shortQty, qtySource };
-      return null;
+      if (!isCurrentObservedSymbol(currentSymbol) || rawCloseContext.symbol !== currentSymbol) return null;
+      const direction = resolveConfirmedCloseDirection(rawCloseContext, loadCloseSide());
+      if (!direction) return null;
+      const { longQty, shortQty, qtySource, hasLong, hasShort, closeLongBtn, closeShortBtn } = rawCloseContext;
+      const dual = hasLong && hasShort;
+      return direction === "SHORT" ? { side: "平空", button: closeShortBtn, by: dual ? "dual_panel" : "single_short", longQty, shortQty, qtySource } : { side: "平多", button: closeLongBtn, by: dual ? "dual_panel" : "single_long", longQty, shortQty, qtySource };
     }
     function resolveOpenAction() {
       const openLongBtn = findOpenLongButton();
@@ -3803,7 +3801,8 @@
       const finalQty = effectiveMinQty ? multiplyDecimalByInt(effectiveMinQty, multiplier) : null;
       const closeSide = loadCloseSide();
       const openSide = loadOpenSide();
-      const closeContext = resolveDisplayCloseState(readCloseContext(), getCurrentSymbol());
+      const rawCloseContext = readCloseContext();
+      const closeContext = resolveDisplayCloseState(rawCloseContext, getCurrentSymbol());
       const { knowsLong, knowsShort, hasLong, hasShort, isPending, isUsingCache } = closeContext;
       const closeMode = hasLong && hasShort ? "dual" : hasLong ? "single_long" : hasShort ? "single_short" : "unknown";
       if (minEl) {
@@ -3880,7 +3879,7 @@
         sideShortBtn.style.opacity = isDisabled ? DISABLED_CONTROL_OPACITY : "1";
         sideShortBtn.style.cursor = isDisabled ? "not-allowed" : "pointer";
       }
-      syncNativeCloseButtons(tradeMode, closeContext);
+      syncNativeCloseButtons(tradeMode, rawCloseContext);
       refreshOrderbookPrecisionRecommendation(panel);
       refreshLadderPanel(panel, tradeMode, closeContext);
     }
@@ -4139,7 +4138,6 @@
       stopTradingTimers();
       invalidateTradeButtonCache();
       lastDisplayCloseState = null;
-      lastAppliedCacheSnapshot = "";
       stopOrderbookPrecisionSampler();
     }
     function renderPanel() {
@@ -4219,7 +4217,6 @@
         if (!matched) return;
         invalidateTradeButtonCache();
         panelPositionSignature = "";
-        applyCachedNativeCloseButtonState();
         window.clearTimeout(tradeUiMutationDebounceTimer);
         tradeUiMutationDebounceTimer = window.setTimeout(() => {
           tradeUiMutationDebounceTimer = 0;
@@ -4462,7 +4459,6 @@
       lastConfirmedCloseState = null;
       lastDisplayCloseState = null;
       closeGuard = null;
-      lastAppliedCacheSnapshot = "";
       invalidateTradeButtonCache();
       stopOrderbookPrecisionSampler();
       const recommendation = getOrderbookPrecisionRecommendation(symbol);

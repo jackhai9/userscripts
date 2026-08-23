@@ -35,6 +35,7 @@ test('visible current-symbol rows are direct open-order evidence', () => {
 
 test('parses symbol when Binance joins time text and contract text', () => {
   assert.deepEqual(readVisibleOpenOrderSymbolsText('2026-05-30 10:27HYPEUSDT永续 限价'), ['HYPEUSDT']);
+  assert.deepEqual(readVisibleOpenOrderSymbolsText('2026-08-23 09:07BTCUSDC永续 限价'), ['BTCUSDC']);
   assert.equal(hasCurrentSymbolOpenOrdersEvidence({
     scopeText: '2026-05-30 10:27HYPEUSDT永续 限价',
     symbol: 'HYPEUSDT',
@@ -42,6 +43,14 @@ test('parses symbol when Binance joins time text and contract text', () => {
     openOrdersCount: 5,
     cancelAllAvailable: true,
   }), true);
+});
+
+test('visible open-order symbols include USDC perpetual contracts', () => {
+  assert.deepEqual(
+    readVisibleOpenOrderSymbolsText('BTCUSDC 永续 价格 数量 HYPEUSDT 永续'),
+    ['BTCUSDC', 'HYPEUSDT'],
+  );
+  assert.equal(isOpenOrdersScopeLimitedToSymbolText('BTCUSDC 永续 BTCUSDC 永续', 'BTCUSDC'), true);
 });
 
 test('open-orders tab count is evidence only after symbol filter is confirmed', () => {

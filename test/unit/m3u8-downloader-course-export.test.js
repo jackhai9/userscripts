@@ -2,7 +2,12 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { buildCaptionUrlFromM3u8 } from '../../src/m3u8-downloader/media-url.js';
+import {
+  buildCaptionUrlFromM3u8,
+  buildExternalDownloaderUrl,
+  getParentMessageTargetOrigin,
+} from '../../src/m3u8-downloader/media-url.js';
+import { isTrustedFrameMessage } from '../../src/m3u8-downloader/frame-message.js';
 import {
   buildBrooksMediaExportEmbedUrl,
   extractBrooksMediaExportPageInfo,
@@ -20,6 +25,47 @@ import {
 } from '../../src/m3u8-downloader/brooks-status.js';
 
 const source = await readFile(new URL('../../scripts/m3u8-downloader.user.js', import.meta.url), 'utf8');
+
+test('external downloader preserves the complete tokenized m3u8 source URL', () => {
+  const sourceUrl = 'https://cdn.example/video.m3u8?token=keep&expires=123';
+  const target = new URL(buildExternalDownloaderUrl(sourceUrl));
+  assert.equal(target.searchParams.get('source'), sourceUrl);
+  assert.equal(target.searchParams.get('expires'), null);
+});
+
+test('frame messages use an explicit parent origin and accept only the matching document iframe', () => {
+  assert.equal(getParentMessageTargetOrigin({
+    brooksExportPageUrl: 'https://www.brookstradingcourse.com/video-01/',
+    referrer: 'https://ignored.example/',
+  }), 'https://www.brookstradingcourse.com');
+  assert.equal(getParentMessageTargetOrigin({
+    brooksExportPageUrl: '',
+    referrer: 'https://njav.com/watch/123',
+  }), 'https://njav.com');
+  assert.throws(() => getParentMessageTargetOrigin({ brooksExportPageUrl: '', referrer: '' }), /parent origin/i);
+
+  const dom = new JSDOM('<iframe src="https://iframe.mediadelivery.net/embed/123/video"></iframe>', {
+    url: 'https://www.brookstradingcourse.com/course/',
+  });
+  const frame = dom.window.document.querySelector('iframe');
+  assert.equal(isTrustedFrameMessage(dom.window.document, {
+    source: frame.contentWindow,
+    origin: 'https://iframe.mediadelivery.net',
+  }), true);
+  assert.equal(isTrustedFrameMessage(dom.window.document, {
+    source: {},
+    origin: 'https://iframe.mediadelivery.net',
+  }), false);
+  assert.equal(isTrustedFrameMessage(dom.window.document, {
+    source: frame.contentWindow,
+    origin: 'https://attacker.example',
+  }), false);
+});
+
+test('XHR interception forwards the complete open argument list', () => {
+  assert.match(source, /realXHR\.open = function\s*\(\.\.\.args\)/);
+  assert.match(source, /originOpen\.apply\(realXHR, args\)/);
+});
 
 test('Brooks course exporter collects unique course video links from the index page', () => {
   const dom = new JSDOM(`

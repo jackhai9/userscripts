@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.1.11
+// @version      1.1.12
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -17,7 +17,7 @@
 // ==/UserScript==
 (() => {
   // src/shared/binance-futures-route.js
-  var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([A-Z0-9_]{3,})\/?$/;
+  var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([A-Za-z0-9_]{3,})\/?$/;
   function parseFuturesTradingSymbolFromPathname(pathname) {
     const normalized = String(pathname || "").split(/[?#]/, 1)[0];
     const match = normalized.match(FUTURES_TRADING_PATH_RE);
@@ -33,7 +33,6 @@
     function isFuturesTradingPage() {
       return isFuturesTradingPathname(location.pathname);
     }
-    if (!isFuturesTradingPage()) return;
     const PREFIX = "[交易数据]";
     const PANEL_ID = "jh-binance-trading-data-panel";
     const STORAGE_POS_KEY = "jh_binance_trading_data_pos";
@@ -666,6 +665,7 @@
     let retryTimer = null;
     let pathTimer = null;
     let agoTimer = null;
+    let serverTimeTimer = null;
     let dragCleanup = null;
     let unloadCleanup = null;
     let panelClosed = false;
@@ -811,6 +811,16 @@
         clearInterval(agoTimer);
         agoTimer = null;
       }
+      if (serverTimeTimer) {
+        clearInterval(serverTimeTimer);
+        serverTimeTimer = null;
+      }
+    }
+    function startServerTimeLoop() {
+      if (serverTimeTimer) return;
+      serverTimeTimer = setInterval(function() {
+        if (isActiveTradingPage()) syncServerTime();
+      }, 60 * 60 * 1e3);
     }
     function stopRouteWatcher() {
       if (pathTimer) {
@@ -845,6 +855,18 @@
       lastSymbol = null;
       removePanel();
     }
+    async function activateTradingPage() {
+      if (!isActiveTradingPage()) return;
+      await syncServerTime();
+      if (!isActiveTradingPage()) return;
+      ensurePanel();
+      startServerTimeLoop();
+      var symbol = getCurrentSymbol();
+      if (!symbol) return;
+      await initialFetch(symbol);
+      if (!isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
+      scheduleCycle();
+    }
     function handlePathChange() {
       if (document.hidden || panelClosed) return;
       if (location.pathname === lastPath) return;
@@ -853,28 +875,15 @@
         pauseForNonTradingPage();
         return;
       }
-      var s = getCurrentSymbol();
-      if (s && s !== lastSymbol) {
-        initialFetch(s).then(function() {
-          scheduleCycle();
-        });
-      }
+      activateTradingPage();
     }
     function startRouteWatcher() {
       if (pathTimer || document.hidden || panelClosed) return;
       lastPath = location.pathname;
       pathTimer = setInterval(handlePathChange, 1e3);
     }
-    async function start() {
-      if (!isFuturesTradingPage()) return;
+    function start() {
       log("脚本启动");
-      await syncServerTime();
-      ensurePanel();
-      if (!document.hidden) {
-        var symbol = getCurrentSymbol();
-        if (symbol) await initialFetch(symbol);
-        scheduleCycle();
-      }
       document.addEventListener("visibilitychange", function() {
         if (!document.hidden) {
           if (panelClosed) return;
@@ -883,32 +892,18 @@
             pauseForNonTradingPage();
             return;
           }
-          syncServerTime();
-          var sym = getCurrentSymbol();
-          if (sym) {
-            initialFetch(sym).then(function() {
-              scheduleCycle();
-            });
-          }
-          if (!agoTimer) {
-            var el = document.querySelector("#" + PANEL_ID + "-footer");
-            if (el && lastUpdateTs) updateFooter(el);
-            agoTimer = setInterval(function() {
-              var el2 = document.querySelector("#" + PANEL_ID + "-footer");
-              if (el2 && lastUpdateTs) updateFooter(el2);
-            }, 1e3);
-          }
+          activateTradingPage();
         } else {
           stopLoop();
         }
       });
-      setInterval(syncServerTime, 60 * 60 * 1e3);
       window.addEventListener("resize", function() {
         var panel = document.getElementById(PANEL_ID);
         if (panel) keepPanelInViewport(panel);
       });
       if (!document.hidden) {
         startRouteWatcher();
+        if (isFuturesTradingPage()) activateTradingPage();
       }
     }
     if (document.readyState === "loading") {

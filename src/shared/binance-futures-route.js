@@ -1,4 +1,4 @@
-const FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([A-Z0-9_]{3,})\/?$/;
+const FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([A-Za-z0-9_]{3,})\/?$/;
 
 export function parseFuturesTradingSymbolFromPathname(pathname) {
   const normalized = String(pathname || '').split(/[?#]/, 1)[0];

@@ -20,7 +20,7 @@ function escapeRegExp(value) {
 function normalizeContractCandidate(candidate, separator) {
   const normalized = String(candidate || '').toUpperCase();
   if (separator === ':') {
-    const timeJoinedMatch = /^\d{1,2}([A-Z][A-Z0-9]*USDT)$/.exec(normalized);
+    const timeJoinedMatch = /^\d{1,2}([A-Z][A-Z0-9]*(?:USDT|USDC))$/.exec(normalized);
     if (timeJoinedMatch) return timeJoinedMatch[1];
   }
   return normalized;
@@ -47,7 +47,7 @@ function hasVisibleContractText(text, symbol) {
 export function readVisibleOpenOrderSymbolsText(text) {
   const normalized = String(text || '').toUpperCase();
   const symbols = new Set();
-  const pattern = /([A-Z0-9]{2,30}USDT)\s*永续/g;
+  const pattern = /([A-Z0-9]{2,30}(?:USDT|USDC))\s*永续/g;
   let match = pattern.exec(normalized);
   while (match) {
     const separator = normalized[match.index - 1] || '';

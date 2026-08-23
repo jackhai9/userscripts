@@ -9,6 +9,7 @@ import {
 test('parses futures trading page paths', () => {
   assert.equal(parseFuturesTradingSymbolFromPathname('/futures/HYPEUSDT'), 'HYPEUSDT');
   assert.equal(parseFuturesTradingSymbolFromPathname('/zh-CN/futures/HYPEUSDT'), 'HYPEUSDT');
+  assert.equal(parseFuturesTradingSymbolFromPathname('/en/futures/btcusdc'), 'BTCUSDC');
 });
 
 test('rejects Binance futures non-trading paths', () => {
@@ -18,5 +19,6 @@ test('rejects Binance futures non-trading paths', () => {
 
 test('identifies only futures trading page paths', () => {
   assert.equal(isFuturesTradingPathname('/zh-CN/futures/HYPEUSDT'), true);
+  assert.equal(isFuturesTradingPathname('/en/futures/btcusdc'), true);
   assert.equal(isFuturesTradingPathname('/zh-CN/my/wallet/futures/balance'), false);
 });
