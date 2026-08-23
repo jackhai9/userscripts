@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.52
+// @version      2.7.53
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -79,6 +79,27 @@
     const visibleSymbols = readVisibleOpenOrderSymbolsText(text);
     if (visibleSymbols.length > 0) return isOpenOrdersScopeLimitedToSymbolText(text, symbol);
     return filterChecked === true;
+  }
+  function isCurrentSymbolOpenOrdersClearCandidate({ scopeText, symbol, openOrdersCount }) {
+    const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
+    if (visibleSymbols.length > 0 && !isOpenOrdersScopeLimitedToSymbolText(scopeText, symbol)) {
+      return false;
+    }
+    if (openOrdersCount === 0) return true;
+    return visibleSymbols.length === 0;
+  }
+  function updateOpenOrdersClearStability({
+    clearCandidate,
+    clearCandidateSince,
+    nowMs,
+    settleMs
+  }) {
+    if (!clearCandidate) return { clearCandidateSince: null, cleared: false };
+    const nextCandidateSince = clearCandidateSince ?? nowMs;
+    return {
+      clearCandidateSince: nextCandidateSince,
+      cleared: nowMs - nextCandidateSince >= settleMs
+    };
   }
   function hasCurrentSymbolOpenOrdersEvidence({
     scopeText,
@@ -871,6 +892,7 @@
     const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
     const LADDER_SUBMIT_POLL_MS = 80;
     const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
+    const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
     const CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 6e4;
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_REPRICE_MAX_ATTEMPTS = 5;
@@ -2619,6 +2641,7 @@
     async function waitForCurrentSymbolOpenOrdersCleared(root, symbol) {
       const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
       let currentRoot = root;
+      let clearCandidateSince = null;
       let lastStatus = currentRoot ? "symbol_filter_not_confirmed" : "scope_not_found";
       while (Date.now() < deadline) {
         if (!isCurrentObservedSymbol(symbol)) {
@@ -2627,18 +2650,32 @@
         const refreshedRoot = getActiveOpenOrdersScope2();
         currentRoot = refreshedRoot;
         if (!currentRoot) {
+          clearCandidateSince = null;
           lastStatus = "scope_not_found";
           await delay(120);
           continue;
         }
         if (!isOpenOrdersScopeConfirmedForSymbol(currentRoot, symbol)) {
+          clearCandidateSince = null;
           lastStatus = "symbol_filter_not_confirmed";
           await delay(120);
           continue;
         }
         lastStatus = "not_cleared";
-        const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
-        if (!hasCurrentSymbolOpenOrders(currentRoot, symbol, true, cancelAllButton)) {
+        const openOrdersCount = getOpenOrdersTabCount();
+        const clearCandidate = isCurrentSymbolOpenOrdersClearCandidate({
+          scopeText: currentRoot.textContent || "",
+          symbol,
+          openOrdersCount
+        });
+        const stability = updateOpenOrdersClearStability({
+          clearCandidate,
+          clearCandidateSince,
+          nowMs: Date.now(),
+          settleMs: CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS
+        });
+        clearCandidateSince = stability.clearCandidateSince;
+        if (stability.cleared) {
           return { ok: true, status: "cleared", root: currentRoot };
         }
         await delay(120);
