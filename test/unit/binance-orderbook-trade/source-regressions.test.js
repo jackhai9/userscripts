@@ -125,6 +125,9 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(requestUrlBody, /requestUrl\.pathname === BINANCE_PLACE_ORDER_BAPI_PATH/);
 
   const observeBody = readFunctionBody('observeLadderSubmitResponse');
+  assert.match(observeBody, /response\.ok/);
+  assert.match(observeBody, /isBinancePlaceOrderSuccessPayload\(payload\)/);
+  assert.match(observeBody, /capture\.apiSuccesses\.push\(\{ requestUrl \}\)/);
   assert.match(observeBody, /capture\.apiErrors\.push\(\{ requestUrl, code \}\)/);
 
   const observationBody = readFunctionBody('waitForLadderSubmitResponseObservations');
@@ -135,8 +138,11 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
   const apiCodeReadIndex = acknowledgementBody.indexOf('readLadderSubmitApiErrors(submitCaptureId)');
   const pendingFailureIndex = acknowledgementBody.indexOf('if (pendingFailure)');
+  const apiSuccessReadIndex = acknowledgementBody.indexOf('readLadderSubmitApiSuccesses(submitCaptureId)');
   assert.notEqual(apiCodeReadIndex, -1);
+  assert.notEqual(apiSuccessReadIndex, -1);
   assert.ok(apiCodeReadIndex < pendingFailureIndex);
+  assert.ok(pendingFailureIndex < apiSuccessReadIndex);
   assert.match(acknowledgementBody, /await waitForLadderSubmitResponseObservations\(/);
   assert.match(acknowledgementBody, /capturedApiErrorsNow\.length === 1/);
   assert.match(acknowledgementBody, /isBinancePostOnlyMakerRejectCode\(capturedApiErrorsNow\[0\]\.code\)/);
@@ -147,6 +153,7 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(acknowledgementBody, /mode === 'CLOSE'/);
   assert.match(acknowledgementBody, /isPostOnlyMakerRejectionFeedback\(pendingFailure\.message\)/);
   assert.match(acknowledgementBody, /createLadderMakerPriceConflictError\(pendingFailure\.message\)/);
+  assert.match(acknowledgementBody, /capturedApiSuccessesNow\.length === 1/);
   assert.doesNotMatch(source, /LADDER_SUBMIT_API_CODE_GRACE_MS/);
 
   const repriceBody = readFunctionBody('refreshRemainingLadderOrders');
@@ -176,6 +183,25 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(generatedSource, /beginLadderSubmitResponseCapture/);
   assert.match(generatedSource, /自动刷新盘口/);
   assert.match(generatedSource, /isPostOnlyMakerRejectionFeedback/);
+});
+
+test('stable panel renders avoid repeated orderbook scans and layout reads', () => {
+  const triggerBody = readFunctionBody('findOrderbookPrecisionTrigger');
+  assert.match(triggerBody, /#futuresOrderbook \.orderbook-tickSize/);
+  assert.match(triggerBody, /\.tick-content/);
+  assert.doesNotMatch(triggerBody, /querySelectorAll/);
+  assert.doesNotMatch(triggerBody, /isVisibleElement/);
+
+  const precisionBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
+  assert.match(precisionBody, /const recommendationHtml =/);
+  assert.match(precisionBody, /if \(el\.innerHTML !== recommendationHtml\)/);
+
+  const renderBody = readFunctionBody('renderPanel');
+  const signatureIndex = renderBody.indexOf('if (panelPositionSignature !== panelHtml)');
+  const positionIndex = renderBody.indexOf('positionPanel(panel)');
+  assert.notEqual(signatureIndex, -1);
+  assert.notEqual(positionIndex, -1);
+  assert.ok(signatureIndex < positionIndex);
 });
 
 test('ladder feedback labels captured API codes without exposing bare numbers', () => {
@@ -408,9 +434,10 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(initialBody, /orderbookPrecisionInitialSampledSymbols\.has\(symbol\)/);
 
   const triggerBody = readFunctionBody('findOrderbookPrecisionTrigger');
-  assert.match(triggerBody, /\.orderbook-tickSize/);
-  assert.match(triggerBody, /\.tick-content/);
-  assert.match(triggerBody, /node\.closest\(clickableSelector\) \|\| node\.parentElement \|\| node/);
+  assert.match(triggerBody, /#futuresOrderbook \.orderbook-tickSize/);
+  assert.match(triggerBody, /tickSize\?\.querySelector\('\.tick-content'\)/);
+  assert.doesNotMatch(triggerBody, /clickableSelector/);
+  assert.doesNotMatch(triggerBody, /querySelectorAll/);
 
   const optionsBody = readFunctionBody('getVisibleOrderbookPrecisionOptionNodes');
   assert.match(optionsBody, /\.ob-ticksize-item/);
