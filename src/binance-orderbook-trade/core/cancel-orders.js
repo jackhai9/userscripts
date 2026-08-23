@@ -103,6 +103,19 @@ export function updateOpenOrdersClearStability({
   };
 }
 
+/**
+ * A blocked main thread can resume after the wall-clock deadline without ever
+ * observing the cleared DOM. Let a post-stall clear candidate finish the
+ * stability window instead of returning the last pre-stall state.
+ */
+export function shouldContinueOpenOrdersClearObservation({
+  nowMs,
+  deadlineMs,
+  clearCandidate,
+}) {
+  return nowMs < deadlineMs || clearCandidate;
+}
+
 export function hasCurrentSymbolOpenOrdersEvidence({
   scopeText,
   symbol,

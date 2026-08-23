@@ -10,6 +10,7 @@ import {
   normalizeText,
   parseOpenOrdersTabCount,
   readVisibleOpenOrderSymbolsText,
+  shouldContinueOpenOrdersClearObservation,
   updateOpenOrdersClearStability,
 } from '../../../src/binance-orderbook-trade/core/cancel-orders.js';
 
@@ -187,4 +188,17 @@ test('clear candidate must remain stable and resets when orders reappear', () =>
     settleMs: 1_200,
   });
   assert.deepEqual(state, { clearCandidateSince: 2_300, cleared: true });
+});
+
+test('post-stall clear candidate completes validation after wall-clock deadline', () => {
+  assert.equal(shouldContinueOpenOrdersClearObservation({
+    nowMs: 8_500,
+    deadlineMs: 6_500,
+    clearCandidate: true,
+  }), true);
+  assert.equal(shouldContinueOpenOrdersClearObservation({
+    nowMs: 8_500,
+    deadlineMs: 6_500,
+    clearCandidate: false,
+  }), false);
 });

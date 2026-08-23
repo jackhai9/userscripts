@@ -379,6 +379,9 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   assert.match(waitBody, /updateOpenOrdersClearStability\(\{/);
   assert.match(waitBody, /clearCandidateSince = stability\.clearCandidateSince/);
   assert.match(waitBody, /if \(stability\.cleared\)/);
+  assert.match(waitBody, /while \(true\)/);
+  assert.match(waitBody, /shouldContinueOpenOrdersClearObservation\(\{/);
+  assert.doesNotMatch(waitBody, /while \(Date\.now\(\) < deadline\)/);
   assert.doesNotMatch(waitBody, /hasCurrentSymbolOpenOrders\(/);
 
   const clearWaitIndex = cancelBody.indexOf('waitForCurrentSymbolOpenOrdersCleared(openOrdersScope, symbol)');
