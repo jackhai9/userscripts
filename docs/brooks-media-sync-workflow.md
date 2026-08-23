@@ -315,7 +315,7 @@ If the userscript becomes unreliable, upgrade to a Chrome extension with:
 
 ## Bunny Referer Behavior
 
-Do not validate Bunny embeds by opening the embed URL as a top-level page. In live checks on 2026-06-03, top-level access to a Bunny embed produced a restricted `403`-style page in Chrome and a small response by command line.
+Do not validate Bunny embeds by opening the embed URL as a top-level page without a Brooks referrer. In live checks on 2026-06-03, direct top-level access to a Bunny embed produced a restricted `403`-style page in Chrome and a small response by command line.
 
 The same Bunny embed URL returned the full player HTML when requested with the Brooks video page as the HTTP referer. The full player response included:
 
@@ -325,26 +325,35 @@ The same Bunny embed URL returned the full player HTML when requested with the B
 
 Adding exporter-only query parameters such as `jhBrooksPageUrl` and `jhBrooksTitle` did not change the full player response when the Brooks referer was present.
 
-Implication: validation must either run the Bunny embed as an iframe inside a Brooks page, or reproduce the request with the Brooks video page as `Referer`. A top-level Bunny tab is not a valid negative test.
+Revalidated with raw CDP on 2026-08-23: an iframe created on the authenticated main course index sent the index page as its `Referer`, returned the Bunny player with HTTP 200, and exposed `playlist.m3u8`, resolution m3u8 URLs, and CN/EN caption URLs. Those playlist and caption requests used the Bunny iframe origin as their referrer and returned HTTP 200. The exact Brooks video-detail URL is therefore not an invariant; the observed access contract is a valid Brooks same-origin referrer for the initial embed request.
 
-## Codex Chrome Verification Limits
+Implication: validation must either run or navigate to the Bunny embed from an authenticated Brooks page so the request carries a Brooks referrer, or reproduce that request explicitly. A direct top-level Bunny request without a Brooks referrer is not a valid negative test for the exporter.
 
-The Codex Chrome extension is useful for authenticated DOM inspection, screenshots, console logs, and observed page assets. It is not always equivalent to the browser's own DevTools Console.
+## Codex Chrome Verification Surfaces
 
-Observed on 2026-06-03 in the extension-backed Playwright evaluation surface:
+The Codex Chrome extension exposes more than one JavaScript execution surface. Treat the historical Playwright evaluation sandbox and raw CDP as separate capabilities.
+
+Observed on 2026-06-03 in the extension-backed Playwright evaluation sandbox:
 
 - `document.querySelector()` and layout inspection worked.
 - `fetch`, `XMLHttpRequest`, `DOMParser`, `document.createElement`, `window.addEventListener`, and `window.performance` were unavailable or not callable from that evaluation sandbox.
 - This limitation belongs to the automation surface, not necessarily to the target Brooks page.
 
-When this happens, use layered evidence instead of assuming the page cannot run the code:
+Revalidated on 2026-08-23 with raw CDP on the authenticated Brooks course index:
+
+- `Runtime.evaluate` executed in the live page context.
+- Same-origin `XMLHttpRequest` returned a video page with HTTP 200, and `DOMParser` extracted its Bunny iframe.
+- `document.createElement`, DOM insertion/removal, event listeners, `postMessage`, and `performance` worked.
+- CDP network events observed the Bunny embed, playlist, resolution m3u8, and CN/EN caption requests and responses.
+
+Use raw CDP for direct page-context verification when it is available. If raw CDP is unavailable or the target browser lacks the required authenticated state, use layered evidence instead of assuming the page cannot run the code:
 
 1. Use Chrome automation for read-only live DOM, iframe attributes, layout, screenshots, and console logs.
 2. Use command-line `curl` with and without `Referer` to verify server-side access-control behavior.
 3. Use unit tests or jsdom for deterministic parser/state-machine behavior.
 4. Use the actual Tampermonkey script or a purpose-built helper extension for full in-page execution of XHR, DOM mutation, iframe creation, and `postMessage`.
 
-Computer-use style clicking can confirm visible UI state, but it does not bypass JavaScript execution-world or extension sandbox limits. For full programmatic validation, prefer DevTools Console/Snippets, a temporary helper extension, or the installed userscript itself.
+Computer-use style clicking can confirm visible UI state, but it does not bypass JavaScript execution-world or extension sandbox limits. For full programmatic validation, prefer raw CDP, then DevTools Console/Snippets, the installed userscript, or a temporary helper extension.
 
 ## Local Audit Workflow
 
@@ -421,7 +430,7 @@ Reviewer verdict:
   - CN and EN subtitle URLs use the detected media host.
   - CN and EN subtitle requests return 200.
 - For performance-sensitive exporter changes, confirm that the exporter loads only the Bunny iframe for each item, not a full WordPress video page iframe.
-- When Codex Chrome cannot execute page-side network or DOM-mutation APIs, record that as a tool limitation and use the layered validation path above.
+- Prefer raw CDP for page-side network, DOM-mutation, and event verification. If only a restricted evaluation surface is available, record that specific surface limitation and use the layered validation path above.
 - For a full exporter, verify:
   - Course link count.
   - Successful page count.
