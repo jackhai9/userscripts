@@ -38,7 +38,7 @@ test('permanent trade-mode observer is scoped to the trade tab root', () => {
 });
 
 test('cancel-symbol flow restores temporary symbol filter through cleanup path', () => {
-  const cancelBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
+  const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /finally\s*\{/);
   assert.match(cancelBody, /await waitForNewVisibleDialog\(dialogsBefore\)/);
   assert.match(cancelBody, /restoreOpenOrdersSymbolFilter\(openOrdersScope,\s*symbolFilterOriginalChecked,\s*symbol\)/);
@@ -334,6 +334,8 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelOpenOrderRowsBody, /currentRoot = row\.root \|\| currentRoot/);
   assert.match(cancelOpenOrderRowsBody, /clickDomTarget\(row\.cancelButton\)/);
   assert.match(cancelOpenOrderRowsBody, /waitForOpenOrderRowKeyCountBelow\(plan\.symbol,\s*row\.key,\s*previousKeyCount\)/);
+  assert.match(cancelOpenOrderRowsBody, /const dialogClosed = await waitForDialogToClose\(dialog\)/);
+  assert.match(cancelOpenOrderRowsBody, /DialogNotClosedError/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /waitForOpenOrderRowKeyCountBelow\(row\.root/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /row\.cancelButton\.click\(\)/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /for \(const row of rowsToCancel\)/);
@@ -351,18 +353,66 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelRowsBody, /getPlanDirectionLabel\(plan\)/);
   assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows\)/);
   assert.match(cancelRowsBody, /finally\s*\{[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(\)[\s\S]*restoreOpenOrdersSymbolFilter\(openOrdersScope/);
+  assert.match(cancelRowsBody, /restoreTemporaryUiState = false/);
+  assert.match(cancelRowsBody, /status = e\?\.name === 'DialogNotClosedError' \? 'dialog_not_closed' : 'row_cancel_failed'/);
+  assert.match(cancelRowsBody, /finally\s*\{\s*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
   assert.doesNotMatch(cancelRowsBody, /allowPartialEnd/);
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
 });
 
-test('cancel current-symbol open orders can wait until replacement orders are cleared', () => {
-  const cancelBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
+test('cancel current-symbol open orders wait for confirmed clearing before restoring page state', () => {
+  const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /waitUntilCleared = false/);
-  assert.match(cancelBody, /waitForNoCurrentSymbolOpenOrders\(openOrdersScope,\s*symbol,\s*symbolFilter\.ok\)/);
+  assert.match(cancelBody, /waitForCurrentSymbolOpenOrdersCleared\(openOrdersScope,\s*symbol\)/);
   const scopeRefreshes = cancelBody.match(/openOrdersScope = await waitForActiveOpenOrdersScope\(\)/g) || [];
   assert.ok(scopeRefreshes.length >= 4, 'cancel flow should reacquire active scope after each Binance rerender boundary');
   assert.match(cancelBody, /return \{ ok: true, status: 'cleared'/);
   assert.match(cancelBody, /return \{ ok: false, status: 'not_cleared'/);
+  assert.doesNotMatch(cancelBody, /status: 'dialog_closed'/);
+
+  const waitBody = readFunctionBody('waitForCurrentSymbolOpenOrdersCleared');
+  assert.match(waitBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
+  assert.match(waitBody, /isOpenOrdersScopeConfirmedForSymbol\(currentRoot,\s*symbol\)/);
+  assert.match(waitBody, /hasCurrentSymbolOpenOrders\(currentRoot,\s*symbol,\s*true,\s*cancelAllButton\)/);
+
+  const clearWaitIndex = cancelBody.indexOf('waitForCurrentSymbolOpenOrdersCleared(openOrdersScope, symbol)');
+  const successIndex = cancelBody.indexOf("return { ok: true, status: 'cleared'");
+  const cleanupIndex = cancelBody.indexOf('finally {');
+  const restoreIndex = cancelBody.indexOf('restoreOpenOrdersSymbolFilter(', cleanupIndex);
+  assert.ok(clearWaitIndex !== -1 && successIndex !== -1 && cleanupIndex !== -1 && restoreIndex !== -1);
+  assert.ok(clearWaitIndex < successIndex, 'clearing must be confirmed before success');
+  assert.ok(successIndex < cleanupIndex && cleanupIndex < restoreIndex, 'page state restores only after the clear result');
+});
+
+test('cancel current-symbol open orders are single-flight and dialog timeout does not restore Binance UI', () => {
+  const wrapperBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
+  assert.match(source, /let cancelCurrentSymbolOpenOrdersTask = null/);
+  assert.match(wrapperBody, /if \(cancelCurrentSymbolOpenOrdersTask\) return cancelCurrentSymbolOpenOrdersTask/);
+  assert.match(wrapperBody, /if \(ladderTask\)[\s\S]*status: 'ladder_running'/);
+  assert.match(wrapperBody, /runCancelCurrentSymbolOpenOrders\(options\)/);
+  assert.match(wrapperBody, /cancelCurrentSymbolOpenOrdersTask = task/);
+  assert.match(wrapperBody, /cancelCurrentSymbolOpenOrdersTask = null/);
+
+  const waitDialogBody = readFunctionBody('waitForDialogToClose');
+  assert.match(source, /CANCEL_DIALOG_CLOSE_TIMEOUT_MS/);
+  assert.match(waitDialogBody, /const deadline = Date\.now\(\) \+ timeoutMs/);
+  assert.match(waitDialogBody, /return false/);
+
+  const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
+  assert.match(cancelBody, /restoreTemporaryUiState = false/);
+  assert.match(cancelBody, /status: 'dialog_not_closed'/);
+  assert.match(cancelBody, /finally\s*\{\s*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
+
+  const panelBody = readFunctionBody('refreshLadderPanel');
+  assert.match(panelBody, /cancelCurrentSymbolOpenOrdersTask/);
+  assert.match(panelBody, /data-ladder-cancel-symbol="true"\$\{cancelDisabledAttrs\}/);
+  assert.match(panelBody, /撤单处理中/);
+
+  const startBody = readFunctionBody('startLadder');
+  assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*撤本币挂单处理中，请等待完成/);
+  const actionRowsBody = readFunctionBody('getLadderActionRows');
+  assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| !!cancelCurrentSymbolOpenOrdersTask/);
+  assert.match(actionRowsBody, /ladderActionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
 });
 
 test('orderbook precision recommendation is sampled and manually applied only', () => {
@@ -504,13 +554,13 @@ test('cancel flow rechecks the captured symbol before destructive click and clea
   const waitBody = readFunctionBody('waitForCurrentSymbolOpenOrders');
   assert.match(waitBody, /isCurrentObservedSymbol\(symbol\)/);
 
-  const cancelBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
+  const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.ok(
     cancelBody.indexOf('if (!isCurrentObservedSymbol(symbol))') < cancelBody.indexOf('const previousAccountOrdersTab'),
     'cancel flow should reject an unobserved symbol before changing tabs'
   );
   assert.match(cancelBody, /if \(!isCurrentObservedSymbol\(symbol\)\)[\s\S]*cancelAllButton\.click\(\)/);
-  assert.match(cancelBody, /finally\s*\{\s*if \(isCurrentObservedSymbol\(symbol\)\) \{/);
+  assert.match(cancelBody, /finally\s*\{\s*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\) \{/);
   assert.match(cancelBody, /restoreOpenOrdersSubTab\(previousOpenOrdersSubTab, symbol\)/);
   assert.match(cancelBody, /restoreAccountOrdersTab\(previousAccountOrdersTab, symbol\)/);
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   hasCurrentSymbolOpenOrdersEvidence,
+  isOpenOrdersScopeConfirmedForSymbolText,
   isOpenOrdersScopeLimitedToSymbolText,
   isOpenOrdersTabText,
   normalizeText,
@@ -111,4 +112,11 @@ test('scope is limited only when all visible symbols match current symbol', () =
   assert.equal(isOpenOrdersScopeLimitedToSymbolText('HYPEUSDT 永续 HYPEUSDT 永续', 'HYPEUSDT'), true);
   assert.equal(isOpenOrdersScopeLimitedToSymbolText('HYPEUSDT 永续 BTCUSDT 永续', 'HYPEUSDT'), false);
   assert.equal(isOpenOrdersScopeLimitedToSymbolText('隐藏其他合约', 'HYPEUSDT'), false);
+});
+
+test('checked current-symbol filter rejects transient rows from another symbol', () => {
+  assert.equal(isOpenOrdersScopeConfirmedForSymbolText('BTCUSDT 永续', 'HYPEUSDT', true), false);
+  assert.equal(isOpenOrdersScopeConfirmedForSymbolText('HYPEUSDT 永续', 'HYPEUSDT', false), true);
+  assert.equal(isOpenOrdersScopeConfirmedForSymbolText('隐藏其他合约', 'HYPEUSDT', true), true);
+  assert.equal(isOpenOrdersScopeConfirmedForSymbolText('隐藏其他合约', 'HYPEUSDT', false), false);
 });
