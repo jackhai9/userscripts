@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.57
+// @version      2.7.58
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -94,8 +94,20 @@ import {
   saveSymbolSide,
 } from './core/panel-options.js';
 import {
+  CHART_ORDERS_RECOVERY_STORAGE_KEY,
+  createChartOrdersRecoveryRecord,
+  parseChartOrdersRecoveryRecord,
+} from './core/chart-orders-recovery.js';
+import { resolveCancelDialogDecision } from './core/cancel-dialog-decision.js';
+import {
+  classifyBinanceCancelAllDialogAction,
+  classifyBinanceCancelAllDialogKeyboardAction,
+  findBinanceCancelAllDialog,
+} from './dom/cancel-all-dialog.js';
+import {
   assertSameBinanceChartOrdersTarget,
   findActiveBinanceChartOrdersPopover,
+  findBinanceChartOrdersTarget as findBinanceChartOrdersTargetDom,
   getBinanceChartOrdersTarget as getBinanceChartOrdersTargetDom,
 } from './dom/chart-orders.js';
 
@@ -179,6 +191,8 @@ import {
   const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
   const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
   const CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 60000;
+  const CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS = 1800;
+  const CANCEL_DIALOG_DECISION_POLL_MS = 50;
   const CHART_ORDERS_MENU_TIMEOUT_MS = 1800;
   const CHART_ORDERS_MENU_POLL_MS = 50;
   const LADDER_MAKER_BUFFER_LEVELS = 1;
@@ -246,6 +260,10 @@ import {
   let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
   let ladderTask = null;
   let cancelCurrentSymbolOpenOrdersTask = null;
+  let chartOrdersRecoveryPendingAtStartup =
+    sessionStorage.getItem(CHART_ORDERS_RECOVERY_STORAGE_KEY) !== null;
+  let chartOrdersRecoveryTask = null;
+  let chartOrdersRecoveryLastError = null;
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
   let ladderPanelBodySignature = '';
@@ -2633,8 +2651,102 @@ import {
     return true;
   }
 
+  function createBinanceCancelAllDialogDecisionWatcher() {
+    const watcher = {
+      action: null,
+      error: null,
+      seenDialog: false,
+    };
+
+    const recordAction = (eventTarget) => {
+      try {
+        const contract = findBinanceCancelAllDialog(document, isVisibleElement);
+        if (!contract) return;
+        watcher.seenDialog = true;
+        const action = classifyBinanceCancelAllDialogAction(contract, eventTarget);
+        if (action && !watcher.action) watcher.action = action;
+      } catch (error) {
+        watcher.error = error;
+      }
+    };
+    const handleClick = (event) => recordAction(event.target);
+    const handleKeydown = (event) => {
+      if (event.key !== 'Escape' && event.key !== 'Enter' && event.key !== ' ') return;
+      try {
+        const contract = findBinanceCancelAllDialog(document, isVisibleElement);
+        if (!contract) return;
+        watcher.seenDialog = true;
+        const action = classifyBinanceCancelAllDialogKeyboardAction(
+          contract,
+          event.key,
+          document.activeElement || event.target,
+        );
+        if (action && !watcher.action) watcher.action = action;
+      } catch (error) {
+        watcher.error = error;
+      }
+    };
+
+    document.addEventListener('click', handleClick, true);
+    document.addEventListener('keydown', handleKeydown, true);
+    return {
+      watcher,
+      dispose() {
+        document.removeEventListener('click', handleClick, true);
+        document.removeEventListener('keydown', handleKeydown, true);
+      },
+    };
+  }
+
+  async function waitForBinanceCancelAllDialogDecision(watcher, onDialogSeen) {
+    const discoveryDeadline = Date.now() + CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS;
+    let closeDeadline = null;
+    let reportedDialog = false;
+    while (true) {
+      if (watcher.error) throw watcher.error;
+      const contract = findBinanceCancelAllDialog(document, isVisibleElement);
+      if (contract) {
+        watcher.seenDialog = true;
+        closeDeadline ??= Date.now() + CANCEL_DIALOG_CLOSE_TIMEOUT_MS;
+        if (!reportedDialog) {
+          reportedDialog = true;
+          onDialogSeen();
+        }
+      }
+
+      const status = resolveCancelDialogDecision({
+        seenDialog: watcher.seenDialog,
+        action: watcher.action,
+        dialogVisible: Boolean(contract),
+        nowMs: Date.now(),
+        discoveryDeadlineMs: discoveryDeadline,
+        closeDeadlineMs: closeDeadline,
+      });
+      if (status !== 'waiting') return { status };
+      await delay(CANCEL_DIALOG_DECISION_POLL_MS);
+    }
+  }
+
   function getBinanceChartOrdersTarget() {
     return getBinanceChartOrdersTargetDom(document);
+  }
+
+  function writeChartOrdersRecoveryRecord() {
+    sessionStorage.setItem(
+      CHART_ORDERS_RECOVERY_STORAGE_KEY,
+      createChartOrdersRecoveryRecord(Date.now()),
+    );
+  }
+
+  function clearChartOrdersRecoveryRecord() {
+    sessionStorage.removeItem(CHART_ORDERS_RECOVERY_STORAGE_KEY);
+  }
+
+  function readChartOrdersRecoveryRecord() {
+    return parseChartOrdersRecoveryRecord(
+      sessionStorage.getItem(CHART_ORDERS_RECOVERY_STORAGE_KEY),
+      Date.now(),
+    );
   }
 
   function dispatchChartOrdersPointerEvents(element, eventTypes, relatedTarget = null) {
@@ -2711,6 +2823,7 @@ import {
     const current = await openBinanceChartOrdersPopover(target);
     state.originalChecked = current.checked;
     if (current.checked) {
+      writeChartOrdersRecoveryRecord();
       state.changed = true;
       current.checkbox.click();
       await waitForBinanceChartOrdersPopover(false);
@@ -2726,6 +2839,57 @@ import {
       await waitForBinanceChartOrdersPopover(state.originalChecked);
     }
     await closeBinanceChartOrdersPopover(target);
+    clearChartOrdersRecoveryRecord();
+  }
+
+  async function recoverChartOrdersStateAfterReload() {
+    const recovery = readChartOrdersRecoveryRecord();
+    if (recovery.status === 'missing') {
+      chartOrdersRecoveryPendingAtStartup = false;
+      return { status: 'missing' };
+    }
+    if (recovery.status === 'invalid' || recovery.status === 'expired') {
+      emit(
+        'ERR',
+        `图表当前委托恢复记录${recovery.status === 'invalid' ? '无效' : '已过期'}，未修改页面状态`,
+      );
+      clearChartOrdersRecoveryRecord();
+      chartOrdersRecoveryPendingAtStartup = false;
+      return { status: recovery.status };
+    }
+
+    const target = findBinanceChartOrdersTargetDom(document);
+    if (!target) return { status: 'target_not_ready' };
+    await restoreBinanceChartOrdersAfterBulkCancel(target, {
+      originalChecked: recovery.record.originalChecked,
+      changed: true,
+    });
+    chartOrdersRecoveryPendingAtStartup = false;
+    chartOrdersRecoveryLastError = null;
+    log('已恢复刷新前的图表当前委托显示状态');
+    return { status: 'restored' };
+  }
+
+  function scheduleChartOrdersRecovery() {
+    if (
+      !chartOrdersRecoveryPendingAtStartup
+      || chartOrdersRecoveryTask
+      || cancelCurrentSymbolOpenOrdersTask
+      || document.hidden
+      || !isFuturesTradingPage()
+    ) return;
+
+    const task = recoverChartOrdersStateAfterReload();
+    chartOrdersRecoveryTask = task;
+    task.catch((error) => {
+      const message = String(error?.message || error);
+      if (message !== chartOrdersRecoveryLastError) {
+        chartOrdersRecoveryLastError = message;
+        emit('ERR', '恢复刷新前的图表当前委托显示失败', error);
+      }
+    }).finally(() => {
+      if (chartOrdersRecoveryTask === task) chartOrdersRecoveryTask = null;
+    });
   }
 
   async function runCancelCurrentSymbolOpenOrders(options = null) {
@@ -2850,30 +3014,50 @@ import {
         return { ok: false, status: 'cancel_button_not_found', message };
       }
 
-      const dialogsBefore = new Set(getVisibleDialogs());
-      cancelAllButton.click();
-      const dialog = await waitForNewVisibleDialog(dialogsBefore);
+      const dialogDecisionWatcher = createBinanceCancelAllDialogDecisionWatcher();
+      let dialogDecision;
+      try {
+        cancelAllButton.click();
+        dialogDecision = await waitForBinanceCancelAllDialogDecision(
+          dialogDecisionWatcher.watcher,
+          () => setLadderStatus(`${symbol} 撤单确认弹窗已打开`),
+        );
+      } catch (error) {
+        restoreTemporaryUiState = false;
+        restoreChartOrdersState = false;
+        emit('ERR', '币安撤单确认弹窗结构异常', error);
+        const message = `${symbol} 撤单确认弹窗结构异常，图表当前委托保持隐藏`;
+        setLadderStatus(message);
+        return { ok: false, status: 'dialog_contract_invalid', message };
+      } finally {
+        dialogDecisionWatcher.dispose();
+      }
       if (!isCurrentObservedSymbol(symbol)) {
         const message = '确认撤单前交易对已变化';
         setLadderStatus(message);
         return { ok: false, status: 'symbol_changed', message };
       }
 
-      if (dialog) {
-        setLadderStatus(`${symbol} 撤单确认弹窗已打开`);
-        waitForTradeUiMutation({ timeoutMs: 800 });
-        const dialogClosed = await waitForDialogToClose(dialog);
-        if (!dialogClosed) {
-          restoreTemporaryUiState = false;
-          restoreChartOrdersState = false;
-          const message = `${symbol} 撤单确认弹窗仍未关闭，图表当前委托保持隐藏`;
-          setLadderStatus(message);
-          return { ok: false, status: 'dialog_not_closed', message };
-        }
-      } else {
-        setLadderStatus(`${symbol} 撤单已点击，等待当前币挂单清空`);
-        waitForTradeUiMutation({ timeoutMs: 800 });
+      if (dialogDecision.status === 'dialog_not_closed') {
+        restoreTemporaryUiState = false;
+        restoreChartOrdersState = false;
+        const message = `${symbol} 撤单确认弹窗仍未关闭，图表当前委托保持隐藏`;
+        setLadderStatus(message);
+        return { ok: false, status: 'dialog_not_closed', message };
       }
+      if (dialogDecision.status === 'not_found') {
+        const message = `${symbol} 未识别到撤单确认弹窗，未继续撤单流程`;
+        setLadderStatus(message);
+        return { ok: false, status: 'dialog_not_found', message };
+      }
+      if (dialogDecision.status === 'cancelled') {
+        const message = `${symbol} 已取消撤单`;
+        setLadderStatus(`${symbol} 已取消撤单，正在恢复页面状态`);
+        successStatusMessage = `${message}，已恢复页面状态`;
+        return { ok: false, status: 'cancelled', message };
+      }
+      waitForTradeUiMutation({ timeoutMs: 800 });
+      setLadderStatus(`${symbol} 已确认撤单，等待当前币挂单清空`);
 
       openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
@@ -4795,6 +4979,7 @@ import {
 
     const needsRender = !renderPanelTimer || !wasTrading;
     startTradingTimers();
+    scheduleChartOrdersRecovery();
     if (needsRender) renderPanel();
     if (!wasTrading && getActiveTradeMode() === 'OPEN') {
       queueAutoOpenLeverageReset('route_return');
@@ -4814,6 +4999,7 @@ import {
 
   startRouteWatcher();
   startTradingTimers();
+  scheduleChartOrdersRecovery();
 
   // 首次进入：document-start 时 DOM 可能尚未 ready，所以延迟后再判断当前 tab。
   window.setTimeout(() => {
