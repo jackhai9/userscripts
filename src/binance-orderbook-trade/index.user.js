@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.49
+// @version      2.7.50
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -50,6 +50,7 @@ import {
 import {
   evaluateOrderSubmitAcknowledgement,
   getBinanceApiErrorCode,
+  isBinancePlaceOrderSuccessPayload,
   isBinancePostOnlyMakerRejectCode,
   isOpenLadderOpenOrdersCapacityFeedback,
   isPostOnlyMakerRejectionFeedback,
@@ -233,6 +234,7 @@ import {
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
   let ladderPanelBodySignature = '';
+  let panelPositionSignature = '';
   let ladderSubmitCaptureSequence = 0;
   let activeLadderSubmitCapture = null;
   let orderbookPrecisionSampling = false;
@@ -812,6 +814,7 @@ import {
     activeLadderSubmitCapture = {
       captureId: ladderSubmitCaptureSequence,
       apiErrors: [],
+      apiSuccesses: [],
       responseObservations: [],
     };
     return activeLadderSubmitCapture.captureId;
@@ -826,8 +829,13 @@ import {
     if (!contentType.includes('application/json')) return;
     const payload = await response.clone().json();
     const code = getBinanceApiErrorCode(payload);
-    if (code == null) return;
-    capture.apiErrors.push({ requestUrl, code });
+    if (code != null) {
+      capture.apiErrors.push({ requestUrl, code });
+      return;
+    }
+    if (response.ok && isBinancePlaceOrderSuccessPayload(payload)) {
+      capture.apiSuccesses.push({ requestUrl });
+    }
   }
 
   function trackLadderSubmitResponse(request, capture, requestUrl) {
@@ -858,6 +866,14 @@ import {
       : null;
     if (!capture) throw new Error('下单响应捕获上下文丢失');
     return capture.apiErrors.slice();
+  }
+
+  function readLadderSubmitApiSuccesses(captureId) {
+    const capture = activeLadderSubmitCapture?.captureId === captureId
+      ? activeLadderSubmitCapture
+      : null;
+    if (!capture) throw new Error('下单响应捕获上下文丢失');
+    return capture.apiSuccesses.slice();
   }
 
   (function installFetchInterceptor() {
@@ -1032,45 +1048,14 @@ import {
   }
 
   function findOrderbookPrecisionTrigger() {
-    const root = document.querySelector('#futuresOrderbook');
-    if (!root) return null;
-    const clickableSelector = 'button,[role="button"],[role="combobox"],[tabindex],.bn-sdd-value,.bn-select-field';
-    const tickSize = root.querySelector('.orderbook-tickSize');
-    if (tickSize && isVisibleElement(tickSize) && !isInsideOrderbookPriceRow(tickSize)) {
-      const tickContent = tickSize.querySelector('.tick-content');
-      const text = (tickSize.textContent || '').trim();
-      if (isOrderbookPrecisionNumericText(text)) {
-        return {
-          element: tickContent && isVisibleElement(tickContent) ? tickContent : tickSize,
-          value: normalizeDecimalString(text),
-        };
-      }
-    }
-
-    const clickables = Array.from(root.querySelectorAll(clickableSelector));
-    for (const candidate of clickables) {
-      if (!isVisibleElement(candidate) || isInsideOrderbookPriceRow(candidate)) continue;
-      const text = (candidate.textContent || '').trim();
-      if (!isOrderbookPrecisionNumericText(text)) continue;
-      return {
-        element: candidate,
-        value: normalizeDecimalString(text),
-      };
-    }
-
-    const numericNodes = Array.from(root.querySelectorAll('span,div'));
-    for (const node of numericNodes) {
-      if (!isVisibleElement(node) || isInsideOrderbookPriceRow(node)) continue;
-      const text = (node.textContent || '').trim();
-      if (!isOrderbookPrecisionNumericText(text)) continue;
-      const target = node.closest(clickableSelector) || node.parentElement || node;
-      if (!target || !isVisibleElement(target) || isInsideOrderbookPriceRow(target)) continue;
-      return {
-        element: target,
-        value: normalizeDecimalString(text),
-      };
-    }
-    return null;
+    const tickSize = document.querySelector('#futuresOrderbook .orderbook-tickSize');
+    const tickContent = tickSize?.querySelector('.tick-content') || null;
+    const text = (tickContent?.textContent || tickSize?.textContent || '').trim();
+    if (!tickSize || !isOrderbookPrecisionNumericText(text)) return null;
+    return {
+      element: tickContent || tickSize,
+      value: normalizeDecimalString(text),
+    };
   }
 
   function readCurrentOrderbookPrecisionValue() {
@@ -1257,7 +1242,7 @@ import {
     const recommendationText = recommendation || '--';
     const displayStatus = busy ? formatOrderbookPrecisionBusyStatus(status) : status;
     const statusText = displayStatus === 'ready' ? '' : `<span>${displayStatus}</span>`;
-    el.innerHTML = [
+    const recommendationHtml = [
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;color:#76808f;font-size:14px;">',
       `<span>缩放 推荐 ${recommendationText}</span>`,
       `<button type="button" data-orderbook-precision-apply="true"${canApply ? '' : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
@@ -1265,6 +1250,9 @@ import {
       statusText,
       '</div>',
     ].join('');
+    if (el.innerHTML !== recommendationHtml) {
+      el.innerHTML = recommendationHtml;
+    }
     if (busy && Number(orderbookPrecisionState.sampleEndsAt) > Date.now()) {
       scheduleRenderPanel({ followUpMs: 1000 });
     }
@@ -1935,6 +1923,8 @@ import {
           : `错误码 ${capturedCodes.join(', ')}`;
         throw new Error(`${pendingFailure.message}（${diagnostic}）`);
       }
+      const capturedApiSuccessesNow = readLadderSubmitApiSuccesses(submitCaptureId);
+      if (capturedApiSuccessesNow.length === 1) return;
       if (acknowledgement.status === 'success') return;
 
       const busy = isSubmitButtonBusy(button);
@@ -3855,6 +3845,7 @@ import {
     const spacer = ensureSpacer(host, Math.max((panel.offsetHeight || 0) + PANEL_BOTTOM_TOOLTIP_GAP, 76));
     const anchorRect = spacer?.getBoundingClientRect() || qtyInput?.getBoundingClientRect() || null;
     placePanelFloating(panel, anchorRect);
+    return Boolean(anchorRect?.width && anchorRect?.height);
   }
 
   function ensurePanel() {
@@ -3901,6 +3892,7 @@ import {
       `<div id="${LADDER_STATUS_ID}" style="display:none;margin-top:6px;color:#76808f;font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
       '</div>',
     ].join('');
+    panelPositionSignature = '';
     document.body.appendChild(panel);
 
     const input = panel.querySelector(`#${INPUT_ID}`);
@@ -4053,6 +4045,7 @@ import {
     document.getElementById(PANEL_ID)?.remove();
     document.getElementById(SPACER_ID)?.remove();
     ladderPanelBodySignature = '';
+    panelPositionSignature = '';
   }
 
   function pauseForNonTradingPage() {
@@ -4088,7 +4081,10 @@ import {
     if (input) {
       applyInputVisualState(input, multiplier);
     }
-    positionPanel(panel);
+    const panelHtml = panel.innerHTML;
+    if (panelPositionSignature !== panelHtml) {
+      if (positionPanel(panel)) panelPositionSignature = panelHtml;
+    }
   }
 
   function scheduleRenderPanel(options = {}) {
@@ -4138,6 +4134,7 @@ import {
       }
       if (!matched) return;
       invalidateTradeButtonCache();
+      panelPositionSignature = '';
 
       // 每次匹配到 trade UI 变化时立即应用缓存状态，
       // 确保 data 属性在下一帧绘制前就位。
@@ -4563,9 +4560,15 @@ import {
       stopRouteWatcher();
       return;
     }
+    panelPositionSignature = '';
     startRouteWatcher();
     syncRouteState();
   });
+
+  window.addEventListener('resize', () => {
+    panelPositionSignature = '';
+    scheduleRenderPanel();
+  }, { passive: true });
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', renderPanel, { once: true });

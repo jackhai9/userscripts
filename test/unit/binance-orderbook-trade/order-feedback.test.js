@@ -5,6 +5,7 @@ import {
   classifyOrderFeedback,
   evaluateOrderSubmitAcknowledgement,
   getBinanceApiErrorCode,
+  isBinancePlaceOrderSuccessPayload,
   isBinancePostOnlyMakerRejectCode,
   isOpenLadderOpenOrdersCapacityFeedback,
   isPostOnlyMakerRejectionFeedback,
@@ -98,6 +99,20 @@ test('reads Binance API error codes without depending on localized messages', ()
   assert.equal(getBinanceApiErrorCode({ code: Number.MAX_SAFE_INTEGER + 1 }), null);
   assert.equal(getBinanceApiErrorCode({ message: 'Post Only order rejected' }), null);
   assert.equal(getBinanceApiErrorCode({ data: { code: -5022 } }), null);
+});
+
+test('recognizes only the verified Binance place-order success payload contract', () => {
+  assert.equal(isBinancePlaceOrderSuccessPayload({ code: 0, success: true }), true);
+  assert.equal(isBinancePlaceOrderSuccessPayload({ code: '000000', success: true }), true);
+  assert.equal(isBinancePlaceOrderSuccessPayload({ success: true, data: {} }), true);
+
+  assert.equal(isBinancePlaceOrderSuccessPayload({ code: -5022, success: true }), false);
+  assert.equal(isBinancePlaceOrderSuccessPayload({ code: '90805022', success: true }), false);
+  assert.equal(isBinancePlaceOrderSuccessPayload({ code: 0 }), false);
+  assert.equal(isBinancePlaceOrderSuccessPayload({ success: false }), false);
+  assert.equal(isBinancePlaceOrderSuccessPayload({}), false);
+  assert.equal(isBinancePlaceOrderSuccessPayload([]), false);
+  assert.equal(isBinancePlaceOrderSuccessPayload(null), false);
 });
 
 test('recognizes only verified Binance Post Only maker rejection codes', () => {

@@ -97,3 +97,13 @@ export function getBinanceApiErrorCode(payload) {
   const code = Number(payload.code);
   return Number.isSafeInteger(code) && code !== 0 ? code : null;
 }
+
+export function isBinancePlaceOrderSuccessPayload(payload) {
+  return (
+    payload != null
+    && typeof payload === 'object'
+    && !Array.isArray(payload)
+    && payload.success === true
+    && getBinanceApiErrorCode(payload) == null
+  );
+}
