@@ -101,15 +101,16 @@ test('ladder retries with restricted open-order replacement after supported feed
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(actionType\)/);
 });
 
-test('close ladder reprices only remaining orders after explicit maker conflicts', () => {
-  const retryBody = readFunctionBody('isRetryableCloseLadderMakerPriceFailure');
+test('open and close ladders reprice only remaining orders after explicit maker conflicts', () => {
+  const retryBody = readFunctionBody('isRetryableLadderMakerPriceFailure');
+  assert.match(retryBody, /plan\?\.spec\?\.mode !== 'OPEN'/);
   assert.match(retryBody, /plan\?\.spec\?\.mode !== 'CLOSE'/);
   assert.match(retryBody, /error\?\.ladderFailureKind === 'maker_price_conflict'/);
   assert.match(retryBody, /isBinancePostOnlyMakerRejectCode\(error\?\.binanceCode\)/);
   assert.match(retryBody, /maker_price_conflict'\) return error\.safeNoSubmit === true/);
   assert.match(retryBody, /isBinancePostOnlyMakerRejectCode\(error\?\.binanceCode\) && error\.safeNoSubmit === true/);
-  assert.match(source, /const LADDER_CLOSE_REPRICE_MAX_ATTEMPTS = 5;/);
-  assert.match(generatedSource, /const LADDER_CLOSE_REPRICE_MAX_ATTEMPTS = 5;/);
+  assert.match(source, /const LADDER_REPRICE_MAX_ATTEMPTS = 5;/);
+  assert.match(generatedSource, /const LADDER_REPRICE_MAX_ATTEMPTS = 5;/);
 
   const interceptBody = readFunctionBody('installFetchInterceptor');
   assert.match(interceptBody, /activeLadderSubmitCapture/);
@@ -132,7 +133,14 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(observationBody, /delay\(timeoutMs\)/);
 
   const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
+  const apiCodeReadIndex = acknowledgementBody.indexOf('readLadderSubmitApiErrors(submitCaptureId)');
+  const pendingFailureIndex = acknowledgementBody.indexOf('if (pendingFailure)');
+  assert.notEqual(apiCodeReadIndex, -1);
+  assert.ok(apiCodeReadIndex < pendingFailureIndex);
   assert.match(acknowledgementBody, /await waitForLadderSubmitResponseObservations\(/);
+  assert.match(acknowledgementBody, /capturedApiErrorsNow\.length === 1/);
+  assert.match(acknowledgementBody, /isBinancePostOnlyMakerRejectCode\(capturedApiErrorsNow\[0\]\.code\)/);
+  assert.match(acknowledgementBody, /createLadderSubmitApiError\(capturedApiErrorsNow\[0\]\.code\)/);
   assert.match(acknowledgementBody, /capturedApiErrors\.length === 1/);
   assert.match(acknowledgementBody, /isBinancePostOnlyMakerRejectCode\(capturedApiErrors\[0\]\.code\)/);
   assert.match(acknowledgementBody, /capturedApiErrors\.length === 0/);
@@ -141,19 +149,23 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(acknowledgementBody, /createLadderMakerPriceConflictError\(pendingFailure\.message\)/);
   assert.doesNotMatch(source, /LADDER_SUBMIT_API_CODE_GRACE_MS/);
 
-  const repriceBody = readFunctionBody('refreshRemainingCloseLadderOrders');
+  const repriceBody = readFunctionBody('refreshRemainingLadderOrders');
   assert.match(repriceBody, /assertLadderExecutionContext\(plan\)/);
   assert.match(repriceBody, /getBufferedMakerPrices\(plan\.spec\.priceSide,\s*remainingCount,\s*plan\.ladderStep\)/);
   assert.match(repriceBody, /repriceRemainingLadderOrders\(\{/);
+  assert.match(repriceBody, /plan\.spec\.mode === 'OPEN'/);
+  assert.match(repriceBody, /getQtyRuleContext\(plan\.symbol,\s*'OPEN',\s*order\.price\)/);
+  assert.match(repriceBody, /compareDecimalStrings\(order\.qty,\s*ruleContext\.effectiveMinQty\)/);
+  assert.match(repriceBody, /数量 \$\{order\.qty\} 低于最小下单量 \$\{ruleContext\.effectiveMinQty\}/);
   assert.doesNotMatch(repriceBody, /buildLadderPlan\(/);
   assert.doesNotMatch(repriceBody, /cancelCurrentSymbolOpenOrders/);
 
   const executeBody = readFunctionBody('executeLadderPlan');
-  assert.match(executeBody, /LADDER_CLOSE_REPRICE_MAX_ATTEMPTS/);
+  assert.match(executeBody, /LADDER_REPRICE_MAX_ATTEMPTS/);
   assert.match(executeBody, /beginLadderSubmitResponseCapture\(\)/);
   assert.match(executeBody, /endLadderSubmitResponseCapture\(submitCaptureId\)/);
   assert.match(executeBody, /waitForOrderSubmitAcknowledgement\([\s\S]*plan\.spec\.mode/);
-  assert.match(executeBody, /refreshRemainingCloseLadderOrders\(plan,\s*done\)/);
+  assert.match(executeBody, /refreshRemainingLadderOrders\(plan,\s*done\)/);
   assert.match(executeBody, /lastRepriceApiErrorCode/);
   assert.match(executeBody, /return \{ done, repriceAttempts, lastRepriceApiErrorCode \}/);
   assert.match(executeBody, /盘口连续移动/);
@@ -164,6 +176,17 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(generatedSource, /beginLadderSubmitResponseCapture/);
   assert.match(generatedSource, /自动刷新盘口/);
   assert.match(generatedSource, /isPostOnlyMakerRejectionFeedback/);
+});
+
+test('ladder feedback labels captured API codes without exposing bare numbers', () => {
+  const apiErrorBody = readFunctionBody('createLadderSubmitApiError');
+  const diagnosticsBody = readFunctionBody('formatLadderRepriceDiagnostics');
+  const executeBody = readFunctionBody('executeLadderPlan');
+  assert.match(apiErrorBody, /Maker 挂单被拒绝（错误码 \$\{apiErrorCode\}）/);
+  assert.match(diagnosticsBody, /错误码 \$\{lastRepriceApiErrorCode\}/);
+  assert.match(executeBody, /错误码 \$\{lastRepriceApiErrorCode\}/);
+  assert.doesNotMatch(source, /错误码：/);
+  assert.doesNotMatch(source, /\(\$\{apiErrorCode\}\)/);
 });
 
 test('ladder minimum quantity failure explains safe manual options', () => {
