@@ -106,6 +106,10 @@ test('close ladder reprices only remaining orders after explicit maker conflicts
   assert.match(retryBody, /plan\?\.spec\?\.mode !== 'CLOSE'/);
   assert.match(retryBody, /error\?\.ladderFailureKind === 'maker_price_conflict'/);
   assert.match(retryBody, /isBinancePostOnlyMakerRejectCode\(error\?\.binanceCode\)/);
+  assert.match(retryBody, /maker_price_conflict'\) return error\.safeNoSubmit === true/);
+  assert.match(retryBody, /isBinancePostOnlyMakerRejectCode\(error\?\.binanceCode\) && error\.safeNoSubmit === true/);
+  assert.match(source, /const LADDER_CLOSE_REPRICE_MAX_ATTEMPTS = 5;/);
+  assert.match(generatedSource, /const LADDER_CLOSE_REPRICE_MAX_ATTEMPTS = 5;/);
 
   const interceptBody = readFunctionBody('installFetchInterceptor');
   assert.match(interceptBody, /activeLadderSubmitCapture/);
