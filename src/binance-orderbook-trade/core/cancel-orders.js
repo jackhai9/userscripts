@@ -69,6 +69,12 @@ export function isOpenOrdersScopeLimitedToSymbolText(text, symbol) {
   ));
 }
 
+export function isOpenOrdersScopeConfirmedForSymbolText(text, symbol, filterChecked) {
+  const visibleSymbols = readVisibleOpenOrderSymbolsText(text);
+  if (visibleSymbols.length > 0) return isOpenOrdersScopeLimitedToSymbolText(text, symbol);
+  return filterChecked === true;
+}
+
 export function hasCurrentSymbolOpenOrdersEvidence({
   scopeText,
   symbol,
