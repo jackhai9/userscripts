@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.77
+// @version      2.7.78
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2182,7 +2182,7 @@
       const recommendationText = recommendation || "--";
       const precisionMessage = selectionBusy ? "调整中" : busy ? formatOrderbookPrecisionBusyStatus(status) : status === "ready" ? `推荐 ${recommendationText}` : status;
       const recommendationHtml = [
-        `<div style="margin-top:8px;color:${MUTED_TEXT_COLOR};font-size:12px;">`,
+        `<div style="margin-top:12px;color:${MUTED_TEXT_COLOR};font-size:12px;">`,
         '<div style="display:grid;grid-template-columns:78px 72px 32px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden;">',
         '<span style="font-size:14px;white-space:nowrap;">订单簿缩放</span>',
         `<span title="当前缩放 ${currentText}" style="min-width:0;height:32px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;background:${CONTROL_BACKGROUND_COLOR};text-align:center;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:30px;color:${PRIMARY_EMPHASIS_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
@@ -4774,7 +4774,7 @@
           ladderOptionRow("量", LADDER_OPEN_PERCENTS, getLadderOpenPercent(symbol, precision), "percent", "%"),
           ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
           ladderOptionRow("幅", LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), "step", ""),
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:12px;">',
           ladderActionButton("OPEN_LONG", "阶梯开多", "BUY", actionDisabled),
           ladderActionButton("OPEN_SHORT", "阶梯开空", "SELL", actionDisabled),
           "</div>"
@@ -4786,7 +4786,7 @@
         ladderOptionRow("量", LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol, precision), "percent", "%"),
         ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
         ladderOptionRow("幅", LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), "step", ""),
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:12px;">',
         ladderActionButton("CLOSE_LONG", "阶梯平多", "SELL", closeLongDisabled),
         ladderActionButton("CLOSE_SHORT", "阶梯平空", "BUY", closeShortDisabled),
         "</div>"
@@ -5054,7 +5054,7 @@
         `<button id="${SIDE_SHORT_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-left:1px solid var(--color-InputLine);border-radius:0 5px 5px 0;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平空</button>`,
         "</div>",
         "</div>",
-        '<div data-panel-group="multiplier" style="margin-top:8px;">',
+        '<div data-panel-group="multiplier" style="margin-top:12px;">',
         '<div data-multiplier-controls style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden;">',
         `<label id="${MULTIPLIER_HINT_ID}" for="${INPUT_ID}" style="color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;">最小下单量的</label>`,
         `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:${PRIMARY_EMPHASIS_COLOR};caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:32px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">`,
@@ -5069,8 +5069,8 @@
         `<span id="jh-binance-close-qty-min" style="display:none;flex:1 1 auto;min-width:0;color:${MUTED_TEXT_COLOR};overflow:hidden;text-overflow:ellipsis;"></span>`,
         "</div>",
         "</div>",
-        `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}"></div>`,
-        '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #eef0f2;">',
+        `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}" data-panel-group="precision"></div>`,
+        '<div data-panel-group="ladder" style="margin-top:12px;padding-top:12px;border-top:1px solid #eef0f2;">',
         `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};background:${CONTROL_BACKGROUND_COLOR};color:${PRIMARY_EMPHASIS_COLOR};text-align:left;font-size:13px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};cursor:pointer;">Maker 阶梯 ▸</button>`,
         `<div id="${LADDER_BODY_ID}" style="display:none;"></div>`,
         `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:hidden;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
