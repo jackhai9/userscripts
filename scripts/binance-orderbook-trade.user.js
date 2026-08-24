@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.71
+// @version      2.7.72
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -4849,7 +4849,8 @@
       const openSide = loadOpenSide();
       const rawCloseContext = readCloseContext();
       const closeContext = resolveDisplayCloseState(rawCloseContext, getCurrentSymbol());
-      const { knowsLong, knowsShort, hasLong, hasShort, isPending, isUsingCache } = closeContext;
+      const { knowsLong, knowsShort, hasLong, hasShort, isUsingCache } = closeContext;
+      const rawCloseReady = rawCloseContext.knowsLong && rawCloseContext.knowsShort;
       const closeMode = hasLong && hasShort ? "dual" : hasLong ? "single_long" : hasShort ? "single_short" : "unknown";
       if (minEl) {
         if (!precisionReady) {
@@ -4882,12 +4883,9 @@
           const action = openSide === "LONG" ? "开多" : "开空";
           hintEl.textContent = "单击订单簿时";
           hintEl.title = `开仓模式：单击订单簿价格后将${CFG.SAFE_MODE ? "填数量" : action}`;
-        } else if (isPending && !isUsingCache) {
-          hintEl.textContent = "正在读取仓位";
-          hintEl.title = "平仓模式：正在读取可平仓位";
-        } else if (isPending && isUsingCache) {
-          hintEl.textContent = "正在刷新仓位";
-          hintEl.title = "平仓模式：正在刷新可平仓位，暂沿用上次识别结果";
+        } else if (!rawCloseReady) {
+          hintEl.textContent = "仓位确认中";
+          hintEl.title = isUsingCache ? "平仓模式：正在确认可平仓位，暂沿用上次识别结果" : "平仓模式：正在确认可平仓位";
         } else if (closeMode === "single_long") {
           hintEl.textContent = "单击订单簿时";
           hintEl.title = `平仓模式：当前仅有多仓，单击订单簿价格后将${CFG.SAFE_MODE ? "填数量" : "平多"}`;
@@ -4899,8 +4897,8 @@
           hintEl.textContent = "单击订单簿时";
           hintEl.title = `平仓模式：双向持仓时单击订单簿价格后将${CFG.SAFE_MODE ? "填数量" : action}`;
         } else {
-          hintEl.textContent = "暂未识别仓位";
-          hintEl.title = "平仓模式：暂未识别到可平仓位";
+          hintEl.textContent = "暂无可平仓位";
+          hintEl.title = "平仓模式：当前币种暂无可平仓位";
         }
       }
       if (decBtn) {
@@ -4923,7 +4921,7 @@
         sideLongBtn.disabled = isDisabled;
         sideLongBtn.setAttribute("aria-checked", String(isActive));
         sideLongBtn.tabIndex = isActive ? 0 : -1;
-        sideLongBtn.style.borderColor = isActive ? isOpenMode ? "var(--color-Buy)" : "var(--color-Sell)" : "var(--color-InputLine)";
+        sideLongBtn.style.boxShadow = isActive && !isDisabled ? `inset 0 0 0 1px ${isOpenMode ? "var(--color-Buy)" : "var(--color-Sell)"}` : "none";
         sideLongBtn.style.background = isActive ? isOpenMode ? "var(--color-GreenAlpha01)" : "var(--color-RedAlpha01)" : CONTROL_BACKGROUND_COLOR;
         sideLongBtn.style.color = isActive ? isOpenMode ? "var(--color-Buy)" : "var(--color-Sell)" : CONTROL_TEXT_COLOR;
       }
@@ -4936,7 +4934,7 @@
         sideShortBtn.disabled = isDisabled;
         sideShortBtn.setAttribute("aria-checked", String(isActive));
         sideShortBtn.tabIndex = isActive ? 0 : -1;
-        sideShortBtn.style.borderColor = isActive ? isOpenMode ? "var(--color-Sell)" : "var(--color-Buy)" : "var(--color-InputLine)";
+        sideShortBtn.style.boxShadow = isActive && !isDisabled ? `inset 0 0 0 1px ${isOpenMode ? "var(--color-Sell)" : "var(--color-Buy)"}` : "none";
         sideShortBtn.style.background = isActive ? isOpenMode ? "var(--color-RedAlpha01)" : "var(--color-GreenAlpha01)" : CONTROL_BACKGROUND_COLOR;
         sideShortBtn.style.color = isActive ? isOpenMode ? "var(--color-Sell)" : "var(--color-Buy)" : CONTROL_TEXT_COLOR;
       }
@@ -5026,10 +5024,12 @@
       panel.style.boxShadow = "none";
       panel.style.visibility = "hidden";
       panel.innerHTML = [
-        `<div data-panel-group="direction" role="radiogroup" aria-labelledby="${MODE_HINT_ID}" style="display:grid;grid-template-columns:minmax(0,1fr) 54px 54px;align-items:center;gap:6px;height:32px;overflow:hidden;">`,
+        '<div data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden;">',
         `<span id="${MODE_HINT_ID}" style="min-width:0;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
-        `<button id="${SIDE_LONG_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:32px;padding:0;border-radius:6px;border:1px solid var(--color-InputLine);background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平多</button>`,
-        `<button id="${SIDE_SHORT_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:32px;padding:0;border-radius:6px;border:1px solid var(--color-InputLine);background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平空</button>`,
+        `<div data-side-selector role="radiogroup" aria-labelledby="${MODE_HINT_ID}" style="box-sizing:border-box;display:grid;grid-template-columns:54px 54px;height:32px;border:1px solid var(--color-InputLine);border-radius:6px;overflow:hidden;background:${CONTROL_BACKGROUND_COLOR};">`,
+        `<button id="${SIDE_LONG_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-radius:5px 0 0 5px;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平多</button>`,
+        `<button id="${SIDE_SHORT_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-left:1px solid var(--color-InputLine);border-radius:0 5px 5px 0;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平空</button>`,
+        "</div>",
         "</div>",
         '<div data-panel-group="multiplier" style="margin-top:8px;">',
         '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap;">',

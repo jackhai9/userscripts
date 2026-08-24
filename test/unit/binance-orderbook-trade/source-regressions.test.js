@@ -245,7 +245,8 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
 
 test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden/);
-  assert.match(source, /grid-template-columns:minmax\(0,1fr\) 54px 54px;align-items:center;gap:6px;height:32px;overflow:hidden/);
+  assert.match(source, /data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
+  assert.match(source, /data-side-selector role="radiogroup"[^>]*display:grid;grid-template-columns:54px 54px;[^>]*border-radius:6px;[^>]*overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="min-width:0;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
   assert.match(source, /grid-template-columns:36px 32px 72px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /grid-template-columns:84px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
@@ -276,16 +277,23 @@ test('direction selector is a compact mutually exclusive radio group', () => {
   const ensurePanelBody = readFunctionBody('ensurePanel');
   const refreshBody = readFunctionBody('refreshComputedInfo');
 
-  assert.match(ensurePanelBody, /data-panel-group="direction" role="radiogroup" aria-labelledby="\$\{MODE_HINT_ID\}"/);
+  assert.match(ensurePanelBody, /data-side-selector role="radiogroup" aria-labelledby="\$\{MODE_HINT_ID\}"/);
   assert.equal((ensurePanelBody.match(/role="radio" aria-checked="false"/g) || []).length, 2);
+  assert.equal((ensurePanelBody.match(/border:0;/g) || []).length, 2);
+  assert.match(ensurePanelBody, /border-left:1px solid var\(--color-InputLine\)/);
   assert.match(refreshBody, /hintEl\.textContent = '单击订单簿时'/);
-  assert.match(refreshBody, /hintEl\.textContent = '正在读取仓位'/);
-  assert.match(refreshBody, /hintEl\.textContent = '正在刷新仓位'/);
-  assert.match(refreshBody, /hintEl\.textContent = '暂未识别仓位'/);
+  assert.match(refreshBody, /hintEl\.textContent = '仓位确认中'/);
+  assert.match(refreshBody, /hintEl\.textContent = '暂无可平仓位'/);
+  assert.doesNotMatch(refreshBody, /正在读取仓位|正在刷新仓位|暂未识别仓位/);
+  assert.match(refreshBody, /const rawCloseReady = rawCloseContext\.knowsLong && rawCloseContext\.knowsShort/);
+  assert.ok(refreshBody.indexOf('!rawCloseReady') < refreshBody.indexOf("closeMode === 'single_long'"));
   assert.match(refreshBody, /sideLongBtn\.setAttribute\('aria-checked', String\(isActive\)\)/);
   assert.match(refreshBody, /sideShortBtn\.setAttribute\('aria-checked', String\(isActive\)\)/);
   assert.match(refreshBody, /sideLongBtn\.tabIndex = isActive \? 0 : -1/);
   assert.match(refreshBody, /sideShortBtn\.tabIndex = isActive \? 0 : -1/);
+  assert.match(refreshBody, /sideLongBtn\.style\.boxShadow = isActive && !isDisabled/);
+  assert.match(refreshBody, /sideShortBtn\.style\.boxShadow = isActive && !isDisabled/);
+  assert.doesNotMatch(refreshBody, /style\.borderColor/);
   assert.match(ensurePanelBody, /\['ArrowRight', 'ArrowDown'\]\.includes\(event\.key\)/);
   assert.match(ensurePanelBody, /\['ArrowLeft', 'ArrowUp'\]\.includes\(event\.key\)/);
   assert.match(ensurePanelBody, /const enabledButtons = \[sideLongBtn, sideShortBtn\]\.filter\(\(button\) => button && !button\.disabled\)/);
@@ -944,8 +952,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.71/);
-  assert.match(generatedSource, /@version\s+2\.7\.71/);
+  assert.match(source, /@version\s+2\.7\.72/);
+  assert.match(generatedSource, /@version\s+2\.7\.72/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
