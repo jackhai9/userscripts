@@ -957,13 +957,37 @@ test('close execution and close-ladder sizing reject display cache', () => {
   const refreshBody = readFunctionBody('refreshComputedInfo');
   assert.match(refreshBody, /const rawCloseContext = readCloseContext\(\)/);
   assert.match(refreshBody, /syncNativeCloseButtons\(tradeMode, rawCloseContext\)/);
-  assert.equal((refreshBody.match(/closeContext\.isPending \|\|/g) || []).length, 2);
+  assert.doesNotMatch(refreshBody, /closeContext\.isPending \|\|/);
+  assert.equal((refreshBody.match(/shouldDisableCloseControl\(/g) || []).length, 2);
 
   const ladderRowsBody = readFunctionBody('getLadderActionRows');
-  assert.match(ladderRowsBody, /const closePending = closeContext\?\.isPending === true/);
-  assert.match(ladderRowsBody, /closeLongDisabled = actionDisabled \|\| closePending/);
-  assert.match(ladderRowsBody, /closeShortDisabled = actionDisabled \|\| closePending/);
+  assert.doesNotMatch(ladderRowsBody, /closePending/);
+  assert.equal((ladderRowsBody.match(/shouldDisableCloseControl\(/g) || []).length, 2);
   assert.doesNotMatch(source, /applyCachedNativeCloseButtonState/);
+});
+
+test('confirmed close-quantity mutations bypass the generic trade UI debounce', () => {
+  const waitStart = source.indexOf('function waitForTradeUiMutation');
+  const waitEnd = source.indexOf('function handleTradeModeTabTransition', waitStart);
+  const waitBody = source.slice(waitStart, waitEnd);
+  const snapshotReadyIndex = waitBody.indexOf('closeGuard.snapshotReady = true');
+  const immediateRenderIndex = waitBody.indexOf('scheduleRenderPanel()', snapshotReadyIndex);
+  const debounceIndex = waitBody.indexOf('tradeUiMutationDebounceTimer = window.setTimeout');
+
+  assert.notEqual(snapshotReadyIndex, -1);
+  assert.notEqual(immediateRenderIndex, -1);
+  assert.notEqual(debounceIndex, -1);
+  assert.ok(snapshotReadyIndex < immediateRenderIndex);
+  assert.ok(immediateRenderIndex < debounceIndex);
+  assert.match(waitBody, /closeGuard\.snapshotReady = true;[\s\S]*window\.clearTimeout\(tradeUiMutationDebounceTimer\);[\s\S]*scheduleRenderPanel\(\);[\s\S]*return;/);
+});
+
+test('pending close actions report position confirmation without starting execution', () => {
+  const startBody = readFunctionBody('startLadder');
+  assert.match(startBody, /spec\?\.mode === 'CLOSE' && !isCloseSnapshotReady\(getCurrentSymbol\(\)\)/);
+  assert.match(startBody, /setLadderStatus\('仓位确认中'\)/);
+
+  assert.match(source, /if \(getActiveTradeMode\(\) === 'CLOSE' && !isCloseSnapshotReady\(clickedSymbol\)\) \{\s*warn\('仓位确认中'\);\s*return;/);
 });
 
 test('cancel flow rechecks the captured symbol before destructive click and cleanup', () => {

@@ -32,3 +32,11 @@ export function resolveCloseDisplayQuantities({
     shouldCommit: rawLongQty != null || rawShortQty != null,
   };
 }
+
+export function shouldDisableCloseControl({
+  actionDisabled = false,
+  knowsPosition,
+  hasPosition,
+}) {
+  return Boolean(actionDisabled || (knowsPosition && !hasPosition));
+}

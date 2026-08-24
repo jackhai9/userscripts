@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.90
+// @version      2.7.91
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -161,6 +161,13 @@
       isUsingCache: rawLongQty == null && cachedLongQty != null || rawShortQty == null && cachedShortQty != null,
       shouldCommit: rawLongQty != null || rawShortQty != null
     };
+  }
+  function shouldDisableCloseControl({
+    actionDisabled = false,
+    knowsPosition,
+    hasPosition
+  }) {
+    return Boolean(actionDisabled || knowsPosition && !hasPosition);
   }
 
   // src/binance-orderbook-trade/core/auto-open-leverage.js
@@ -3138,8 +3145,12 @@
         setLadderStatus("正在执行，先点停止");
         return;
       }
-      ladderStopRequested = false;
       const spec = getLadderActionSpec2(actionType);
+      if (spec?.mode === "CLOSE" && !isCloseSnapshotReady(getCurrentSymbol())) {
+        setLadderStatus("仓位确认中");
+        return;
+      }
+      ladderStopRequested = false;
       setLadderStatus(`${spec?.label || "阶梯"} 准备中`);
       ladderTask = (async () => {
         const {
@@ -4953,9 +4964,16 @@
           "</div>"
         ];
       }
-      const closePending = closeContext?.isPending === true;
-      const closeLongDisabled = actionDisabled || closePending || (closeContext?.knowsLong ? !closeContext.hasLong : false);
-      const closeShortDisabled = actionDisabled || closePending || (closeContext?.knowsShort ? !closeContext.hasShort : false);
+      const closeLongDisabled = shouldDisableCloseControl({
+        actionDisabled,
+        knowsPosition: closeContext?.knowsLong,
+        hasPosition: closeContext?.hasLong
+      });
+      const closeShortDisabled = shouldDisableCloseControl({
+        actionDisabled,
+        knowsPosition: closeContext?.knowsShort,
+        hasPosition: closeContext?.hasShort
+      });
       return [
         ladderOptionRow("量", LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol, precision), "percent", "%"),
         ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
@@ -5111,7 +5129,10 @@
       }
       if (sideLongBtn) {
         const isOpenMode = tradeMode === "OPEN";
-        const isDisabled = isOpenMode ? false : closeContext.isPending || (knowsLong ? !hasLong : false);
+        const isDisabled = isOpenMode ? false : shouldDisableCloseControl({
+          knowsPosition: knowsLong,
+          hasPosition: hasLong
+        });
         const isActive = isOpenMode ? openSide === "LONG" : closeMode === "single_long" || closeMode !== "single_short" && closeSide === "LONG";
         sideLongBtn.textContent = isOpenMode ? "开多" : "平多";
         sideLongBtn.style.order = "0";
@@ -5124,7 +5145,10 @@
       }
       if (sideShortBtn) {
         const isOpenMode = tradeMode === "OPEN";
-        const isDisabled = isOpenMode ? false : closeContext.isPending || (knowsShort ? !hasShort : false);
+        const isDisabled = isOpenMode ? false : shouldDisableCloseControl({
+          knowsPosition: knowsShort,
+          hasPosition: hasShort
+        });
         const isActive = isOpenMode ? openSide === "SHORT" : closeMode === "single_short" || closeMode !== "single_long" && closeSide === "SHORT";
         sideShortBtn.textContent = isOpenMode ? "开空" : "平空";
         sideShortBtn.style.order = "1";
@@ -5509,10 +5533,18 @@
         }
         if (!matched) return;
         invalidateTradeButtonCache();
-        if (closeQuantityChanged && closeGuard && closeGuard.symbol === getCurrentSymbol() && getActiveTradeMode() === "CLOSE" && findCloseLongButton() && findCloseShortButton()) {
+        let confirmedCloseSnapshot = false;
+        if (closeQuantityChanged && closeGuard && closeGuard.symbol === getCurrentSymbol() && !closeGuard.snapshotReady && getActiveTradeMode() === "CLOSE" && findCloseLongButton() && findCloseShortButton()) {
           closeGuard.snapshotReady = true;
+          confirmedCloseSnapshot = true;
         }
         panelPositionSignature = "";
+        if (confirmedCloseSnapshot) {
+          window.clearTimeout(tradeUiMutationDebounceTimer);
+          tradeUiMutationDebounceTimer = 0;
+          scheduleRenderPanel();
+          return;
+        }
         window.clearTimeout(tradeUiMutationDebounceTimer);
         tradeUiMutationDebounceTimer = window.setTimeout(() => {
           tradeUiMutationDebounceTimer = 0;
@@ -5647,6 +5679,10 @@
         const clickedSymbol = getCurrentSymbol();
         if (!isCurrentObservedSymbol(clickedSymbol)) {
           warn("交易对正在切换，已忽略本次点击");
+          return;
+        }
+        if (getActiveTradeMode() === "CLOSE" && !isCloseSnapshotReady(clickedSymbol)) {
+          warn("仓位确认中");
           return;
         }
         if (CFG.DEBUG) {
