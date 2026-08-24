@@ -204,6 +204,17 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
   assert.ok(signatureIndex < positionIndex);
 });
 
+test('dynamic panel text keeps fixed single-line slots', () => {
+  assert.match(source, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);align-items:center;gap:10px;height:18px;overflow:hidden/);
+  assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="height:18px;line-height:18px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
+  assert.match(source, /data-orderbook-precision-status="true"[^>]*height:18px;line-height:18px;[^>]*visibility:\$\{statusVisibility\};white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
+
+  const ladderBody = readFunctionBody('refreshLadderPanel');
+  assert.match(ladderBody, /status\.style\.visibility = expanded \|\| ladderTask \|\| ladderStatusText !== '空闲' \? 'visible' : 'hidden'/);
+  assert.doesNotMatch(ladderBody, /status\.style\.display/);
+  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*height:18px;[^>]*visibility:hidden;[^>]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
+});
+
 test('ladder feedback labels captured API codes without exposing bare numbers', () => {
   const apiErrorBody = readFunctionBody('createLadderSubmitApiError');
   const diagnosticsBody = readFunctionBody('formatLadderRepriceDiagnostics');
@@ -805,8 +816,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.61/);
-  assert.match(generatedSource, /@version\s+2\.7\.61/);
+  assert.match(source, /@version\s+2\.7\.62/);
+  assert.match(generatedSource, /@version\s+2\.7\.62/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
