@@ -50,6 +50,22 @@ test('expanded ladder panel avoids rebuilding unchanged body markup', () => {
   assert.match(ladderBody, /body\.innerHTML = bodyHtml/);
 });
 
+test('panel primary values and ladder selections share the Binance emphasis standard', () => {
+  assert.match(source, /const PRIMARY_EMPHASIS_COLOR = '#000000';/);
+  assert.match(source, /const PRIMARY_EMPHASIS_FONT_WEIGHT = '500';/);
+
+  const precisionBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
+  assert.match(precisionBody, /title="当前缩放 \$\{currentText\}"[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}/);
+
+  const optionBody = readFunctionBody('ladderOptionButton');
+  assert.match(optionBody, /color:\$\{PRIMARY_EMPHASIS_COLOR\};font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}/);
+
+  const panelBody = readFunctionBody('ensurePanel');
+  assert.match(panelBody, /id="\$\{INPUT_ID\}"[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}/);
+  assert.match(panelBody, /id="jh-binance-close-qty-final"[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}/);
+  assert.match(panelBody, /id="\$\{LADDER_TOGGLE_ID\}"[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}/);
+});
+
 test('route watcher owns non-trading page pause instead of business timers spinning forever', () => {
   assert.match(source, /function startRouteWatcher\(\)/);
   assert.match(source, /function pauseForNonTradingPage\(\)/);
@@ -883,8 +899,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.68/);
-  assert.match(generatedSource, /@version\s+2\.7\.68/);
+  assert.match(source, /@version\s+2\.7\.69/);
+  assert.match(generatedSource, /@version\s+2\.7\.69/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
