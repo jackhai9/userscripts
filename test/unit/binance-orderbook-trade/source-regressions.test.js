@@ -245,7 +245,8 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
 
 test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden/);
-  assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="height:18px;line-height:18px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
+  assert.match(source, /grid-template-columns:minmax\(0,1fr\) 54px 54px;align-items:center;gap:6px;height:32px;overflow:hidden/);
+  assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="min-width:0;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
   assert.match(source, /grid-template-columns:36px 32px 72px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /grid-template-columns:84px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
   assert.match(source, /buttonBaseStyle = `width:44px;height:24px;[^`]*font-size:12px;line-height:22px;`/);
@@ -269,6 +270,27 @@ test('panel keeps direction and multiplier controls in cohesive ordered groups',
   assert.ok(modeHintIndex > directionIndex);
   assert.ok(multiplierIndex > modeHintIndex);
   assert.ok(quantityMinIndex > multiplierIndex);
+});
+
+test('direction selector is a compact mutually exclusive radio group', () => {
+  const ensurePanelBody = readFunctionBody('ensurePanel');
+  const refreshBody = readFunctionBody('refreshComputedInfo');
+
+  assert.match(ensurePanelBody, /data-panel-group="direction" role="radiogroup" aria-labelledby="\$\{MODE_HINT_ID\}"/);
+  assert.equal((ensurePanelBody.match(/role="radio" aria-checked="false"/g) || []).length, 2);
+  assert.match(refreshBody, /hintEl\.textContent = '单击订单簿时'/);
+  assert.match(refreshBody, /hintEl\.textContent = '正在读取仓位'/);
+  assert.match(refreshBody, /hintEl\.textContent = '正在刷新仓位'/);
+  assert.match(refreshBody, /hintEl\.textContent = '暂未识别仓位'/);
+  assert.match(refreshBody, /sideLongBtn\.setAttribute\('aria-checked', String\(isActive\)\)/);
+  assert.match(refreshBody, /sideShortBtn\.setAttribute\('aria-checked', String\(isActive\)\)/);
+  assert.match(refreshBody, /sideLongBtn\.tabIndex = isActive \? 0 : -1/);
+  assert.match(refreshBody, /sideShortBtn\.tabIndex = isActive \? 0 : -1/);
+  assert.match(ensurePanelBody, /\['ArrowRight', 'ArrowDown'\]\.includes\(event\.key\)/);
+  assert.match(ensurePanelBody, /\['ArrowLeft', 'ArrowUp'\]\.includes\(event\.key\)/);
+  assert.match(ensurePanelBody, /const enabledButtons = \[sideLongBtn, sideShortBtn\]\.filter\(\(button\) => button && !button\.disabled\)/);
+  assert.match(ensurePanelBody, /nextButton\.focus\(\)/);
+  assert.match(ensurePanelBody, /nextButton\.click\(\)/);
 });
 
 test('ladder feedback labels captured API codes without exposing bare numbers', () => {
@@ -922,8 +944,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.70/);
-  assert.match(generatedSource, /@version\s+2\.7\.70/);
+  assert.match(source, /@version\s+2\.7\.71/);
+  assert.match(generatedSource, /@version\s+2\.7\.71/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
