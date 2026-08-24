@@ -35,6 +35,7 @@ export async function coalesceTradingViewDrawingSaves(
   api,
   action,
   {
+    eventDiscoveryTimeoutMs = 800,
     timeoutMs = 1800,
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
@@ -42,6 +43,9 @@ export async function coalesceTradingViewDrawingSaves(
 ) {
   validateTradingViewApi(api);
   if (typeof action !== 'function') throw new Error('Chart action is unavailable');
+  if (!Number.isFinite(eventDiscoveryTimeoutMs) || eventDiscoveryTimeoutMs <= 0) {
+    throw new Error('TradingView drawing-event discovery timeout is invalid');
+  }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error('TradingView save coalescing timeout is invalid');
   }
@@ -52,18 +56,32 @@ export async function coalesceTradingViewDrawingSaves(
   let saveRequestCount = 0;
   let pendingSave = null;
   let actionFinished = false;
+  let eventStartResolve;
   let waitResolve;
+  let eventDiscoveryTimeout = null;
   let waitTimeout = null;
   let subscribed = false;
 
+  const drawingEventsStarted = new Promise((resolve) => {
+    eventStartResolve = resolve;
+  });
   const savesReady = new Promise((resolve) => {
     waitResolve = resolve;
   });
   const resolveIfReady = () => {
-    if (actionFinished && saveRequestCount >= drawingEventCount) waitResolve();
+    if (
+      actionFinished
+      && drawingEventCount > 0
+      && saveRequestCount >= drawingEventCount
+    ) {
+      waitResolve();
+    }
   };
   const handleDrawingEvent = (_drawingId, eventType) => {
-    if (!IGNORED_DRAWING_EVENT_TYPES.has(eventType)) drawingEventCount += 1;
+    if (IGNORED_DRAWING_EVENT_TYPES.has(eventType)) return;
+    drawingEventCount += 1;
+    if (drawingEventCount === 1) eventStartResolve();
+    resolveIfReady();
   };
   const saveChartWrapper = function coalescedSaveChart(...args) {
     saveRequestCount += 1;
@@ -85,10 +103,19 @@ export async function coalesceTradingViewDrawingSaves(
 
   try {
     const actionResult = await action();
-    api.unsubscribe('drawing_event', handleDrawingEvent);
-    subscribed = false;
     actionFinished = true;
     resolveIfReady();
+
+    if (drawingEventCount === 0) {
+      // Binance updates the checkbox immediately, then applies broker order-line changes later.
+      // Keep the save interception alive across that observed asynchronous boundary.
+      await Promise.race([
+        drawingEventsStarted,
+        new Promise((resolve) => {
+          eventDiscoveryTimeout = setTimeoutFn(resolve, eventDiscoveryTimeoutMs);
+        }),
+      ]);
+    }
 
     if (drawingEventCount > saveRequestCount) {
       await Promise.race([
@@ -103,6 +130,9 @@ export async function coalesceTradingViewDrawingSaves(
       ]);
     }
 
+    api.unsubscribe('drawing_event', handleDrawingEvent);
+    subscribed = false;
+
     if (pendingSave) {
       originalSaveChart.apply(pendingSave.thisValue, pendingSave.args);
     }
@@ -113,6 +143,7 @@ export async function coalesceTradingViewDrawingSaves(
       fullSaveCount: pendingSave ? 1 : 0,
     };
   } finally {
+    if (eventDiscoveryTimeout !== null) clearTimeoutFn(eventDiscoveryTimeout);
     if (waitTimeout !== null) clearTimeoutFn(waitTimeout);
     if (subscribed) api.unsubscribe('drawing_event', handleDrawingEvent);
     restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
