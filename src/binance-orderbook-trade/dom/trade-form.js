@@ -56,3 +56,33 @@ export function collectTradeButtonsFromScopes(scopes, mode, {
   for (const scope of scopes) collectFrom(scope);
   return buttons;
 }
+
+export function parseLeverageButtonText(text) {
+  const match = String(text || '').trim().match(/^(\d{1,3})\s*[xX]$/);
+  if (!match) return null;
+  const leverage = Number(match[1]);
+  return leverage >= 1 && leverage <= 125 ? leverage : null;
+}
+
+export function findCurrentLeverageButtonFromScopes(scopes, {
+  panelId,
+  isVisibleElement,
+}) {
+  const buttons = [];
+  const seen = new Set();
+  for (const scope of scopes) {
+    if (!scope) continue;
+    for (const button of scope.querySelectorAll('button')) {
+      if (
+        seen.has(button)
+        || isOwnPanelButton(button, panelId)
+        || !isVisibleElement(button)
+      ) {
+        continue;
+      }
+      seen.add(button);
+      if (parseLeverageButtonText(button.textContent) != null) buttons.push(button);
+    }
+  }
+  return buttons.length === 1 ? buttons[0] : null;
+}

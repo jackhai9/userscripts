@@ -3,10 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  findAccountPositionTab,
   findOpenOrdersBasicSubTab,
   findOpenOrdersTab,
   findSelectedOpenOrdersSubTab,
   getActiveOpenOrdersScope,
+  parseAccountPositionTabCount,
 } from '../../../src/binance-orderbook-trade/dom/account-orders.js';
 import { isVisibleElement, loadFixtureDom } from '../../helpers/dom.js';
 
@@ -19,6 +21,44 @@ test('selects the bottom account-orders open-orders tab over unrelated tab group
 
   assert.equal(tab?.textContent.trim(), '当前委托(2)');
   assert.equal(tab?.closest('#account-orders') != null, true);
+});
+
+test('reads a confirmed zero position count from the unique account tab group', () => {
+  const { window } = loadFixtureDom(`
+    <section id="account-orders">
+      <div class="account-tab-group">
+        <div role="tab" aria-selected="true">仓位(0)</div>
+        <div role="tab" aria-selected="false">当前委托(0)</div>
+        <div role="tab" aria-selected="false">历史委托</div>
+        <div role="tab" aria-selected="false">历史成交</div>
+        <div role="tab" aria-selected="false">资金流水</div>
+      </div>
+    </section>
+  `);
+
+  const tab = findAccountPositionTab(window.document, { isVisibleElement });
+
+  assert.equal(tab?.textContent.trim(), '仓位(0)');
+  assert.equal(parseAccountPositionTabCount(tab?.textContent), 0);
+  assert.equal(parseAccountPositionTabCount('Positions (12)'), 12);
+  assert.equal(parseAccountPositionTabCount('仓位'), null);
+});
+
+test('rejects position counts when account tab groups are ambiguous', () => {
+  const accountGroup = (id) => `
+    <section id="${id}">
+      <div class="account-tab-group">
+        <div role="tab" aria-selected="true">仓位(0)</div>
+        <div role="tab" aria-selected="false">当前委托(0)</div>
+        <div role="tab" aria-selected="false">历史委托</div>
+        <div role="tab" aria-selected="false">历史成交</div>
+        <div role="tab" aria-selected="false">资金流水</div>
+      </div>
+    </section>
+  `;
+  const { window } = loadFixtureDom(`${accountGroup('first')}${accountGroup('second')}`);
+
+  assert.equal(findAccountPositionTab(window.document, { isVisibleElement }), null);
 });
 
 test('does not trust aria-controls alone when resolving current-orders pane', () => {
