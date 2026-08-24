@@ -604,7 +604,7 @@ test('bulk cancel hides Binance OpenOrders before opening the native dialog and 
   assert.match(cancelBody, /dialogDecision\.status === 'cancelled'[\s\S]*status: 'cancelled'/);
   assert.match(cancelBody, /dialogDecision\.status === 'cancelled'[\s\S]*return \{ ok: false, status: 'cancelled'[\s\S]*waitForCurrentSymbolOpenOrdersCleared/);
   assert.match(cancelBody, /dialogDecisionWatcher\.dispose\(\)/);
-  assert.match(cancelBody, /restoreChartOrdersState = false[\s\S]*status: 'dialog_not_closed'/);
+  assert.match(cancelBody, /restoreChartOrdersState = false[\s\S]*status: 'aborted'/);
   assert.ok(chartRestoreIndex !== -1 && symbolGuardedRestoreIndex !== -1);
   assert.ok(
     chartRestoreIndex < symbolGuardedRestoreIndex,
@@ -624,7 +624,8 @@ test('bulk cancel distinguishes native confirm from cancellation before clear po
   const decisionBody = readFunctionBody('waitForBinanceCancelAllDialogDecision');
   assert.match(decisionBody, /resolveCancelDialogDecision\(\{/);
   assert.match(decisionBody, /dialogVisible: Boolean\(contract\)/);
-  assert.match(decisionBody, /closeDeadlineMs: closeDeadline/);
+  assert.match(decisionBody, /aborted: lifecycleSignal\.aborted/);
+  assert.doesNotMatch(decisionBody, /closeDeadline/);
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   const watcherIndex = cancelBody.indexOf('createBinanceCancelAllDialogDecisionWatcher()');
@@ -707,7 +708,7 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   assert.match(toggleChartOrdersBody, /expectDrawingEvents \? \{\} : \{ eventDiscoveryTimeoutMs: 0 \}/);
 });
 
-test('cancel current-symbol open orders are single-flight and dialog timeout does not restore Binance UI', () => {
+test('cancel current-symbol open orders are single-flight and follow the native dialog lifecycle', () => {
   const wrapperBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
   assert.match(source, /let cancelCurrentSymbolOpenOrdersTask = null/);
   assert.match(wrapperBody, /if \(cancelCurrentSymbolOpenOrdersTask\) return cancelCurrentSymbolOpenOrdersTask/);
@@ -717,14 +718,25 @@ test('cancel current-symbol open orders are single-flight and dialog timeout doe
   assert.match(wrapperBody, /cancelCurrentSymbolOpenOrdersTask = null/);
 
   const waitDialogBody = readFunctionBody('waitForDialogToClose');
-  assert.match(source, /CANCEL_DIALOG_CLOSE_TIMEOUT_MS/);
+  assert.match(source, /ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS/);
   assert.match(waitDialogBody, /const deadline = Date\.now\(\) \+ timeoutMs/);
   assert.match(waitDialogBody, /return false/);
+
+  const watcherBody = readFunctionBody('createBinanceCancelAllDialogDecisionWatcher');
+  assert.match(watcherBody, /new AbortController\(\)/);
+  assert.match(watcherBody, /window\.addEventListener\('pagehide', handlePageHide\)/);
+  assert.match(watcherBody, /if \(!event\.persisted\) lifecycleController\.abort\(\)/);
+  assert.match(watcherBody, /window\.removeEventListener\('pagehide', handlePageHide\)/);
+
+  const decisionBody = readFunctionBody('waitForBinanceCancelAllDialogDecision');
+  assert.match(decisionBody, /aborted: lifecycleSignal\.aborted/);
+  assert.doesNotMatch(decisionBody, /closeDeadline/);
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /restoreTemporaryUiState = false/);
   assert.match(cancelBody, /restoreChartOrdersState = false/);
-  assert.match(cancelBody, /status: 'dialog_not_closed'/);
+  assert.match(cancelBody, /dialogDecision\.status === 'aborted'[\s\S]*status: 'aborted'/);
+  assert.doesNotMatch(cancelBody, /dialogDecision\.status === 'dialog_not_closed'/);
   assert.match(cancelBody, /finally\s*\{[\s\S]*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
 
   const panelBody = readFunctionBody('refreshLadderPanel');

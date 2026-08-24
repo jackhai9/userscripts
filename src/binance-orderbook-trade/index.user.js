@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.94
+// @version      2.7.95
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -216,7 +216,7 @@ import {
   const LADDER_SUBMIT_POLL_MS = 80;
   const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
   const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
-  const CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 60000;
+  const ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 60000;
   const CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS = 1800;
   const CANCEL_DIALOG_DECISION_POLL_MS = 50;
   const CHART_ORDERS_MENU_TIMEOUT_MS = 1800;
@@ -3092,7 +3092,7 @@ import {
     return findNewVisibleDialog(dialogsBefore);
   }
 
-  async function waitForDialogToClose(dialog, timeoutMs = CANCEL_DIALOG_CLOSE_TIMEOUT_MS) {
+  async function waitForDialogToClose(dialog, timeoutMs = ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline && dialog.isConnected && isVisibleElement(dialog)) {
       await delay(500);
@@ -3102,6 +3102,7 @@ import {
   }
 
   function createBinanceCancelAllDialogDecisionWatcher() {
+    const lifecycleController = new AbortController();
     const watcher = {
       action: null,
       error: null,
@@ -3136,28 +3137,34 @@ import {
         watcher.error = error;
       }
     };
+    // A BFCache page is only frozen and can resume the same native dialog later.
+    const handlePageHide = (event) => {
+      if (!event.persisted) lifecycleController.abort();
+    };
 
     document.addEventListener('click', handleClick, true);
     document.addEventListener('keydown', handleKeydown, true);
+    window.addEventListener('pagehide', handlePageHide);
     return {
       watcher,
+      lifecycleSignal: lifecycleController.signal,
       dispose() {
         document.removeEventListener('click', handleClick, true);
         document.removeEventListener('keydown', handleKeydown, true);
+        window.removeEventListener('pagehide', handlePageHide);
       },
     };
   }
 
-  async function waitForBinanceCancelAllDialogDecision(watcher, onDialogSeen) {
+  async function waitForBinanceCancelAllDialogDecision(watcher, lifecycleSignal, onDialogSeen) {
     const discoveryDeadline = Date.now() + CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS;
-    let closeDeadline = null;
     let reportedDialog = false;
     while (true) {
+      if (lifecycleSignal.aborted) return { status: 'aborted' };
       if (watcher.error) throw watcher.error;
       const contract = findBinanceCancelAllDialog(document, isVisibleElement);
       if (contract) {
         watcher.seenDialog = true;
-        closeDeadline ??= Date.now() + CANCEL_DIALOG_CLOSE_TIMEOUT_MS;
         if (!reportedDialog) {
           reportedDialog = true;
           onDialogSeen();
@@ -3168,9 +3175,9 @@ import {
         seenDialog: watcher.seenDialog,
         action: watcher.action,
         dialogVisible: Boolean(contract),
+        aborted: lifecycleSignal.aborted,
         nowMs: Date.now(),
         discoveryDeadlineMs: discoveryDeadline,
-        closeDeadlineMs: closeDeadline,
       });
       if (status !== 'waiting') return { status };
       await delay(CANCEL_DIALOG_DECISION_POLL_MS);
@@ -3502,6 +3509,7 @@ import {
         cancelAllButton.click();
         dialogDecision = await waitForBinanceCancelAllDialogDecision(
           dialogDecisionWatcher.watcher,
+          dialogDecisionWatcher.lifecycleSignal,
           () => setLadderStatus(`${symbol} 撤单确认弹窗已打开`),
         );
       } catch (error) {
@@ -3514,18 +3522,17 @@ import {
       } finally {
         dialogDecisionWatcher.dispose();
       }
+      if (dialogDecision.status === 'aborted') {
+        restoreTemporaryUiState = false;
+        restoreChartOrdersState = false;
+        const message = `${symbol} 页面已离开，撤单确认跟踪已停止`;
+        setLadderStatus(message);
+        return { ok: false, status: 'aborted', message };
+      }
       if (!isCurrentObservedSymbol(symbol)) {
         const message = '确认撤单前交易对已变化';
         setLadderStatus(message);
         return { ok: false, status: 'symbol_changed', message };
-      }
-
-      if (dialogDecision.status === 'dialog_not_closed') {
-        restoreTemporaryUiState = false;
-        restoreChartOrdersState = false;
-        const message = `${symbol} 撤单确认弹窗仍未关闭，图表当前委托保持隐藏`;
-        setLadderStatus(message);
-        return { ok: false, status: 'dialog_not_closed', message };
       }
       if (dialogDecision.status === 'not_found') {
         const message = `${symbol} 未识别到撤单确认弹窗，未继续撤单流程`;
