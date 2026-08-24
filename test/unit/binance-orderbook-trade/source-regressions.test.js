@@ -553,7 +553,7 @@ test('bulk cancel hides Binance OpenOrders before opening the native dialog and 
   assert.match(hideBody, /const current = await openBinanceChartOrdersPopover\(target\)/);
   assert.match(hideBody, /state\.originalChecked = current\.checked/);
   assert.match(hideBody, /writeChartOrdersRecoveryRecord\(\)[\s\S]*state\.changed = true/);
-  assert.match(hideBody, /state\.changed = true[\s\S]*toggleBinanceChartOrdersWithCoalescedSave\(target, current\.checkbox, false\)/);
+  assert.match(hideBody, /state\.changed = true[\s\S]*toggleBinanceChartOrdersWithCoalescedSave\(target, current\.checkbox, false, true\)/);
   assert.match(hideBody, /await closeBinanceChartOrdersPopover\(target\)/);
 
   const closeBody = readFunctionBody('closeBinanceChartOrdersPopover');
@@ -679,10 +679,10 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   assert.match(source, /CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200/);
   assert.match(waitBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
   assert.match(waitBody, /isCurrentSymbolOpenOrdersClearCandidate\(\{/);
-  assert.match(waitBody, /isCurrentSymbolOpenOrdersDefinitivelyClear\(\{[\s\S]*return \{ ok: true, status: 'cleared'/);
+  assert.match(waitBody, /isCurrentSymbolOpenOrdersDefinitivelyClear\(\{[\s\S]*definitivelyCleared: true/);
   assert.match(waitBody, /updateOpenOrdersClearStability\(\{/);
   assert.match(waitBody, /clearCandidateSince = stability\.clearCandidateSince/);
-  assert.match(waitBody, /if \(stability\.cleared\)/);
+  assert.match(waitBody, /if \(stability\.cleared\)[\s\S]*definitivelyCleared: false/);
   assert.match(waitBody, /while \(true\)/);
   assert.match(waitBody, /shouldContinueOpenOrdersClearObservation\(\{/);
   assert.doesNotMatch(waitBody, /while \(Date\.now\(\) < deadline\)/);
@@ -695,6 +695,16 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   assert.ok(clearWaitIndex !== -1 && successIndex !== -1 && cleanupIndex !== -1 && restoreIndex !== -1);
   assert.ok(clearWaitIndex < successIndex, 'clearing must be confirmed before success');
   assert.ok(successIndex < cleanupIndex && cleanupIndex < restoreIndex, 'page state restores only after the clear result');
+
+  assert.match(cancelBody, /let chartOrdersDefinitivelyCleared = false/);
+  assert.match(cancelBody, /chartOrdersDefinitivelyCleared = clearResult\.definitivelyCleared === true/);
+  assert.match(cancelBody, /chartOrdersStillDefinitivelyCleared =[\s\S]*chartOrdersDefinitivelyCleared && getOpenOrdersTabCount\(\) === 0/);
+  assert.match(cancelBody, /restoreBinanceChartOrdersAfterBulkCancel\([\s\S]*!chartOrdersStillDefinitivelyCleared/);
+
+  const restoreChartOrdersBody = readFunctionBody('restoreBinanceChartOrdersAfterBulkCancel');
+  assert.match(restoreChartOrdersBody, /expectDrawingEvents/);
+  const toggleChartOrdersBody = readFunctionBody('toggleBinanceChartOrdersWithCoalescedSave');
+  assert.match(toggleChartOrdersBody, /expectDrawingEvents \? \{\} : \{ eventDiscoveryTimeoutMs: 0 \}/);
 });
 
 test('cancel current-symbol open orders are single-flight and dialog timeout does not restore Binance UI', () => {

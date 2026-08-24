@@ -148,6 +148,32 @@ test('allows a zero-drawing transition without inventing a chart save', async ()
   assert.deepEqual(saved, []);
 });
 
+test('skips drawing discovery when the caller proves no drawings can exist', async () => {
+  const { api, saved } = createTradingViewApi();
+  let timerCalls = 0;
+
+  const result = await coalesceTradingViewDrawingSaves(
+    api,
+    () => 'definitively-empty',
+    {
+      eventDiscoveryTimeoutMs: 0,
+      setTimeoutFn() {
+        timerCalls += 1;
+        throw new Error('drawing discovery timer must not start');
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    actionResult: 'definitively-empty',
+    drawingEventCount: 0,
+    saveRequestCount: 0,
+    fullSaveCount: 0,
+  });
+  assert.equal(timerCalls, 0);
+  assert.deepEqual(saved, []);
+});
+
 test('restores the original save method when the chart action fails', async () => {
   const { api, saved, listeners } = createTradingViewApi();
   const originalSaveChart = api.saveChart;
