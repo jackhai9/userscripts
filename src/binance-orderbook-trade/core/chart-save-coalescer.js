@@ -43,7 +43,7 @@ export async function coalesceTradingViewDrawingSaves(
 ) {
   validateTradingViewApi(api);
   if (typeof action !== 'function') throw new Error('Chart action is unavailable');
-  if (!Number.isFinite(eventDiscoveryTimeoutMs) || eventDiscoveryTimeoutMs <= 0) {
+  if (!Number.isFinite(eventDiscoveryTimeoutMs) || eventDiscoveryTimeoutMs < 0) {
     throw new Error('TradingView drawing-event discovery timeout is invalid');
   }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -106,7 +106,7 @@ export async function coalesceTradingViewDrawingSaves(
     actionFinished = true;
     resolveIfReady();
 
-    if (drawingEventCount === 0) {
+    if (drawingEventCount === 0 && eventDiscoveryTimeoutMs > 0) {
       // Binance updates the checkbox immediately, then applies broker order-line changes later.
       // Keep the save interception alive across that observed asynchronous boundary.
       await Promise.race([
