@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   findTradeFormRoot,
   findTradePanelInsertionPoint,
+  mutationTouchesCloseQuantity,
   placeTradePanelSpacer,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
 import { loadFixtureDom } from '../../helpers/dom.js';
@@ -112,4 +113,31 @@ test('trade form root observes live position state after React replaces descenda
   assert.equal(root.isConnected, true);
   assert.equal(root.querySelector('[data-testid="max-buy-amount"]')?.textContent, '0.00 HYPE');
   assert.ok(observedTexts.includes('0.00 HYPE'));
+});
+
+test('recognizes only close-quantity mutations as a confirmed close snapshot', async () => {
+  const dom = loadFixtureDom(`
+    <section id="trade-form">
+      <div data-testid="max-buy-amount">4.06 HYPE</div>
+      <div class="unrelated">unchanged</div>
+    </section>
+  `);
+  const { document, MutationObserver } = dom.window;
+  const mutationBatches = [];
+  const observer = new MutationObserver((mutations) => mutationBatches.push(mutations));
+  observer.observe(document.querySelector('#trade-form'), {
+    subtree: true,
+    childList: true,
+    characterData: true,
+  });
+
+  document.querySelector('.unrelated').textContent = 'changed';
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  document.querySelector('[data-testid="max-buy-amount"]').textContent = '0.00 HYPE';
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  observer.disconnect();
+
+  assert.equal(mutationBatches.length, 2);
+  assert.equal(mutationBatches[0].some(mutationTouchesCloseQuantity), false);
+  assert.equal(mutationBatches[1].some(mutationTouchesCloseQuantity), true);
 });

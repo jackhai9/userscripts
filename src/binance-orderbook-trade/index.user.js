@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.89
+// @version      2.7.90
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -28,7 +28,10 @@ import {
   shouldContinueOpenOrdersClearObservation,
   updateOpenOrdersClearStability,
 } from './core/cancel-orders.js';
-import { resolveConfirmedCloseDirection } from './core/close-action.js';
+import {
+  resolveCloseDisplayQuantities,
+  resolveConfirmedCloseDirection,
+} from './core/close-action.js';
 import {
   observeAutoOpenLeveragePositionState,
   resolveSymbolPositionStatus,
@@ -91,6 +94,7 @@ import {
   findCurrentLeverageButtonFromScopes,
   isTradeActionButton as isTradeActionButtonDom,
   isTradeModeTab as isTradeModeTabDom,
+  mutationTouchesCloseQuantity,
   parseLeverageButtonText,
   placeTradePanelSpacer,
 } from './dom/trade-form.js';
@@ -286,7 +290,7 @@ import {
   let lastObservedAccountPositionState = null;
   let lastConfirmedCloseState = null;  // 第三层：已确认的稳定缓存（仅 CLOSE 模式下写入）
   let lastDisplayCloseState = null;   // 第二层：仅供脚本面板展示的缓存态
-  let closeGuard = null;              // 切 tab 保护状态机（OPEN→CLOSE 时创建，500ms 后过期）
+  let closeGuard = null;              // 切 tab 快照门控（OPEN→CLOSE 时创建，500ms 后过期）
   let autoOpenLeverageTask = null;
   let pendingAutoOpenLeverageReset = null;
   let autoOpenLeveragePositionCheckTask = null;
@@ -1999,7 +2003,9 @@ import {
   }
 
   function readCloseBaseQtyForLadder(spec) {
-    const raw = readCloseContext();
+    const symbol = getCurrentSymbol();
+    if (!isCloseSnapshotReady(symbol)) return { qty: null, qtySource: null };
+    const raw = readCloseContext(symbol);
     const hasConfirmedContext = raw.knowsLong && raw.knowsShort;
     const qty = hasConfirmedContext ? (spec.side === 'LONG' ? raw.longQty : raw.shortQty) : null;
     return {
@@ -3896,9 +3902,9 @@ import {
 
   // ── 平仓状态三层架构 ──
   // 第一层 rawCloseContext：readCloseContext() 直接从 DOM 读取的原始值
-  // 第二层 displayCloseState：resolveDisplayCloseState() 经 guard 保护后的显示态
+  // 第二层 displayCloseState：resolveDisplayCloseState() 只接受已就绪的平仓快照
   // 第三层 lastConfirmedCloseState：仅在 CLOSE 模式下提交的稳定缓存
-  // UI 渲染和执行路径统一消费第二层，不直接使用第一层。
+  // UI 渲染消费第二层；执行路径只接受第一层两侧都已确认的实时值。
 
   function readCloseContext(expectedSymbol = getCurrentSymbol()) {
     const pending = {
@@ -3936,49 +3942,37 @@ import {
     };
   }
 
+  function getActiveCloseGuard(symbol = getCurrentSymbol()) {
+    return closeGuard
+      && closeGuard.symbol === symbol
+      && Date.now() < closeGuard.expiresAt
+      ? closeGuard
+      : null;
+  }
+
+  function isCloseSnapshotReady(symbol = getCurrentSymbol()) {
+    const guard = getActiveCloseGuard(symbol);
+    return !guard || guard.snapshotReady;
+  }
+
   function resolveDisplayCloseState(rawCloseContext, symbol) {
     const cache = symbol && lastConfirmedCloseState?.symbol === symbol ? lastConfirmedCloseState : null;
-    const isPending = !rawCloseContext.knowsLong && !rawCloseContext.knowsShort;
-    const isUsingCache = (rawCloseContext.longQty == null && cache?.longQty != null)
-      || (rawCloseContext.shortQty == null && cache?.shortQty != null);
-
-    // 第一层：null 回退到缓存
-    let longQty = rawCloseContext.longQty ?? cache?.longQty ?? null;
-    let shortQty = rawCloseContext.shortQty ?? cache?.shortQty ?? null;
-
-    // 第二层：guard 保护——仅在 CLOSE tab 切换保护窗口内抑制瞬态 0
-    const guard = closeGuard && closeGuard.symbol === symbol
-      && Date.now() < closeGuard.expiresAt ? closeGuard : null;
-
-    if (guard && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
-      // 指纹去重：同一份原始读数不重复推进 streak
-      const rawLong = rawCloseContext.longQty;
-      const rawShort = rawCloseContext.shortQty;
-      const isNewSnapshot = rawLong !== guard.lastRawLong || rawShort !== guard.lastRawShort;
-      guard.lastRawLong = rawLong;
-      guard.lastRawShort = rawShort;
-
-      if (isNewSnapshot) {
-        if (rawLong === 0) {
-          guard.longZeroStreak++;
-        } else if (rawLong > 0) {
-          guard.longZeroStreak = 0;
-        }
-        if (rawShort === 0) {
-          guard.shortZeroStreak++;
-        } else if (rawShort > 0) {
-          guard.shortZeroStreak = 0;
-        }
-      }
-
-      const ZERO_CONFIRM_THRESHOLD = 2;
-      if (rawLong === 0 && cache?.longQty > 0 && guard.longZeroStreak < ZERO_CONFIRM_THRESHOLD) {
-        longQty = cache.longQty;
-      }
-      if (rawShort === 0 && cache?.shortQty > 0 && guard.shortZeroStreak < ZERO_CONFIRM_THRESHOLD) {
-        shortQty = cache.shortQty;
-      }
-    }
+    const guard = getActiveCloseGuard(symbol);
+    const transitionPending = Boolean(guard && !guard.snapshotReady);
+    const {
+      longQty,
+      shortQty,
+      isUsingCache,
+      shouldCommit,
+    } = resolveCloseDisplayQuantities({
+      rawLongQty: rawCloseContext.longQty,
+      rawShortQty: rawCloseContext.shortQty,
+      cachedLongQty: cache?.longQty ?? null,
+      cachedShortQty: cache?.shortQty ?? null,
+      transitionPending,
+    });
+    const isPending = transitionPending
+      || (!rawCloseContext.knowsLong && !rawCloseContext.knowsShort);
 
     const knowsLong = longQty != null;
     const knowsShort = shortQty != null;
@@ -3988,7 +3982,7 @@ import {
     // 第三层：提交稳定缓存——仅在 CLOSE 模式下写入，避免 OPEN 模式瞬态 0/0 污染
     if (symbol && rawCloseContext.symbol === symbol && isCurrentObservedSymbol(symbol)
       && getActiveTradeMode() === 'CLOSE'
-      && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
+      && shouldCommit) {
       const closeMode = hasLong && hasShort ? 'dual'
         : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
       lastConfirmedCloseState = {
@@ -4263,8 +4257,9 @@ import {
   }
 
   function resolveCloseAction() {
-    const rawCloseContext = readCloseContext();
     const currentSymbol = getCurrentSymbol();
+    if (!isCloseSnapshotReady(currentSymbol)) return null;
+    const rawCloseContext = readCloseContext(currentSymbol);
     if (!isCurrentObservedSymbol(currentSymbol) || rawCloseContext.symbol !== currentSymbol) return null;
     const direction = resolveConfirmedCloseDirection(rawCloseContext, loadCloseSide());
     if (!direction) return null;
@@ -4589,8 +4584,11 @@ import {
       ];
     }
 
-    const closeLongDisabled = actionDisabled || (closeContext?.knowsLong ? !closeContext.hasLong : false);
-    const closeShortDisabled = actionDisabled || (closeContext?.knowsShort ? !closeContext.hasShort : false);
+    const closePending = closeContext?.isPending === true;
+    const closeLongDisabled = actionDisabled || closePending
+      || (closeContext?.knowsLong ? !closeContext.hasLong : false);
+    const closeShortDisabled = actionDisabled || closePending
+      || (closeContext?.knowsShort ? !closeContext.hasShort : false);
     return [
       ladderOptionRow('量', LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol, precision), 'percent', '%'),
       ladderOptionRow('档', LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), 'levels', ''),
@@ -4665,7 +4663,9 @@ import {
     const rawCloseContext = readCloseContext();
     const closeContext = resolveDisplayCloseState(rawCloseContext, getCurrentSymbol());
     const { knowsLong, knowsShort, hasLong, hasShort, isUsingCache } = closeContext;
-    const rawCloseReady = rawCloseContext.knowsLong && rawCloseContext.knowsShort;
+    const rawCloseReady = !closeContext.isPending
+      && rawCloseContext.knowsLong
+      && rawCloseContext.knowsShort;
     const closeMode = hasLong && hasShort ? 'dual' : hasLong ? 'single_long' : hasShort ? 'single_short' : 'unknown';
 
     let formulaPrefixText = '';
@@ -4751,7 +4751,7 @@ import {
     }
     if (sideLongBtn) {
       const isOpenMode = tradeMode === 'OPEN';
-      const isDisabled = isOpenMode ? false : knowsLong ? !hasLong : false;
+      const isDisabled = isOpenMode ? false : closeContext.isPending || (knowsLong ? !hasLong : false);
       const isActive = isOpenMode
         ? openSide === 'LONG'
         : closeMode === 'single_long' || (closeMode !== 'single_short' && closeSide === 'LONG');
@@ -4772,7 +4772,7 @@ import {
     }
     if (sideShortBtn) {
       const isOpenMode = tradeMode === 'OPEN';
-      const isDisabled = isOpenMode ? false : knowsShort ? !hasShort : false;
+      const isDisabled = isOpenMode ? false : closeContext.isPending || (knowsShort ? !hasShort : false);
       const isActive = isOpenMode
         ? openSide === 'SHORT'
         : closeMode === 'single_short' || (closeMode !== 'single_long' && closeSide === 'SHORT');
@@ -5194,12 +5194,23 @@ import {
     }
 
     tradeUiMutationObserver = new MutationObserver((mutations) => {
+      const closeQuantityChanged = mutations.some(mutationTouchesCloseQuantity);
       let matched = false;
       for (const mutation of mutations) {
         if (mutationTouchesTradeUi(mutation)) { matched = true; break; }
       }
       if (!matched) return;
       invalidateTradeButtonCache();
+      if (
+        closeQuantityChanged
+        && closeGuard
+        && closeGuard.symbol === getCurrentSymbol()
+        && getActiveTradeMode() === 'CLOSE'
+        && findCloseLongButton()
+        && findCloseShortButton()
+      ) {
+        closeGuard.snapshotReady = true;
+      }
       panelPositionSignature = '';
 
       // 防抖：React 可能短时间内触发多批 mutation，
@@ -5240,10 +5251,7 @@ import {
       closeGuard = {
         symbol: getCurrentSymbol(),
         expiresAt: Date.now() + 500,
-        longZeroStreak: 0,
-        shortZeroStreak: 0,
-        lastRawLong: undefined,
-        lastRawShort: undefined,
+        snapshotReady: false,
       };
     }
     if (isEnteringOpen) {

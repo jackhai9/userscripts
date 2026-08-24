@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.89
+// @version      2.7.90
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -139,6 +139,28 @@
     if (closeContext.hasLong) return "LONG";
     if (closeContext.hasShort) return "SHORT";
     return null;
+  }
+  function resolveCloseDisplayQuantities({
+    rawLongQty,
+    rawShortQty,
+    cachedLongQty = null,
+    cachedShortQty = null,
+    transitionPending = false
+  }) {
+    if (transitionPending) {
+      return {
+        longQty: cachedLongQty,
+        shortQty: cachedShortQty,
+        isUsingCache: cachedLongQty != null || cachedShortQty != null,
+        shouldCommit: false
+      };
+    }
+    return {
+      longQty: rawLongQty ?? cachedLongQty,
+      shortQty: rawShortQty ?? cachedShortQty,
+      isUsingCache: rawLongQty == null && cachedLongQty != null || rawShortQty == null && cachedShortQty != null,
+      shouldCommit: rawLongQty != null || rawShortQty != null
+    };
   }
 
   // src/binance-orderbook-trade/core/auto-open-leverage.js
@@ -753,6 +775,19 @@
   }
   function isOwnPanelButton(button, panelId) {
     return !!button?.closest?.(`#${panelId}`);
+  }
+  var CLOSE_QUANTITY_SELECTOR = '[data-testid="max-sell-amount"], [data-testid="max-buy-amount"]';
+  function isCloseQuantityNode(node) {
+    const element = node?.nodeType === 1 ? node : node?.parentElement;
+    if (!element) return false;
+    return element.matches?.(CLOSE_QUANTITY_SELECTOR) || !!element.closest?.(CLOSE_QUANTITY_SELECTOR) || !!element.querySelector?.(CLOSE_QUANTITY_SELECTOR);
+  }
+  function mutationTouchesCloseQuantity(mutation) {
+    if (!mutation) return false;
+    if (mutation.type === "characterData") return isCloseQuantityNode(mutation.target);
+    if (mutation.type !== "childList") return false;
+    if (isCloseQuantityNode(mutation.target)) return true;
+    return Array.from(mutation.addedNodes || []).some(isCloseQuantityNode);
   }
   function findTradeFormRoot(activeTab, qtyInput) {
     if (!activeTab?.isConnected || !qtyInput?.isConnected) return null;
@@ -2698,7 +2733,9 @@
       };
     }
     function readCloseBaseQtyForLadder(spec) {
-      const raw = readCloseContext();
+      const symbol = getCurrentSymbol();
+      if (!isCloseSnapshotReady(symbol)) return { qty: null, qtySource: null };
+      const raw = readCloseContext(symbol);
       const hasConfirmedContext = raw.knowsLong && raw.knowsShort;
       const qty = hasConfirmedContext ? spec.side === "LONG" ? raw.longQty : raw.shortQty : null;
       return {
@@ -4379,44 +4416,35 @@
         hasShort
       };
     }
+    function getActiveCloseGuard(symbol = getCurrentSymbol()) {
+      return closeGuard && closeGuard.symbol === symbol && Date.now() < closeGuard.expiresAt ? closeGuard : null;
+    }
+    function isCloseSnapshotReady(symbol = getCurrentSymbol()) {
+      const guard = getActiveCloseGuard(symbol);
+      return !guard || guard.snapshotReady;
+    }
     function resolveDisplayCloseState(rawCloseContext, symbol) {
       const cache = symbol && lastConfirmedCloseState?.symbol === symbol ? lastConfirmedCloseState : null;
-      const isPending = !rawCloseContext.knowsLong && !rawCloseContext.knowsShort;
-      const isUsingCache = rawCloseContext.longQty == null && cache?.longQty != null || rawCloseContext.shortQty == null && cache?.shortQty != null;
-      let longQty = rawCloseContext.longQty ?? cache?.longQty ?? null;
-      let shortQty = rawCloseContext.shortQty ?? cache?.shortQty ?? null;
-      const guard = closeGuard && closeGuard.symbol === symbol && Date.now() < closeGuard.expiresAt ? closeGuard : null;
-      if (guard && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
-        const rawLong = rawCloseContext.longQty;
-        const rawShort = rawCloseContext.shortQty;
-        const isNewSnapshot = rawLong !== guard.lastRawLong || rawShort !== guard.lastRawShort;
-        guard.lastRawLong = rawLong;
-        guard.lastRawShort = rawShort;
-        if (isNewSnapshot) {
-          if (rawLong === 0) {
-            guard.longZeroStreak++;
-          } else if (rawLong > 0) {
-            guard.longZeroStreak = 0;
-          }
-          if (rawShort === 0) {
-            guard.shortZeroStreak++;
-          } else if (rawShort > 0) {
-            guard.shortZeroStreak = 0;
-          }
-        }
-        const ZERO_CONFIRM_THRESHOLD = 2;
-        if (rawLong === 0 && cache?.longQty > 0 && guard.longZeroStreak < ZERO_CONFIRM_THRESHOLD) {
-          longQty = cache.longQty;
-        }
-        if (rawShort === 0 && cache?.shortQty > 0 && guard.shortZeroStreak < ZERO_CONFIRM_THRESHOLD) {
-          shortQty = cache.shortQty;
-        }
-      }
+      const guard = getActiveCloseGuard(symbol);
+      const transitionPending = Boolean(guard && !guard.snapshotReady);
+      const {
+        longQty,
+        shortQty,
+        isUsingCache,
+        shouldCommit
+      } = resolveCloseDisplayQuantities({
+        rawLongQty: rawCloseContext.longQty,
+        rawShortQty: rawCloseContext.shortQty,
+        cachedLongQty: cache?.longQty ?? null,
+        cachedShortQty: cache?.shortQty ?? null,
+        transitionPending
+      });
+      const isPending = transitionPending || !rawCloseContext.knowsLong && !rawCloseContext.knowsShort;
       const knowsLong = longQty != null;
       const knowsShort = shortQty != null;
       const hasLong = longQty > 0;
       const hasShort = shortQty > 0;
-      if (symbol && rawCloseContext.symbol === symbol && isCurrentObservedSymbol(symbol) && getActiveTradeMode() === "CLOSE" && (rawCloseContext.knowsLong || rawCloseContext.knowsShort)) {
+      if (symbol && rawCloseContext.symbol === symbol && isCurrentObservedSymbol(symbol) && getActiveTradeMode() === "CLOSE" && shouldCommit) {
         const closeMode = hasLong && hasShort ? "dual" : hasLong ? "single_long" : hasShort ? "single_short" : "unknown";
         lastConfirmedCloseState = {
           symbol,
@@ -4649,8 +4677,9 @@
       return true;
     }
     function resolveCloseAction() {
-      const rawCloseContext = readCloseContext();
       const currentSymbol = getCurrentSymbol();
+      if (!isCloseSnapshotReady(currentSymbol)) return null;
+      const rawCloseContext = readCloseContext(currentSymbol);
       if (!isCurrentObservedSymbol(currentSymbol) || rawCloseContext.symbol !== currentSymbol) return null;
       const direction = resolveConfirmedCloseDirection(rawCloseContext, loadCloseSide());
       if (!direction) return null;
@@ -4924,8 +4953,9 @@
           "</div>"
         ];
       }
-      const closeLongDisabled = actionDisabled || (closeContext?.knowsLong ? !closeContext.hasLong : false);
-      const closeShortDisabled = actionDisabled || (closeContext?.knowsShort ? !closeContext.hasShort : false);
+      const closePending = closeContext?.isPending === true;
+      const closeLongDisabled = actionDisabled || closePending || (closeContext?.knowsLong ? !closeContext.hasLong : false);
+      const closeShortDisabled = actionDisabled || closePending || (closeContext?.knowsShort ? !closeContext.hasShort : false);
       return [
         ladderOptionRow("量", LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol, precision), "percent", "%"),
         ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
@@ -4998,7 +5028,7 @@
       const rawCloseContext = readCloseContext();
       const closeContext = resolveDisplayCloseState(rawCloseContext, getCurrentSymbol());
       const { knowsLong, knowsShort, hasLong, hasShort, isUsingCache } = closeContext;
-      const rawCloseReady = rawCloseContext.knowsLong && rawCloseContext.knowsShort;
+      const rawCloseReady = !closeContext.isPending && rawCloseContext.knowsLong && rawCloseContext.knowsShort;
       const closeMode = hasLong && hasShort ? "dual" : hasLong ? "single_long" : hasShort ? "single_short" : "unknown";
       let formulaPrefixText = "";
       let finalText = "";
@@ -5081,7 +5111,7 @@
       }
       if (sideLongBtn) {
         const isOpenMode = tradeMode === "OPEN";
-        const isDisabled = isOpenMode ? false : knowsLong ? !hasLong : false;
+        const isDisabled = isOpenMode ? false : closeContext.isPending || (knowsLong ? !hasLong : false);
         const isActive = isOpenMode ? openSide === "LONG" : closeMode === "single_long" || closeMode !== "single_short" && closeSide === "LONG";
         sideLongBtn.textContent = isOpenMode ? "开多" : "平多";
         sideLongBtn.style.order = "0";
@@ -5094,7 +5124,7 @@
       }
       if (sideShortBtn) {
         const isOpenMode = tradeMode === "OPEN";
-        const isDisabled = isOpenMode ? false : knowsShort ? !hasShort : false;
+        const isDisabled = isOpenMode ? false : closeContext.isPending || (knowsShort ? !hasShort : false);
         const isActive = isOpenMode ? openSide === "SHORT" : closeMode === "single_short" || closeMode !== "single_long" && closeSide === "SHORT";
         sideShortBtn.textContent = isOpenMode ? "开空" : "平空";
         sideShortBtn.style.order = "1";
@@ -5469,6 +5499,7 @@
         return;
       }
       tradeUiMutationObserver = new MutationObserver((mutations) => {
+        const closeQuantityChanged = mutations.some(mutationTouchesCloseQuantity);
         let matched = false;
         for (const mutation of mutations) {
           if (mutationTouchesTradeUi(mutation)) {
@@ -5478,6 +5509,9 @@
         }
         if (!matched) return;
         invalidateTradeButtonCache();
+        if (closeQuantityChanged && closeGuard && closeGuard.symbol === getCurrentSymbol() && getActiveTradeMode() === "CLOSE" && findCloseLongButton() && findCloseShortButton()) {
+          closeGuard.snapshotReady = true;
+        }
         panelPositionSignature = "";
         window.clearTimeout(tradeUiMutationDebounceTimer);
         tradeUiMutationDebounceTimer = window.setTimeout(() => {
@@ -5510,10 +5544,7 @@
         closeGuard = {
           symbol: getCurrentSymbol(),
           expiresAt: Date.now() + 500,
-          longZeroStreak: 0,
-          shortZeroStreak: 0,
-          lastRawLong: void 0,
-          lastRawShort: void 0
+          snapshotReady: false
         };
       }
       if (isEnteringOpen) {

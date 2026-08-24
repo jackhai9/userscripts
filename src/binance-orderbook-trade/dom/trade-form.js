@@ -7,6 +7,24 @@ function isOwnPanelButton(button, panelId) {
   return !!button?.closest?.(`#${panelId}`);
 }
 
+const CLOSE_QUANTITY_SELECTOR = '[data-testid="max-sell-amount"], [data-testid="max-buy-amount"]';
+
+function isCloseQuantityNode(node) {
+  const element = node?.nodeType === 1 ? node : node?.parentElement;
+  if (!element) return false;
+  return element.matches?.(CLOSE_QUANTITY_SELECTOR)
+    || !!element.closest?.(CLOSE_QUANTITY_SELECTOR)
+    || !!element.querySelector?.(CLOSE_QUANTITY_SELECTOR);
+}
+
+export function mutationTouchesCloseQuantity(mutation) {
+  if (!mutation) return false;
+  if (mutation.type === 'characterData') return isCloseQuantityNode(mutation.target);
+  if (mutation.type !== 'childList') return false;
+  if (isCloseQuantityNode(mutation.target)) return true;
+  return Array.from(mutation.addedNodes || []).some(isCloseQuantityNode);
+}
+
 /**
  * Resolve the live trade form without trusting Binance's duplicated tab-pane IDs.
  * React keeps the mode tabs and quantity input under one stable form owner even
