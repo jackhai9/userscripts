@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   resolveCloseDisplayQuantities,
   resolveConfirmedCloseDirection,
+  shouldDisableCloseControl,
 } from '../../../src/binance-orderbook-trade/core/close-action.js';
 
 test('close direction requires both position sides to be freshly known', () => {
@@ -76,4 +77,27 @@ test('first confirmed close snapshot accepts a legitimate zero immediately', () 
     isUsingCache: false,
     shouldCommit: true,
   });
+});
+
+test('close controls render from confirmed display state without a pending-only disabled flash', () => {
+  assert.equal(shouldDisableCloseControl({
+    actionDisabled: false,
+    knowsPosition: true,
+    hasPosition: true,
+  }), false);
+  assert.equal(shouldDisableCloseControl({
+    actionDisabled: false,
+    knowsPosition: true,
+    hasPosition: false,
+  }), true);
+  assert.equal(shouldDisableCloseControl({
+    actionDisabled: false,
+    knowsPosition: false,
+    hasPosition: false,
+  }), false);
+  assert.equal(shouldDisableCloseControl({
+    actionDisabled: true,
+    knowsPosition: true,
+    hasPosition: true,
+  }), true);
 });
