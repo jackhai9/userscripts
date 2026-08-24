@@ -29,7 +29,6 @@ export function findBinanceChartOrdersTarget(document) {
       const latestPriceSlot = toolbar.children[toolbar.children.length - 1];
       return hasVisibleBox(toolbar)
         && hasVisibleBox(trigger)
-        && hasVisibleBox(latestPriceSlot)
         && trigger.matches('.bn-tooltips-wrap.bn-tooltips-web')
         && latestPriceSlot.matches('.contents');
     });

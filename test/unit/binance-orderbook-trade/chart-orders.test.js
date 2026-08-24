@@ -55,9 +55,23 @@ function getContract(dom) {
   };
 }
 
+function makeLatestPriceSlotBoxless(document) {
+  const latestPriceSlot = document.querySelector('[data-testid="latest-price"]');
+  latestPriceSlot.getClientRects = () => [];
+  latestPriceSlot.getBoundingClientRect = () => ({
+    width: 0,
+    height: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  });
+}
+
 test('locates the shared Binance chart OpenOrders target in TradingView and Basic modes', () => {
   for (const mode of ['tradingview', 'basic']) {
     const dom = loadFixtureDom(createChartMarkup({ mode }));
+    makeLatestPriceSlotBoxless(dom.window.document);
     const target = getBinanceChartOrdersTarget(dom.window.document);
 
     assert.equal(target.chartRoot.className, 'chart-widget-root');
