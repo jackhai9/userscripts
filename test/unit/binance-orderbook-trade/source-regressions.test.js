@@ -755,7 +755,7 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy\)/);
   assert.match(refreshBody, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);[^']*height:24px;margin-top:6px/);
   assert.match(refreshBody, /grid-column:1 \/ 4;[^`]*>\$\{precisionMessage\}<\/span>/);
-  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[^`]*grid-column:4 \/ 6;/);
+  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[^`]*grid-column:2 \/ 4;/);
   const messageIndex = refreshBody.indexOf('>\${precisionMessage}</span>');
   const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
   assert.ok(messageIndex >= 0, 'recommendation or transient status should be rendered');

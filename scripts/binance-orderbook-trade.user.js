@@ -2207,7 +2207,7 @@
         "</div>",
         '<div style="display:grid;grid-template-columns:78px repeat(4,minmax(0,1fr));align-items:center;gap:4px;height:24px;margin-top:6px;overflow:hidden;">',
         `<span title="${precisionMessage}" style="grid-column:1 / 4;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${precisionMessage}</span>`,
-        `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}grid-column:4 / 6;${NEUTRAL_CONTROL_STYLE}">更新推荐</button>`,
+        `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}grid-column:2 / 4;${NEUTRAL_CONTROL_STYLE}">更新推荐</button>`,
         "</div>",
         "</div>"
       ].join("");
