@@ -28,6 +28,13 @@ Use this skill when shipping changes in this repository.
    - wait for required checks to pass, or explicitly report missing checks
    - merge with `gh pr merge`
    - do not locally merge into `main` and direct-push `main`
+9. After the PR is merged, verify the raw GitHub userscript exposes the released `@version`. When the next step is local Tampermonkey validation, use the configured Tampermonkey MCP instead of the extension's manual update checker:
+   - identify the existing script by namespace/name and use its returned source path
+   - patch that existing source with the generated `scripts/*.user.js` artifact; do not create a duplicate script
+   - read the installed source back and verify its `@version` and content match the generated artifact
+   - hard-reload the applicable target page so the updated userscript actually runs
+   - verify the target page loaded normally and record any browser path that was not exercised
+   - if Tampermonkey Editors is disconnected, call `tampermonkey_get_connection_code` and ask the user only for the required one-time bridge pairing; do not silently fall back to clicking `Check for updates`
 
 ## Release Checklist
 
@@ -35,6 +42,8 @@ Use this skill when shipping changes in this repository.
 - generated userscript artifacts refreshed from their source
 - tests, build, syntax check, and whitespace check passed where applicable
 - release to `main` goes through PR review/merge history, not direct `main` push
+- released userscript synchronized to the existing local Tampermonkey script through MCP when browser validation follows
+- installed `@version` and generated artifact content verified before the target page is hard-reloaded
 - no accidental source-of-truth drift in `README.md`
 - final summary includes residual risks when browser hand-testing was skipped
 
