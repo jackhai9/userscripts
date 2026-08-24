@@ -728,6 +728,10 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(refreshBody, /const canIncrease = !controlsBusy && Boolean\(increaseTarget\)/);
   assert.match(refreshBody, /decreaseDisabledAttrs/);
   assert.match(refreshBody, /increaseDisabledAttrs/);
+  assert.match(refreshBody, /const decreaseTitle = controlsBusy[\s\S]*缩放调整暂不可用[\s\S]*decreaseTarget[\s\S]*切换到小 10 倍的原生缩放档[\s\S]*已达到最小原生缩放档/);
+  assert.match(refreshBody, /const increaseTitle = controlsBusy[\s\S]*缩放调整暂不可用[\s\S]*increaseTarget[\s\S]*切换到大 10 倍的原生缩放档[\s\S]*已达到最大原生缩放档/);
+  assert.match(refreshBody, /data-orderbook-precision-adjust="DECREASE"[^`]*title="\$\{decreaseTitle\}"/);
+  assert.match(refreshBody, /data-orderbook-precision-adjust="INCREASE"[^`]*title="\$\{increaseTitle\}"/);
   const precisionChangeBody = readFunctionBody('handleOrderbookPrecisionChange');
   assert.match(precisionChangeBody, /readVisibleOrderbookPrecisionOptionValues\(\)/);
   assert.match(precisionChangeBody, /nativeOptionsChanged/);
