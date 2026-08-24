@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.74
+// @version      2.7.75
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3039,16 +3039,16 @@ import {
     }
   }
 
-  async function waitForBinanceChartOrdersPopover(expectedChecked = null) {
+  async function waitForBinanceChartOrdersPopover(target, expectedChecked = null) {
     const deadline = Date.now() + CHART_ORDERS_MENU_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      const current = findActiveBinanceChartOrdersPopover(document, isVisibleElement);
+      const current = findActiveBinanceChartOrdersPopover(document, target, isVisibleElement);
       if (current && (expectedChecked === null || current.checked === expectedChecked)) {
         return current;
       }
       await delay(CHART_ORDERS_MENU_POLL_MS);
     }
-    const current = findActiveBinanceChartOrdersPopover(document, isVisibleElement);
+    const current = findActiveBinanceChartOrdersPopover(document, target, isVisibleElement);
     if (current && (expectedChecked === null || current.checked === expectedChecked)) return current;
     throw new Error(expectedChecked === null
       ? 'Binance chart OpenOrders popover did not open'
@@ -3062,37 +3062,41 @@ import {
       currentTarget.trigger,
       ['pointerover', 'mouseover', 'mouseenter'],
     );
-    return waitForBinanceChartOrdersPopover();
+    return waitForBinanceChartOrdersPopover(currentTarget);
   }
 
   async function closeBinanceChartOrdersPopover(target) {
     const currentTarget = getBinanceChartOrdersTarget();
     assertSameBinanceChartOrdersTarget(target, currentTarget);
-    const current = findActiveBinanceChartOrdersPopover(document, isVisibleElement);
+    const current = findActiveBinanceChartOrdersPopover(
+      document,
+      currentTarget,
+      isVisibleElement,
+    );
     if (!current) return;
 
     dispatchChartOrdersPointerEvents(
       current.popover,
       ['pointerout', 'mouseout', 'mouseleave'],
-      currentTarget.frame,
+      currentTarget.chartRoot,
     );
     dispatchChartOrdersPointerEvents(
       currentTarget.trigger,
       ['pointerout', 'mouseout', 'mouseleave'],
-      currentTarget.frame,
+      currentTarget.chartRoot,
     );
     dispatchChartOrdersPointerEvents(
-      currentTarget.frame,
+      currentTarget.chartRoot,
       ['pointerover', 'mouseover', 'mouseenter'],
       currentTarget.trigger,
     );
 
     const deadline = Date.now() + CHART_ORDERS_MENU_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      if (!findActiveBinanceChartOrdersPopover(document, isVisibleElement)) return;
+      if (!findActiveBinanceChartOrdersPopover(document, currentTarget, isVisibleElement)) return;
       await delay(CHART_ORDERS_MENU_POLL_MS);
     }
-    if (findActiveBinanceChartOrdersPopover(document, isVisibleElement)) {
+    if (findActiveBinanceChartOrdersPopover(document, currentTarget, isVisibleElement)) {
       throw new Error('Binance chart OpenOrders popover did not close');
     }
   }
@@ -3104,7 +3108,7 @@ import {
       writeChartOrdersRecoveryRecord();
       state.changed = true;
       current.checkbox.click();
-      await waitForBinanceChartOrdersPopover(false);
+      await waitForBinanceChartOrdersPopover(target, false);
     }
     await closeBinanceChartOrdersPopover(target);
   }
@@ -3114,7 +3118,7 @@ import {
     const current = await openBinanceChartOrdersPopover(target);
     if (current.checked !== state.originalChecked) {
       current.checkbox.click();
-      await waitForBinanceChartOrdersPopover(state.originalChecked);
+      await waitForBinanceChartOrdersPopover(target, state.originalChecked);
     }
     await closeBinanceChartOrdersPopover(target);
     clearChartOrdersRecoveryRecord();

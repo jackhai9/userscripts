@@ -513,17 +513,25 @@ test('bulk cancel hides Binance OpenOrders before opening the native dialog and 
   assert.match(hideBody, /state\.originalChecked = current\.checked/);
   assert.match(hideBody, /writeChartOrdersRecoveryRecord\(\)[\s\S]*state\.changed = true/);
   assert.match(hideBody, /state\.changed = true[\s\S]*current\.checkbox\.click\(\)/);
-  assert.match(hideBody, /await waitForBinanceChartOrdersPopover\(false\)/);
+  assert.match(hideBody, /await waitForBinanceChartOrdersPopover\(target, false\)/);
   assert.match(hideBody, /await closeBinanceChartOrdersPopover\(target\)/);
 
   const closeBody = readFunctionBody('closeBinanceChartOrdersPopover');
+  assert.match(closeBody, /currentTarget\.chartRoot/);
+  assert.doesNotMatch(closeBody, /currentTarget\.frame/);
   assert.match(closeBody, /throw new Error\('Binance chart OpenOrders popover did not close'\)/);
+
+  const waitBody = readFunctionBody('waitForBinanceChartOrdersPopover');
+  assert.match(
+    waitBody,
+    /findActiveBinanceChartOrdersPopover\(document, target, isVisibleElement\)/,
+  );
 
   const restoreBody = readFunctionBody('restoreBinanceChartOrdersAfterBulkCancel');
   assert.match(restoreBody, /assertSameBinanceChartOrdersTarget\(target, getBinanceChartOrdersTarget\(\)\)/);
   assert.match(restoreBody, /const current = await openBinanceChartOrdersPopover\(target\)/);
   assert.match(restoreBody, /current\.checked !== state\.originalChecked/);
-  assert.match(restoreBody, /await waitForBinanceChartOrdersPopover\(state\.originalChecked\)/);
+  assert.match(restoreBody, /await waitForBinanceChartOrdersPopover\(target, state\.originalChecked\)/);
   assert.match(restoreBody, /await closeBinanceChartOrdersPopover\(target\)/);
   assert.match(restoreBody, /clearChartOrdersRecoveryRecord\(\)/);
 

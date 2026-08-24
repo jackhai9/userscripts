@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.74
+// @version      2.7.75
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1044,35 +1044,30 @@
   }
 
   // src/binance-orderbook-trade/dom/chart-orders.js
-  var BINANCE_CHART_IFRAME_SELECTOR = '#chart_futures-tradingview > iframe[id^="tradingview_"]';
-  var CHART_PANEL_SELECTOR = ".bn-flex.h-full.flex-col";
+  var CHART_ROOT_SELECTOR = ".chart-widget-root";
   var CHART_TOOLBAR_SELECTOR = ".flex.items-center.gap-\\[--space-m\\]";
   var ACTIVE_POPOVER_SELECTOR = ".bn-bubble.active";
   var OPEN_ORDERS_LABEL_PATTERN = /^(?:当前委托|Open Orders)$/i;
   function normalizeLabel(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
+  function hasVisibleBox(element) {
+    if (!element?.getClientRects().length) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
   function findBinanceChartOrdersTarget(document2) {
-    const frames = Array.from(document2.querySelectorAll(BINANCE_CHART_IFRAME_SELECTOR));
-    if (!frames.length) return null;
-    if (frames.length > 1) {
-      throw new Error(`Expected one Binance chart iframe, found ${frames.length}`);
+    const chartRoots = Array.from(document2.querySelectorAll(CHART_ROOT_SELECTOR)).filter(hasVisibleBox);
+    if (!chartRoots.length) return null;
+    if (chartRoots.length > 1) {
+      throw new Error(`Expected one visible Binance chart root, found ${chartRoots.length}`);
     }
-    const frame = frames[0];
-    const chartRoot = frame.closest(".chart-widget-root");
-    if (!chartRoot) return null;
-    const panels = Array.from(chartRoot.querySelectorAll(CHART_PANEL_SELECTOR)).filter((panel2) => panel2.children.length >= 2 && panel2.children[1].contains(frame));
-    if (!panels.length) return null;
-    if (panels.length > 1) {
-      throw new Error(`Expected one Binance chart panel, found ${panels.length}`);
-    }
-    const panel = panels[0];
-    const header = panel.children[0];
-    const toolbars = Array.from(header.querySelectorAll(CHART_TOOLBAR_SELECTOR)).filter((toolbar2) => {
+    const chartRoot = chartRoots[0];
+    const toolbars = Array.from(chartRoot.querySelectorAll(CHART_TOOLBAR_SELECTOR)).filter((toolbar2) => {
       if (toolbar2.children.length < 2) return false;
       const trigger2 = toolbar2.children[toolbar2.children.length - 2];
       const latestPriceSlot = toolbar2.children[toolbar2.children.length - 1];
-      return trigger2.matches(".bn-tooltips-wrap.bn-tooltips-web") && latestPriceSlot.matches(".contents");
+      return hasVisibleBox(toolbar2) && hasVisibleBox(trigger2) && hasVisibleBox(latestPriceSlot) && trigger2.matches(".bn-tooltips-wrap.bn-tooltips-web") && latestPriceSlot.matches(".contents");
     });
     if (!toolbars.length) return null;
     if (toolbars.length > 1) {
@@ -1081,7 +1076,22 @@
     const toolbar = toolbars[0];
     const trigger = toolbar.children[toolbar.children.length - 2];
     if (!trigger) throw new Error("Binance chart orders menu trigger is unavailable");
-    return { frame, chartRoot, trigger };
+    const popoverReferences = Array.from(
+      trigger.querySelectorAll(".bn-tooltips-ele[aria-describedby]")
+    );
+    if (popoverReferences.length !== 1) {
+      throw new Error(
+        `Expected one Binance chart orders popover reference, found ${popoverReferences.length}`
+      );
+    }
+    const popoverId = popoverReferences[0].getAttribute("aria-describedby");
+    if (!popoverId) throw new Error("Binance chart orders popover id is unavailable");
+    return {
+      chartRoot,
+      toolbar,
+      trigger,
+      popoverId
+    };
   }
   function getBinanceChartOrdersTarget(document2) {
     const target = findBinanceChartOrdersTarget(document2);
@@ -1092,27 +1102,27 @@
     if (!capturedTarget || !currentTarget) {
       throw new Error("Binance chart orders target is unavailable");
     }
-    if (capturedTarget.frame !== currentTarget.frame || capturedTarget.chartRoot !== currentTarget.chartRoot) {
+    if (capturedTarget.chartRoot !== currentTarget.chartRoot || capturedTarget.toolbar !== currentTarget.toolbar || capturedTarget.trigger !== currentTarget.trigger || capturedTarget.popoverId !== currentTarget.popoverId) {
       throw new Error("Binance chart orders target changed");
     }
   }
-  function findActiveBinanceChartOrdersPopover(document2, isVisibleElement) {
-    const candidates = Array.from(document2.querySelectorAll(ACTIVE_POPOVER_SELECTOR)).filter(isVisibleElement).map((popover) => {
-      const checkboxes = Array.from(popover.querySelectorAll('[role="checkbox"]')).filter(isVisibleElement);
-      if (checkboxes.length !== 8) return null;
-      const checkbox = checkboxes[1];
-      const label = normalizeLabel(checkbox.textContent);
-      if (!OPEN_ORDERS_LABEL_PATTERN.test(label)) return null;
-      const checkedValue = checkbox.getAttribute("aria-checked");
-      if (checkedValue !== "true" && checkedValue !== "false") {
-        throw new Error(`Binance chart OpenOrders state is ${checkedValue}`);
-      }
-      return { popover, checkbox, checked: checkedValue === "true" };
-    }).filter(Boolean);
-    if (candidates.length > 1) {
-      throw new Error(`Expected at most one Binance chart OpenOrders popover, found ${candidates.length}`);
+  function findActiveBinanceChartOrdersPopover(document2, target, isVisibleElement) {
+    if (!target?.popoverId) throw new Error("Binance chart orders target is unavailable");
+    const popover = document2.getElementById(target.popoverId);
+    if (!popover || !popover.matches(ACTIVE_POPOVER_SELECTOR) || !isVisibleElement(popover)) {
+      return null;
     }
-    return candidates[0] || null;
+    const checkboxes = Array.from(popover.querySelectorAll('[role="checkbox"]')).filter(isVisibleElement).filter((checkbox2) => OPEN_ORDERS_LABEL_PATTERN.test(normalizeLabel(checkbox2.textContent)));
+    if (!checkboxes.length) return null;
+    if (checkboxes.length > 1) {
+      throw new Error(`Expected one Binance chart OpenOrders checkbox, found ${checkboxes.length}`);
+    }
+    const checkbox = checkboxes[0];
+    const checkedValue = checkbox.getAttribute("aria-checked");
+    if (checkedValue !== "true" && checkedValue !== "false") {
+      throw new Error(`Binance chart OpenOrders state is ${checkedValue}`);
+    }
+    return { popover, checkbox, checked: checkedValue === "true" };
   }
 
   // src/binance-orderbook-trade/index.user.js
@@ -3563,16 +3573,16 @@
         }));
       }
     }
-    async function waitForBinanceChartOrdersPopover(expectedChecked = null) {
+    async function waitForBinanceChartOrdersPopover(target, expectedChecked = null) {
       const deadline = Date.now() + CHART_ORDERS_MENU_TIMEOUT_MS;
       while (Date.now() < deadline) {
-        const current2 = findActiveBinanceChartOrdersPopover(document, isVisibleElement);
+        const current2 = findActiveBinanceChartOrdersPopover(document, target, isVisibleElement);
         if (current2 && (expectedChecked === null || current2.checked === expectedChecked)) {
           return current2;
         }
         await delay(CHART_ORDERS_MENU_POLL_MS);
       }
-      const current = findActiveBinanceChartOrdersPopover(document, isVisibleElement);
+      const current = findActiveBinanceChartOrdersPopover(document, target, isVisibleElement);
       if (current && (expectedChecked === null || current.checked === expectedChecked)) return current;
       throw new Error(expectedChecked === null ? "Binance chart OpenOrders popover did not open" : `Binance chart OpenOrders state did not become ${expectedChecked}`);
     }
@@ -3583,34 +3593,38 @@
         currentTarget.trigger,
         ["pointerover", "mouseover", "mouseenter"]
       );
-      return waitForBinanceChartOrdersPopover();
+      return waitForBinanceChartOrdersPopover(currentTarget);
     }
     async function closeBinanceChartOrdersPopover(target) {
       const currentTarget = getBinanceChartOrdersTarget2();
       assertSameBinanceChartOrdersTarget(target, currentTarget);
-      const current = findActiveBinanceChartOrdersPopover(document, isVisibleElement);
+      const current = findActiveBinanceChartOrdersPopover(
+        document,
+        currentTarget,
+        isVisibleElement
+      );
       if (!current) return;
       dispatchChartOrdersPointerEvents(
         current.popover,
         ["pointerout", "mouseout", "mouseleave"],
-        currentTarget.frame
+        currentTarget.chartRoot
       );
       dispatchChartOrdersPointerEvents(
         currentTarget.trigger,
         ["pointerout", "mouseout", "mouseleave"],
-        currentTarget.frame
+        currentTarget.chartRoot
       );
       dispatchChartOrdersPointerEvents(
-        currentTarget.frame,
+        currentTarget.chartRoot,
         ["pointerover", "mouseover", "mouseenter"],
         currentTarget.trigger
       );
       const deadline = Date.now() + CHART_ORDERS_MENU_TIMEOUT_MS;
       while (Date.now() < deadline) {
-        if (!findActiveBinanceChartOrdersPopover(document, isVisibleElement)) return;
+        if (!findActiveBinanceChartOrdersPopover(document, currentTarget, isVisibleElement)) return;
         await delay(CHART_ORDERS_MENU_POLL_MS);
       }
-      if (findActiveBinanceChartOrdersPopover(document, isVisibleElement)) {
+      if (findActiveBinanceChartOrdersPopover(document, currentTarget, isVisibleElement)) {
         throw new Error("Binance chart OpenOrders popover did not close");
       }
     }
@@ -3621,7 +3635,7 @@
         writeChartOrdersRecoveryRecord();
         state.changed = true;
         current.checkbox.click();
-        await waitForBinanceChartOrdersPopover(false);
+        await waitForBinanceChartOrdersPopover(target, false);
       }
       await closeBinanceChartOrdersPopover(target);
     }
@@ -3630,7 +3644,7 @@
       const current = await openBinanceChartOrdersPopover(target);
       if (current.checked !== state.originalChecked) {
         current.checkbox.click();
-        await waitForBinanceChartOrdersPopover(state.originalChecked);
+        await waitForBinanceChartOrdersPopover(target, state.originalChecked);
       }
       await closeBinanceChartOrdersPopover(target);
       clearChartOrdersRecoveryRecord();
