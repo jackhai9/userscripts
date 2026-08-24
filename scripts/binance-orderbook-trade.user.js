@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.73
+// @version      2.7.74
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2171,10 +2171,10 @@
       const precisionMessage = selectionBusy ? "调整中" : busy ? formatOrderbookPrecisionBusyStatus(status) : status === "ready" ? `推荐 ${recommendationText}` : status;
       const recommendationHtml = [
         `<div style="margin-top:8px;color:${MUTED_TEXT_COLOR};font-size:12px;">`,
-        '<div style="display:grid;grid-template-columns:36px 32px 72px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden;">',
-        '<span style="font-size:14px;">缩放</span>',
-        `<button type="button" data-orderbook-precision-adjust="DECREASE"${decreaseDisabledAttrs} aria-label="减小缩放" title="切换到小 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">-</button>`,
+        '<div style="display:grid;grid-template-columns:78px 72px 32px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden;">',
+        '<span style="font-size:14px;white-space:nowrap;">订单簿缩放</span>',
         `<span title="当前缩放 ${currentText}" style="min-width:0;height:32px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;background:${CONTROL_BACKGROUND_COLOR};text-align:center;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:30px;color:${PRIMARY_EMPHASIS_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
+        `<button type="button" data-orderbook-precision-adjust="DECREASE"${decreaseDisabledAttrs} aria-label="减小缩放" title="切换到小 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">-</button>`,
         `<button type="button" data-orderbook-precision-adjust="INCREASE"${increaseDisabledAttrs} aria-label="增大缩放" title="切换到大 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">+</button>`,
         "</div>",
         '<div style="display:grid;grid-template-columns:84px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden;">',
@@ -4737,23 +4737,6 @@
         "</div>"
       ].join("");
     }
-    function ladderStepRow(mode, symbol, precision) {
-      const value = getLadderStep(mode, symbol, precision);
-      const decDisabled = value <= LADDER_STEP_MIN;
-      const incDisabled = value >= LADDER_STEP_MAX;
-      const stepButton = (action, label, disabled) => {
-        const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : "";
-        return `<button type="button" data-ladder-step-action="${action}"${disabledAttrs} style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:16px;line-height:26px;${NEUTRAL_CONTROL_STYLE}">${label}</button>`;
-      };
-      return [
-        '<div style="display:grid;grid-template-columns:28px repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">',
-        `<span style="color:${MUTED_TEXT_COLOR};font-size:13px;">幅</span>`,
-        stepButton("dec", "-", decDisabled),
-        `<span style="box-sizing:border-box;width:100%;min-width:0;height:28px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;background:${CONTROL_BACKGROUND_COLOR};color:${PRIMARY_EMPHASIS_COLOR};font-size:13px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:26px;text-align:center;">${value}</span>`,
-        stepButton("inc", "+", incDisabled),
-        "</div>"
-      ].join("");
-    }
     function ladderActionButton(actionType, label, tone, disabled = false) {
       const isBuyTone = tone === "BUY";
       const borderColor = isBuyTone ? "var(--color-Buy)" : "var(--color-Sell)";
@@ -4774,7 +4757,7 @@
         return [
           ladderOptionRow("量", LADDER_OPEN_PERCENTS, getLadderOpenPercent(symbol, precision), "percent", "%"),
           ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
-          ladderStepRow(tradeMode, symbol, precision),
+          ladderOptionRow("幅", LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), "step", ""),
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
           ladderActionButton("OPEN_LONG", "阶梯开多", "BUY", actionDisabled),
           ladderActionButton("OPEN_SHORT", "阶梯开空", "SELL", actionDisabled),
@@ -4786,7 +4769,7 @@
       return [
         ladderOptionRow("量", LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol, precision), "percent", "%"),
         ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
-        ladderStepRow(tradeMode, symbol, precision),
+        ladderOptionRow("幅", LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), "step", ""),
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
         ladderActionButton("CLOSE_LONG", "阶梯平多", "SELL", closeLongDisabled),
         ladderActionButton("CLOSE_SHORT", "阶梯平空", "BUY", closeShortDisabled),
@@ -4834,6 +4817,9 @@
       const input = panel.querySelector(`#${INPUT_ID}`);
       const minEl = panel.querySelector("#jh-binance-close-qty-min");
       const finalEl = panel.querySelector("#jh-binance-close-qty-final");
+      const formulaPrefixEl = panel.querySelector("[data-multiplier-formula-prefix]");
+      const constraintDividerEl = panel.querySelector("[data-multiplier-constraint-divider]");
+      const calculationEl = panel.querySelector("[data-multiplier-calculation]");
       const hintEl = panel.querySelector(`#${MODE_HINT_ID}`);
       const multiplierHintEl = panel.querySelector(`#${MULTIPLIER_HINT_ID}`);
       const decBtn = panel.querySelector(`#${DEC_ID}`);
@@ -4854,31 +4840,41 @@
       const { knowsLong, knowsShort, hasLong, hasShort, isUsingCache } = closeContext;
       const rawCloseReady = rawCloseContext.knowsLong && rawCloseContext.knowsShort;
       const closeMode = hasLong && hasShort ? "dual" : hasLong ? "single_long" : hasShort ? "single_short" : "unknown";
-      if (minEl) {
-        if (!precisionReady) {
-          minEl.textContent = "等待订单簿缩放值";
-        } else if (!modeReady) {
-          minEl.textContent = "等待开仓/平仓状态";
-        } else if (rulesPending) {
-          minEl.textContent = "最小量读取中";
-        } else if (tradeMode === "OPEN" && qtyRuleContext?.minNotionalQty && qtyRuleContext?.referencePrice) {
-          minEl.textContent = `最小 ${effectiveMinQty} (>=${qtyRuleContext.minNotional}U @ ${qtyRuleContext.referencePrice})`;
-        } else if (effectiveMinQty) {
-          minEl.textContent = `最小 ${effectiveMinQty}`;
-        } else {
-          minEl.textContent = "最小量读取中";
+      let formulaPrefixText = "";
+      let finalText = "";
+      let constraintText = "";
+      if (!precisionReady) {
+        finalText = "等待订单簿缩放值";
+      } else if (!modeReady) {
+        finalText = "等待开仓/平仓状态";
+      } else if (rulesPending || !effectiveMinQty) {
+        finalText = "最小量读取中";
+      } else if (isValidMultiplier(multiplier) && finalQty) {
+        formulaPrefixText = `${effectiveMinQty} × ${multiplier} =`;
+        finalText = finalQty;
+        if (tradeMode === "OPEN" && qtyRuleContext?.minNotionalQty && qtyRuleContext?.referencePrice) {
+          constraintText = `≥${qtyRuleContext.minNotional}U @ ${qtyRuleContext.referencePrice}`;
         }
-        minEl.title = minEl.textContent;
+      } else {
+        finalText = "请输入正整数倍数";
+      }
+      if (formulaPrefixEl) {
+        formulaPrefixEl.textContent = formulaPrefixText;
+        formulaPrefixEl.style.display = formulaPrefixText ? "inline" : "none";
       }
       if (finalEl) {
-        if (!numericContextReady || rulesPending) {
-          finalEl.textContent = "--";
-        } else if (isValidMultiplier(multiplier) && finalQty && effectiveMinQty) {
-          finalEl.textContent = `${effectiveMinQty} x ${multiplier} = ${finalQty}`;
-        } else {
-          finalEl.textContent = "请输入正整数倍数";
-        }
-        finalEl.title = finalEl.textContent;
+        finalEl.textContent = finalText;
+        finalEl.style.color = formulaPrefixText ? PRIMARY_EMPHASIS_COLOR : MUTED_TEXT_COLOR;
+      }
+      if (constraintDividerEl) {
+        constraintDividerEl.style.display = constraintText ? "block" : "none";
+      }
+      if (minEl) {
+        minEl.textContent = constraintText;
+        minEl.style.display = constraintText ? "block" : "none";
+      }
+      if (calculationEl) {
+        calculationEl.title = [formulaPrefixText, finalText, constraintText].filter(Boolean).join(" ");
       }
       if (multiplierHintEl) {
         if (tradeMode === "OPEN") {
@@ -5050,9 +5046,11 @@
         `<button id="${DEC_ID}" type="button" aria-label="减少倍数" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">-</button>`,
         `<button id="${INC_ID}" type="button" aria-label="增加倍数" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">+</button>`,
         "</div>",
-        '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden;">',
-        `<span id="jh-binance-close-qty-min" style="min-width:0;color:${MUTED_TEXT_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
-        `<span id="jh-binance-close-qty-final" style="min-width:0;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};color:${PRIMARY_EMPHASIS_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
+        '<div data-multiplier-calculation style="display:flex;align-items:center;gap:7px;height:18px;margin-top:4px;overflow:hidden;white-space:nowrap;">',
+        `<span data-multiplier-formula-prefix style="flex:0 1 auto;min-width:0;color:${MUTED_TEXT_COLOR};overflow:hidden;text-overflow:ellipsis;"></span>`,
+        `<span id="jh-binance-close-qty-final" style="flex:0 0 auto;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};color:${PRIMARY_EMPHASIS_COLOR};"></span>`,
+        `<span data-multiplier-constraint-divider aria-hidden="true" style="display:none;flex:0 0 1px;width:1px;height:12px;background:${CONTROL_BORDER_COLOR};"></span>`,
+        `<span id="jh-binance-close-qty-min" style="display:none;flex:1 1 auto;min-width:0;color:${MUTED_TEXT_COLOR};overflow:hidden;text-overflow:ellipsis;"></span>`,
         "</div>",
         "</div>",
         `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}"></div>`,
@@ -5187,20 +5185,9 @@
           if (group === "levels") {
             setLadderLevels(value, optionContext.mode, optionContext.symbol, optionContext.precision);
           }
-          return;
-        }
-        const stepBtn = target.closest("[data-ladder-step-action]");
-        if (stepBtn) {
-          if (stepBtn.disabled || stepBtn.getAttribute("aria-disabled") === "true") return;
-          const optionContext = getPanelOptionContext();
-          if (!optionContext) return;
-          const delta = stepBtn.getAttribute("data-ladder-step-action") === "inc" ? 1 : -1;
-          setLadderStep(
-            getLadderStep(optionContext.mode, optionContext.symbol, optionContext.precision) + delta,
-            optionContext.mode,
-            optionContext.symbol,
-            optionContext.precision
-          );
+          if (group === "step") {
+            setLadderStep(value, optionContext.mode, optionContext.symbol, optionContext.precision);
+          }
           return;
         }
         const precisionAdjustBtn = target.closest("[data-orderbook-precision-adjust]");

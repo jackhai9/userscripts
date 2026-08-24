@@ -226,8 +226,7 @@ test('ladder execution and UI updates use one captured mode-symbol-precision con
   assert.match(source, /spec\.mode === 'CLOSE' \? getLadderClosePercent\(startSymbol, startPrecision\) : null/);
   assert.match(source, /const optionContext = getPanelOptionContext\(\)/);
   assert.match(source, /setLadderLevels\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
-  assert.match(source, /getLadderStep\(optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
-  assert.match(source, /setLadderStep\([\s\S]*?optionContext\.mode,[\s\S]*?optionContext\.symbol,[\s\S]*?optionContext\.precision,[\s\S]*?\)/);
+  assert.match(source, /setLadderStep\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
   assert.match(source, /plan\.ladderStep === DEFAULT_LADDER_STEP \? '' : `\/幅\$\{plan\.ladderStep\}`/);
 });
 
@@ -236,17 +235,14 @@ test('open and close ladder percentage rows share the quantity label', () => {
   assert.doesNotMatch(source, /ladderOptionRow\('[开平]',/);
 });
 
-test('ladder quantity levels and step controls share one stable five-slot grid', () => {
+test('ladder quantity levels and step options share one stable five-slot grid', () => {
   const optionRow = source.match(/function ladderOptionRow[\s\S]*?\n  }/)?.[0] || '';
-  const stepRow = source.match(/function ladderStepRow[\s\S]*?\n  }/)?.[0] || '';
 
   assert.match(optionRow, /grid-template-columns:28px repeat\(5,minmax\(0,1fr\)\)/);
-  assert.match(stepRow, /grid-template-columns:28px repeat\(5,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(optionRow, /flex-wrap/);
-  assert.doesNotMatch(stepRow, /flex-wrap/);
   assert.match(source, /data-ladder-value="\$\{value\}" style="box-sizing:border-box;width:100%;min-width:0;height:28px/);
-  assert.match(stepRow, /data-ladder-step-action="\$\{action\}"[^`]*font-size:16px;line-height:26px/);
-  assert.match(stepRow, /color:\$\{PRIMARY_EMPHASIS_COLOR\};font-size:13px;font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\};line-height:26px;text-align:center/);
+  assert.equal((source.match(/ladderOptionRow\('幅', LADDER_STEP_OPTIONS/g) || []).length, 2);
+  assert.doesNotMatch(source, /data-ladder-step-action|function ladderStepRow/);
 });
 
 test('close ladder buttons match the Binance native long-short order', () => {
