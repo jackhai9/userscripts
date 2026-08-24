@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.76
+// @version      2.7.77
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2176,6 +2176,8 @@
       const adjustButtonBaseStyle = `width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;`;
       const decreaseDisabledAttrs = canDecrease ? "" : ' disabled aria-disabled="true"';
       const increaseDisabledAttrs = canIncrease ? "" : ' disabled aria-disabled="true"';
+      const decreaseTitle = controlsBusy ? "缩放调整暂不可用" : decreaseTarget ? "切换到小 10 倍的原生缩放档" : "已达到最小原生缩放档";
+      const increaseTitle = controlsBusy ? "缩放调整暂不可用" : increaseTarget ? "切换到大 10 倍的原生缩放档" : "已达到最大原生缩放档";
       const currentText = current || "--";
       const recommendationText = recommendation || "--";
       const precisionMessage = selectionBusy ? "调整中" : busy ? formatOrderbookPrecisionBusyStatus(status) : status === "ready" ? `推荐 ${recommendationText}` : status;
@@ -2184,8 +2186,8 @@
         '<div style="display:grid;grid-template-columns:78px 72px 32px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden;">',
         '<span style="font-size:14px;white-space:nowrap;">订单簿缩放</span>',
         `<span title="当前缩放 ${currentText}" style="min-width:0;height:32px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;background:${CONTROL_BACKGROUND_COLOR};text-align:center;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:30px;color:${PRIMARY_EMPHASIS_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
-        `<button type="button" data-orderbook-precision-adjust="DECREASE"${decreaseDisabledAttrs} aria-label="减小缩放" title="切换到小 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">-</button>`,
-        `<button type="button" data-orderbook-precision-adjust="INCREASE"${increaseDisabledAttrs} aria-label="增大缩放" title="切换到大 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">+</button>`,
+        `<button type="button" data-orderbook-precision-adjust="DECREASE"${decreaseDisabledAttrs} aria-label="减小缩放" title="${decreaseTitle}" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">-</button>`,
+        `<button type="button" data-orderbook-precision-adjust="INCREASE"${increaseDisabledAttrs} aria-label="增大缩放" title="${increaseTitle}" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">+</button>`,
         "</div>",
         '<div style="display:grid;grid-template-columns:84px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden;">',
         `<span title="${precisionMessage}" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${precisionMessage}</span>`,
