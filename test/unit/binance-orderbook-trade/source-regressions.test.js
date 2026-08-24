@@ -207,10 +207,10 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
 test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="height:18px;line-height:18px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
-  assert.match(source, /grid-template-columns:28px 28px 38px 28px;align-items:center;justify-content:start;gap:4px;height:24px;overflow:hidden/);
+  assert.match(source, /grid-template-columns:36px 32px 60px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /grid-template-columns:68px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
   assert.match(source, /buttonBaseStyle = 'width:44px;height:24px;[^']*font-size:12px;line-height:22px;'/);
-  assert.match(source, /adjustButtonBaseStyle = 'width:28px;height:24px;[^']*font-size:14px;line-height:22px;'/);
+  assert.match(source, /adjustButtonBaseStyle = 'width:32px;height:32px;[^']*font-size:18px;line-height:30px;'/);
   assert.doesNotMatch(source, /data-orderbook-precision-status/);
 
   const ladderBody = readFunctionBody('refreshLadderPanel');
@@ -612,6 +612,8 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
   assert.match(refreshBody, /buttonBaseStyle = 'width:44px;height:24px;[^']*padding:0;[^']*font-size:12px;line-height:22px;/);
   assert.match(refreshBody, /margin-top:8px;[^']*font-size:12px;/);
+  assert.match(refreshBody, /<span style="font-size:14px;">缩放<\/span>/);
+  assert.match(refreshBody, /当前缩放 \$\{currentText\}[^`]*height:32px;[^`]*font-size:15px;[^`]*line-height:30px/);
   const decreaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="DECREASE"');
   const currentIndex = refreshBody.indexOf('>\${currentText}</span>');
   const increaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="INCREASE"');
@@ -879,8 +881,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.65/);
-  assert.match(generatedSource, /@version\s+2\.7\.65/);
+  assert.match(source, /@version\s+2\.7\.66/);
+  assert.match(generatedSource, /@version\s+2\.7\.66/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
