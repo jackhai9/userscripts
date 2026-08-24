@@ -20,6 +20,20 @@ function readFunctionBody(name, sourceText = source) {
   assert.fail(`${name} body should be closed`);
 }
 
+function readUserscriptVersion(sourceText) {
+  const match = sourceText.match(/^\/\/ @version\s+(\S+)\s*$/m);
+  assert.notEqual(match, null, 'userscript version metadata should exist');
+  return match[1];
+}
+
+test('source and generated userscript versions stay synchronized', () => {
+  const sourceVersion = readUserscriptVersion(source);
+  const generatedVersion = readUserscriptVersion(generatedSource);
+
+  assert.match(sourceVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(generatedVersion, sourceVersion);
+});
+
 test('symbol-change polling is stopped while the tab is hidden', () => {
   assert.doesNotMatch(source, /\n  setInterval\(checkSymbolChangeForLeverage,\s*500\);/);
   assert.match(source, /function startSymbolChangeTimer\(\)/);
@@ -988,8 +1002,6 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.74/);
-  assert.match(generatedSource, /@version\s+2\.7\.74/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
