@@ -828,6 +828,11 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(openOptionsBody, /triggerElement\.closest\?\.\('\.bn-tooltips-ele'\)/);
   assert.match(openOptionsBody, /clickTarget\.closest\('#futuresOrderbook \.orderbook-tickSize'\)/);
   assert.match(openOptionsBody, /clickDomTarget\(clickTarget\)/);
+  const deferIndex = openOptionsBody.indexOf('await delay(0)');
+  const clickIndex = openOptionsBody.indexOf('clickDomTarget(clickTarget)');
+  assert.ok(deferIndex >= 0, 'native precision click should leave the shortcut click event first');
+  assert.ok(deferIndex < clickIndex, 'native precision click must run after the event-loop handoff');
+  assert.match(openOptionsBody, /!triggerElement\.isConnected \|\| !clickTarget\.isConnected/);
   assert.match(openOptionsBody, /return waitForVisibleOrderbookPrecisionOptions\(triggerElement\)/);
   assert.doesNotMatch(openOptionsBody, /candidates|for \(const target|dispatchOrderbookPrecisionToggleSequence/);
 
