@@ -51,6 +51,21 @@ test('permanent trade-mode observer is scoped to the trade tab root', () => {
   assert.match(observerBody, /getTradeModeObserverRoot\(\)/);
 });
 
+test('close snapshot validation refreshes button scope before checking close actions', () => {
+  const waitStart = source.indexOf('function waitForTradeUiMutation');
+  const waitEnd = source.indexOf('function handleTradeModeTabTransition', waitStart);
+  const waitBody = source.slice(waitStart, waitEnd);
+  const invalidateIndex = waitBody.indexOf('invalidateTradeButtonCache()');
+  const closeButtonIndex = waitBody.indexOf('findCloseLongButton()');
+
+  assert.notEqual(waitStart, -1);
+  assert.notEqual(waitEnd, -1);
+  assert.notEqual(invalidateIndex, -1);
+  assert.notEqual(closeButtonIndex, -1);
+  assert.ok(invalidateIndex < closeButtonIndex);
+  assert.match(waitBody, /closeQuantityChanged[\s\S]*findCloseLongButton\(\)[\s\S]*findCloseShortButton\(\)[\s\S]*snapshotReady = true/);
+});
+
 test('cancel-symbol flow restores temporary symbol filter through cleanup path', () => {
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /finally\s*\{/);
@@ -355,7 +370,10 @@ test('direction selector is a compact mutually exclusive radio group', () => {
   assert.match(refreshBody, /hintEl\.textContent = '仓位确认中'/);
   assert.match(refreshBody, /hintEl\.textContent = '暂无可平仓位'/);
   assert.doesNotMatch(refreshBody, /正在读取仓位|正在刷新仓位|暂未识别仓位/);
-  assert.match(refreshBody, /const rawCloseReady = rawCloseContext\.knowsLong && rawCloseContext\.knowsShort/);
+  assert.match(
+    refreshBody,
+    /const rawCloseReady = !closeContext\.isPending\s*&& rawCloseContext\.knowsLong\s*&& rawCloseContext\.knowsShort/
+  );
   assert.ok(refreshBody.indexOf('!rawCloseReady') < refreshBody.indexOf("closeMode === 'single_long'"));
   assert.match(refreshBody, /sideLongBtn\.setAttribute\('aria-checked', String\(isActive\)\)/);
   assert.match(refreshBody, /sideShortBtn\.setAttribute\('aria-checked', String\(isActive\)\)/);
@@ -925,18 +943,26 @@ test('close state is committed only for the currently observed symbol', () => {
 
 test('close execution and close-ladder sizing reject display cache', () => {
   const actionBody = readFunctionBody('resolveCloseAction');
-  assert.match(actionBody, /const rawCloseContext = readCloseContext\(\)/);
+  assert.match(actionBody, /isCloseSnapshotReady\(currentSymbol\)/);
+  assert.match(actionBody, /const rawCloseContext = readCloseContext\(currentSymbol\)/);
   assert.match(actionBody, /resolveConfirmedCloseDirection\(rawCloseContext/);
   assert.doesNotMatch(actionBody, /lastDisplayCloseState/);
 
   const closeBaseBody = readFunctionBody('readCloseBaseQtyForLadder');
-  assert.match(closeBaseBody, /const raw = readCloseContext\(\)/);
+  assert.match(closeBaseBody, /isCloseSnapshotReady\(symbol\)/);
+  assert.match(closeBaseBody, /const raw = readCloseContext\(symbol\)/);
   assert.match(closeBaseBody, /raw\.knowsLong && raw\.knowsShort/);
   assert.doesNotMatch(closeBaseBody, /resolveDisplayCloseState/);
 
   const refreshBody = readFunctionBody('refreshComputedInfo');
   assert.match(refreshBody, /const rawCloseContext = readCloseContext\(\)/);
   assert.match(refreshBody, /syncNativeCloseButtons\(tradeMode, rawCloseContext\)/);
+  assert.equal((refreshBody.match(/closeContext\.isPending \|\|/g) || []).length, 2);
+
+  const ladderRowsBody = readFunctionBody('getLadderActionRows');
+  assert.match(ladderRowsBody, /const closePending = closeContext\?\.isPending === true/);
+  assert.match(ladderRowsBody, /closeLongDisabled = actionDisabled \|\| closePending/);
+  assert.match(ladderRowsBody, /closeShortDisabled = actionDisabled \|\| closePending/);
   assert.doesNotMatch(source, /applyCachedNativeCloseButtonState/);
 });
 
