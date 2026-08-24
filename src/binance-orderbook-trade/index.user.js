@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.61
+// @version      2.7.62
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1386,13 +1386,16 @@ import {
     const buttonBaseStyle = 'height:32px;padding:0 12px;border-radius:6px;border:1px solid #d5d9e2;font-size:14px;line-height:30px;';
     const recommendationText = recommendation || '--';
     const displayStatus = busy ? formatOrderbookPrecisionBusyStatus(status) : status;
-    const statusText = displayStatus === 'ready' ? '' : `<span>${displayStatus}</span>`;
+    const statusText = displayStatus === 'ready' ? '' : displayStatus;
+    const statusVisibility = statusText ? 'visible' : 'hidden';
     const recommendationHtml = [
-      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;color:#76808f;font-size:14px;">',
-      `<span>缩放 推荐 ${recommendationText}</span>`,
+      '<div style="margin-top:8px;color:#76808f;font-size:14px;">',
+      '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;height:32px;overflow:hidden;">',
+      `<span title="缩放 推荐 ${recommendationText}" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">缩放 推荐 ${recommendationText}</span>`,
       `<button type="button" data-orderbook-precision-apply="true"${canApply ? '' : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
       `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? '' : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${refreshButtonStyle}">刷新</button>`,
-      statusText,
+      '</div>',
+      `<div data-orderbook-precision-status="true" title="${statusText}" style="height:18px;line-height:18px;margin-top:2px;visibility:${statusVisibility};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${statusText}</div>`,
       '</div>',
     ].join('');
     if (el.innerHTML !== recommendationHtml) {
@@ -4370,7 +4373,7 @@ import {
     }
     if (status) {
       status.textContent = ladderStatusText;
-      status.style.display = expanded || ladderTask || ladderStatusText !== '空闲' ? 'block' : 'none';
+      status.style.visibility = expanded || ladderTask || ladderStatusText !== '空闲' ? 'visible' : 'hidden';
     }
   }
 
@@ -4411,6 +4414,7 @@ import {
       } else {
         minEl.textContent = '最小量读取中';
       }
+      minEl.title = minEl.textContent;
     }
     if (finalEl) {
       if (!numericContextReady || rulesPending) {
@@ -4420,6 +4424,7 @@ import {
       } else {
         finalEl.textContent = '请输入正整数倍数';
       }
+      finalEl.title = finalEl.textContent;
     }
     if (hintEl) {
       if (tradeMode === 'OPEN') {
@@ -4439,6 +4444,7 @@ import {
       } else {
         hintEl.textContent = '平仓模式：暂未识别到可平仓位';
       }
+      hintEl.title = hintEl.textContent;
     }
     if (decBtn) {
       decBtn.disabled = !numericContextReady || Number(multiplier) <= 1;
@@ -4609,20 +4615,20 @@ import {
         '<span style="font-size:13px;font-weight:500;color:#5e6673;">倍</span>' +
       '</label>',
       '</div>',
-      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">',
-      '<span id="jh-binance-close-qty-min" style="color:#76808f;"></span>',
-      '<span id="jh-binance-close-qty-final" style="font-weight:600;color:#1e2329;"></span>',
+      '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:10px;height:18px;overflow:hidden;">',
+      '<span id="jh-binance-close-qty-min" style="min-width:0;color:#76808f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>',
+      '<span id="jh-binance-close-qty-final" style="min-width:0;font-weight:600;color:#1e2329;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>',
       '</div>',
       `<div style="display:flex;align-items:center;gap:4px;margin-top:6px;">` +
         `<button id="${SIDE_LONG_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平多</button>` +
         `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平空</button>` +
       '</div>',
-      `<div id="${MODE_HINT_ID}" style="margin-top:6px;color:#76808f;"></div>`,
+      `<div id="${MODE_HINT_ID}" style="height:18px;line-height:18px;margin-top:6px;color:#76808f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
       `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}"></div>`,
       '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #eef0f2;">',
       `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;text-align:left;font-size:13px;font-weight:600;cursor:pointer;">Maker 阶梯 ▸</button>`,
       `<div id="${LADDER_BODY_ID}" style="display:none;"></div>`,
-      `<div id="${LADDER_STATUS_ID}" style="display:none;margin-top:6px;color:#76808f;font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
+      `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:hidden;color:#76808f;font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
       '</div>',
     ].join('');
     panelPositionSignature = '';
