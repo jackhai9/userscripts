@@ -176,6 +176,11 @@ test('ladder execution and UI updates use one captured mode-symbol-precision con
   assert.match(source, /plan\.ladderStep === DEFAULT_LADDER_STEP \? '' : `\/幅\$\{plan\.ladderStep\}`/);
 });
 
+test('open and close ladder percentage rows share the quantity label', () => {
+  assert.equal((source.match(/ladderOptionRow\('量',/g) || []).length, 2);
+  assert.doesNotMatch(source, /ladderOptionRow\('[开平]',/);
+});
+
 test('close ladder buttons match the Binance native long-short order', () => {
   const closeLongButton = "ladderActionButton('CLOSE_LONG', '阶梯平多', 'SELL', closeLongDisabled)";
   const closeShortButton = "ladderActionButton('CLOSE_SHORT', '阶梯平空', 'BUY', closeShortDisabled)";
