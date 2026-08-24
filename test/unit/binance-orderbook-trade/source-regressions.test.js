@@ -775,15 +775,20 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.doesNotMatch(source, /function applyRecommendedOrderbookPrecision/);
 
   const loadBody = readFunctionBody('runLoadOrderbookPrecisionOptions');
-  assert.match(loadBody, /waitForOrderbookPrecisionBootstrapReady\(symbol\)/);
-  assert.match(loadBody, /const optionsInitiallyVisible = getVisibleOrderbookPrecisionOptionNodes\(trigger\.element\)\.length > 0/);
-  assert.match(loadBody, /ensureVisibleOrderbookPrecisionOptions\(trigger\.element\)/);
-  assert.match(loadBody, /nativeOptions: values/);
-  assert.match(loadBody, /finally\s*\{[\s\S]*if \(!optionsInitiallyVisible\)[\s\S]*cleanupPrecision = isCurrentObservedSymbol\(symbol\)[\s\S]*readCurrentOrderbookPrecisionValue\(\)[\s\S]*closeOrderbookPrecisionOptions\(trigger\.element, cleanupPrecision, true\)/);
-  const loadValidationIndex = loadBody.indexOf('if (!options.length || !values.includes(startPrecision))');
-  const loadCommitIndex = loadBody.indexOf('nativeOptions: values');
-  assert.ok(loadValidationIndex >= 0, 'native precision load should validate the complete option list');
-  assert.ok(loadValidationIndex < loadCommitIndex, 'native precision load should validate before replacing cached options');
+  assert.match(loadBody, /waitForStableOrderbookPrecisionOptions\(symbol\)/);
+  assert.match(loadBody, /nativeOptions: snapshot\.values/);
+
+  const stableLoadBody = readFunctionBody('waitForStableOrderbookPrecisionOptions');
+  assert.match(stableLoadBody, /while \(!document\.hidden && isFuturesTradingPage\(\) && isCurrentObservedSymbol\(symbol\)\)/);
+  assert.match(stableLoadBody, /findOrderbookPrecisionTrigger\(\)/);
+  assert.match(stableLoadBody, /currentTrigger\?\.element === trigger\.element/);
+  assert.match(stableLoadBody, /values\.includes\(startPrecision\)/);
+  assert.match(stableLoadBody, /finally\s*\{[\s\S]*if \(!optionsInitiallyVisible\)[\s\S]*closeOrderbookPrecisionOptions\(trigger\.element, cleanupPrecision, true\)/);
+  assert.match(stableLoadBody, /await delay\(ORDERBOOK_PRECISION_READY_POLL_MS\)/);
+
+  const closeOptionsBody = readFunctionBody('closeOrderbookPrecisionOptions');
+  assert.match(closeOptionsBody, /findVisibleOrderbookPrecisionOption\(currentPrecision, triggerElement\)/);
+  assert.match(closeOptionsBody, /dispatchOrderbookPrecisionToggleSequence\(toggleTarget\)/);
 
   const selectBody = readFunctionBody('runSelectOrderbookPrecision');
   assert.match(selectBody, /getOrderbookPrecisionShortcutOptions\([\s\S]*ORDERBOOK_PRECISION_SHORTCUT_LIMIT/);
@@ -808,12 +813,17 @@ test('orderbook precision recommendation marks one shortcut without applying it 
 
   const openOptionsBody = readFunctionBody('openOrderbookPrecisionOptions');
   assert.match(openOptionsBody, /if \(getVisibleOrderbookPrecisionOptionNodes\(triggerElement\)\.length\) return true/);
-  assert.match(openOptionsBody, /mousedown/);
-  assert.match(openOptionsBody, /pointerdown/);
+  assert.match(openOptionsBody, /dispatchOrderbookPrecisionToggleSequence\(target\)/);
 
   const openEventBody = readFunctionBody('dispatchOrderbookPrecisionOpenEvent');
   assert.match(openEventBody, /PointerEvent/);
   assert.match(openEventBody, /MouseEvent/);
+  const toggleSequenceBody = readFunctionBody('dispatchOrderbookPrecisionToggleSequence');
+  assert.match(toggleSequenceBody, /pointerdown/);
+  assert.match(toggleSequenceBody, /mousedown/);
+  assert.match(toggleSequenceBody, /pointerup/);
+  assert.match(toggleSequenceBody, /mouseup/);
+  assert.match(toggleSequenceBody, /click/);
 
   const waitOptionsBody = readFunctionBody('waitForVisibleOrderbookPrecisionOptions');
   assert.match(waitOptionsBody, /getVisibleOrderbookPrecisionOptionNodes\(triggerElement\)\.length/);
@@ -825,7 +835,6 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(bootstrapReadyBody, /getOrderbookPrices\('ASK', 1\)/);
   assert.match(bootstrapReadyBody, /isCurrentObservedSymbol\(symbol\)/);
 
-  const closeOptionsBody = readFunctionBody('closeOrderbookPrecisionOptions');
   assert.match(closeOptionsBody, /waitForVisibleOrderbookPrecisionOptions\(triggerElement, ORDERBOOK_PRECISION_OPTION_WAIT_MS\)/);
   assert.match(closeOptionsBody, /findVisibleOrderbookPrecisionOption\(currentPrecision, triggerElement\)/);
   assert.match(closeOptionsBody, /waitForOrderbookPrecisionOptionsClosed\(triggerElement\)/);
@@ -1007,7 +1016,10 @@ test('precision shortcut selection and sampling do not commit after a symbol swi
 
   const loadBody = readFunctionBody('runLoadOrderbookPrecisionOptions');
   assert.match(loadBody, /const symbol = getCurrentSymbol\(\)/);
-  assert.match(loadBody, /readCurrentOrderbookPrecisionValue\(\) !== startPrecision/);
+  assert.match(loadBody, /!snapshot \|\| !isCurrentObservedSymbol\(symbol\)/);
+  const stableLoadBody = readFunctionBody('waitForStableOrderbookPrecisionOptions');
+  assert.match(stableLoadBody, /isCurrentObservedSymbol\(symbol\)/);
+  assert.match(stableLoadBody, /currentTrigger\.value === startPrecision/);
 
   const roundBody = readFunctionBody('runOrderbookPrecisionSampleRound');
   assert.match(roundBody, /request\.symbol/);
