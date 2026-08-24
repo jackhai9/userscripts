@@ -251,11 +251,22 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
   assert.match(precisionBody, /if \(el\.innerHTML !== recommendationHtml\)/);
 
   const renderBody = readFunctionBody('renderPanel');
-  const signatureIndex = renderBody.indexOf('if (panelPositionSignature !== panelHtml)');
+  const signatureIndex = renderBody.indexOf('if (panelPositionSignature !== panelHtml ||');
   const positionIndex = renderBody.indexOf('positionPanel(panel)');
   assert.notEqual(signatureIndex, -1);
   assert.notEqual(positionIndex, -1);
   assert.ok(signatureIndex < positionIndex);
+  assert.match(renderBody, /panelPositionSignature !== panelHtml \|\| !isPanelPositionCurrent\(\)/);
+
+  const currentPositionBody = readFunctionBody('isPanelPositionCurrent');
+  assert.match(currentPositionBody, /findTradePanelInsertionPoint\(document\)/);
+  assert.match(currentPositionBody, /spacer\.parentElement === insertionPoint\.parent/);
+  assert.match(currentPositionBody, /spacer\.nextElementSibling === insertionPoint\.before/);
+
+  const positionBody = readFunctionBody('positionPanel');
+  assert.match(positionBody, /findTradePanelInsertionPoint\(document\)/);
+  assert.doesNotMatch(positionBody, /findQtyInput\(\)/);
+  assert.doesNotMatch(positionBody, /findQtyFormItem\(/);
 });
 
 test('dynamic panel text keeps fixed single-line slots', () => {
