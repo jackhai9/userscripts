@@ -274,17 +274,27 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*height:18px;[^>]*visibility:hidden;[^>]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
 });
 
-test('panel keeps direction and multiplier controls in cohesive ordered groups', () => {
+test('panel keeps controls in cohesive ordered semantic groups', () => {
   const ensurePanelBody = readFunctionBody('ensurePanel');
+  const precisionBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
+  const ladderRowsBody = readFunctionBody('getLadderActionRows');
   const directionIndex = ensurePanelBody.indexOf('data-panel-group="direction"');
   const modeHintIndex = ensurePanelBody.indexOf('id="${MODE_HINT_ID}"');
   const multiplierIndex = ensurePanelBody.indexOf('data-panel-group="multiplier"');
   const quantityMinIndex = ensurePanelBody.indexOf('id="jh-binance-close-qty-min"');
+  const precisionIndex = ensurePanelBody.indexOf('data-panel-group="precision"');
+  const ladderIndex = ensurePanelBody.indexOf('data-panel-group="ladder"');
 
   assert.ok(directionIndex >= 0);
   assert.ok(modeHintIndex > directionIndex);
   assert.ok(multiplierIndex > modeHintIndex);
   assert.ok(quantityMinIndex > multiplierIndex);
+  assert.ok(precisionIndex > quantityMinIndex);
+  assert.ok(ladderIndex > precisionIndex);
+  assert.match(ensurePanelBody, /data-panel-group="multiplier" style="margin-top:12px;"/);
+  assert.match(precisionBody, /margin-top:12px;/);
+  assert.match(ensurePanelBody, /data-panel-group="ladder" style="margin-top:12px;padding-top:12px;border-top:/);
+  assert.equal((ladderRowsBody.match(/gap:4px;margin-top:12px/g) || []).length, 2);
 });
 
 test('multiplier row reads as a labeled value followed by decrement and increment controls', () => {
@@ -741,7 +751,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
   assert.match(refreshBody, /buttonBaseStyle = `width:44px;height:24px;[^`]*padding:0;[^`]*font-size:12px;line-height:22px;/);
-  assert.match(refreshBody, /margin-top:8px;[^`]*font-size:12px;/);
+  assert.match(refreshBody, /margin-top:12px;[^`]*font-size:12px;/);
   assert.match(refreshBody, /<span style="font-size:14px;white-space:nowrap;">订单簿缩放<\/span>/);
   assert.match(refreshBody, /当前缩放 \$\{currentText\}[^`]*height:32px;[^`]*font-size:15px;[^`]*line-height:30px/);
   const decreaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="DECREASE"');
