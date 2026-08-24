@@ -244,11 +244,11 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
 });
 
 test('dynamic panel text keeps fixed single-line slots', () => {
-  assert.match(source, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden/);
+  assert.match(source, /data-multiplier-calculation style="display:flex;align-items:center;gap:7px;height:18px;margin-top:4px;overflow:hidden;white-space:nowrap/);
   assert.match(source, /data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /data-side-selector role="radiogroup"[^>]*display:grid;grid-template-columns:54px 54px;[^>]*border-radius:6px;[^>]*overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="min-width:0;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
-  assert.match(source, /grid-template-columns:36px 32px 72px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden/);
+  assert.match(source, /grid-template-columns:78px 72px 32px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /grid-template-columns:84px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
   assert.match(source, /buttonBaseStyle = `width:44px;height:24px;[^`]*font-size:12px;line-height:22px;`/);
   assert.match(source, /adjustButtonBaseStyle = `width:32px;height:32px;[^`]*font-size:18px;line-height:30px;`/);
@@ -291,6 +291,19 @@ test('multiplier row reads as a labeled value followed by decrement and incremen
   assert.match(refreshBody, /multiplierHintEl\.textContent = '最小开仓量的'/);
   assert.match(refreshBody, /multiplierHintEl\.textContent = '最小平仓量的'/);
   assert.match(refreshBody, /multiplierHintEl\.textContent = '最小下单量的'/);
+});
+
+test('multiplier calculation keeps the formula primary and separates the notional constraint visually', () => {
+  const ensurePanelBody = readFunctionBody('ensurePanel');
+  const refreshBody = readFunctionBody('refreshComputedInfo');
+
+  assert.match(ensurePanelBody, /data-multiplier-calculation/);
+  assert.match(ensurePanelBody, /data-multiplier-constraint-divider/);
+  assert.match(refreshBody, /`\$\{effectiveMinQty\} × \$\{multiplier\} =`/);
+  assert.match(refreshBody, /finalText = finalQty/);
+  assert.match(refreshBody, /`≥\$\{qtyRuleContext\.minNotional\}U @ \$\{qtyRuleContext\.referencePrice\}`/);
+  assert.match(refreshBody, /constraintDividerEl\.style\.display = constraintText \? 'block' : 'none'/);
+  assert.doesNotMatch(refreshBody, /最小 \$\{effectiveMinQty\} \(>=/);
 });
 
 test('direction selector is a compact mutually exclusive radio group', () => {
@@ -703,7 +716,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
   assert.match(refreshBody, /buttonBaseStyle = `width:44px;height:24px;[^`]*padding:0;[^`]*font-size:12px;line-height:22px;/);
   assert.match(refreshBody, /margin-top:8px;[^`]*font-size:12px;/);
-  assert.match(refreshBody, /<span style="font-size:14px;">缩放<\/span>/);
+  assert.match(refreshBody, /<span style="font-size:14px;white-space:nowrap;">订单簿缩放<\/span>/);
   assert.match(refreshBody, /当前缩放 \$\{currentText\}[^`]*height:32px;[^`]*font-size:15px;[^`]*line-height:30px/);
   const decreaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="DECREASE"');
   const currentIndex = refreshBody.indexOf('>\${currentText}</span>');
@@ -711,12 +724,15 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   const messageIndex = refreshBody.indexOf('>\${precisionMessage}</span>');
   const applyButtonIndex = refreshBody.indexOf('data-orderbook-precision-apply="true"');
   const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
-  assert.ok(decreaseIndex >= 0 && decreaseIndex < currentIndex, 'decrease should stay before the current precision');
-  assert.ok(currentIndex < increaseIndex, 'increase should stay after the current precision');
+  assert.ok(currentIndex >= 0 && currentIndex < decreaseIndex, 'current precision should stay before the stepper buttons');
+  assert.ok(decreaseIndex < increaseIndex, 'decrease and increase should stay adjacent in that order');
   assert.ok(messageIndex >= 0, 'recommendation or transient status should be rendered');
   assert.ok(messageIndex < applyButtonIndex, 'precision message should stay before the Apply button');
   assert.ok(applyButtonIndex < refreshButtonIndex, 'Apply button should stay before the Refresh button');
   assert.doesNotMatch(refreshBody, /data-orderbook-precision-status/);
+
+  assert.equal((source.match(/ladderOptionRow\('幅', LADDER_STEP_OPTIONS/g) || []).length, 2);
+  assert.doesNotMatch(source, /data-ladder-step-action|function ladderStepRow/);
 
   const busyStatusBody = readFunctionBody('formatOrderbookPrecisionBusyStatus');
   assert.match(busyStatusBody, /Math\.ceil\(remainingMs \/ 1000\)/);
@@ -870,8 +886,8 @@ test('panel numeric options wait for a complete mode-symbol-precision context', 
   assert.match(renderBody, /const storedMultiplier = optionContext/);
 
   const refreshBody = readFunctionBody('refreshComputedInfo');
-  assert.match(refreshBody, /minEl\.textContent = '等待订单簿缩放值'/);
-  assert.match(refreshBody, /minEl\.textContent = '等待开仓\/平仓状态'/);
+  assert.match(refreshBody, /finalText = '等待订单簿缩放值'/);
+  assert.match(refreshBody, /finalText = '等待开仓\/平仓状态'/);
   assert.match(refreshBody, /const numericContextReady = modeReady && precisionReady/);
 });
 
@@ -972,8 +988,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.73/);
-  assert.match(generatedSource, /@version\s+2\.7\.73/);
+  assert.match(source, /@version\s+2\.7\.74/);
+  assert.match(generatedSource, /@version\s+2\.7\.74/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
