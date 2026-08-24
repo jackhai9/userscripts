@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 
 import {
   isModeSymbolOptionStorageKey,
-  loadModeSymbolNumberOption,
-  modeSymbolOptionStorageKey,
-  saveModeSymbolNumberOption,
+  loadModeSymbolPrecisionNumberOption,
+  modeSymbolPrecisionOptionStorageKey,
+  saveModeSymbolPrecisionNumberOption,
 } from '../../../src/binance-orderbook-trade/core/panel-options.js';
 
 const source = await readFile(new URL('../../../src/binance-orderbook-trade/index.user.js', import.meta.url), 'utf8');
@@ -18,6 +18,10 @@ const MODE_KEYS = {
 const STEP_KEYS = {
   OPEN: 'jh_binance_ladder_open_step',
   CLOSE: 'jh_binance_ladder_close_step',
+};
+const MULTIPLIER_KEYS = {
+  OPEN: 'jh_binance_qty_multiplier_v2:OPEN',
+  CLOSE: 'jh_binance_qty_multiplier_v2:CLOSE',
 };
 
 function createStorage() {
@@ -68,45 +72,79 @@ test('new symbols default open and close ladder step to five without replacing s
   const storage = createStorage();
   const options = [1, 2, 3, 4, 5];
 
-  assert.equal(loadModeSymbolNumberOption(storage, STEP_KEYS, 'OPEN', 'ETHUSDT', options, 5), 5);
-  assert.equal(loadModeSymbolNumberOption(storage, STEP_KEYS, 'CLOSE', 'ETHUSDT', options, 5), 5);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, STEP_KEYS, 'OPEN', 'ETHUSDT', '0.01', options, 5), 5);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, STEP_KEYS, 'CLOSE', 'ETHUSDT', '0.01', options, 5), 5);
 
-  saveModeSymbolNumberOption(storage, STEP_KEYS, 'OPEN', 'BTCUSDT', 1, options);
-  saveModeSymbolNumberOption(storage, STEP_KEYS, 'CLOSE', 'BTCUSDT', 3, options);
-  assert.equal(loadModeSymbolNumberOption(storage, STEP_KEYS, 'OPEN', 'BTCUSDT', options, 5), 1);
-  assert.equal(loadModeSymbolNumberOption(storage, STEP_KEYS, 'CLOSE', 'BTCUSDT', options, 5), 3);
+  saveModeSymbolPrecisionNumberOption(storage, STEP_KEYS, 'OPEN', 'BTCUSDT', '0.01', 1, options);
+  saveModeSymbolPrecisionNumberOption(storage, STEP_KEYS, 'CLOSE', 'BTCUSDT', '0.01', 3, options);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, STEP_KEYS, 'OPEN', 'BTCUSDT', '0.01', options, 5), 1);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, STEP_KEYS, 'CLOSE', 'BTCUSDT', '0.01', options, 5), 3);
 });
 
 test('ladder option persistence is scoped by the current symbol', () => {
   const storage = createStorage();
-  saveModeSymbolNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', 3, [3, 5, 7, 9]);
-  saveModeSymbolNumberOption(storage, MODE_KEYS, 'OPEN', 'ETHUSDT', 7, [3, 5, 7, 9]);
+  saveModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.01', 3, [3, 5, 7, 9]);
+  saveModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'ETHUSDT', '0.01', 7, [3, 5, 7, 9]);
 
-  assert.equal(loadModeSymbolNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', [3, 5, 7, 9], 5), 3);
-  assert.equal(loadModeSymbolNumberOption(storage, MODE_KEYS, 'OPEN', 'ETHUSDT', [3, 5, 7, 9], 5), 7);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.01', [3, 5, 7, 9], 5), 3);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'ETHUSDT', '0.01', [3, 5, 7, 9], 5), 7);
 });
 
 test('ladder option persistence separates open and close mode for one symbol', () => {
   const storage = createStorage();
-  saveModeSymbolNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', 3, [3, 5, 7, 9]);
-  saveModeSymbolNumberOption(storage, MODE_KEYS, 'CLOSE', 'BTCUSDT', 9, [3, 5, 7, 9]);
+  saveModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.01', 3, [3, 5, 7, 9]);
+  saveModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'CLOSE', 'BTCUSDT', '0.01', 9, [3, 5, 7, 9]);
 
-  assert.equal(loadModeSymbolNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', [3, 5, 7, 9], 5), 3);
-  assert.equal(loadModeSymbolNumberOption(storage, MODE_KEYS, 'CLOSE', 'BTCUSDT', [3, 5, 7, 9], 5), 9);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.01', [3, 5, 7, 9], 5), 3);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'CLOSE', 'BTCUSDT', '0.01', [3, 5, 7, 9], 5), 9);
   assert.deepEqual(storage.entries(), [
-    ['jh_binance_ladder_open_levels:BTCUSDT', '3'],
-    ['jh_binance_ladder_close_levels:BTCUSDT', '9'],
+    ['jh_binance_ladder_open_levels:BTCUSDT:0.01', '3'],
+    ['jh_binance_ladder_close_levels:BTCUSDT:0.01', '9'],
   ]);
 });
 
-test('ladder option persistence rejects unknown mode and skips missing symbol writes', () => {
+test('ladder option persistence separates orderbook precision for one symbol and mode', () => {
+  const storage = createStorage();
+  const options = [3, 5, 7, 9];
+  saveModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.01', 3, options);
+  saveModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.001', 9, options);
+
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.01', options, 5), 3);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.001', options, 5), 9);
+});
+
+test('quantity multiplier keys share the symbol-mode-precision identity', () => {
+  assert.equal(
+    modeSymbolPrecisionOptionStorageKey(MULTIPLIER_KEYS, 'OPEN', 'btcusdt', '0.01'),
+    'jh_binance_qty_multiplier_v2:OPEN:BTCUSDT:0.01',
+  );
+  assert.equal(
+    modeSymbolPrecisionOptionStorageKey(MULTIPLIER_KEYS, 'CLOSE', 'BTCUSDT', '0.001'),
+    'jh_binance_qty_multiplier_v2:CLOSE:BTCUSDT:0.001',
+  );
+});
+
+test('ladder option persistence rejects unknown mode and skips incomplete context', () => {
   const storage = createStorage();
 
-  assert.throws(() => modeSymbolOptionStorageKey(MODE_KEYS, 'UNKNOWN', 'BTCUSDT'), /Unknown trade mode/);
-  assert.equal(modeSymbolOptionStorageKey(MODE_KEYS, 'OPEN', ''), null);
-  assert.equal(loadModeSymbolNumberOption(storage, MODE_KEYS, 'OPEN', '', [3, 5, 7, 9], 5), 5);
-  assert.equal(saveModeSymbolNumberOption(storage, MODE_KEYS, 'OPEN', '', 3, [3, 5, 7, 9]), false);
+  assert.throws(() => modeSymbolPrecisionOptionStorageKey(MODE_KEYS, 'UNKNOWN', 'BTCUSDT', '0.01'), /Unknown trade mode/);
+  assert.equal(modeSymbolPrecisionOptionStorageKey(MODE_KEYS, 'OPEN', '', '0.01'), null);
+  assert.equal(modeSymbolPrecisionOptionStorageKey(MODE_KEYS, 'OPEN', 'BTCUSDT', ''), null);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', '', '0.01', [3, 5, 7, 9], 5), null);
+  assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '', [3, 5, 7, 9], 5), null);
+  assert.equal(saveModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', '', '0.01', 3, [3, 5, 7, 9]), false);
+  assert.equal(saveModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '', 3, [3, 5, 7, 9]), false);
   assert.deepEqual(storage.entries(), []);
+});
+
+test('new precision profiles do not inherit legacy symbol-only values', () => {
+  const storage = createStorage();
+  storage.setItem('jh_binance_ladder_open_levels:BTCUSDT', '9');
+
+  assert.equal(
+    loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', 'BTCUSDT', '0.01', [3, 5, 7, 9], 5),
+    5,
+  );
 });
 
 test('storage events accept six mode-scoped keys and reject legacy shared keys', () => {
@@ -119,21 +157,22 @@ test('storage events accept six mode-scoped keys and reject legacy shared keys',
     'jh_binance_ladder_close_step',
   ];
   for (const key of keys) {
-    assert.equal(isModeSymbolOptionStorageKey(`${key}:BTCUSDT`, keys), true);
+    assert.equal(isModeSymbolOptionStorageKey(`${key}:BTCUSDT:0.01`, keys), true);
+    assert.equal(isModeSymbolOptionStorageKey(`${key}:BTCUSDT`, keys), false);
   }
   assert.equal(isModeSymbolOptionStorageKey('jh_binance_ladder_levels:BTCUSDT', keys), false);
   assert.equal(isModeSymbolOptionStorageKey('jh_binance_ladder_step:BTCUSDT', keys), false);
 });
 
-test('ladder execution and UI updates use one captured mode-symbol context', () => {
-  assert.match(source, /getLadderLevels\(spec\.mode,\s*startSymbol\)/);
-  assert.match(source, /getLadderStep\(spec\.mode,\s*startSymbol\)/);
-  assert.match(source, /getLadderOpenPercent\(startSymbol\)/);
-  assert.match(source, /getLadderClosePercent\(startSymbol\)/);
-  assert.match(source, /const optionContext = \{ mode: getActiveTradeMode\(\), symbol: getCurrentSymbol\(\) \}/);
-  assert.match(source, /setLadderLevels\(value, optionContext\.mode, optionContext\.symbol\)/);
-  assert.match(source, /getLadderStep\(optionContext\.mode, optionContext\.symbol\)/);
-  assert.match(source, /setLadderStep\([^\n]+, optionContext\.mode, optionContext\.symbol\)/);
+test('ladder execution and UI updates use one captured mode-symbol-precision context', () => {
+  assert.match(source, /getLadderLevels\(spec\.mode,\s*startSymbol,\s*startPrecision\)/);
+  assert.match(source, /getLadderStep\(spec\.mode,\s*startSymbol,\s*startPrecision\)/);
+  assert.match(source, /getLadderOpenPercent\(startSymbol,\s*startPrecision\)/);
+  assert.match(source, /getLadderClosePercent\(startSymbol,\s*startPrecision\)/);
+  assert.match(source, /const optionContext = getPanelOptionContext\(\)/);
+  assert.match(source, /setLadderLevels\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
+  assert.match(source, /getLadderStep\(optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
+  assert.match(source, /setLadderStep\([\s\S]*?optionContext\.mode,[\s\S]*?optionContext\.symbol,[\s\S]*?optionContext\.precision,[\s\S]*?\)/);
   assert.match(source, /plan\.ladderStep === DEFAULT_LADDER_STEP \? '' : `\/幅\$\{plan\.ladderStep\}`/);
 });
 
