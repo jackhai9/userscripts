@@ -265,7 +265,7 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="min-width:0;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
   assert.match(source, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);align-items:center;gap:4px;height:32px;overflow:hidden/);
   assert.match(source, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);align-items:center;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
-  assert.match(source, /buttonBaseStyle = `width:100%;height:24px;[^`]*font-size:12px;line-height:22px;`/);
+  assert.match(source, /buttonBaseStyle = `width:68px;height:24px;[^`]*font-size:12px;line-height:22px;`/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcut'), /height:32px[^`]*font-size:12px;line-height:30px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcutSlots'), /while \(slots\.length < ORDERBOOK_PRECISION_SHORTCUT_LIMIT\)/);
   assert.doesNotMatch(source, /data-orderbook-precision-status/);
@@ -749,13 +749,13 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
-  assert.match(refreshBody, /buttonBaseStyle = `width:100%;height:24px;[^`]*padding:0;[^`]*font-size:12px;line-height:22px;/);
+  assert.match(refreshBody, /buttonBaseStyle = `width:68px;height:24px;[^`]*padding:0;[^`]*font-size:12px;line-height:22px;/);
   assert.match(refreshBody, /margin-top:12px;[^`]*font-size:12px;/);
   assert.match(refreshBody, /当前缩放 \$\{current \|\| '--'\}[^`]*订单簿缩放/);
   assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy\)/);
   assert.match(refreshBody, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);[^']*height:24px;margin-top:6px/);
-  assert.match(refreshBody, /grid-column:1 \/ 4;[^`]*>\$\{precisionMessage\}<\/span>/);
-  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[^`]*grid-column:2 \/ 4;/);
+  assert.match(refreshBody, /grid-column:1;[^`]*>\$\{precisionMessage\}<\/span>/);
+  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[^`]*grid-column:2;justify-self:start;/);
   const messageIndex = refreshBody.indexOf('>\${precisionMessage}</span>');
   const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
   assert.ok(messageIndex >= 0, 'recommendation or transient status should be rendered');
