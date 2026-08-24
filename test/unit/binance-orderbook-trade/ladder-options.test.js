@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   isModeSymbolOptionStorageKey,
   loadModeSymbolPrecisionNumberOption,
+  migrateModeSymbolPrecisionNumberOption,
   modeSymbolPrecisionOptionStorageKey,
   saveModeSymbolPrecisionNumberOption,
 } from '../../../src/binance-orderbook-trade/core/panel-options.js';
@@ -53,7 +54,59 @@ function readConstNumber(name) {
 
 test('ladder percent options match configured open and close presets', () => {
   assert.deepEqual(readConstArray('LADDER_OPEN_PERCENTS'), [2, 10, 30, 50, 70]);
-  assert.deepEqual(readConstArray('LADDER_CLOSE_PERCENTS'), [0.3, 1, 5, 10, 30, 100]);
+  assert.deepEqual(readConstArray('LADDER_CLOSE_PERCENTS'), [0.3, 1, 5, 10, 30]);
+});
+
+test('retired close 100 percent profiles explicitly migrate to the close default', () => {
+  const storage = createStorage();
+  const percentKeys = {
+    OPEN: 'jh_binance_ladder_open_percent',
+    CLOSE: 'jh_binance_ladder_close_percent',
+  };
+  const options = [0.3, 1, 5, 10, 30];
+  storage.setItem('jh_binance_ladder_close_percent:BTCUSDT:0.01', '100');
+
+  assert.equal(
+    migrateModeSymbolPrecisionNumberOption(
+      storage,
+      percentKeys,
+      'CLOSE',
+      'BTCUSDT',
+      '0.01',
+      100,
+      0.3,
+      options,
+    ),
+    true,
+  );
+  assert.equal(
+    loadModeSymbolPrecisionNumberOption(storage, percentKeys, 'CLOSE', 'BTCUSDT', '0.01', options, 0.3),
+    0.3,
+  );
+  assert.deepEqual(storage.entries(), [
+    ['jh_binance_ladder_close_percent:BTCUSDT:0.01', '0.3'],
+  ]);
+  assert.match(
+    source,
+    /if \(migrated\) \{\s*setLadderStatus\(`平仓量 100% 已调整为 \$\{DEFAULT_LADDER_CLOSE_PERCENT\}%`\);\s*\}/,
+  );
+});
+
+test('retired option migration rejects an unsupported replacement', () => {
+  const storage = createStorage();
+  assert.throws(
+    () => migrateModeSymbolPrecisionNumberOption(
+      storage,
+      MODE_KEYS,
+      'CLOSE',
+      'BTCUSDT',
+      '0.01',
+      100,
+      0.3,
+      [1, 5, 10],
+    ),
+    /Invalid replacement option: 0\.3/,
+  );
 });
 
 test('ladder default percents are available options', () => {
@@ -169,6 +222,8 @@ test('ladder execution and UI updates use one captured mode-symbol-precision con
   assert.match(source, /getLadderStep\(spec\.mode,\s*startSymbol,\s*startPrecision\)/);
   assert.match(source, /getLadderOpenPercent\(startSymbol,\s*startPrecision\)/);
   assert.match(source, /getLadderClosePercent\(startSymbol,\s*startPrecision\)/);
+  assert.match(source, /spec\.mode === 'OPEN' \? getLadderOpenPercent\(startSymbol, startPrecision\) : null/);
+  assert.match(source, /spec\.mode === 'CLOSE' \? getLadderClosePercent\(startSymbol, startPrecision\) : null/);
   assert.match(source, /const optionContext = getPanelOptionContext\(\)/);
   assert.match(source, /setLadderLevels\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
   assert.match(source, /getLadderStep\(optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
@@ -179,6 +234,17 @@ test('ladder execution and UI updates use one captured mode-symbol-precision con
 test('open and close ladder percentage rows share the quantity label', () => {
   assert.equal((source.match(/ladderOptionRow\('量',/g) || []).length, 2);
   assert.doesNotMatch(source, /ladderOptionRow\('[开平]',/);
+});
+
+test('ladder quantity levels and step controls share one stable five-slot grid', () => {
+  const optionRow = source.match(/function ladderOptionRow[\s\S]*?\n  }/)?.[0] || '';
+  const stepRow = source.match(/function ladderStepRow[\s\S]*?\n  }/)?.[0] || '';
+
+  assert.match(optionRow, /grid-template-columns:28px repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(stepRow, /grid-template-columns:28px repeat\(5,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(optionRow, /flex-wrap/);
+  assert.doesNotMatch(stepRow, /flex-wrap/);
+  assert.match(source, /data-ladder-value="\$\{value\}" style="box-sizing:border-box;width:100%;min-width:0;height:28px/);
 });
 
 test('close ladder buttons match the Binance native long-short order', () => {
