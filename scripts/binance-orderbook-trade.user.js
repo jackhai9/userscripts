@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.88
+// @version      2.7.89
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -753,6 +753,17 @@
   }
   function isOwnPanelButton(button, panelId) {
     return !!button?.closest?.(`#${panelId}`);
+  }
+  function findTradeFormRoot(activeTab, qtyInput) {
+    if (!activeTab?.isConnected || !qtyInput?.isConnected) return null;
+    if (activeTab.ownerDocument !== qtyInput.ownerDocument) return null;
+    const ownerDocument = activeTab.ownerDocument;
+    let candidate = qtyInput.parentElement;
+    while (candidate && candidate !== ownerDocument.body && candidate !== ownerDocument.documentElement) {
+      if (candidate.contains(activeTab)) return candidate;
+      candidate = candidate.parentElement;
+    }
+    return null;
   }
   function findTradePanelInsertionPoint(root) {
     const modeTabs = root?.querySelector?.("#position-direction");
@@ -1711,8 +1722,8 @@
         seen.add(node);
         scopes.push(node);
       };
-      const paneId = activeTab?.getAttribute("aria-controls");
-      if (paneId) pushScope(document.getElementById(paneId));
+      const tradeFormRoot = findTradeFormRoot(activeTab, findQtyInput());
+      pushScope(tradeFormRoot);
       const tabRoot = activeTab?.closest("#position-direction") || activeTab?.closest(".bn-tabs__buySell") || activeTab?.parentElement || null;
       if (tabRoot) {
         let node = tabRoot.parentElement;
@@ -1746,7 +1757,7 @@
       return findVisibleElementInScopes(getTradeSearchScopes(), selector, predicate);
     }
     function getTradeMutationRoot() {
-      return getTradeSearchScopes()[0] || findQtyFormItem(findQtyInput())?.parentElement || null;
+      return findTradeFormRoot(getActiveTradeTab(), findQtyInput());
     }
     function collectTradeButtons(mode) {
       const now = Date.now();
