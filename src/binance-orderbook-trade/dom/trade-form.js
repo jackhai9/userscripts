@@ -7,6 +7,28 @@ function isOwnPanelButton(button, panelId) {
   return !!button?.closest?.(`#${panelId}`);
 }
 
+/**
+ * Resolve the live trade form without trusting Binance's duplicated tab-pane IDs.
+ * React keeps the mode tabs and quantity input under one stable form owner even
+ * when it replaces the active pane's descendants during an OPEN/CLOSE switch.
+ */
+export function findTradeFormRoot(activeTab, qtyInput) {
+  if (!activeTab?.isConnected || !qtyInput?.isConnected) return null;
+  if (activeTab.ownerDocument !== qtyInput.ownerDocument) return null;
+
+  const ownerDocument = activeTab.ownerDocument;
+  let candidate = qtyInput.parentElement;
+  while (
+    candidate
+    && candidate !== ownerDocument.body
+    && candidate !== ownerDocument.documentElement
+  ) {
+    if (candidate.contains(activeTab)) return candidate;
+    candidate = candidate.parentElement;
+  }
+  return null;
+}
+
 export function findTradePanelInsertionPoint(root) {
   const modeTabs = root?.querySelector?.('#position-direction');
   if (!modeTabs) return null;

@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  findTradeFormRoot,
   findTradePanelInsertionPoint,
   placeTradePanelSpacer,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
@@ -51,4 +52,64 @@ test('unexpected trade-mode structure is rejected instead of inserting at a gues
   `);
 
   assert.equal(findTradePanelInsertionPoint(dom.window.document), null);
+});
+
+test('trade form root ignores duplicated Binance tab-pane IDs', () => {
+  const dom = loadFixtureDom(`
+    <section id="bn-tab-pane-0"><button>平空</button></section>
+    <section id="bn-tab-pane-0"><button>平空</button></section>
+    <section id="trade-form">
+      <div id="position-direction">
+        <div role="tab" aria-controls="bn-tab-pane-0" aria-selected="true">平仓</div>
+      </div>
+      <div data-testid="max-buy-amount">0.00 HYPE</div>
+      <input id="unitAmount-close" />
+      <button>平多</button>
+      <button>平空</button>
+    </section>
+  `);
+  const { document } = dom.window;
+  const activeTab = document.querySelector('#position-direction [aria-selected="true"]');
+  const qtyInput = document.querySelector('#unitAmount-close');
+
+  const root = findTradeFormRoot(activeTab, qtyInput);
+
+  assert.equal(root?.id, 'trade-form');
+  assert.notEqual(root, document.getElementById('bn-tab-pane-0'));
+  assert.equal(root.querySelector('[data-testid="max-buy-amount"]')?.textContent, '0.00 HYPE');
+});
+
+test('trade form root observes live position state after React replaces descendants', async () => {
+  const dom = loadFixtureDom(`
+    <section id="trade-form">
+      <div id="position-direction">
+        <div role="tab" aria-selected="true">平仓</div>
+      </div>
+      <div class="trade-fields">
+        <div data-testid="max-buy-amount">0.42 HYPE</div>
+        <input id="unitAmount-close" />
+      </div>
+    </section>
+  `);
+  const { document, MutationObserver } = dom.window;
+  const activeTab = document.querySelector('#position-direction [aria-selected="true"]');
+  const qtyInput = document.querySelector('#unitAmount-close');
+  const root = findTradeFormRoot(activeTab, qtyInput);
+  const observedTexts = [];
+  const observer = new MutationObserver(() => {
+    observedTexts.push(root.querySelector('[data-testid="max-buy-amount"]')?.textContent);
+  });
+  observer.observe(root, { subtree: true, childList: true, characterData: true });
+
+  document.querySelector('.trade-fields').replaceChildren();
+  const maxBuy = document.createElement('div');
+  maxBuy.dataset.testid = 'max-buy-amount';
+  maxBuy.textContent = '0.00 HYPE';
+  document.querySelector('.trade-fields').append(maxBuy);
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  observer.disconnect();
+
+  assert.equal(root.isConnected, true);
+  assert.equal(root.querySelector('[data-testid="max-buy-amount"]')?.textContent, '0.00 HYPE');
+  assert.ok(observedTexts.includes('0.00 HYPE'));
 });
