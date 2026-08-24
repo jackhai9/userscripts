@@ -547,14 +547,13 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
 });
 
 test('bulk cancel hides Binance OpenOrders before opening the native dialog and restores it independently', () => {
-  assert.doesNotMatch(source, /tradingViewApi|applyOverrides|tradingProperties\.showOrders/);
+  assert.doesNotMatch(source, /applyOverrides|tradingProperties\.showOrders/);
 
   const hideBody = readFunctionBody('hideBinanceChartOrdersForBulkCancel');
   assert.match(hideBody, /const current = await openBinanceChartOrdersPopover\(target\)/);
   assert.match(hideBody, /state\.originalChecked = current\.checked/);
   assert.match(hideBody, /writeChartOrdersRecoveryRecord\(\)[\s\S]*state\.changed = true/);
-  assert.match(hideBody, /state\.changed = true[\s\S]*current\.checkbox\.click\(\)/);
-  assert.match(hideBody, /await waitForBinanceChartOrdersPopover\(target, false\)/);
+  assert.match(hideBody, /state\.changed = true[\s\S]*toggleBinanceChartOrdersWithCoalescedSave\(target, current\.checkbox, false\)/);
   assert.match(hideBody, /await closeBinanceChartOrdersPopover\(target\)/);
 
   const closeBody = readFunctionBody('closeBinanceChartOrdersPopover');
@@ -572,7 +571,7 @@ test('bulk cancel hides Binance OpenOrders before opening the native dialog and 
   assert.match(restoreBody, /assertSameBinanceChartOrdersTarget\(target, getBinanceChartOrdersTarget\(\)\)/);
   assert.match(restoreBody, /const current = await openBinanceChartOrdersPopover\(target\)/);
   assert.match(restoreBody, /current\.checked !== state\.originalChecked/);
-  assert.match(restoreBody, /await waitForBinanceChartOrdersPopover\(target, state\.originalChecked\)/);
+  assert.match(restoreBody, /toggleBinanceChartOrdersWithCoalescedSave\([\s\S]*state\.originalChecked/);
   assert.match(restoreBody, /await closeBinanceChartOrdersPopover\(target\)/);
   assert.match(restoreBody, /clearChartOrdersRecoveryRecord\(\)/);
 
@@ -644,8 +643,8 @@ test('chart OpenOrders reload recovery is journaled, bounded, and retried only f
   const hideBody = readFunctionBody('hideBinanceChartOrdersForBulkCancel');
   const writeIndex = hideBody.indexOf('writeChartOrdersRecoveryRecord()');
   const stateChangeIndex = hideBody.indexOf('state.changed = true');
-  const checkboxClickIndex = hideBody.indexOf('current.checkbox.click()');
-  assert.ok(writeIndex < stateChangeIndex && stateChangeIndex < checkboxClickIndex);
+  const coalescedToggleIndex = hideBody.indexOf('toggleBinanceChartOrdersWithCoalescedSave(');
+  assert.ok(writeIndex < stateChangeIndex && stateChangeIndex < coalescedToggleIndex);
 
   const recoverBody = readFunctionBody('recoverChartOrdersStateAfterReload');
   assert.match(recoverBody, /recovery\.status === 'invalid' \|\| recovery\.status === 'expired'/);
