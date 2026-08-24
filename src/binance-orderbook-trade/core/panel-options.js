@@ -62,6 +62,28 @@ export function loadModeSymbolPrecisionNumberOption(
   return options.includes(stored) ? stored : fallback;
 }
 
+export function migrateModeSymbolPrecisionNumberOption(
+  storage,
+  modeKeys,
+  mode,
+  symbol,
+  precision,
+  retiredValue,
+  replacementValue,
+  options,
+) {
+  const numericReplacement = Number(replacementValue);
+  if (!options.includes(numericReplacement)) {
+    throw new Error(`Invalid replacement option: ${replacementValue}`);
+  }
+  const storageKey = modeSymbolPrecisionOptionStorageKey(modeKeys, mode, symbol, precision);
+  if (!storageKey) return false;
+  const storedValue = storage.getItem(storageKey);
+  if (storedValue === null || Number(storedValue) !== Number(retiredValue)) return false;
+  storage.setItem(storageKey, String(numericReplacement));
+  return true;
+}
+
 export function saveModeSymbolPrecisionNumberOption(
   storage,
   modeKeys,

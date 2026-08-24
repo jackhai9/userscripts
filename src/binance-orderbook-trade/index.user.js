@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.64
+// @version      2.7.65
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -99,6 +99,7 @@ import {
   isSymbolScopedSideStorageKey,
   loadModeSymbolPrecisionNumberOption,
   loadSymbolSide,
+  migrateModeSymbolPrecisionNumberOption,
   modeSymbolPrecisionOptionStorageKey,
   saveModeSymbolPrecisionNumberOption,
   saveSymbolSide,
@@ -170,7 +171,7 @@ import {
   const DEFAULT_LADDER_LEVELS = 5;
   const DEFAULT_LADDER_STEP = 5;
   const LADDER_OPEN_PERCENTS = [2, 10, 30, 50, 70];
-  const LADDER_CLOSE_PERCENTS = [0.3, 1, 5, 10, 30, 100];
+  const LADDER_CLOSE_PERCENTS = [0.3, 1, 5, 10, 30];
   const LADDER_LEVEL_OPTIONS = [3, 5, 7, 9];
   const LADDER_STEP_MIN = 1;
   const LADDER_STEP_MAX = 5;
@@ -492,6 +493,19 @@ import {
     symbol = getCurrentSymbol(),
     precision = readCurrentOrderbookPrecisionValue(),
   ) {
+    const migrated = migrateModeSymbolPrecisionNumberOption(
+      localStorage,
+      LADDER_PERCENT_STORAGE_KEYS,
+      'CLOSE',
+      symbol,
+      precision,
+      100,
+      DEFAULT_LADDER_CLOSE_PERCENT,
+      LADDER_CLOSE_PERCENTS,
+    );
+    if (migrated) {
+      setLadderStatus(`平仓量 100% 已调整为 ${DEFAULT_LADDER_CLOSE_PERCENT}%`);
+    }
     return loadModeSymbolPrecisionNumberOption(
       localStorage,
       LADDER_PERCENT_STORAGE_KEYS,
@@ -1408,8 +1422,8 @@ import {
     const refreshButtonStyle = canRefresh
       ? activeButtonStyle
       : disabledButtonStyle;
-    const buttonBaseStyle = 'width:58px;height:32px;padding:0;border-radius:6px;border:1px solid #d5d9e2;font-size:14px;line-height:30px;';
-    const adjustButtonBaseStyle = 'width:32px;height:32px;padding:0;border-radius:6px;border:1px solid #d5d9e2;font-size:18px;line-height:30px;';
+    const buttonBaseStyle = 'width:44px;height:24px;padding:0;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;';
+    const adjustButtonBaseStyle = 'width:28px;height:24px;padding:0;border-radius:5px;border:1px solid #d5d9e2;font-size:14px;line-height:22px;';
     const decreaseDisabledAttrs = canDecrease ? '' : ' disabled aria-disabled="true"';
     const increaseDisabledAttrs = canIncrease ? '' : ' disabled aria-disabled="true"';
     const currentText = current || '--';
@@ -1422,14 +1436,14 @@ import {
           ? `推荐 ${recommendationText}`
           : status;
     const recommendationHtml = [
-      '<div style="margin-top:8px;color:#76808f;font-size:14px;">',
-      '<div style="display:grid;grid-template-columns:48px 32px 60px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden;">',
+      '<div style="margin-top:8px;color:#76808f;font-size:12px;">',
+      '<div style="display:grid;grid-template-columns:28px 28px 38px 28px;align-items:center;justify-content:start;gap:4px;height:24px;overflow:hidden;">',
       '<span>缩放</span>',
       `<button type="button" data-orderbook-precision-adjust="DECREASE"${decreaseDisabledAttrs} aria-label="减小缩放" title="切换到小 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${decreaseButtonStyle}">−</button>`,
-      `<span title="当前缩放 ${currentText}" style="min-width:0;text-align:center;font-weight:600;color:#1e2329;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
+      `<span title="当前缩放 ${currentText}" style="min-width:0;height:24px;border:1px solid #d5d9e2;border-radius:5px;background:#ffffff;text-align:center;font-size:13px;font-weight:600;line-height:22px;color:#1e2329;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
       `<button type="button" data-orderbook-precision-adjust="INCREASE"${increaseDisabledAttrs} aria-label="增大缩放" title="切换到大 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${increaseButtonStyle}">+</button>`,
       '</div>',
-      '<div style="display:grid;grid-template-columns:86px 58px 58px;align-items:center;justify-content:start;gap:6px;height:32px;margin-top:4px;overflow:hidden;">',
+      '<div style="display:grid;grid-template-columns:68px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden;">',
       `<span title="${precisionMessage}" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${precisionMessage}</span>`,
       `<button type="button" data-orderbook-precision-apply="true"${canApply ? '' : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
       `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? '' : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${refreshButtonStyle}">刷新</button>`,
@@ -1912,8 +1926,8 @@ import {
 
     let percent = getLadderPercentForMode(
       spec.mode,
-      getLadderOpenPercent(startSymbol, startPrecision),
-      getLadderClosePercent(startSymbol, startPrecision)
+      spec.mode === 'OPEN' ? getLadderOpenPercent(startSymbol, startPrecision) : null,
+      spec.mode === 'CLOSE' ? getLadderClosePercent(startSymbol, startPrecision) : null,
     );
     if (percent == null) throw new Error('未知阶梯模式');
     const totalQty = multiplyDecimalByRatio(baseQty, percent, 100);
@@ -4379,13 +4393,13 @@ import {
     const activeStyle = selected
       ? 'border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:#1e2329;font-weight:600;'
       : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;font-weight:500;';
-    return `<button type="button" data-ladder-group="${group}" data-ladder-value="${value}" style="height:24px;min-width:34px;padding:0 6px;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;cursor:pointer;${activeStyle}">${label}</button>`;
+    return `<button type="button" data-ladder-group="${group}" data-ladder-value="${value}" style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid #d5d9e2;font-size:13px;line-height:26px;cursor:pointer;${activeStyle}">${label}</button>`;
   }
 
   function ladderOptionRow(title, options, selected, group, suffix = '') {
     return [
-      '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:6px;">',
-      `<span style="width:28px;color:#76808f;font-size:12px;">${title}</span>`,
+      '<div style="display:grid;grid-template-columns:28px repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">',
+      `<span style="color:#76808f;font-size:13px;">${title}</span>`,
       ...options.map((value) => ladderOptionButton(`${value}${suffix}`, value, Number(value) === Number(selected), group)),
       '</div>',
     ].join('');
@@ -4400,13 +4414,13 @@ import {
       const style = disabled
         ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`
         : 'border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;';
-      return `<button type="button" data-ladder-step-action="${action}"${disabledAttrs} style="width:28px;height:24px;padding:0;border-radius:5px;border:1px solid #d5d9e2;font-size:14px;line-height:22px;${style}">${label}</button>`;
+      return `<button type="button" data-ladder-step-action="${action}"${disabledAttrs} style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid #d5d9e2;font-size:13px;line-height:26px;${style}">${label}</button>`;
     };
     return [
-      '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:6px;">',
-      '<span style="width:28px;color:#76808f;font-size:12px;">幅</span>',
+      '<div style="display:grid;grid-template-columns:28px repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">',
+      '<span style="color:#76808f;font-size:13px;">幅</span>',
       stepButton('dec', '-', decDisabled),
-      `<span style="min-width:26px;height:24px;border:1px solid #d5d9e2;border-radius:5px;background:#ffffff;color:#1e2329;font-size:12px;font-weight:600;line-height:22px;text-align:center;">${value}</span>`,
+      `<span style="box-sizing:border-box;width:100%;min-width:0;height:28px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:#1e2329;font-size:13px;font-weight:600;line-height:26px;text-align:center;">${value}</span>`,
       stepButton('inc', '+', incDisabled),
       '</div>',
     ].join('');
@@ -4729,7 +4743,15 @@ import {
     panel.style.boxShadow = 'none';
     panel.style.visibility = 'hidden';
     panel.innerHTML = [
-      '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:6px;flex-wrap:wrap;">',
+      '<div data-panel-group="direction">',
+      `<div style="display:flex;align-items:center;gap:4px;">` +
+        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平多</button>` +
+        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平空</button>` +
+      '</div>',
+      `<div id="${MODE_HINT_ID}" style="height:18px;line-height:18px;margin-top:4px;color:#76808f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
+      '</div>',
+      '<div data-panel-group="multiplier" style="margin-top:8px;">',
+      '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap;">',
       `<label style="display:flex;align-items:center;gap:6px;">` +
         `<button id="${INC_ID}" type="button" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:18px;line-height:30px;cursor:pointer;">+</button>` +
         `<button id="${DEC_ID}" type="button" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:18px;line-height:30px;cursor:pointer;">-</button>` +
@@ -4737,15 +4759,11 @@ import {
         '<span style="font-size:13px;font-weight:500;color:#5e6673;">倍</span>' +
       '</label>',
       '</div>',
-      '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:10px;height:18px;overflow:hidden;">',
+      '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden;">',
       '<span id="jh-binance-close-qty-min" style="min-width:0;color:#76808f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>',
       '<span id="jh-binance-close-qty-final" style="min-width:0;font-weight:600;color:#1e2329;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>',
       '</div>',
-      `<div style="display:flex;align-items:center;gap:4px;margin-top:6px;">` +
-        `<button id="${SIDE_LONG_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平多</button>` +
-        `<button id="${SIDE_SHORT_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平空</button>` +
       '</div>',
-      `<div id="${MODE_HINT_ID}" style="height:18px;line-height:18px;margin-top:6px;color:#76808f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
       `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}"></div>`,
       '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #eef0f2;">',
       `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#1e2329;text-align:left;font-size:13px;font-weight:600;cursor:pointer;">Maker 阶梯 ▸</button>`,

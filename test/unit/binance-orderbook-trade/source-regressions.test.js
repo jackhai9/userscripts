@@ -205,16 +205,31 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
 });
 
 test('dynamic panel text keeps fixed single-line slots', () => {
-  assert.match(source, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);align-items:center;gap:10px;height:18px;overflow:hidden/);
+  assert.match(source, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="height:18px;line-height:18px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
-  assert.match(source, /grid-template-columns:48px 32px 60px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden/);
-  assert.match(source, /grid-template-columns:86px 58px 58px;align-items:center;justify-content:start;gap:6px;height:32px;margin-top:4px;overflow:hidden/);
+  assert.match(source, /grid-template-columns:28px 28px 38px 28px;align-items:center;justify-content:start;gap:4px;height:24px;overflow:hidden/);
+  assert.match(source, /grid-template-columns:68px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
+  assert.match(source, /buttonBaseStyle = 'width:44px;height:24px;[^']*font-size:12px;line-height:22px;'/);
+  assert.match(source, /adjustButtonBaseStyle = 'width:28px;height:24px;[^']*font-size:14px;line-height:22px;'/);
   assert.doesNotMatch(source, /data-orderbook-precision-status/);
 
   const ladderBody = readFunctionBody('refreshLadderPanel');
   assert.match(ladderBody, /status\.style\.visibility = expanded \|\| ladderTask \|\| ladderStatusText !== '空闲' \? 'visible' : 'hidden'/);
   assert.doesNotMatch(ladderBody, /status\.style\.display/);
   assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*height:18px;[^>]*visibility:hidden;[^>]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
+});
+
+test('panel keeps direction and multiplier controls in cohesive ordered groups', () => {
+  const ensurePanelBody = readFunctionBody('ensurePanel');
+  const directionIndex = ensurePanelBody.indexOf('data-panel-group="direction"');
+  const modeHintIndex = ensurePanelBody.indexOf('id="${MODE_HINT_ID}"');
+  const multiplierIndex = ensurePanelBody.indexOf('data-panel-group="multiplier"');
+  const quantityMinIndex = ensurePanelBody.indexOf('id="jh-binance-close-qty-min"');
+
+  assert.ok(directionIndex >= 0);
+  assert.ok(modeHintIndex > directionIndex);
+  assert.ok(multiplierIndex > modeHintIndex);
+  assert.ok(quantityMinIndex > multiplierIndex);
 });
 
 test('ladder feedback labels captured API codes without exposing bare numbers', () => {
@@ -595,8 +610,8 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
-  assert.match(refreshBody, /buttonBaseStyle = 'width:58px;height:32px;[^']*padding:0;[^']*font-size:14px;line-height:30px;/);
-  assert.match(refreshBody, /margin-top:8px;[^']*font-size:14px;/);
+  assert.match(refreshBody, /buttonBaseStyle = 'width:44px;height:24px;[^']*padding:0;[^']*font-size:12px;line-height:22px;/);
+  assert.match(refreshBody, /margin-top:8px;[^']*font-size:12px;/);
   const decreaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="DECREASE"');
   const currentIndex = refreshBody.indexOf('>\${currentText}</span>');
   const increaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="INCREASE"');
@@ -864,8 +879,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.64/);
-  assert.match(generatedSource, /@version\s+2\.7\.64/);
+  assert.match(source, /@version\s+2\.7\.65/);
+  assert.match(generatedSource, /@version\s+2\.7\.65/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
