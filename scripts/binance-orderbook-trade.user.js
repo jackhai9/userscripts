@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.69
+// @version      2.7.70
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1241,7 +1241,13 @@
     const INPUT_DEFAULT_BG = "transparent";
     const PRIMARY_EMPHASIS_COLOR = "#000000";
     const PRIMARY_EMPHASIS_FONT_WEIGHT = "500";
-    const DISABLED_CONTROL_BORDER = "#d5d9e2";
+    const CONTROL_BORDER_COLOR = "#d5d9e2";
+    const CONTROL_BACKGROUND_COLOR = "#ffffff";
+    const CONTROL_TEXT_COLOR = "#5e6673";
+    const CONTROL_FONT_WEIGHT = "500";
+    const MUTED_TEXT_COLOR = "#76808f";
+    const NEUTRAL_CONTROL_STYLE = `border-color:${CONTROL_BORDER_COLOR};background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-weight:${CONTROL_FONT_WEIGHT};cursor:pointer;opacity:1;`;
+    const DISABLED_CONTROL_BORDER = CONTROL_BORDER_COLOR;
     const DISABLED_CONTROL_BG = "#f5f5f5";
     const DISABLED_CONTROL_TEXT = "#b7bdc6";
     const DISABLED_CONTROL_OPACITY = "0.65";
@@ -1306,18 +1312,22 @@
     const MODE_HINT_ID = "jh-binance-trade-mode-hint";
     const NATIVE_ACTION_DISABLED_ATTR = "data-jh-native-action-disabled";
     const PREFIX = "[订单簿下单]";
-    (function injectNativeDisabledStyle() {
-      const styleId = "jh-native-action-disabled-style";
+    (function injectDisabledControlStyle() {
+      const styleId = "jh-disabled-control-style";
       if (document.getElementById(styleId)) return;
       const style = document.createElement("style");
       style.id = styleId;
       style.textContent = `
-      button[${NATIVE_ACTION_DISABLED_ATTR}="true"] {
+      button[${NATIVE_ACTION_DISABLED_ATTR}="true"],
+      #${PANEL_ID} button:disabled {
         background: ${DISABLED_CONTROL_BG} !important;
         color: ${DISABLED_CONTROL_TEXT} !important;
         border-color: ${DISABLED_CONTROL_BORDER} !important;
         opacity: ${DISABLED_CONTROL_OPACITY} !important;
+        font-weight: ${CONTROL_FONT_WEIGHT} !important;
         cursor: not-allowed !important;
+      }
+      button[${NATIVE_ACTION_DISABLED_ATTR}="true"] {
         pointer-events: none !important;
       }
     `;
@@ -2151,31 +2161,25 @@
       const canIncrease = !controlsBusy && Boolean(increaseTarget);
       const canApply = !controlsBusy && recommendation && current !== recommendation;
       const canRefresh = !controlsBusy;
-      const activeButtonStyle = "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;";
-      const disabledButtonStyle = `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`;
-      const decreaseButtonStyle = canDecrease ? activeButtonStyle : disabledButtonStyle;
-      const increaseButtonStyle = canIncrease ? activeButtonStyle : disabledButtonStyle;
-      const applyButtonStyle = canApply ? activeButtonStyle : disabledButtonStyle;
-      const refreshButtonStyle = canRefresh ? activeButtonStyle : disabledButtonStyle;
-      const buttonBaseStyle = "width:44px;height:24px;padding:0;border-radius:5px;border:1px solid #d5d9e2;font-size:12px;line-height:22px;";
-      const adjustButtonBaseStyle = "width:32px;height:32px;padding:0;border-radius:6px;border:1px solid #d5d9e2;font-size:18px;line-height:30px;";
+      const buttonBaseStyle = `width:44px;height:24px;padding:0;border-radius:5px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:22px;`;
+      const adjustButtonBaseStyle = `width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;`;
       const decreaseDisabledAttrs = canDecrease ? "" : ' disabled aria-disabled="true"';
       const increaseDisabledAttrs = canIncrease ? "" : ' disabled aria-disabled="true"';
       const currentText = current || "--";
       const recommendationText = recommendation || "--";
       const precisionMessage = selectionBusy ? "调整中" : busy ? formatOrderbookPrecisionBusyStatus(status) : status === "ready" ? `推荐 ${recommendationText}` : status;
       const recommendationHtml = [
-        '<div style="margin-top:8px;color:#76808f;font-size:12px;">',
+        `<div style="margin-top:8px;color:${MUTED_TEXT_COLOR};font-size:12px;">`,
         '<div style="display:grid;grid-template-columns:36px 32px 72px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden;">',
         '<span style="font-size:14px;">缩放</span>',
-        `<button type="button" data-orderbook-precision-adjust="DECREASE"${decreaseDisabledAttrs} aria-label="减小缩放" title="切换到小 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${decreaseButtonStyle}">-</button>`,
-        `<span title="当前缩放 ${currentText}" style="min-width:0;height:32px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;text-align:center;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:30px;color:${PRIMARY_EMPHASIS_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
-        `<button type="button" data-orderbook-precision-adjust="INCREASE"${increaseDisabledAttrs} aria-label="增大缩放" title="切换到大 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${increaseButtonStyle}">+</button>`,
+        `<button type="button" data-orderbook-precision-adjust="DECREASE"${decreaseDisabledAttrs} aria-label="减小缩放" title="切换到小 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">-</button>`,
+        `<span title="当前缩放 ${currentText}" style="min-width:0;height:32px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;background:${CONTROL_BACKGROUND_COLOR};text-align:center;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:30px;color:${PRIMARY_EMPHASIS_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
+        `<button type="button" data-orderbook-precision-adjust="INCREASE"${increaseDisabledAttrs} aria-label="增大缩放" title="切换到大 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">+</button>`,
         "</div>",
         '<div style="display:grid;grid-template-columns:84px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden;">',
         `<span title="${precisionMessage}" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${precisionMessage}</span>`,
-        `<button type="button" data-orderbook-precision-apply="true"${canApply ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
-        `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${refreshButtonStyle}">刷新</button>`,
+        `<button type="button" data-orderbook-precision-apply="true"${canApply ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${NEUTRAL_CONTROL_STYLE}">应用</button>`,
+        `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${NEUTRAL_CONTROL_STYLE}">刷新</button>`,
         "</div>",
         "</div>"
       ].join("");
@@ -4721,13 +4725,13 @@
       }
     }
     function ladderOptionButton(label, value, selected, group) {
-      const activeStyle = selected ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};` : "border-color:#d5d9e2;background:#ffffff;color:#5e6673;font-weight:500;";
-      return `<button type="button" data-ladder-group="${group}" data-ladder-value="${value}" style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid #d5d9e2;font-size:13px;line-height:26px;cursor:pointer;${activeStyle}">${label}</button>`;
+      const activeStyle = selected ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};` : NEUTRAL_CONTROL_STYLE;
+      return `<button type="button" data-ladder-group="${group}" data-ladder-value="${value}" style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:13px;line-height:26px;cursor:pointer;${activeStyle}">${label}</button>`;
     }
     function ladderOptionRow(title, options, selected, group, suffix = "") {
       return [
         '<div style="display:grid;grid-template-columns:28px repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">',
-        `<span style="color:#76808f;font-size:13px;">${title}</span>`,
+        `<span style="color:${MUTED_TEXT_COLOR};font-size:13px;">${title}</span>`,
         ...options.map((value) => ladderOptionButton(`${value}${suffix}`, value, Number(value) === Number(selected), group)),
         "</div>"
       ].join("");
@@ -4738,34 +4742,32 @@
       const incDisabled = value >= LADDER_STEP_MAX;
       const stepButton = (action, label, disabled) => {
         const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : "";
-        const style = disabled ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};` : "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;";
-        return `<button type="button" data-ladder-step-action="${action}"${disabledAttrs} style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid #d5d9e2;font-size:16px;line-height:26px;${style}">${label}</button>`;
+        return `<button type="button" data-ladder-step-action="${action}"${disabledAttrs} style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:16px;line-height:26px;${NEUTRAL_CONTROL_STYLE}">${label}</button>`;
       };
       return [
         '<div style="display:grid;grid-template-columns:28px repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">',
-        '<span style="color:#76808f;font-size:13px;">幅</span>',
+        `<span style="color:${MUTED_TEXT_COLOR};font-size:13px;">幅</span>`,
         stepButton("dec", "-", decDisabled),
-        `<span style="box-sizing:border-box;width:100%;min-width:0;height:28px;border:1px solid #d5d9e2;border-radius:6px;background:#ffffff;color:${PRIMARY_EMPHASIS_COLOR};font-size:13px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:26px;text-align:center;">${value}</span>`,
+        `<span style="box-sizing:border-box;width:100%;min-width:0;height:28px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;background:${CONTROL_BACKGROUND_COLOR};color:${PRIMARY_EMPHASIS_COLOR};font-size:13px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:26px;text-align:center;">${value}</span>`,
         stepButton("inc", "+", incDisabled),
         "</div>"
       ].join("");
     }
     function ladderActionButton(actionType, label, tone, disabled = false) {
       const isBuyTone = tone === "BUY";
-      const borderColor = disabled ? DISABLED_CONTROL_BORDER : isBuyTone ? "var(--color-Buy)" : "var(--color-Sell)";
-      const background = disabled ? DISABLED_CONTROL_BG : isBuyTone ? "var(--color-GreenAlpha01)" : "var(--color-RedAlpha01)";
-      const color = disabled ? DISABLED_CONTROL_TEXT : borderColor;
+      const borderColor = isBuyTone ? "var(--color-Buy)" : "var(--color-Sell)";
+      const background = isBuyTone ? "var(--color-GreenAlpha01)" : "var(--color-RedAlpha01)";
       const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : "";
-      return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${color};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${disabled ? "not-allowed" : "pointer"};opacity:${disabled ? DISABLED_CONTROL_OPACITY : "1"};">${label}</button>`;
+      return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;opacity:1;">${label}</button>`;
     }
     function getLadderActionRows(tradeMode, closeContext, symbol, precision) {
       const ladderRunning = !!ladderTask;
       const actionDisabled = ladderRunning || !!cancelCurrentSymbolOpenOrdersTask;
       if (!["OPEN", "CLOSE"].includes(tradeMode)) {
-        return ['<div style="margin-top:6px;color:#76808f;font-size:12px;">等待开仓/平仓状态</div>'];
+        return [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待开仓/平仓状态</div>`];
       }
       if (!precision) {
-        return ['<div style="margin-top:6px;color:#76808f;font-size:12px;">等待订单簿缩放值</div>'];
+        return [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待订单簿缩放值</div>`];
       }
       if (tradeMode === "OPEN") {
         return [
@@ -4806,16 +4808,14 @@
         if (expanded) {
           const stopDisabled = !ladderTask;
           const stopDisabledAttrs = stopDisabled ? ' disabled aria-disabled="true"' : "";
-          const stopStyle = stopDisabled ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};` : "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;";
           const cancelRunning = !!cancelCurrentSymbolOpenOrdersTask;
           const cancelDisabled = !!ladderTask || cancelRunning;
           const cancelDisabledAttrs = cancelDisabled ? ' disabled aria-disabled="true"' : "";
-          const cancelStyle = cancelDisabled ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};` : "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;";
           const bodyHtml = [
             ...getLadderActionRows(mode, closeContext, symbol, precision),
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
-            `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${stopStyle}">停止阶梯挂单</button>`,
-            `<button type="button" data-ladder-cancel-symbol="true"${cancelDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${cancelStyle}">${cancelRunning ? "撤单处理中" : "撤本币挂单"}</button>`,
+            `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">停止阶梯挂单</button>`,
+            `<button type="button" data-ladder-cancel-symbol="true"${cancelDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${cancelRunning ? "撤单处理中" : "撤本币挂单"}</button>`,
             "</div>"
           ].join("");
           if (ladderPanelBodySignature !== bodyHtml || body.innerHTML !== bodyHtml) {
@@ -4899,13 +4899,9 @@
       }
       if (decBtn) {
         decBtn.disabled = !numericContextReady || Number(multiplier) <= 1;
-        decBtn.style.opacity = decBtn.disabled ? "0.45" : "1";
-        decBtn.style.cursor = decBtn.disabled ? "not-allowed" : "pointer";
       }
       if (incBtn) {
         incBtn.disabled = !numericContextReady;
-        incBtn.style.opacity = incBtn.disabled ? "0.45" : "1";
-        incBtn.style.cursor = incBtn.disabled ? "not-allowed" : "pointer";
       }
       if (input) {
         input.disabled = !numericContextReady;
@@ -4919,11 +4915,9 @@
         sideLongBtn.textContent = isOpenMode ? "开多" : "平多";
         sideLongBtn.style.order = "0";
         sideLongBtn.disabled = isDisabled;
-        sideLongBtn.style.borderColor = isDisabled ? DISABLED_CONTROL_BORDER : isActive ? isOpenMode ? "var(--color-Buy)" : "var(--color-Sell)" : "var(--color-InputLine)";
-        sideLongBtn.style.background = isDisabled ? DISABLED_CONTROL_BG : isActive ? isOpenMode ? "var(--color-GreenAlpha01)" : "var(--color-RedAlpha01)" : "#ffffff";
-        sideLongBtn.style.color = isDisabled ? DISABLED_CONTROL_TEXT : isActive ? isOpenMode ? "var(--color-Buy)" : "var(--color-Sell)" : "#5e6673";
-        sideLongBtn.style.opacity = isDisabled ? DISABLED_CONTROL_OPACITY : "1";
-        sideLongBtn.style.cursor = isDisabled ? "not-allowed" : "pointer";
+        sideLongBtn.style.borderColor = isActive ? isOpenMode ? "var(--color-Buy)" : "var(--color-Sell)" : "var(--color-InputLine)";
+        sideLongBtn.style.background = isActive ? isOpenMode ? "var(--color-GreenAlpha01)" : "var(--color-RedAlpha01)" : CONTROL_BACKGROUND_COLOR;
+        sideLongBtn.style.color = isActive ? isOpenMode ? "var(--color-Buy)" : "var(--color-Sell)" : CONTROL_TEXT_COLOR;
       }
       if (sideShortBtn) {
         const isOpenMode = tradeMode === "OPEN";
@@ -4932,11 +4926,9 @@
         sideShortBtn.textContent = isOpenMode ? "开空" : "平空";
         sideShortBtn.style.order = "1";
         sideShortBtn.disabled = isDisabled;
-        sideShortBtn.style.borderColor = isDisabled ? DISABLED_CONTROL_BORDER : isActive ? isOpenMode ? "var(--color-Sell)" : "var(--color-Buy)" : "var(--color-InputLine)";
-        sideShortBtn.style.background = isDisabled ? DISABLED_CONTROL_BG : isActive ? isOpenMode ? "var(--color-RedAlpha01)" : "var(--color-GreenAlpha01)" : "#ffffff";
-        sideShortBtn.style.color = isDisabled ? DISABLED_CONTROL_TEXT : isActive ? isOpenMode ? "var(--color-Sell)" : "var(--color-Buy)" : "#5e6673";
-        sideShortBtn.style.opacity = isDisabled ? DISABLED_CONTROL_OPACITY : "1";
-        sideShortBtn.style.cursor = isDisabled ? "not-allowed" : "pointer";
+        sideShortBtn.style.borderColor = isActive ? isOpenMode ? "var(--color-Sell)" : "var(--color-Buy)" : "var(--color-InputLine)";
+        sideShortBtn.style.background = isActive ? isOpenMode ? "var(--color-RedAlpha01)" : "var(--color-GreenAlpha01)" : CONTROL_BACKGROUND_COLOR;
+        sideShortBtn.style.color = isActive ? isOpenMode ? "var(--color-Sell)" : "var(--color-Buy)" : CONTROL_TEXT_COLOR;
       }
       syncNativeCloseButtons(tradeMode, rawCloseContext);
       refreshOrderbookPrecisionRecommendation(panel);
@@ -5025,23 +5017,23 @@
       panel.style.visibility = "hidden";
       panel.innerHTML = [
         '<div data-panel-group="direction">',
-        `<div style="display:flex;align-items:center;gap:4px;"><button id="${SIDE_LONG_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平多</button><button id="${SIDE_SHORT_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:#ffffff;color:#5e6673;font-size:14px;line-height:30px;cursor:pointer;">平空</button></div>`,
-        `<div id="${MODE_HINT_ID}" style="height:18px;line-height:18px;margin-top:4px;color:#76808f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
+        `<div style="display:flex;align-items:center;gap:4px;"><button id="${SIDE_LONG_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平多</button><button id="${SIDE_SHORT_ID}" type="button" style="min-width:54px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--color-InputLine);background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平空</button></div>`,
+        `<div id="${MODE_HINT_ID}" style="height:18px;line-height:18px;margin-top:4px;color:${MUTED_TEXT_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
         "</div>",
         '<div data-panel-group="multiplier" style="margin-top:8px;">',
         '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap;">',
-        `<label style="display:flex;align-items:center;gap:6px;"><button id="${INC_ID}" type="button" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:18px;line-height:30px;cursor:pointer;">+</button><button id="${DEC_ID}" type="button" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:#5e6673;font-size:18px;line-height:30px;cursor:pointer;">-</button><input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:${PRIMARY_EMPHASIS_COLOR};caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:32px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;"><span style="font-size:13px;font-weight:500;color:#5e6673;">倍</span></label>`,
+        `<label style="display:flex;align-items:center;gap:6px;"><button id="${INC_ID}" type="button" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">+</button><button id="${DEC_ID}" type="button" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">-</button><input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:${PRIMARY_EMPHASIS_COLOR};caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:32px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;"><span style="font-size:13px;font-weight:${CONTROL_FONT_WEIGHT};color:${CONTROL_TEXT_COLOR};">倍</span></label>`,
         "</div>",
         '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden;">',
-        '<span id="jh-binance-close-qty-min" style="min-width:0;color:#76808f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>',
+        `<span id="jh-binance-close-qty-min" style="min-width:0;color:${MUTED_TEXT_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
         `<span id="jh-binance-close-qty-final" style="min-width:0;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};color:${PRIMARY_EMPHASIS_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
         "</div>",
         "</div>",
         `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}"></div>`,
         '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #eef0f2;">',
-        `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid #d5d9e2;background:#ffffff;color:${PRIMARY_EMPHASIS_COLOR};text-align:left;font-size:13px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};cursor:pointer;">Maker 阶梯 ▸</button>`,
+        `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};background:${CONTROL_BACKGROUND_COLOR};color:${PRIMARY_EMPHASIS_COLOR};text-align:left;font-size:13px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};cursor:pointer;">Maker 阶梯 ▸</button>`,
         `<div id="${LADDER_BODY_ID}" style="display:none;"></div>`,
-        `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:hidden;color:#76808f;font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
+        `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:hidden;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
         "</div>"
       ].join("");
       panelPositionSignature = "";
