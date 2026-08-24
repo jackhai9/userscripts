@@ -7,6 +7,47 @@ function isOwnPanelButton(button, panelId) {
   return !!button?.closest?.(`#${panelId}`);
 }
 
+export function findTradePanelInsertionPoint(root) {
+  const modeTabs = root?.querySelector?.('#position-direction');
+  if (!modeTabs) return null;
+
+  const modeAndOrderTypeColumn = modeTabs.parentElement;
+  const modeAndOrderTypeRow = modeAndOrderTypeColumn?.parentElement;
+  const tradeHeader = modeAndOrderTypeRow?.parentElement;
+  const ownerDocument = modeTabs.ownerDocument;
+  const modeLabels = Array.from(modeTabs.querySelectorAll('[role="tab"]'))
+    .map((tab) => (tab.textContent || '').trim());
+
+  if (
+    !modeAndOrderTypeColumn
+    || !modeAndOrderTypeRow
+    || !tradeHeader
+    || modeAndOrderTypeRow === ownerDocument?.body
+    || tradeHeader === ownerDocument?.documentElement
+    || modeAndOrderTypeRow.firstElementChild !== modeAndOrderTypeColumn
+    || modeAndOrderTypeRow.children.length !== 1
+    || tradeHeader.firstElementChild === modeAndOrderTypeRow
+    || !modeLabels.some((text) => text.includes('开仓'))
+    || !modeLabels.some((text) => text.includes('平仓'))
+  ) {
+    return null;
+  }
+
+  return {
+    parent: tradeHeader,
+    before: modeAndOrderTypeRow,
+  };
+}
+
+export function placeTradePanelSpacer(spacer, insertionPoint) {
+  const { parent, before } = insertionPoint || {};
+  if (!spacer || !parent || !before || before.parentElement !== parent) return false;
+  if (spacer.parentElement !== parent || spacer.nextElementSibling !== before) {
+    parent.insertBefore(spacer, before);
+  }
+  return true;
+}
+
 export function isTradeModeTab(node, { panelId }) {
   if (!node?.matches?.('[role="tab"]')) return false;
   if (node.closest(`#${panelId}`)) return false;

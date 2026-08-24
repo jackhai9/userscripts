@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.84
+// @version      2.7.85
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -86,10 +86,12 @@ import {
 } from './dom/account-orders.js';
 import {
   collectTradeButtonsFromScopes,
+  findTradePanelInsertionPoint,
   findCurrentLeverageButtonFromScopes,
   isTradeActionButton as isTradeActionButtonDom,
   isTradeModeTab as isTradeModeTabDom,
   parseLeverageButtonText,
+  placeTradePanelSpacer,
 } from './dom/trade-form.js';
 import {
   planBufferedMakerPrices,
@@ -4810,9 +4812,9 @@ import {
     );
   }
 
-  function ensureSpacer(host, panelHeight) {
+  function ensureSpacer(insertionPoint, panelHeight) {
     let spacer = document.getElementById(SPACER_ID);
-    if (!host || !host.parentElement) {
+    if (!insertionPoint) {
       if (spacer) spacer.remove();
       return null;
     }
@@ -4825,12 +4827,7 @@ import {
     spacer.style.margin = '8px 0 0 0';
     spacer.style.pointerEvents = 'none';
 
-    if (spacer.parentElement !== host.parentElement) {
-      host.parentElement.insertBefore(spacer, host.nextSibling);
-    } else if (spacer.previousElementSibling !== host) {
-      host.parentElement.insertBefore(spacer, host.nextSibling);
-    }
-    return spacer;
+    return placeTradePanelSpacer(spacer, insertionPoint) ? spacer : null;
   }
 
   function placePanelFloating(panel, anchorRect) {
@@ -4870,12 +4867,25 @@ import {
   }
 
   function positionPanel(panel) {
-    const qtyInput = findQtyInput();
-    const host = findQtyFormItem(qtyInput);
-    const spacer = ensureSpacer(host, Math.max((panel.offsetHeight || 0) + PANEL_BOTTOM_TOOLTIP_GAP, 76));
-    const anchorRect = spacer?.getBoundingClientRect() || qtyInput?.getBoundingClientRect() || null;
+    const insertionPoint = findTradePanelInsertionPoint(document);
+    const spacer = ensureSpacer(
+      insertionPoint,
+      Math.max((panel.offsetHeight || 0) + PANEL_BOTTOM_TOOLTIP_GAP, 76)
+    );
+    const anchorRect = spacer?.getBoundingClientRect() || null;
     placePanelFloating(panel, anchorRect);
     return Boolean(anchorRect?.width && anchorRect?.height);
+  }
+
+  function isPanelPositionCurrent() {
+    const spacer = document.getElementById(SPACER_ID);
+    const insertionPoint = findTradePanelInsertionPoint(document);
+    return Boolean(
+      spacer
+      && insertionPoint
+      && spacer.parentElement === insertionPoint.parent
+      && spacer.nextElementSibling === insertionPoint.before
+    );
   }
 
   function ensurePanel() {
@@ -5143,7 +5153,7 @@ import {
       applyInputVisualState(input, multiplier);
     }
     const panelHtml = panel.innerHTML;
-    if (panelPositionSignature !== panelHtml) {
+    if (panelPositionSignature !== panelHtml || !isPanelPositionCurrent()) {
       if (positionPanel(panel)) panelPositionSignature = panelHtml;
     }
   }
