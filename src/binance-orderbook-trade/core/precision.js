@@ -28,6 +28,27 @@ export function getOrderbookPrecisionDecadeTarget(options, current, direction) {
   return available.has(target) ? target : null;
 }
 
+export function getOrderbookPrecisionShortcutOptions(options, limit = 4) {
+  const normalizedLimit = Number(limit);
+  if (!Number.isInteger(normalizedLimit) || normalizedLimit < 1) {
+    throw new Error(`Invalid orderbook precision shortcut limit: ${limit}`);
+  }
+  return Array.from(new Set(sortedPositiveDecimals(options))).slice(0, normalizedLimit);
+}
+
+export function formatOrderbookPrecisionShortcutLabel(value) {
+  const normalized = normalizeDecimalString(value);
+  if (!normalized || !isPositiveDecimalString(normalized)) {
+    throw new Error(`Invalid orderbook precision shortcut value: ${value}`);
+  }
+  if (normalized.length <= 5) return normalized;
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`Orderbook precision shortcut value is not finite: ${value}`);
+  }
+  return numeric.toExponential().replace('e+', 'e');
+}
+
 export function collectNonZeroPriceMoves(prices) {
   const moves = [];
   let previous = null;

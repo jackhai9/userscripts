@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.78
+// @version      2.7.79
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -47,7 +47,8 @@ import {
 } from './core/decimal.js';
 import {
   collectNonZeroPriceMoves,
-  getOrderbookPrecisionDecadeTarget,
+  formatOrderbookPrecisionShortcutLabel,
+  getOrderbookPrecisionShortcutOptions,
   mergePrecisionSamples,
   recommendOrderbookPrecision,
   resolveOrderbookPrecisionSampleState,
@@ -226,6 +227,7 @@ import {
   const ORDERBOOK_PRECISION_OPTION_WAIT_MS = 1200;
   const ORDERBOOK_PRECISION_MIN_TRADE_PRICE_ROWS = 6;
   const ORDERBOOK_PRECISION_SAMPLE_MAX = 96;
+  const ORDERBOOK_PRECISION_SHORTCUT_LIMIT = 4;
   const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
     '0.00000001',
     '0.0000001',
@@ -305,6 +307,7 @@ import {
   let orderbookPrecisionActiveRequest = null;
   let orderbookPrecisionPendingRequest = null;
   let orderbookPrecisionSelectionTask = null;
+  let orderbookPrecisionOptionsLoadRequestedSymbol = null;
   let orderbookPrecisionObserver = null;
   let orderbookPrecisionObserverRoot = null;
   let lastObservedOrderbookPrecision = null;
@@ -1374,6 +1377,28 @@ import {
     return `采样中 ${remainingSeconds}s`;
   }
 
+  function renderOrderbookPrecisionShortcut(value, current, disabled) {
+    const selected = value === current;
+    const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
+    const title = disabled
+      ? '缩放调整暂不可用'
+      : selected
+        ? `当前原生缩放 ${value}`
+        : `切换到原生缩放 ${value}`;
+    const activeStyle = selected
+      ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};`
+      : NEUTRAL_CONTROL_STYLE;
+    return `<button type="button" data-orderbook-precision-value="${value}"${disabledAttrs} aria-pressed="${selected}" aria-label="切换订单簿缩放到 ${value}" title="${title}" style="box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:30px;white-space:nowrap;overflow:hidden;cursor:pointer;${activeStyle}">${formatOrderbookPrecisionShortcutLabel(value)}</button>`;
+  }
+
+  function renderOrderbookPrecisionShortcutSlots(options, current, disabled) {
+    const slots = options.map((value) => renderOrderbookPrecisionShortcut(value, current, disabled));
+    while (slots.length < ORDERBOOK_PRECISION_SHORTCUT_LIMIT) {
+      slots.push('<span aria-hidden="true" style="height:32px;visibility:hidden;"></span>');
+    }
+    return slots;
+  }
+
   function refreshOrderbookPrecisionRecommendation(panel = document.getElementById(PANEL_ID)) {
     const el = panel?.querySelector?.(`#${ORDERBOOK_PRECISION_RECOMMENDATION_ID}`);
     if (!el) return;
@@ -1411,49 +1436,30 @@ import {
     const nativeOptions = orderbookPrecisionState.symbol === symbol
       ? orderbookPrecisionState.nativeOptions
       : [];
-    const adjustmentOptions = nativeOptions.length
-      ? nativeOptions
-      : ORDERBOOK_PRECISION_CANDIDATE_OPTIONS;
-    const decreaseTarget = current
-      ? getOrderbookPrecisionDecadeTarget(adjustmentOptions, current, 'DECREASE')
-      : null;
-    const increaseTarget = current
-      ? getOrderbookPrecisionDecadeTarget(adjustmentOptions, current, 'INCREASE')
-      : null;
-    const canDecrease = !controlsBusy && Boolean(decreaseTarget);
-    const canIncrease = !controlsBusy && Boolean(increaseTarget);
-    const canApply = !controlsBusy && recommendation && current !== recommendation;
+    const shortcutOptions = getOrderbookPrecisionShortcutOptions(
+      nativeOptions,
+      ORDERBOOK_PRECISION_SHORTCUT_LIMIT
+    );
+    if (!nativeOptions.length) queueOrderbookPrecisionOptionsLoad(symbol);
+    const canApply = !controlsBusy
+      && recommendation
+      && current !== recommendation
+      && shortcutOptions.includes(recommendation);
     const canRefresh = !controlsBusy;
     const buttonBaseStyle = `width:44px;height:24px;padding:0;border-radius:5px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:22px;`;
-    const adjustButtonBaseStyle = `width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;`;
-    const decreaseDisabledAttrs = canDecrease ? '' : ' disabled aria-disabled="true"';
-    const increaseDisabledAttrs = canIncrease ? '' : ' disabled aria-disabled="true"';
-    const decreaseTitle = controlsBusy
-      ? '缩放调整暂不可用'
-      : decreaseTarget
-        ? '切换到小 10 倍的原生缩放档'
-        : '已达到最小原生缩放档';
-    const increaseTitle = controlsBusy
-      ? '缩放调整暂不可用'
-      : increaseTarget
-        ? '切换到大 10 倍的原生缩放档'
-        : '已达到最大原生缩放档';
-    const currentText = current || '--';
     const recommendationText = recommendation || '--';
     const precisionMessage = selectionBusy
-      ? '调整中'
+      ? nativeOptions.length ? '调整中' : '读取档位'
       : busy
         ? formatOrderbookPrecisionBusyStatus(status)
         : status === 'ready'
-          ? `推荐 ${recommendationText}`
+          ? `推荐 ${recommendationText}${recommendation && !shortcutOptions.includes(recommendation) ? '（原生）' : ''}`
           : status;
     const recommendationHtml = [
       `<div style="margin-top:12px;color:${MUTED_TEXT_COLOR};font-size:12px;">`,
-      '<div style="display:grid;grid-template-columns:78px 72px 32px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden;">',
-      '<span style="font-size:14px;white-space:nowrap;">订单簿缩放</span>',
-      `<span title="当前缩放 ${currentText}" style="min-width:0;height:32px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;background:${CONTROL_BACKGROUND_COLOR};text-align:center;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:30px;color:${PRIMARY_EMPHASIS_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
-      `<button type="button" data-orderbook-precision-adjust="DECREASE"${decreaseDisabledAttrs} aria-label="减小缩放" title="${decreaseTitle}" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">-</button>`,
-      `<button type="button" data-orderbook-precision-adjust="INCREASE"${increaseDisabledAttrs} aria-label="增大缩放" title="${increaseTitle}" style="${adjustButtonBaseStyle}${NEUTRAL_CONTROL_STYLE}">+</button>`,
+      '<div style="display:grid;grid-template-columns:78px repeat(4,minmax(0,1fr));align-items:center;gap:4px;height:32px;overflow:hidden;">',
+      `<span title="当前缩放 ${current || '--'}" style="font-size:14px;white-space:nowrap;">订单簿缩放</span>`,
+      ...renderOrderbookPrecisionShortcutSlots(shortcutOptions, current, controlsBusy),
       '</div>',
       '<div style="display:grid;grid-template-columns:84px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden;">',
       `<span title="${precisionMessage}" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${precisionMessage}</span>`,
@@ -1509,6 +1515,25 @@ import {
       scheduleRenderPanel();
       return false;
     }
+    const shortcutOptions = getOrderbookPrecisionShortcutOptions(
+      nativeOptions,
+      ORDERBOOK_PRECISION_SHORTCUT_LIMIT
+    );
+    if (!shortcutOptions.includes(recommendation)) {
+      const currentOption = findVisibleOrderbookPrecisionOption(startPrecision, trigger.element);
+      if (!currentOption || !clickDomTarget(currentOption)) {
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: '无法关闭原生缩放下拉' };
+        scheduleRenderPanel();
+        return false;
+      }
+      orderbookPrecisionState = {
+        ...orderbookPrecisionState,
+        recommendation,
+        status: `推荐 ${recommendation}，请使用原生下拉`,
+      };
+      scheduleRenderPanel();
+      return false;
+    }
 
     const applied = await clickAndConfirmOrderbookPrecisionOption({
       symbol,
@@ -1528,7 +1553,7 @@ import {
     return true;
   }
 
-  async function runAdjustOrderbookPrecision(direction) {
+  async function runLoadOrderbookPrecisionOptions() {
     const symbol = getCurrentSymbol();
     if (!isCurrentObservedSymbol(symbol)) return false;
     const trigger = findOrderbookPrecisionTrigger();
@@ -1547,23 +1572,48 @@ import {
       scheduleRenderPanel();
       return false;
     }
+    const currentOption = findVisibleOrderbookPrecisionOption(startPrecision, trigger.element);
+    if (!currentOption || !clickDomTarget(currentOption)) {
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: '无法关闭原生缩放下拉' };
+      scheduleRenderPanel();
+      return false;
+    }
+    scheduleRenderPanel();
+    return true;
+  }
 
-    const targetPrecision = getOrderbookPrecisionDecadeTarget(values, startPrecision, direction);
-    if (!targetPrecision) {
-      clickDomTarget(findVisibleOrderbookPrecisionOption(startPrecision, trigger.element));
-      const sizeLabel = direction === 'DECREASE' ? '小' : '大';
-      orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到${sizeLabel} 10 倍的原生缩放档` };
+  async function runSelectOrderbookPrecision(targetPrecision) {
+    const symbol = getCurrentSymbol();
+    if (!isCurrentObservedSymbol(symbol)) return false;
+    const trigger = findOrderbookPrecisionTrigger();
+    if (!symbol || !trigger?.element) {
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: '未定位到缩放下拉' };
+      scheduleRenderPanel();
+      return false;
+    }
+    const startPrecision = trigger.value;
+    if (targetPrecision === startPrecision) return true;
+    const options = await ensureVisibleOrderbookPrecisionOptions(trigger.element);
+    if (!isCurrentObservedSymbol(symbol) || readCurrentOrderbookPrecisionValue() !== startPrecision) return false;
+    const values = readVisibleOrderbookPrecisionOptionValues(trigger.element);
+    const shortcutOptions = getOrderbookPrecisionShortcutOptions(
+      values,
+      ORDERBOOK_PRECISION_SHORTCUT_LIMIT
+    );
+    orderbookPrecisionState = { ...orderbookPrecisionState, symbol, nativeOptions: values };
+    if (!options.length || !shortcutOptions.includes(targetPrecision)) {
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到快捷缩放 ${targetPrecision}` };
       scheduleRenderPanel();
       return false;
     }
 
-    const adjusted = await clickAndConfirmOrderbookPrecisionOption({
+    const selected = await clickAndConfirmOrderbookPrecisionOption({
       symbol,
       startPrecision,
       targetPrecision,
       triggerElement: trigger.element,
     });
-    if (!adjusted) {
+    if (!selected) {
       if (isCurrentObservedSymbol(symbol)) {
         orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到 ${targetPrecision} 档切换结果` };
         scheduleRenderPanel();
@@ -1592,8 +1642,41 @@ import {
     return runOrderbookPrecisionSelectionTask(runApplyRecommendedOrderbookPrecision);
   }
 
-  function adjustOrderbookPrecision(direction) {
-    return runOrderbookPrecisionSelectionTask(() => runAdjustOrderbookPrecision(direction));
+  function selectOrderbookPrecision(value) {
+    const targetPrecision = normalizeDecimalString(value);
+    if (!targetPrecision || !isPositiveDecimalString(targetPrecision)) {
+      throw new Error(`无效的订单簿缩放快捷值: ${value}`);
+    }
+    return runOrderbookPrecisionSelectionTask(() => runSelectOrderbookPrecision(targetPrecision));
+  }
+
+  function queueOrderbookPrecisionOptionsLoad(symbol) {
+    if (
+      !isCurrentObservedSymbol(symbol)
+      || document.hidden
+      || orderbookPrecisionOptionsLoadRequestedSymbol === symbol
+      || orderbookPrecisionSelectionTask
+      || !findOrderbookPrecisionTrigger()?.element
+    ) return;
+    orderbookPrecisionOptionsLoadRequestedSymbol = symbol;
+    window.setTimeout(() => {
+      if (!isCurrentObservedSymbol(symbol)) return;
+      if (document.hidden) {
+        orderbookPrecisionOptionsLoadRequestedSymbol = null;
+        return;
+      }
+      if (orderbookPrecisionSelectionTask) {
+        orderbookPrecisionOptionsLoadRequestedSymbol = null;
+        scheduleRenderPanel();
+        return;
+      }
+      runOrderbookPrecisionSelectionTask(runLoadOrderbookPrecisionOptions).catch((error) => {
+        err('读取原生订单簿缩放档位失败:', error);
+        if (!isCurrentObservedSymbol(symbol)) return;
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: '读取原生缩放档位失败' };
+        scheduleRenderPanel();
+      });
+    }, 0);
   }
 
   async function runOrderbookPrecisionSampleRound(request) {
@@ -4922,10 +5005,10 @@ import {
         }
         return;
       }
-      const precisionAdjustBtn = target.closest('[data-orderbook-precision-adjust]');
-      if (precisionAdjustBtn) {
-        if (precisionAdjustBtn.disabled || precisionAdjustBtn.getAttribute('aria-disabled') === 'true') return;
-        adjustOrderbookPrecision(precisionAdjustBtn.getAttribute('data-orderbook-precision-adjust'));
+      const precisionShortcutBtn = target.closest('[data-orderbook-precision-value]');
+      if (precisionShortcutBtn) {
+        if (precisionShortcutBtn.disabled || precisionShortcutBtn.getAttribute('aria-disabled') === 'true') return;
+        selectOrderbookPrecision(precisionShortcutBtn.getAttribute('data-orderbook-precision-value'));
         return;
       }
       const precisionApplyBtn = target.closest('[data-orderbook-precision-apply]');
@@ -5365,6 +5448,7 @@ import {
     closeGuard = null;
     invalidateTradeButtonCache();
     stopOrderbookPrecisionSampler();
+    orderbookPrecisionOptionsLoadRequestedSymbol = null;
     const recommendation = getOrderbookPrecisionRecommendation(symbol);
     orderbookPrecisionState = {
       symbol,
