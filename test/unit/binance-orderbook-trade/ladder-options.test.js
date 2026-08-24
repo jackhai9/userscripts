@@ -245,6 +245,8 @@ test('ladder quantity levels and step controls share one stable five-slot grid',
   assert.doesNotMatch(optionRow, /flex-wrap/);
   assert.doesNotMatch(stepRow, /flex-wrap/);
   assert.match(source, /data-ladder-value="\$\{value\}" style="box-sizing:border-box;width:100%;min-width:0;height:28px/);
+  assert.match(stepRow, /data-ladder-step-action="\$\{action\}"[^`]*font-size:16px;line-height:26px/);
+  assert.match(stepRow, /font-size:13px;font-weight:600;line-height:26px;text-align:center/);
 });
 
 test('close ladder buttons match the Binance native long-short order', () => {

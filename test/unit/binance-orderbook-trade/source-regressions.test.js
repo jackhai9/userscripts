@@ -883,8 +883,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.67/);
-  assert.match(generatedSource, /@version\s+2\.7\.67/);
+  assert.match(source, /@version\s+2\.7\.68/);
+  assert.match(generatedSource, /@version\s+2\.7\.68/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
