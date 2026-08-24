@@ -25,7 +25,7 @@ function createTradingViewApi() {
   return { api, saved, listeners };
 }
 
-for (const drawingCount of [1, 5, 20, 21, 37, 40, 100, 200]) {
+for (const drawingCount of [1, 5, 20, 21, 37, 40, 100, 120, 199, 200]) {
   test(`coalesces ${drawingCount} dynamic drawing saves into the final full save`, async () => {
     const { api, saved, listeners } = createTradingViewApi();
     const originalSaveChart = api.saveChart;
