@@ -46,6 +46,15 @@ function isOpenOrdersConditionalSubTabText(text) {
   return /^(条件委托|Conditional Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
 }
 
+function isAccountPositionTabText(text) {
+  return /^(仓位|Positions)(?:\s*\(\d+\))?$/i.test(normalizeText(text));
+}
+
+export function parseAccountPositionTabCount(text) {
+  const match = normalizeText(text).match(/^(?:仓位|Positions)\s*\((\d+)\)$/i);
+  return match ? Number(match[1]) : null;
+}
+
 export function findOpenOrdersBasicSubTab(root, { isVisibleElement }) {
   return Array.from(root.querySelectorAll('[role="tab"]'))
     .find((tab) => isVisibleElement(tab) && isOpenOrdersBasicSubTabText(getNormalizedText(tab))) || null;
@@ -103,6 +112,21 @@ export function findOpenOrdersTab(root, { isVisibleElement }) {
   const tabs = Array.from(root.querySelectorAll('[role="tab"]'))
     .filter((tab) => isVisibleElement(tab) && isOpenOrdersTabText(getNormalizedText(tab)));
   return tabs.find((tab) => isAccountOrdersTab(tab, { isVisibleElement })) || tabs[0] || null;
+}
+
+export function findAccountPositionTab(root, { isVisibleElement }) {
+  const accountGroups = new Set();
+  for (const tab of root.querySelectorAll('[role="tab"]')) {
+    if (!isVisibleElement(tab) || !isOpenOrdersTabText(getNormalizedText(tab))) continue;
+    const group = getAccountOrdersTabGroup(tab, { isVisibleElement });
+    if (group) accountGroups.add(group);
+  }
+  if (accountGroups.size !== 1) return null;
+
+  const [group] = accountGroups;
+  const positionTabs = Array.from(group.querySelectorAll('[role="tab"]'))
+    .filter((tab) => isVisibleElement(tab) && isAccountPositionTabText(getNormalizedText(tab)));
+  return positionTabs.length === 1 ? positionTabs[0] : null;
 }
 
 export function findSelectedAccountOrdersTab(root, { isVisibleElement }) {

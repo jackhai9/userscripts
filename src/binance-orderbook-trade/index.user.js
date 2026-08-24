@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.58
+// @version      2.7.59
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -29,6 +29,10 @@ import {
   updateOpenOrdersClearStability,
 } from './core/cancel-orders.js';
 import { resolveConfirmedCloseDirection } from './core/close-action.js';
+import {
+  observeAutoOpenLeveragePositionState,
+  resolveSymbolPositionStatus,
+} from './core/auto-open-leverage.js';
 import {
   addDecimalStrings,
   ceilQtyByNotional,
@@ -68,6 +72,7 @@ import {
   parseFuturesTradingSymbolFromPathname,
 } from '../shared/binance-futures-route.js';
 import {
+  findAccountPositionTab as findAccountPositionTabDom,
   findOpenOrdersBasicSubTab as findOpenOrdersBasicSubTabDom,
   findOpenOrdersConditionalSubTab as findOpenOrdersConditionalSubTabDom,
   findOpenOrdersTab as findOpenOrdersTabDom,
@@ -75,11 +80,14 @@ import {
   findSelectedOpenOrdersSubTab as findSelectedOpenOrdersSubTabDom,
   getAccountOrdersTabGroup as getAccountOrdersTabGroupDom,
   getActiveOpenOrdersScope as getActiveOpenOrdersScopeDom,
+  parseAccountPositionTabCount,
 } from './dom/account-orders.js';
 import {
   collectTradeButtonsFromScopes,
+  findCurrentLeverageButtonFromScopes,
   isTradeActionButton as isTradeActionButtonDom,
   isTradeModeTab as isTradeModeTabDom,
+  parseLeverageButtonText,
 } from './dom/trade-form.js';
 import {
   planBufferedMakerPrices,
@@ -199,6 +207,7 @@ import {
   const LADDER_REPRICE_MAX_ATTEMPTS = 5;
   const LADDER_REPRICE_DELAY_MS = 180;
   const BINANCE_PLACE_ORDER_BAPI_PATH = '/bapi/futures/v1/private/future/order/place-order';
+  const BINANCE_USER_POSITION_BAPI_PATH = '/bapi/futures/v6/private/future/user-data/user-position';
   const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
   const LADDER_OPEN_QTY_POLL_MS = 80;
   const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
@@ -250,11 +259,17 @@ import {
   let tradeUiMutationDebounceTimer = 0;
   let tradeModeTabObserver = null;
   let tradeModeTabObserverRoot = null;
+  let accountPositionObserver = null;
+  let accountPositionObserverRoot = null;
+  let lastObservedAccountPositionCount = null;
+  let lastObservedAccountPositionState = null;
   let lastConfirmedCloseState = null;  // 第三层：已确认的稳定缓存（仅 CLOSE 模式下写入）
   let lastDisplayCloseState = null;   // 第二层：仅供脚本面板展示的缓存态
   let closeGuard = null;              // 切 tab 保护状态机（OPEN→CLOSE 时创建，500ms 后过期）
   let autoOpenLeverageTask = null;
   let pendingAutoOpenLeverageReset = null;
+  let autoOpenLeveragePositionCheckTask = null;
+  let pendingAutoOpenLeveragePositionCheck = null;
   let lastAutoOpenLeverage = { symbol: null, at: 0 };
   let tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
   let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
@@ -3580,88 +3595,82 @@ import {
     return symbol && lastConfirmedCloseState?.symbol === symbol ? lastConfirmedCloseState : null;
   }
 
-  function hasPositionInDom(symbol) {
-    // 页面底部持仓列表：每行包含 symbol 文本，有仓时行可见
-    const rows = document.querySelectorAll(
-      '[class*="position"] tr, [class*="position"] [role="row"], ' +
-      '[data-testid*="position"] tr, [data-testid*="position"] [role="row"]'
-    );
-    for (const row of rows) {
-      if (!isVisibleElement(row)) continue;
-      if (isOpenOrderRowCurrentSymbol(row.textContent, symbol)) return true;
-    }
-    return false;
+  function findAccountPositionTab() {
+    return findAccountPositionTabDom(document, { isVisibleElement });
+  }
+
+  function readAccountPositionCount() {
+    const tab = findAccountPositionTab();
+    return tab ? parseAccountPositionTabCount(tab.textContent) : null;
   }
 
   function readCurrentLeverageFromDom() {
-    // 杠杆按钮通常显示 "全仓 20x" 或 "逐仓 5x"
-    const leverageButton = findVisibleTradeScopeElement('button, [role="button"]', (el) => {
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (text.length > 48) return false;
-      return /(?:全仓|逐仓|cross|isolated)\s*\d{1,3}\s*[xX]/i.test(text);
+    const leverageButton = findCurrentLeverageButtonFromScopes(getTradeSearchScopes(), {
+      panelId: PANEL_ID,
+      isVisibleElement,
     });
-    const text = (leverageButton?.textContent || '').replace(/\s+/g, ' ').trim();
-    const match = text.match(/(?:全仓|逐仓|cross|isolated)\s*(\d{1,3})\s*[xX]/i);
-    return match ? Number(match[1]) : null;
+    return parseLeverageButtonText(leverageButton?.textContent);
   }
 
-  function getCachedPositionState(symbol) {
-    // DOM 持仓列表是最新真相源，优先检查
-    if (hasPositionInDom(symbol)) {
-      return { status: 'has_position', source: 'dom' };
+  async function waitForBncHeaders(symbol) {
+    if (cachedBncHeaders) return true;
+    for (let i = 0; i < 10; i++) {
+      await delay(500);
+      if (cachedBncHeaders || !isCurrentObservedSymbol(symbol)) break;
     }
+    return Boolean(cachedBncHeaders && isCurrentObservedSymbol(symbol));
+  }
 
-    const cache = getCachedCloseState(symbol);
-    if (!cache) return { status: 'unknown', source: 'close_cache_miss' };
-
-    const longQty = typeof cache.longQty === 'number' ? cache.longQty : null;
-    const shortQty = typeof cache.shortQty === 'number' ? cache.shortQty : null;
-    if (!(longQty >= 0) || !(shortQty >= 0)) {
-      return { status: 'unknown', source: 'close_cache_partial' };
+  async function fetchCurrentSymbolPositionState(symbol) {
+    if (!cachedBncHeaders) throw new Error('bapi header 尚未缓存');
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const resp = await fetch(`${window.location.origin}${BINANCE_USER_POSITION_BAPI_PATH}`, {
+        method: 'POST',
+        headers: getBncHeaders(),
+        body: JSON.stringify({}),
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      if (!resp.ok) throw new Error(`user-position HTTP ${resp.status}`);
+      const payload = await resp.json();
+      return {
+        ...resolveSymbolPositionStatus(payload, symbol),
+        source: 'user_position_api',
+      };
+    } finally {
+      window.clearTimeout(timer);
     }
-
-    const hasPosition = longQty > 0 || shortQty > 0;
-    return {
-      status: hasPosition ? 'has_position' : 'flat',
-      source: 'close_cache',
-      longQty,
-      shortQty,
-      closeMode: cache.closeMode,
-    };
   }
 
   function isStableOpenContext(symbol) {
     return getActiveTradeMode() === 'OPEN' && isCurrentObservedSymbol(symbol);
   }
 
-  async function autoResetOpenLeverageToDefault(symbol, positionState, triggerSource) {
+  async function autoResetOpenLeverageToDefault(symbol, triggerSource) {
     await delay(AUTO_OPEN_LEVERAGE_DELAY_MS);
     if (!isStableOpenContext(symbol)) return false;
 
-    // 等待 header 缓存就绪（Binance 页面会持续发 bapi 请求）
-    if (!cachedBncHeaders) {
-      for (let i = 0; i < 10; i++) {
-        await delay(500);
-        if (cachedBncHeaders || !isStableOpenContext(symbol)) break;
-      }
-    }
-    if (!cachedBncHeaders) {
+    if (!await waitForBncHeaders(symbol)) {
       log('bapi header 尚未缓存，跳过杠杆重置', symbol);
       return false;
     }
     if (!isStableOpenContext(symbol)) return false;
-
-    // 延迟后再次确认无仓（防止 delay 期间仓位变化）
-    if (hasPositionInDom(symbol)) {
-      log('延迟后发现持仓，跳过杠杆重置', symbol);
-      return false;
-    }
 
     // 已经是目标杠杆则短路
     const currentLeverage = readCurrentLeverageFromDom();
     if (currentLeverage === DEFAULT_OPEN_LEVERAGE) {
       log('开仓杠杆已是默认值', symbol, `${DEFAULT_OPEN_LEVERAGE}x`, triggerSource);
       return true;
+    }
+
+    if (!isStableOpenContext(symbol)) return false;
+    const finalPositionState = await fetchCurrentSymbolPositionState(symbol);
+    if (!isStableOpenContext(symbol)) return false;
+    if (finalPositionState.status !== 'flat') {
+      log('当前币种仍有持仓，跳过杠杆重置', symbol, finalPositionState.source);
+      return false;
     }
 
     try {
@@ -3676,7 +3685,7 @@ import {
       symbol,
       `${DEFAULT_OPEN_LEVERAGE}x`,
       triggerSource,
-      positionState.source
+      finalPositionState.source
     );
     return true;
   }
@@ -3689,12 +3698,7 @@ import {
       return;
     }
 
-    const positionState = getCachedPositionState(symbol);
-    // Only confirmed flat is allowed to reset leverage. Unknown means the
-    // position panel/cache is not reliable enough for a state-changing call.
-    if (positionState.status === 'has_position') return;
-    if (positionState.status !== 'flat') return;
-    if (!isStableOpenContext(symbol) && triggerSource === 'mutation') return;
+    if (!isStableOpenContext(symbol)) return;
 
     const now = Date.now();
     if (
@@ -3706,7 +3710,7 @@ import {
 
     lastAutoOpenLeverage = { symbol, at: now };
     let task = null;
-    task = autoResetOpenLeverageToDefault(symbol, positionState, triggerSource)
+    task = autoResetOpenLeverageToDefault(symbol, triggerSource)
       .catch((e) => {
         err('自动重置开仓杠杆失败:', e);
         return false;
@@ -3721,6 +3725,107 @@ import {
         }
       });
     autoOpenLeverageTask = task;
+  }
+
+  async function runAutoOpenLeveragePositionCheck(symbol, triggerSource, resetIfFlat) {
+    if (!await waitForBncHeaders(symbol)) {
+      log('bapi header 尚未缓存，跳过持仓检查', symbol, triggerSource);
+      return false;
+    }
+    if (!isCurrentObservedSymbol(symbol)) return false;
+
+    const positionState = await fetchCurrentSymbolPositionState(symbol);
+    if (!isCurrentObservedSymbol(symbol)) return false;
+    const observation = observeAutoOpenLeveragePositionState(
+      lastObservedAccountPositionState,
+      { symbol, status: positionState.status }
+    );
+    lastObservedAccountPositionState = observation.state;
+    if (
+      positionState.status === 'flat'
+      && isStableOpenContext(symbol)
+      && (observation.shouldReset || resetIfFlat)
+    ) {
+      queueAutoOpenLeverageReset(triggerSource);
+    }
+    return true;
+  }
+
+  function queueAutoOpenLeveragePositionCheck(triggerSource, options = {}) {
+    const symbol = getCurrentSymbol();
+    if (!isCurrentObservedSymbol(symbol)) return;
+    const resetIfFlat = options.resetIfFlat === true;
+    if (autoOpenLeveragePositionCheckTask) {
+      const pending = pendingAutoOpenLeveragePositionCheck;
+      pendingAutoOpenLeveragePositionCheck = {
+        symbol,
+        triggerSource,
+        resetIfFlat: resetIfFlat || (pending?.symbol === symbol && pending.resetIfFlat),
+      };
+      return;
+    }
+
+    let task = null;
+    task = runAutoOpenLeveragePositionCheck(symbol, triggerSource, resetIfFlat)
+      .catch((e) => {
+        err('自动检查当前币种持仓失败:', e);
+        return false;
+      })
+      .finally(() => {
+        if (autoOpenLeveragePositionCheckTask !== task) return;
+        autoOpenLeveragePositionCheckTask = null;
+        const pending = pendingAutoOpenLeveragePositionCheck;
+        pendingAutoOpenLeveragePositionCheck = null;
+        if (pending && isCurrentObservedSymbol(pending.symbol)) {
+          queueAutoOpenLeveragePositionCheck(pending.triggerSource, {
+            resetIfFlat: pending.resetIfFlat,
+          });
+        }
+      });
+    autoOpenLeveragePositionCheckTask = task;
+  }
+
+  function handleAccountPositionObservation(triggerSource) {
+    const positionCount = readAccountPositionCount();
+    if (positionCount == null || positionCount === lastObservedAccountPositionCount) return;
+    lastObservedAccountPositionCount = positionCount;
+    queueAutoOpenLeveragePositionCheck(triggerSource);
+  }
+
+  function getAccountPositionObserverRoot() {
+    const positionTab = findAccountPositionTab();
+    return positionTab ? getAccountOrdersTabGroup(positionTab) : null;
+  }
+
+  function stopAccountPositionObserver() {
+    if (accountPositionObserver) {
+      accountPositionObserver.disconnect();
+      accountPositionObserver = null;
+    }
+    accountPositionObserverRoot = null;
+    lastObservedAccountPositionCount = null;
+  }
+
+  function ensureAccountPositionObserver() {
+    if (document.hidden || !isFuturesTradingPage()) return;
+    const root = getAccountPositionObserverRoot();
+    if (!root) {
+      stopAccountPositionObserver();
+      return;
+    }
+    if (accountPositionObserver && accountPositionObserverRoot === root && root.isConnected) return;
+
+    stopAccountPositionObserver();
+    accountPositionObserverRoot = root;
+    accountPositionObserver = new MutationObserver(() => {
+      handleAccountPositionObservation('account_position_mutation');
+    });
+    accountPositionObserver.observe(root, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+    handleAccountPositionObservation('account_position_ready');
   }
 
   function applyCachedCloseUiState() {
@@ -4519,6 +4624,7 @@ import {
       return;
     }
     ensureTradeModeTabObserver();
+    ensureAccountPositionObserver();
     const panel = ensurePanel();
     const input = panel.querySelector(`#${INPUT_ID}`);
     const symbol = getCurrentSymbol() || '-';
@@ -4638,7 +4744,7 @@ import {
     }
     if (isEnteringOpen) {
       invalidateTradeButtonCache();
-      const reset = () => queueAutoOpenLeverageReset(source);
+      const reset = () => queueAutoOpenLeveragePositionCheck(source, { resetIfFlat: true });
       if (source === 'click') window.requestAnimationFrame(reset);
       else reset();
     }
@@ -4886,6 +4992,7 @@ import {
     stopMultiplierEdit();
     lastConfirmedCloseState = null;
     lastDisplayCloseState = null;
+    lastObservedAccountPositionState = null;
     closeGuard = null;
     invalidateTradeButtonCache();
     stopOrderbookPrecisionSampler();
@@ -4908,7 +5015,7 @@ import {
     startInitialOrderbookPrecisionSample();
     scheduleRenderPanel();
     if (getActiveTradeMode() === 'OPEN') {
-      queueAutoOpenLeverageReset('symbol_change');
+      queueAutoOpenLeveragePositionCheck('symbol_change');
     }
   }
 
@@ -4945,6 +5052,7 @@ import {
     if (document.hidden || !isFuturesTradingPage()) return;
     startSymbolChangeTimer();
     ensureTradeModeTabObserver();
+    ensureAccountPositionObserver();
     startRenderPanelTimer();
     startInitialOrderbookPrecisionSample();
   }
@@ -4952,6 +5060,7 @@ import {
   function stopTradingTimers() {
     stopSymbolChangeTimer();
     stopTradeModeTabObserver();
+    stopAccountPositionObserver();
     clearTradeUiMutationWait();
     stopRenderPanelTimer();
     stopOrderbookPrecisionSampler();
@@ -4982,7 +5091,7 @@ import {
     scheduleChartOrdersRecovery();
     if (needsRender) renderPanel();
     if (!wasTrading && getActiveTradeMode() === 'OPEN') {
-      queueAutoOpenLeverageReset('route_return');
+      queueAutoOpenLeveragePositionCheck('route_return');
     }
   }
 
@@ -5001,9 +5110,10 @@ import {
   startTradingTimers();
   scheduleChartOrdersRecovery();
 
-  // 首次进入：document-start 时 DOM 可能尚未 ready，所以延迟后再判断当前 tab。
   window.setTimeout(() => {
-    if (isFuturesTradingPage() && getActiveTradeMode() === 'OPEN') queueAutoOpenLeverageReset('init');
+    if (isFuturesTradingPage() && getActiveTradeMode() === 'OPEN') {
+      queueAutoOpenLeveragePositionCheck('init');
+    }
   }, 1500);
 
   document.addEventListener('visibilitychange', () => {
@@ -5042,7 +5152,7 @@ import {
     findOrderbookRow,
     findClickedPriceNode,
     findPriceNodeFromRow,
-    getCachedPositionState,
+    fetchCurrentSymbolPositionState,
     resolveCloseAction,
     resolveTradeAction,
     resolveTargetQty,
@@ -5056,6 +5166,7 @@ import {
     stopLadder,
     cancelCurrentSymbolOpenOrders,
     queueAutoOpenLeverageReset,
+    queueAutoOpenLeveragePositionCheck,
     renderPanel,
   };
 

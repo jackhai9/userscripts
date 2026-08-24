@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 
 import {
   collectTradeButtonsFromScopes,
+  findCurrentLeverageButtonFromScopes,
   isTradeModeTab,
+  parseLeverageButtonText,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
 import { isVisibleElement, loadFixtureDom } from '../../helpers/dom.js';
 
@@ -29,4 +31,39 @@ test('collects trade action buttons from explicit trade scopes and ignores own p
   });
 
   assert.deepEqual(openButtons.map((button) => button.textContent.trim()), ['开多', '开空']);
+});
+
+test('reads the unique split leverage button from the active trade scope', () => {
+  const { window } = loadFixtureDom(`
+    <section id="trade-form">
+      <button>全仓</button>
+      <button>5x</button>
+      <button>开多</button>
+    </section>
+    <aside><button>20x</button></aside>
+  `);
+  const scope = window.document.querySelector('#trade-form');
+  const button = findCurrentLeverageButtonFromScopes([scope], {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement,
+  });
+
+  assert.equal(button?.textContent.trim(), '5x');
+  assert.equal(parseLeverageButtonText(button?.textContent), 5);
+  assert.equal(parseLeverageButtonText('全仓 5x'), null);
+});
+
+test('rejects ambiguous leverage buttons in the active trade scope', () => {
+  const { window } = loadFixtureDom(`
+    <section id="trade-form">
+      <button>5x</button>
+      <button>10x</button>
+    </section>
+  `);
+  const scope = window.document.querySelector('#trade-form');
+
+  assert.equal(findCurrentLeverageButtonFromScopes([scope], {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement,
+  }), null);
 });

@@ -728,8 +728,36 @@ test('busy leverage reset retains and replays the latest symbol request', () => 
   assert.match(queueBody, /queueAutoOpenLeverageReset\(pending\.triggerSource\)/);
 });
 
-test('position rows use exact symbol tokens instead of substring matching', () => {
-  const positionBody = readFunctionBody('hasPositionInDom');
-  assert.match(positionBody, /isOpenOrderRowCurrentSymbol\(row\.textContent, symbol\)/);
-  assert.doesNotMatch(positionBody, /text\.includes\(symbol\)/);
+test('auto leverage reset is authorized by a fresh current-symbol position response', () => {
+  assert.match(
+    source,
+    /BINANCE_USER_POSITION_BAPI_PATH = '\/bapi\/futures\/v6\/private\/future\/user-data\/user-position'/,
+  );
+  const fetchBody = readFunctionBody('fetchCurrentSymbolPositionState');
+  assert.match(fetchBody, /resolveSymbolPositionStatus\(payload, symbol\)/);
+  assert.match(fetchBody, /body: JSON\.stringify\(\{\}\)/);
+
+  const resetBody = readFunctionBody('autoResetOpenLeverageToDefault');
+  const positionCheckIndex = resetBody.indexOf('await fetchCurrentSymbolPositionState(symbol)');
+  const leverageRequestIndex = resetBody.indexOf('await adjustLeverageApi(symbol, DEFAULT_OPEN_LEVERAGE)');
+  assert.ok(positionCheckIndex >= 0);
+  assert.ok(leverageRequestIndex > positionCheckIndex);
+  assert.match(resetBody, /finalPositionState\.status !== 'flat'/);
+  assert.doesNotMatch(source, /function hasPositionInDom/);
+  assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
+  assert.match(generatedSource, /function resolveSymbolPositionStatus/);
+  assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
+  assert.match(source, /@version\s+2\.7\.59/);
+  assert.match(generatedSource, /@version\s+2\.7\.59/);
+});
+
+test('account position count changes schedule symbol-specific API checks', () => {
+  const observationBody = readFunctionBody('handleAccountPositionObservation');
+  assert.match(observationBody, /positionCount === lastObservedAccountPositionCount/);
+  assert.match(observationBody, /queueAutoOpenLeveragePositionCheck\(triggerSource\)/);
+
+  const checkBody = readFunctionBody('runAutoOpenLeveragePositionCheck');
+  assert.match(checkBody, /await fetchCurrentSymbolPositionState\(symbol\)/);
+  assert.match(checkBody, /observeAutoOpenLeveragePositionState/);
+  assert.match(checkBody, /observation\.shouldReset \|\| resetIfFlat/);
 });
