@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.59
+// @version      2.7.60
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -881,31 +881,44 @@
   function isSymbolScopedSideStorageKey(key, baseKeys) {
     return !!key && baseKeys.some((baseKey) => key.startsWith(`${baseKey}:`));
   }
-  function modeSymbolOptionStorageKey(modeKeys, mode, symbol) {
+  function normalizePrecisionScopeValue(precision) {
+    const normalized = String(precision || "").trim();
+    return /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(normalized) && Number(normalized) > 0 ? normalized : null;
+  }
+  function modeSymbolPrecisionOptionStorageKey(modeKeys, mode, symbol, precision) {
     if (mode !== "OPEN" && mode !== "CLOSE") {
       throw new Error(`Unknown trade mode: ${mode}`);
     }
     const baseKey = modeKeys[mode];
     if (!baseKey) throw new Error(`Missing storage key for trade mode: ${mode}`);
     const normalizedSymbol = String(symbol || "").toUpperCase();
-    return normalizedSymbol ? `${baseKey}:${normalizedSymbol}` : null;
+    const normalizedPrecision = normalizePrecisionScopeValue(precision);
+    return normalizedSymbol && normalizedPrecision ? `${baseKey}:${normalizedSymbol}:${normalizedPrecision}` : null;
   }
-  function loadModeSymbolNumberOption(storage, modeKeys, mode, symbol, options, fallback) {
-    const storageKey = modeSymbolOptionStorageKey(modeKeys, mode, symbol);
-    if (!storageKey) return fallback;
-    const stored = Number(storage.getItem(storageKey));
+  function loadModeSymbolPrecisionNumberOption(storage, modeKeys, mode, symbol, precision, options, fallback) {
+    const storageKey = modeSymbolPrecisionOptionStorageKey(modeKeys, mode, symbol, precision);
+    if (!storageKey) return null;
+    const storedValue = storage.getItem(storageKey);
+    if (storedValue === null) return fallback;
+    const stored = Number(storedValue);
     return options.includes(stored) ? stored : fallback;
   }
-  function saveModeSymbolNumberOption(storage, modeKeys, mode, symbol, value, options) {
+  function saveModeSymbolPrecisionNumberOption(storage, modeKeys, mode, symbol, precision, value, options) {
     const numericValue = Number(value);
     if (!options.includes(numericValue)) return false;
-    const storageKey = modeSymbolOptionStorageKey(modeKeys, mode, symbol);
+    const storageKey = modeSymbolPrecisionOptionStorageKey(modeKeys, mode, symbol, precision);
     if (!storageKey) return false;
     storage.setItem(storageKey, String(numericValue));
     return true;
   }
   function isModeSymbolOptionStorageKey(key, baseKeys) {
-    return !!key && baseKeys.some((baseKey) => key.startsWith(`${baseKey}:`));
+    if (!key) return false;
+    return baseKeys.some((baseKey) => {
+      const prefix = `${baseKey}:`;
+      if (!key.startsWith(prefix)) return false;
+      const [symbol, precision, extra] = key.slice(prefix.length).split(":");
+      return Boolean(symbol && normalizePrecisionScopeValue(precision) && extra === void 0);
+    });
   }
 
   // src/binance-orderbook-trade/core/chart-orders-recovery.js
@@ -1130,6 +1143,10 @@
     const LADDER_STEP_MIN = 1;
     const LADDER_STEP_MAX = 5;
     const LADDER_STEP_OPTIONS = [1, 2, 3, 4, 5];
+    const MULTIPLIER_STORAGE_KEYS = {
+      OPEN: `${LOCAL_QTY_MULTIPLIER_PREFIX}:OPEN`,
+      CLOSE: `${LOCAL_QTY_MULTIPLIER_PREFIX}:CLOSE`
+    };
     const LADDER_PERCENT_STORAGE_KEYS = {
       OPEN: LOCAL_LADDER_OPEN_PERCENT_KEY,
       CLOSE: LOCAL_LADDER_CLOSE_PERCENT_KEY
@@ -1244,6 +1261,9 @@
     let orderbookPrecisionSampleTimer = 0;
     let orderbookPrecisionActiveRequest = null;
     let orderbookPrecisionPendingRequest = null;
+    let orderbookPrecisionObserver = null;
+    let orderbookPrecisionObserverRoot = null;
+    let lastObservedOrderbookPrecision = null;
     const orderbookPrecisionInitialSampledSymbols = /* @__PURE__ */ new Set();
     let orderbookPrecisionState = {
       symbol: null,
@@ -1366,92 +1386,108 @@
       localStorage.setItem(LOCAL_LADDER_EXPANDED_KEY, expanded ? "true" : "false");
       scheduleRenderPanel();
     }
-    function getLadderOpenPercent(symbol = getCurrentSymbol()) {
-      return loadModeSymbolNumberOption(
+    function getLadderOpenPercent(symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      return loadModeSymbolPrecisionNumberOption(
         localStorage,
         LADDER_PERCENT_STORAGE_KEYS,
         "OPEN",
         symbol,
+        precision,
         LADDER_OPEN_PERCENTS,
         DEFAULT_LADDER_OPEN_PERCENT
       );
     }
-    function setLadderOpenPercent(value, symbol = getCurrentSymbol()) {
-      saveModeSymbolNumberOption(
+    function setLadderOpenPercent(value, symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      const saved = saveModeSymbolPrecisionNumberOption(
         localStorage,
         LADDER_PERCENT_STORAGE_KEYS,
         "OPEN",
         symbol,
+        precision,
         value,
         LADDER_OPEN_PERCENTS
       );
+      if (!saved) return false;
       scheduleRenderPanel();
+      return true;
     }
-    function getLadderClosePercent(symbol = getCurrentSymbol()) {
-      return loadModeSymbolNumberOption(
+    function getLadderClosePercent(symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      return loadModeSymbolPrecisionNumberOption(
         localStorage,
         LADDER_PERCENT_STORAGE_KEYS,
         "CLOSE",
         symbol,
+        precision,
         LADDER_CLOSE_PERCENTS,
         DEFAULT_LADDER_CLOSE_PERCENT
       );
     }
-    function setLadderClosePercent(value, symbol = getCurrentSymbol()) {
-      saveModeSymbolNumberOption(
+    function setLadderClosePercent(value, symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      const saved = saveModeSymbolPrecisionNumberOption(
         localStorage,
         LADDER_PERCENT_STORAGE_KEYS,
         "CLOSE",
         symbol,
+        precision,
         value,
         LADDER_CLOSE_PERCENTS
       );
+      if (!saved) return false;
       scheduleRenderPanel();
+      return true;
     }
-    function getLadderLevels(mode = getActiveTradeMode(), symbol = getCurrentSymbol()) {
-      return loadModeSymbolNumberOption(
+    function getLadderLevels(mode = getActiveTradeMode(), symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      return loadModeSymbolPrecisionNumberOption(
         localStorage,
         LADDER_LEVELS_STORAGE_KEYS,
         mode,
         symbol,
+        precision,
         LADDER_LEVEL_OPTIONS,
         DEFAULT_LADDER_LEVELS
       );
     }
-    function setLadderLevels(value, mode = getActiveTradeMode(), symbol = getCurrentSymbol()) {
-      saveModeSymbolNumberOption(
+    function setLadderLevels(value, mode = getActiveTradeMode(), symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      const saved = saveModeSymbolPrecisionNumberOption(
         localStorage,
         LADDER_LEVELS_STORAGE_KEYS,
         mode,
         symbol,
+        precision,
         value,
         LADDER_LEVEL_OPTIONS
       );
+      if (!saved) return false;
       scheduleRenderPanel();
+      return true;
     }
-    function getLadderStep(mode = getActiveTradeMode(), symbol = getCurrentSymbol()) {
-      return loadModeSymbolNumberOption(
+    function getLadderStep(mode = getActiveTradeMode(), symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      return loadModeSymbolPrecisionNumberOption(
         localStorage,
         LADDER_STEP_STORAGE_KEYS,
         mode,
         symbol,
+        precision,
         LADDER_STEP_OPTIONS,
         DEFAULT_LADDER_STEP
       );
     }
-    function setLadderStep(value, mode = getActiveTradeMode(), symbol = getCurrentSymbol()) {
+    function setLadderStep(value, mode = getActiveTradeMode(), symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
       const numericValue = Number(value);
-      if (!Number.isInteger(numericValue)) return;
+      if (!Number.isInteger(numericValue)) return false;
       const normalizedValue = Math.max(LADDER_STEP_MIN, Math.min(numericValue, LADDER_STEP_MAX));
-      saveModeSymbolNumberOption(
+      const saved = saveModeSymbolPrecisionNumberOption(
         localStorage,
         LADDER_STEP_STORAGE_KEYS,
         mode,
         symbol,
+        precision,
         normalizedValue,
         LADDER_STEP_OPTIONS
       );
+      if (!saved) return false;
       scheduleRenderPanel();
+      return true;
     }
     function setLadderStatus(text, title = null) {
       ladderStatusText = String(text || "空闲");
@@ -1888,6 +1924,43 @@
     }
     function readCurrentOrderbookPrecisionValue() {
       return findOrderbookPrecisionTrigger()?.value || null;
+    }
+    function handleOrderbookPrecisionChange() {
+      const precision = readCurrentOrderbookPrecisionValue();
+      if (precision === lastObservedOrderbookPrecision) return;
+      lastObservedOrderbookPrecision = precision;
+      stopMultiplierEdit();
+      ladderPanelBodySignature = "";
+      scheduleRenderPanel();
+    }
+    function stopOrderbookPrecisionObserver() {
+      if (orderbookPrecisionObserver) {
+        orderbookPrecisionObserver.disconnect();
+        orderbookPrecisionObserver = null;
+      }
+      orderbookPrecisionObserverRoot = null;
+      lastObservedOrderbookPrecision = null;
+    }
+    function ensureOrderbookPrecisionObserver() {
+      if (document.hidden || !isFuturesTradingPage()) return;
+      const trigger = findOrderbookPrecisionTrigger();
+      const root = trigger?.element?.closest(".orderbook-tickSize") || trigger?.element || null;
+      if (!root) {
+        if (orderbookPrecisionObserverRoot) stopOrderbookPrecisionObserver();
+        return;
+      }
+      if (orderbookPrecisionObserver && orderbookPrecisionObserverRoot === root && root.isConnected) return;
+      stopOrderbookPrecisionObserver();
+      orderbookPrecisionObserverRoot = root;
+      lastObservedOrderbookPrecision = readCurrentOrderbookPrecisionValue();
+      orderbookPrecisionObserver = new MutationObserver(() => {
+        handleOrderbookPrecisionChange();
+      });
+      orderbookPrecisionObserver.observe(root, {
+        subtree: true,
+        childList: true,
+        characterData: true
+      });
     }
     function readOrderbookPrecisionOptionValue(node) {
       if (!node) return null;
@@ -2332,24 +2405,36 @@
         qtySource: raw.qtySource
       };
     }
-    async function buildLadderPlan(actionType, expectedSymbol = null) {
+    async function buildLadderPlan(actionType, expectedContext = null) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec) throw new Error("未知阶梯动作");
       const startSymbol = getCurrentSymbol();
       if (!startSymbol) throw new Error("未识别当前交易对");
-      if (expectedSymbol && startSymbol !== expectedSymbol) throw new Error("重挂前交易对已变化，已停止");
+      if (expectedContext?.symbol && startSymbol !== expectedContext.symbol) {
+        throw new Error("重挂前交易对已变化，已停止");
+      }
+      if (expectedContext?.mode && spec.mode !== expectedContext.mode) {
+        throw new Error("重挂前开仓/平仓模式已变化，已停止");
+      }
       const modeReady = await activateTradeMode(spec.mode);
       if (!modeReady || getCurrentSymbol() !== startSymbol) throw new Error("切换开仓/平仓失败或交易对已变化");
+      const startPrecision = readCurrentOrderbookPrecisionValue();
+      if (!startPrecision) throw new Error("未识别订单簿缩放值");
+      if (expectedContext?.precision && startPrecision !== expectedContext.precision) {
+        throw new Error("重挂前订单簿缩放值已变化，已停止");
+      }
       const postOnlyReady = await ensurePostOnlyOrderType();
       if (!postOnlyReady) throw new Error("请刷新页面让只做Maker (Post Only) 生效后重试，脚本不会用普通限价继续");
-      const levels = getLadderLevels(spec.mode, startSymbol);
-      const ladderStep = getLadderStep(spec.mode, startSymbol);
+      const levels = getLadderLevels(spec.mode, startSymbol, startPrecision);
+      const ladderStep = getLadderStep(spec.mode, startSymbol, startPrecision);
       const prices = getBufferedMakerPrices(spec.priceSide, levels, ladderStep);
       if (prices.length < levels) {
         throw new Error(`订单簿${spec.priceSide === "BID" ? "买盘" : "卖盘"}不足 ${levels} 档，档幅 ${ladderStep}`);
       }
       const rules = await ensureRules(startSymbol);
-      if (!rules || getCurrentSymbol() !== startSymbol) throw new Error("交易规则未就绪或交易对已变化");
+      if (!rules || getCurrentSymbol() !== startSymbol || readCurrentOrderbookPrecisionValue() !== startPrecision) {
+        throw new Error("交易规则未就绪或交易上下文已变化");
+      }
       const ruleContext = getQtyRuleContext(startSymbol, spec.mode, prices[0]);
       if (ruleContext.status !== "ready" || !ruleContext.stepSize || !ruleContext.baseMinQty) {
         throw new Error("数量步进/最小量未就绪");
@@ -2357,7 +2442,7 @@
       const minRequiredQtyByLevel = spec.mode === "OPEN" ? prices.map((price) => getQtyRuleContext(startSymbol, spec.mode, price).effectiveMinQty || ruleContext.baseMinQty) : prices.map(() => ruleContext.baseMinQty);
       let minRequiredQty = minRequiredQtyByLevel.filter(Boolean).reduce((maxQty, qty) => maxDecimalString(maxQty, qty), ruleContext.baseMinQty);
       const base = spec.mode === "OPEN" ? await readOpenBaseQtyForLadder(spec, prices[0]) : readCloseBaseQtyForLadder(spec);
-      if (getCurrentSymbol() !== startSymbol || getActiveTradeMode() !== spec.mode || !isPostOnlyOrderTypeActive()) {
+      if (getCurrentSymbol() !== startSymbol || getActiveTradeMode() !== spec.mode || readCurrentOrderbookPrecisionValue() !== startPrecision || !isPostOnlyOrderTypeActive()) {
         throw new Error("读取可用数量后交易上下文已变化，已停止");
       }
       const baseQty = normalizeDecimalString(base?.qty || "");
@@ -2366,8 +2451,8 @@
       }
       let percent = getLadderPercentForMode(
         spec.mode,
-        getLadderOpenPercent(startSymbol),
-        getLadderClosePercent(startSymbol)
+        getLadderOpenPercent(startSymbol, startPrecision),
+        getLadderClosePercent(startSymbol, startPrecision)
       );
       if (percent == null) throw new Error("未知阶梯模式");
       const totalQty = multiplyDecimalByRatio(baseQty, percent, 100);
@@ -2394,6 +2479,7 @@
           throw createLadderMinimumQtyFailure({
             spec,
             symbol: startSymbol,
+            precision: startPrecision,
             mode: spec.mode,
             minRequiredQty,
             baseQty,
@@ -2409,6 +2495,7 @@
       return {
         spec,
         symbol: startSymbol,
+        precision: startPrecision,
         percent,
         ladderStep,
         levels: allocation.actualLevels,
@@ -2432,6 +2519,7 @@
       const {
         spec,
         symbol,
+        precision,
         mode,
         minRequiredQty,
         percent,
@@ -2449,10 +2537,11 @@
       const levelsText = levels ? `当前档位 ${levels} 档。` : "";
       const replacementText = mode === "OPEN" ? "脚本只会尝试替换当前币同向开仓基础单，不会自动全撤。" : "脚本不会自动撤单。";
       error.statusTitle = `当前${percentLabel} ${percent}%，目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；${levelsText}${minimumText}${maxText}已尝试自动提高比例和自动降档；${replacementText}`;
-      if (mode === "OPEN" && spec && symbol && replacementTotalQty && isPositiveDecimalString(replacementTotalQty)) {
+      if (mode === "OPEN" && spec && symbol && precision && replacementTotalQty && isPositiveDecimalString(replacementTotalQty)) {
         error.openOrdersReplacementPlan = {
           spec,
           symbol,
+          precision,
           totalQty: replacementTotalQty
         };
       }
@@ -2526,6 +2615,9 @@
     function assertLadderExecutionContext(plan) {
       if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("执行中交易对变化，已停止");
       if (getActiveTradeMode() !== plan.spec.mode) throw new Error("执行中开仓/平仓模式变化，已停止");
+      if (readCurrentOrderbookPrecisionValue() !== plan.precision) {
+        throw new Error("执行中订单簿缩放值变化，已停止");
+      }
       if (!isPostOnlyOrderTypeActive()) throw new Error("执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试");
     }
     function assertSubmittedPriceMatchesClickedPrice(clickedPrice, submittedPrice) {
@@ -3788,7 +3880,7 @@
     }
     function getOpenLadderMinimumQtyReplacementPlan(error) {
       const plan = error?.openOrdersReplacementPlan;
-      if (plan?.spec?.mode === "OPEN" && plan.symbol && plan.totalQty && isPositiveDecimalString(plan.totalQty)) {
+      if (plan?.spec?.mode === "OPEN" && plan.symbol && plan.precision && plan.totalQty && isPositiveDecimalString(plan.totalQty)) {
         return plan;
       }
       return null;
@@ -3802,20 +3894,28 @@
       if (plan?.spec?.mode === "OPEN") return `${plan.symbol} 同向开仓挂单可能占用可开数量，准备替换`;
       return `${plan.symbol} 当前挂单占用可平数量，准备替换`;
     }
+    function createLadderExpectedContext(plan) {
+      return {
+        symbol: plan.symbol,
+        mode: plan.spec.mode,
+        precision: plan.precision
+      };
+    }
     async function runLadderPlanWithOpenOrderReplacement(actionType) {
-      let replacementSymbol = null;
+      let replacementContext = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         let plan = null;
         try {
-          plan = await buildLadderPlan(actionType, replacementSymbol);
+          plan = await buildLadderPlan(actionType, replacementContext);
           setLadderStatus(formatLadderPlanStatus(plan));
           const execution = await executeLadderPlan(plan);
           return { plan, ...execution };
         } catch (e) {
           const replacementPlan = getReplaceableLadderOpenOrdersPlan(plan, e);
           if (attempt > 0 || !replacementPlan) throw e;
+          assertLadderExecutionContext(replacementPlan);
           setLadderStatus(formatOpenOrdersReplacementStatus(replacementPlan));
-          replacementSymbol = replacementPlan.symbol;
+          replacementContext = createLadderExpectedContext(replacementPlan);
           const result = await cancelCurrentSymbolOpenOrdersForPlan(replacementPlan);
           if (!result?.ok) throw new Error(result.message || "当前币挂单未替换，已停止重挂");
         }
@@ -4382,35 +4482,45 @@
         effectiveMinQty
       };
     }
-    function multiplierKey(mode, symbol) {
-      const normalizedSymbol = String(symbol || getCurrentSymbol() || "").toUpperCase();
-      if (!normalizedSymbol) return null;
-      const normalizedMode = mode === "OPEN" ? "OPEN" : "CLOSE";
-      return `${LOCAL_QTY_MULTIPLIER_PREFIX}:${normalizedMode}:${normalizedSymbol}`;
+    function multiplierKey(mode, symbol, precision) {
+      return modeSymbolPrecisionOptionStorageKey(
+        MULTIPLIER_STORAGE_KEYS,
+        mode,
+        symbol || getCurrentSymbol(),
+        precision
+      );
     }
-    function loadMultiplier(mode, symbol) {
-      const key = multiplierKey(mode || getActiveTradeMode(), symbol);
-      if (!key) return DEFAULT_MULTIPLIER;
+    function loadMultiplier(mode, symbol, precision = readCurrentOrderbookPrecisionValue()) {
+      const key = multiplierKey(mode || getActiveTradeMode(), symbol, precision);
+      if (!key) return null;
       const value = localStorage.getItem(key);
       return isValidMultiplier(value) ? String(value) : DEFAULT_MULTIPLIER;
     }
-    function saveMultiplier(value, mode, symbol) {
-      const key = multiplierKey(mode || getActiveTradeMode(), symbol);
-      if (!key) return;
+    function saveMultiplier(value, mode, symbol, precision) {
+      const key = multiplierKey(mode || getActiveTradeMode(), symbol, precision);
+      if (!key) return false;
       localStorage.setItem(key, value);
+      return true;
     }
     function sanitizeMultiplier(value) {
       return isValidMultiplier(value) ? String(value).trim() : DEFAULT_MULTIPLIER;
     }
-    function beginMultiplierEdit() {
-      multiplierEditContext = {
+    function getPanelOptionContext() {
+      const context = {
         symbol: getCurrentSymbol(),
-        mode: getActiveTradeMode()
+        mode: getActiveTradeMode(),
+        precision: readCurrentOrderbookPrecisionValue()
       };
+      return context.symbol && context.precision && ["OPEN", "CLOSE"].includes(context.mode) ? context : null;
+    }
+    function beginMultiplierEdit() {
+      multiplierEditContext = getPanelOptionContext();
+      if (!multiplierEditContext) return false;
       isEditingMultiplier = true;
+      return true;
     }
     function isMultiplierEditContextCurrent(context = multiplierEditContext) {
-      return !!context && isCurrentObservedSymbol(context.symbol) && getActiveTradeMode() === context.mode;
+      return !!context && isCurrentObservedSymbol(context.symbol) && getActiveTradeMode() === context.mode && context.precision === readCurrentOrderbookPrecisionValue();
     }
     function stopMultiplierEdit() {
       multiplierEditContext = null;
@@ -4418,11 +4528,11 @@
     }
     function updateMultiplier(nextValue, context) {
       if (!context) return false;
-      if (!isCurrentObservedSymbol(context.symbol) || getActiveTradeMode() !== context.mode) return false;
+      if (!isCurrentObservedSymbol(context.symbol) || getActiveTradeMode() !== context.mode || context.precision !== readCurrentOrderbookPrecisionValue()) return false;
       const input = document.getElementById(INPUT_ID);
       const normalized = sanitizeMultiplier(nextValue);
       stopMultiplierEdit();
-      saveMultiplier(normalized, context.mode, context.symbol);
+      saveMultiplier(normalized, context.mode, context.symbol, context.precision);
       if (input) input.value = normalized;
       renderPanel();
       return true;
@@ -4482,8 +4592,8 @@
         "</div>"
       ].join("");
     }
-    function ladderStepRow(mode, symbol) {
-      const value = getLadderStep(mode, symbol);
+    function ladderStepRow(mode, symbol, precision) {
+      const value = getLadderStep(mode, symbol, precision);
       const decDisabled = value <= LADDER_STEP_MIN;
       const incDisabled = value >= LADDER_STEP_MAX;
       const stepButton = (action, label, disabled) => {
@@ -4508,14 +4618,20 @@
       const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : "";
       return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${color};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${disabled ? "not-allowed" : "pointer"};opacity:${disabled ? DISABLED_CONTROL_OPACITY : "1"};">${label}</button>`;
     }
-    function getLadderActionRows(tradeMode, closeContext, symbol) {
+    function getLadderActionRows(tradeMode, closeContext, symbol, precision) {
       const ladderRunning = !!ladderTask;
       const actionDisabled = ladderRunning || !!cancelCurrentSymbolOpenOrdersTask;
+      if (!["OPEN", "CLOSE"].includes(tradeMode)) {
+        return ['<div style="margin-top:6px;color:#76808f;font-size:12px;">等待开仓/平仓状态</div>'];
+      }
+      if (!precision) {
+        return ['<div style="margin-top:6px;color:#76808f;font-size:12px;">等待订单簿缩放值</div>'];
+      }
       if (tradeMode === "OPEN") {
         return [
-          ladderOptionRow("开", LADDER_OPEN_PERCENTS, getLadderOpenPercent(symbol), "percent", "%"),
-          ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol), "levels", ""),
-          ladderStepRow(tradeMode, symbol),
+          ladderOptionRow("开", LADDER_OPEN_PERCENTS, getLadderOpenPercent(symbol, precision), "percent", "%"),
+          ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
+          ladderStepRow(tradeMode, symbol, precision),
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
           ladderActionButton("OPEN_LONG", "阶梯开多", "BUY", actionDisabled),
           ladderActionButton("OPEN_SHORT", "阶梯开空", "SELL", actionDisabled),
@@ -4525,9 +4641,9 @@
       const closeLongDisabled = actionDisabled || (closeContext?.knowsLong ? !closeContext.hasLong : false);
       const closeShortDisabled = actionDisabled || (closeContext?.knowsShort ? !closeContext.hasShort : false);
       return [
-        ladderOptionRow("平", LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol), "percent", "%"),
-        ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol), "levels", ""),
-        ladderStepRow(tradeMode, symbol),
+        ladderOptionRow("平", LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol, precision), "percent", "%"),
+        ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
+        ladderStepRow(tradeMode, symbol, precision),
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">',
         ladderActionButton("CLOSE_LONG", "阶梯平多", "SELL", closeLongDisabled),
         ladderActionButton("CLOSE_SHORT", "阶梯平空", "BUY", closeShortDisabled),
@@ -4539,8 +4655,9 @@
       const body = panel.querySelector(`#${LADDER_BODY_ID}`);
       const status = panel.querySelector(`#${LADDER_STATUS_ID}`);
       const expanded = isLadderExpanded();
-      const mode = tradeMode === "OPEN" ? "OPEN" : "CLOSE";
+      const mode = ["OPEN", "CLOSE"].includes(tradeMode) ? tradeMode : null;
       const symbol = getCurrentSymbol();
+      const precision = readCurrentOrderbookPrecisionValue();
       if (toggle) {
         toggle.textContent = `Maker 阶梯 ${expanded ? "▾" : "▸"}`;
       }
@@ -4555,7 +4672,7 @@
           const cancelDisabledAttrs = cancelDisabled ? ' disabled aria-disabled="true"' : "";
           const cancelStyle = cancelDisabled ? `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};` : "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;";
           const bodyHtml = [
-            ...getLadderActionRows(mode, closeContext, symbol),
+            ...getLadderActionRows(mode, closeContext, symbol, precision),
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
             `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${stopStyle}">停止阶梯挂单</button>`,
             `<button type="button" data-ladder-cancel-symbol="true"${cancelDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid #d5d9e2;border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${cancelStyle}">${cancelRunning ? "撤单处理中" : "撤本币挂单"}</button>`,
@@ -4573,6 +4690,7 @@
       }
     }
     function refreshComputedInfo(panel, multiplier, qtyRuleContext) {
+      const input = panel.querySelector(`#${INPUT_ID}`);
       const minEl = panel.querySelector("#jh-binance-close-qty-min");
       const finalEl = panel.querySelector("#jh-binance-close-qty-final");
       const hintEl = panel.querySelector(`#${MODE_HINT_ID}`);
@@ -4581,6 +4699,9 @@
       const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
       const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
       const tradeMode = getActiveTradeMode();
+      const modeReady = ["OPEN", "CLOSE"].includes(tradeMode);
+      const precisionReady = Boolean(readCurrentOrderbookPrecisionValue());
+      const numericContextReady = modeReady && precisionReady;
       const rulesPending = qtyRuleContext?.status !== "ready";
       const effectiveMinQty = rulesPending ? null : qtyRuleContext?.effectiveMinQty || null;
       const finalQty = effectiveMinQty ? multiplyDecimalByInt(effectiveMinQty, multiplier) : null;
@@ -4591,7 +4712,11 @@
       const { knowsLong, knowsShort, hasLong, hasShort, isPending, isUsingCache } = closeContext;
       const closeMode = hasLong && hasShort ? "dual" : hasLong ? "single_long" : hasShort ? "single_short" : "unknown";
       if (minEl) {
-        if (rulesPending) {
+        if (!precisionReady) {
+          minEl.textContent = "等待订单簿缩放值";
+        } else if (!modeReady) {
+          minEl.textContent = "等待开仓/平仓状态";
+        } else if (rulesPending) {
           minEl.textContent = "最小量读取中";
         } else if (tradeMode === "OPEN" && qtyRuleContext?.minNotionalQty && qtyRuleContext?.referencePrice) {
           minEl.textContent = `最小 ${effectiveMinQty} (>=${qtyRuleContext.minNotional}U @ ${qtyRuleContext.referencePrice})`;
@@ -4602,7 +4727,7 @@
         }
       }
       if (finalEl) {
-        if (rulesPending) {
+        if (!numericContextReady || rulesPending) {
           finalEl.textContent = "--";
         } else if (isValidMultiplier(multiplier) && finalQty && effectiveMinQty) {
           finalEl.textContent = `${effectiveMinQty} x ${multiplier} = ${finalQty}`;
@@ -4630,13 +4755,19 @@
         }
       }
       if (decBtn) {
-        decBtn.disabled = Number(multiplier) <= 1;
+        decBtn.disabled = !numericContextReady || Number(multiplier) <= 1;
         decBtn.style.opacity = decBtn.disabled ? "0.45" : "1";
         decBtn.style.cursor = decBtn.disabled ? "not-allowed" : "pointer";
       }
       if (incBtn) {
-        incBtn.style.opacity = "1";
-        incBtn.style.cursor = "pointer";
+        incBtn.disabled = !numericContextReady;
+        incBtn.style.opacity = incBtn.disabled ? "0.45" : "1";
+        incBtn.style.cursor = incBtn.disabled ? "not-allowed" : "pointer";
+      }
+      if (input) {
+        input.disabled = !numericContextReady;
+        input.style.opacity = input.disabled ? "0.65" : "1";
+        input.style.cursor = input.disabled ? "not-allowed" : "text";
       }
       if (sideLongBtn) {
         const isOpenMode = tradeMode === "OPEN";
@@ -4775,7 +4906,8 @@
       const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
       const ladderToggle = panel.querySelector(`#${LADDER_TOGGLE_ID}`);
       if (input) {
-        input.value = loadMultiplier(getActiveTradeMode(), getCurrentSymbol());
+        const initialContext = getPanelOptionContext();
+        input.value = initialContext ? loadMultiplier(initialContext.mode, initialContext.symbol, initialContext.precision) || "" : "";
         input.addEventListener("focus", () => {
           beginMultiplierEdit();
           applyInputVisualState(input, input.value);
@@ -4790,7 +4922,12 @@
           const value = String(input.value || "").replace(/[^\d]/g, "");
           if (input.value !== value) input.value = value;
           if (isValidMultiplier(value)) {
-            saveMultiplier(value, multiplierEditContext.mode, multiplierEditContext.symbol);
+            saveMultiplier(
+              value,
+              multiplierEditContext.mode,
+              multiplierEditContext.symbol,
+              multiplierEditContext.precision
+            );
           }
           const symbol = multiplierEditContext.symbol || "-";
           const qtyRuleContext = getQtyRuleContext(symbol !== "-" ? symbol : null, multiplierEditContext.mode);
@@ -4807,7 +4944,7 @@
           const value = String(input.value || "").trim();
           const normalized = sanitizeMultiplier(value);
           stopMultiplierEdit();
-          saveMultiplier(normalized, editContext.mode, editContext.symbol);
+          saveMultiplier(normalized, editContext.mode, editContext.symbol, editContext.precision);
           input.value = normalized;
           applyInputVisualState(input, normalized);
           renderPanel();
@@ -4816,17 +4953,17 @@
       }
       if (decBtn) {
         decBtn.addEventListener("click", () => {
-          const context = { symbol: getCurrentSymbol(), mode: getActiveTradeMode() };
-          if (!isCurrentObservedSymbol(context.symbol)) return;
-          const current = Number(loadMultiplier(context.mode, context.symbol));
+          const context = getPanelOptionContext();
+          if (!context || !isCurrentObservedSymbol(context.symbol)) return;
+          const current = Number(loadMultiplier(context.mode, context.symbol, context.precision));
           updateMultiplier(String(Math.max(1, current - 1)), context);
         });
       }
       if (incBtn) {
         incBtn.addEventListener("click", () => {
-          const context = { symbol: getCurrentSymbol(), mode: getActiveTradeMode() };
-          if (!isCurrentObservedSymbol(context.symbol)) return;
-          const current = Number(loadMultiplier(context.mode, context.symbol));
+          const context = getPanelOptionContext();
+          if (!context || !isCurrentObservedSymbol(context.symbol)) return;
+          const current = Number(loadMultiplier(context.mode, context.symbol, context.precision));
           updateMultiplier(String(current + 1), context);
         });
       }
@@ -4858,26 +4995,33 @@
         if (!target) return;
         const optionBtn = target.closest("[data-ladder-group][data-ladder-value]");
         if (optionBtn) {
-          const optionContext = { mode: getActiveTradeMode(), symbol: getCurrentSymbol() };
-          if (!optionContext.symbol || !["OPEN", "CLOSE"].includes(optionContext.mode)) return;
+          const optionContext = getPanelOptionContext();
+          if (!optionContext) return;
           const group = optionBtn.getAttribute("data-ladder-group");
           const value = Number(optionBtn.getAttribute("data-ladder-value"));
           if (group === "percent" && optionContext.mode === "OPEN") {
-            setLadderOpenPercent(value, optionContext.symbol);
+            setLadderOpenPercent(value, optionContext.symbol, optionContext.precision);
           }
           if (group === "percent" && optionContext.mode === "CLOSE") {
-            setLadderClosePercent(value, optionContext.symbol);
+            setLadderClosePercent(value, optionContext.symbol, optionContext.precision);
           }
-          if (group === "levels") setLadderLevels(value, optionContext.mode, optionContext.symbol);
+          if (group === "levels") {
+            setLadderLevels(value, optionContext.mode, optionContext.symbol, optionContext.precision);
+          }
           return;
         }
         const stepBtn = target.closest("[data-ladder-step-action]");
         if (stepBtn) {
           if (stepBtn.disabled || stepBtn.getAttribute("aria-disabled") === "true") return;
-          const optionContext = { mode: getActiveTradeMode(), symbol: getCurrentSymbol() };
-          if (!optionContext.symbol || !["OPEN", "CLOSE"].includes(optionContext.mode)) return;
+          const optionContext = getPanelOptionContext();
+          if (!optionContext) return;
           const delta = stepBtn.getAttribute("data-ladder-step-action") === "inc" ? 1 : -1;
-          setLadderStep(getLadderStep(optionContext.mode, optionContext.symbol) + delta, optionContext.mode, optionContext.symbol);
+          setLadderStep(
+            getLadderStep(optionContext.mode, optionContext.symbol, optionContext.precision) + delta,
+            optionContext.mode,
+            optionContext.symbol,
+            optionContext.precision
+          );
           return;
         }
         const precisionApplyBtn = target.closest("[data-orderbook-precision-apply]");
@@ -4932,6 +5076,7 @@
       }
       ensureTradeModeTabObserver();
       ensureAccountPositionObserver();
+      ensureOrderbookPrecisionObserver();
       const panel = ensurePanel();
       const input = panel.querySelector(`#${INPUT_ID}`);
       const symbol = getCurrentSymbol() || "-";
@@ -4940,11 +5085,12 @@
           if (rules) scheduleRenderPanel();
         });
       }
-      const storedMultiplier = loadMultiplier(getActiveTradeMode(), symbol !== "-" ? symbol : null);
+      const optionContext = getPanelOptionContext();
+      const storedMultiplier = optionContext ? loadMultiplier(optionContext.mode, optionContext.symbol, optionContext.precision) : null;
       if (input && !isEditingMultiplier && input.value !== storedMultiplier) {
-        input.value = storedMultiplier;
+        input.value = storedMultiplier || "";
       }
-      const multiplier = input ? String((isEditingMultiplier ? input.value : storedMultiplier) || "").trim() : storedMultiplier;
+      const multiplier = input ? String((isEditingMultiplier ? input.value : storedMultiplier) || "").trim() : storedMultiplier || "";
       const qtyRuleContext = getQtyRuleContext(symbol !== "-" ? symbol : null, getActiveTradeMode());
       refreshComputedInfo(panel, multiplier, qtyRuleContext);
       if (input) {
@@ -5113,18 +5259,21 @@
     }
     function resolveTargetQty(tradeMode, priceOverride) {
       const symbol = getCurrentSymbol();
+      const precision = readCurrentOrderbookPrecisionValue();
+      if (!precision) throw new Error("未识别订单簿缩放值");
       const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
       if (qtyRuleContext.status !== "ready" || !qtyRuleContext.effectiveMinQty) {
         if (symbol && !rulesCache[symbol]) ensureRules(symbol);
         return null;
       }
-      const multiplier = loadMultiplier(tradeMode, symbol);
+      const multiplier = loadMultiplier(tradeMode, symbol, precision);
       const qty = multiplyDecimalByInt(qtyRuleContext.effectiveMinQty, multiplier);
       if (!qty) return null;
       return {
         qty,
         source: `MULTIPLIER(${multiplier}x @ ${qtyRuleContext.effectiveMinQty})`,
         symbol,
+        precision,
         rule: qtyRuleContext
       };
     }
@@ -5188,6 +5337,9 @@
         }
         if (getActiveTradeMode() !== action.mode) {
           throw new Error("开仓/平仓模式已变化，已停止提交");
+        }
+        if (readCurrentOrderbookPrecisionValue() !== qtyPlan.precision) {
+          throw new Error("订单簿缩放值已变化，已停止提交");
         }
         const currentAction = resolveTradeAction();
         if (!currentAction || currentAction.mode !== action.mode || currentAction.side !== action.side || !currentAction.button || currentAction.button.disabled || currentAction.button.getAttribute("aria-disabled") === "true") {
@@ -5297,6 +5449,7 @@
       startSymbolChangeTimer();
       ensureTradeModeTabObserver();
       ensureAccountPositionObserver();
+      ensureOrderbookPrecisionObserver();
       startRenderPanelTimer();
       startInitialOrderbookPrecisionSample();
     }
@@ -5304,6 +5457,7 @@
       stopSymbolChangeTimer();
       stopTradeModeTabObserver();
       stopAccountPositionObserver();
+      stopOrderbookPrecisionObserver();
       clearTradeUiMutationWait();
       stopRenderPanelTimer();
       stopOrderbookPrecisionSampler();

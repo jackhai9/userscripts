@@ -91,8 +91,8 @@ test('ladder retries with restricted open-order replacement after supported feed
   assert.match(retryBody, /getReplaceableLadderOpenOrdersPlan\(plan,\s*e\)/);
   assert.match(retryBody, /cancelCurrentSymbolOpenOrdersForPlan\(replacementPlan\)/);
   assert.doesNotMatch(retryBody, /cancelCurrentSymbolOpenOrders\(\{\s*waitUntilCleared: true\s*\}\)/);
-  assert.match(retryBody, /replacementSymbol = replacementPlan\.symbol/);
-  assert.match(retryBody, /buildLadderPlan\(actionType,\s*replacementSymbol\)/);
+  assert.match(retryBody, /replacementContext = createLadderExpectedContext\(replacementPlan\)/);
+  assert.match(retryBody, /buildLadderPlan\(actionType,\s*replacementContext\)/);
   assert.doesNotMatch(retryBody, /findCurrentSymbolCancelAllButton/);
 
   const startBody = readFunctionBody('startLadder');
@@ -226,7 +226,7 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(buildBody, /autoFitLevels = autoFit\.levels/);
   assert.match(buildBody, /autoFitPercent: autoFitPercent/);
   assert.match(buildBody, /autoFitLevels/);
-  assert.match(buildBody, /createLadderMinimumQtyFailure\(\{\s*spec,\s*symbol: startSymbol,\s*mode: spec\.mode,\s*minRequiredQty,\s*baseQty,\s*percent,\s*levels,\s*minimumPercent: autoFit\.minimumPercent,\s*maxAutoFitPercent: autoFit\.maxPercent,\s*replacementTotalQty: spec\.mode === 'OPEN' \? multiplyDecimalByInt\(minRequiredQty,\s*levels\) : null,\s*\}\)/);
+  assert.match(buildBody, /createLadderMinimumQtyFailure\(\{\s*spec,\s*symbol: startSymbol,\s*precision: startPrecision,\s*mode: spec\.mode,\s*minRequiredQty,\s*baseQty,\s*percent,\s*levels,\s*minimumPercent: autoFit\.minimumPercent,\s*maxAutoFitPercent: autoFit\.maxPercent,\s*replacementTotalQty: spec\.mode === 'OPEN' \? multiplyDecimalByInt\(minRequiredQty,\s*levels\) : null,\s*\}\)/);
 
   const errorBody = readFunctionBody('createLadderMinimumQtyFailure');
   assert.match(errorBody, /数量低于最小下单量/);
@@ -687,16 +687,74 @@ test('cancel flow rechecks the captured symbol before destructive click and clea
   assert.match(cancelBody, /restoreAccountOrdersTab\(previousAccountOrdersTab, symbol\)/);
 });
 
-test('multiplier edits retain their captured symbol and mode', () => {
+test('multiplier edits retain their captured symbol, mode, and orderbook precision', () => {
   assert.match(source, /let multiplierEditContext = null/);
   assert.match(source, /function beginMultiplierEdit\(/);
   assert.match(source, /function isMultiplierEditContextCurrent\(/);
-  assert.match(source, /saveMultiplier\(value, multiplierEditContext\.mode, multiplierEditContext\.symbol\)/);
-  assert.match(source, /saveMultiplier\(normalized, editContext\.mode, editContext\.symbol\)/);
+  assert.match(source, /precision: readCurrentOrderbookPrecisionValue\(\)/);
+  assert.match(source, /context\.precision === readCurrentOrderbookPrecisionValue\(\)/);
+  assert.match(source, /saveMultiplier\(\s*value,\s*multiplierEditContext\.mode,\s*multiplierEditContext\.symbol,\s*multiplierEditContext\.precision,?\s*\)/);
+  assert.match(source, /saveMultiplier\(normalized, editContext\.mode, editContext\.symbol, editContext\.precision\)/);
   const updateBody = readFunctionBody('updateMultiplier');
   assert.match(updateBody, /isCurrentObservedSymbol\(context\.symbol\)/);
-  assert.match(updateBody, /saveMultiplier\(normalized, context\.mode, context\.symbol\)/);
+  assert.match(updateBody, /context\.precision !== readCurrentOrderbookPrecisionValue\(\)/);
+  assert.match(updateBody, /saveMultiplier\(normalized, context\.mode, context\.symbol, context\.precision\)/);
   assert.match(source, /updateMultiplier\([^\n]+, context\)/);
+});
+
+test('panel numeric options wait for a complete mode-symbol-precision context', () => {
+  const contextBody = readFunctionBody('getPanelOptionContext');
+  assert.match(contextBody, /\['OPEN', 'CLOSE'\]\.includes\(context\.mode\)/);
+  assert.match(contextBody, /context\.symbol && context\.precision/);
+
+  const renderBody = readFunctionBody('renderPanel');
+  assert.match(renderBody, /const optionContext = getPanelOptionContext\(\)/);
+  assert.match(renderBody, /const storedMultiplier = optionContext/);
+
+  const refreshBody = readFunctionBody('refreshComputedInfo');
+  assert.match(refreshBody, /minEl\.textContent = '等待订单簿缩放值'/);
+  assert.match(refreshBody, /minEl\.textContent = '等待开仓\/平仓状态'/);
+  assert.match(refreshBody, /const numericContextReady = modeReady && precisionReady/);
+});
+
+test('precision changes invalidate edits and immediately rerender the panel', () => {
+  assert.match(source, /let orderbookPrecisionObserver = null/);
+  assert.match(source, /let lastObservedOrderbookPrecision = null/);
+  const ensureBody = readFunctionBody('ensureOrderbookPrecisionObserver');
+  assert.match(ensureBody, /findOrderbookPrecisionTrigger\(\)/);
+  assert.match(ensureBody, /new MutationObserver/);
+  assert.match(ensureBody, /handleOrderbookPrecisionChange\(\)/);
+  assert.match(ensureBody, /characterData: true/);
+  const changeBody = readFunctionBody('handleOrderbookPrecisionChange');
+  assert.match(changeBody, /stopMultiplierEdit\(\)/);
+  assert.match(changeBody, /ladderPanelBodySignature = ''/);
+  assert.match(changeBody, /scheduleRenderPanel\(\)/);
+  const stopBody = readFunctionBody('stopTradingTimers');
+  assert.match(stopBody, /stopOrderbookPrecisionObserver\(\)/);
+});
+
+test('ladder plans fail closed when orderbook precision changes', () => {
+  const buildBody = readFunctionBody('buildLadderPlan');
+  assert.match(buildBody, /const startPrecision = readCurrentOrderbookPrecisionValue\(\)/);
+  assert.match(buildBody, /if \(!startPrecision\) throw new Error\('未识别订单簿缩放值'\)/);
+  assert.match(buildBody, /precision: startPrecision/);
+
+  const contextBody = readFunctionBody('assertLadderExecutionContext');
+  assert.match(contextBody, /readCurrentOrderbookPrecisionValue\(\) !== plan\.precision/);
+
+  const replacementBody = readFunctionBody('createLadderExpectedContext');
+  assert.match(replacementBody, /symbol: plan\.symbol/);
+  assert.match(replacementBody, /mode: plan\.spec\.mode/);
+  assert.match(replacementBody, /precision: plan\.precision/);
+});
+
+test('single-order sizing and submission retain the captured orderbook precision', () => {
+  const resolveBody = readFunctionBody('resolveTargetQty');
+  assert.match(resolveBody, /const precision = readCurrentOrderbookPrecisionValue\(\)/);
+  assert.match(resolveBody, /if \(!precision\) throw new Error\('未识别订单簿缩放值'\)/);
+  assert.match(resolveBody, /loadMultiplier\(tradeMode, symbol, precision\)/);
+  assert.match(resolveBody, /precision,/);
+  assert.match(source, /readCurrentOrderbookPrecisionValue\(\) !== qtyPlan\.precision/);
 });
 
 test('precision apply and sampling do not commit after a symbol switch', () => {
@@ -747,8 +805,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.59/);
-  assert.match(generatedSource, /@version\s+2\.7\.59/);
+  assert.match(source, /@version\s+2\.7\.60/);
+  assert.match(generatedSource, /@version\s+2\.7\.60/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
