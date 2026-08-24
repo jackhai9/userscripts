@@ -3,11 +3,31 @@ import assert from 'node:assert/strict';
 
 import {
   collectNonZeroPriceMoves,
+  formatOrderbookPrecisionShortcutLabel,
   getOrderbookPrecisionDecadeTarget,
+  getOrderbookPrecisionShortcutOptions,
   mergePrecisionSamples,
   recommendOrderbookPrecision,
   resolveOrderbookPrecisionSampleState,
 } from '../../../src/binance-orderbook-trade/core/precision.js';
+
+test('keeps only the four smallest exact native precision shortcuts', () => {
+  assert.deepEqual(
+    getOrderbookPrecisionShortcutOptions(['100', '0.1', '10', '1', '1000', '0.10']),
+    ['0.1', '1', '10', '100']
+  );
+  assert.deepEqual(
+    getOrderbookPrecisionShortcutOptions(['0.001', '0.01', '0.1']),
+    ['0.001', '0.01', '0.1']
+  );
+});
+
+test('compacts long precision labels without changing the selected native value', () => {
+  assert.equal(formatOrderbookPrecisionShortcutLabel('0.00000001'), '1e-8');
+  assert.equal(formatOrderbookPrecisionShortcutLabel('0.00001'), '1e-5');
+  assert.equal(formatOrderbookPrecisionShortcutLabel('0.001'), '0.001');
+  assert.equal(formatOrderbookPrecisionShortcutLabel('1000'), '1000');
+});
 
 test('selects only an exact native decade precision target', () => {
   const options = ['1.0', '0.0010', '0.1', '0.010', '0.01'];
