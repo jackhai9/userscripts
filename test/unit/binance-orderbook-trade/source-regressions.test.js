@@ -234,7 +234,8 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(generatedSource, /90805022/);
   assert.match(generatedSource, /isBinancePostOnlyMakerRejectCode/);
   assert.match(generatedSource, /beginLadderSubmitResponseCapture/);
-  assert.match(generatedSource, /自动刷新盘口/);
+  assert.match(generatedSource, /刷新盘口/);
+  assert.doesNotMatch(generatedSource, /自动刷新盘口/);
   assert.match(generatedSource, /isPostOnlyMakerRejectionFeedback/);
 });
 
@@ -263,8 +264,8 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /data-side-selector role="radiogroup"[^>]*display:grid;grid-template-columns:54px 54px;[^>]*border-radius:6px;[^>]*overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="min-width:0;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
   assert.match(source, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);align-items:center;gap:4px;height:32px;overflow:hidden/);
-  assert.match(source, /grid-template-columns:84px 44px 44px;align-items:center;justify-content:start;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
-  assert.match(source, /buttonBaseStyle = `width:44px;height:24px;[^`]*font-size:12px;line-height:22px;`/);
+  assert.match(source, /grid-template-columns:minmax\(0,1fr\) 68px;align-items:center;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
+  assert.match(source, /buttonBaseStyle = `width:68px;height:24px;[^`]*font-size:12px;line-height:22px;`/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcut'), /height:32px[^`]*font-size:12px;line-height:30px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcutSlots'), /while \(slots\.length < ORDERBOOK_PRECISION_SHORTCUT_LIMIT\)/);
   assert.doesNotMatch(source, /data-orderbook-precision-status/);
@@ -700,13 +701,13 @@ test('cancel current-symbol open orders are single-flight and dialog timeout doe
   assert.match(actionRowsBody, /ladderActionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
 });
 
-test('orderbook precision recommendation and four native shortcuts share one verified selection path', () => {
+test('orderbook precision recommendation marks one shortcut without applying it automatically', () => {
   assert.match(source, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6000/);
   assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
   assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3'/);
   assert.match(source, /ORDERBOOK_PRECISION_SHORTCUT_LIMIT = 4/);
-  assert.match(source, /data-orderbook-precision-apply/);
+  assert.doesNotMatch(source, /data-orderbook-precision-apply/);
   assert.match(source, /data-orderbook-precision-value/);
   assert.doesNotMatch(source, /data-orderbook-precision-adjust/);
   assert.match(source, /data-orderbook-precision-refresh/);
@@ -736,6 +737,10 @@ test('orderbook precision recommendation and four native shortcuts share one ver
   assert.match(refreshBody, /getOrderbookPrecisionShortcutOptions\([\s\S]*ORDERBOOK_PRECISION_SHORTCUT_LIMIT/);
   assert.match(refreshBody, /queueOrderbookPrecisionOptionsLoad\(symbol\)/);
   assert.match(refreshBody, /shortcutOptions\.includes\(recommendation\)/);
+  const shortcutBody = readFunctionBody('renderOrderbookPrecisionShortcut');
+  assert.match(shortcutBody, /const recommended = value === recommendation/);
+  assert.match(shortcutBody, /position:absolute;top:3px;right:3px;width:6px;height:6px/);
+  assert.match(shortcutBody, /background:var\(--color-PrimaryYellow\)/);
   const precisionChangeBody = readFunctionBody('handleOrderbookPrecisionChange');
   assert.match(precisionChangeBody, /readVisibleOrderbookPrecisionOptionValues\(\)/);
   assert.match(precisionChangeBody, /nativeOptionsChanged/);
@@ -744,16 +749,15 @@ test('orderbook precision recommendation and four native shortcuts share one ver
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
-  assert.match(refreshBody, /buttonBaseStyle = `width:44px;height:24px;[^`]*padding:0;[^`]*font-size:12px;line-height:22px;/);
+  assert.match(refreshBody, /buttonBaseStyle = `width:68px;height:24px;[^`]*padding:0;[^`]*font-size:12px;line-height:22px;/);
   assert.match(refreshBody, /margin-top:12px;[^`]*font-size:12px;/);
   assert.match(refreshBody, /当前缩放 \$\{current \|\| '--'\}[^`]*订单簿缩放/);
-  assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, controlsBusy\)/);
+  assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy\)/);
   const messageIndex = refreshBody.indexOf('>\${precisionMessage}</span>');
-  const applyButtonIndex = refreshBody.indexOf('data-orderbook-precision-apply="true"');
   const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
   assert.ok(messageIndex >= 0, 'recommendation or transient status should be rendered');
-  assert.ok(messageIndex < applyButtonIndex, 'precision message should stay before the Apply button');
-  assert.ok(applyButtonIndex < refreshButtonIndex, 'Apply button should stay before the Refresh button');
+  assert.ok(messageIndex < refreshButtonIndex, 'precision message should stay before the update button');
+  assert.match(refreshBody, />更新推荐<\/button>/);
   assert.doesNotMatch(refreshBody, /data-orderbook-precision-status/);
 
   assert.equal((source.match(/ladderOptionRow\('幅', LADDER_STEP_OPTIONS/g) || []).length, 2);
@@ -763,14 +767,8 @@ test('orderbook precision recommendation and four native shortcuts share one ver
   assert.match(busyStatusBody, /Math\.ceil\(remainingMs \/ 1000\)/);
   assert.match(busyStatusBody, /刷新中 \$\{remainingSeconds\}s/);
 
-  const applyBody = readFunctionBody('runApplyRecommendedOrderbookPrecision');
-  assert.match(applyBody, /ensureVisibleOrderbookPrecisionOptions\(trigger\.element\)/);
-  assert.match(applyBody, /clickAndConfirmOrderbookPrecisionOption\(\{/);
-  assert.match(applyBody, /targetPrecision: recommendation/);
-  assert.match(applyBody, /!shortcutOptions\.includes\(recommendation\)/);
-  assert.match(applyBody, /请使用原生下拉/);
-  assert.doesNotMatch(applyBody, /clickDomTarget\(trigger\.element\)/);
-  assert.doesNotMatch(applyBody, /fallbackMovement/);
+  assert.doesNotMatch(source, /function runApplyRecommendedOrderbookPrecision/);
+  assert.doesNotMatch(source, /function applyRecommendedOrderbookPrecision/);
 
   const loadBody = readFunctionBody('runLoadOrderbookPrecisionOptions');
   assert.match(loadBody, /ensureVisibleOrderbookPrecisionOptions\(trigger\.element\)/);
@@ -785,7 +783,6 @@ test('orderbook precision recommendation and four native shortcuts share one ver
 
   const selectionBody = readFunctionBody('runOrderbookPrecisionSelectionTask');
   assert.match(selectionBody, /if \(orderbookPrecisionSelectionTask\) return orderbookPrecisionSelectionTask/);
-  assert.match(readFunctionBody('applyRecommendedOrderbookPrecision'), /runOrderbookPrecisionSelectionTask/);
   assert.match(readFunctionBody('selectOrderbookPrecision'), /runOrderbookPrecisionSelectionTask/);
   assert.match(readFunctionBody('queueOrderbookPrecisionOptionsLoad'), /runOrderbookPrecisionSelectionTask\(runLoadOrderbookPrecisionOptions\)/);
 
@@ -964,12 +961,7 @@ test('single-order sizing and submission retain the captured orderbook precision
   assert.match(source, /readCurrentOrderbookPrecisionValue\(\) !== qtyPlan\.precision/);
 });
 
-test('precision apply, shortcut selection, and sampling do not commit after a symbol switch', () => {
-  const applyBody = readFunctionBody('runApplyRecommendedOrderbookPrecision');
-  assert.match(applyBody, /const symbol = getCurrentSymbol\(\)/);
-  assert.match(applyBody, /if \(!isCurrentObservedSymbol\(symbol\)\) return false/);
-  assert.match(applyBody, /readCurrentOrderbookPrecisionValue\(\) !== startPrecision/);
-
+test('precision shortcut selection and sampling do not commit after a symbol switch', () => {
   const confirmBody = readFunctionBody('clickAndConfirmOrderbookPrecisionOption');
   assert.match(confirmBody, /!isCurrentObservedSymbol\(symbol\)/);
   assert.match(confirmBody, /readCurrentOrderbookPrecisionValue\(\) !== startPrecision/);
