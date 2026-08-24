@@ -207,7 +207,9 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
 test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);align-items:center;gap:10px;height:18px;overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="height:18px;line-height:18px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
-  assert.match(source, /data-orderbook-precision-status="true"[^>]*height:18px;line-height:18px;[^>]*visibility:\$\{statusVisibility\};white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
+  assert.match(source, /grid-template-columns:48px 32px 60px 32px;align-items:center;justify-content:start;gap:6px;height:32px;overflow:hidden/);
+  assert.match(source, /grid-template-columns:86px 58px 58px;align-items:center;justify-content:start;gap:6px;height:32px;margin-top:4px;overflow:hidden/);
+  assert.doesNotMatch(source, /data-orderbook-precision-status/);
 
   const ladderBody = readFunctionBody('refreshLadderPanel');
   assert.match(ladderBody, /status\.style\.visibility = expanded \|\| ladderTask \|\| ladderStatusText !== '空闲' \? 'visible' : 'hidden'/);
@@ -581,26 +583,32 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(refreshBody, /data-orderbook-precision-adjust="DECREASE"/);
   assert.match(refreshBody, /data-orderbook-precision-adjust="INCREASE"/);
   assert.match(refreshBody, /const controlsBusy = busy \|\| selectionBusy/);
+  assert.match(refreshBody, /const canDecrease = !controlsBusy && Boolean\(decreaseTarget\)/);
+  assert.match(refreshBody, /const canIncrease = !controlsBusy && Boolean\(increaseTarget\)/);
+  assert.match(refreshBody, /decreaseDisabledAttrs/);
+  assert.match(refreshBody, /increaseDisabledAttrs/);
+  const precisionChangeBody = readFunctionBody('handleOrderbookPrecisionChange');
+  assert.match(precisionChangeBody, /readVisibleOrderbookPrecisionOptionValues\(\)/);
+  assert.match(precisionChangeBody, /nativeOptionsChanged/);
   assert.doesNotMatch(refreshBody, /样本/);
   assert.doesNotMatch(refreshBody, /sampleText/);
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
-  assert.match(refreshBody, /buttonBaseStyle = 'height:32px;[^']*padding:0 12px;[^']*font-size:14px;line-height:30px;/);
+  assert.match(refreshBody, /buttonBaseStyle = 'width:58px;height:32px;[^']*padding:0;[^']*font-size:14px;line-height:30px;/);
   assert.match(refreshBody, /margin-top:8px;[^']*font-size:14px;/);
   const decreaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="DECREASE"');
   const currentIndex = refreshBody.indexOf('>\${currentText}</span>');
   const increaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="INCREASE"');
-  const recommendationIndex = refreshBody.indexOf('>推荐 \${recommendationText}</span>');
+  const messageIndex = refreshBody.indexOf('>\${precisionMessage}</span>');
   const applyButtonIndex = refreshBody.indexOf('data-orderbook-precision-apply="true"');
   const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
-  const statusTextIndex = refreshBody.lastIndexOf('statusText');
   assert.ok(decreaseIndex >= 0 && decreaseIndex < currentIndex, 'decrease should stay before the current precision');
   assert.ok(currentIndex < increaseIndex, 'increase should stay after the current precision');
-  assert.ok(recommendationIndex >= 0, 'recommendation text should be rendered');
-  assert.ok(recommendationIndex < applyButtonIndex, 'recommendation text should stay before the Apply button');
+  assert.ok(messageIndex >= 0, 'recommendation or transient status should be rendered');
+  assert.ok(messageIndex < applyButtonIndex, 'precision message should stay before the Apply button');
   assert.ok(applyButtonIndex < refreshButtonIndex, 'Apply button should stay before the Refresh button');
-  assert.ok(refreshButtonIndex < statusTextIndex, 'transient precision status should stay after both buttons');
+  assert.doesNotMatch(refreshBody, /data-orderbook-precision-status/);
 
   const busyStatusBody = readFunctionBody('formatOrderbookPrecisionBusyStatus');
   assert.match(busyStatusBody, /Math\.ceil\(remainingMs \/ 1000\)/);
@@ -615,6 +623,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
 
   const adjustBody = readFunctionBody('runAdjustOrderbookPrecision');
   assert.match(adjustBody, /readVisibleOrderbookPrecisionOptionValues\(trigger\.element\)/);
+  assert.match(adjustBody, /nativeOptions: values/);
   assert.match(adjustBody, /getOrderbookPrecisionDecadeTarget\(values, startPrecision, direction\)/);
   assert.match(adjustBody, /clickAndConfirmOrderbookPrecisionOption\(\{/);
 
@@ -855,8 +864,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.63/);
-  assert.match(generatedSource, /@version\s+2\.7\.63/);
+  assert.match(source, /@version\s+2\.7\.64/);
+  assert.match(generatedSource, /@version\s+2\.7\.64/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
