@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.91
+// @version      2.7.92
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1055,6 +1055,110 @@
     return { status: "valid", record };
   }
 
+  // src/binance-orderbook-trade/core/chart-save-coalescer.js
+  var IGNORED_DRAWING_EVENT_TYPES = /* @__PURE__ */ new Set(["click", "move"]);
+  function validateTradingViewApi(api) {
+    if (!api || typeof api !== "object") {
+      throw new Error("TradingView API is unavailable");
+    }
+    if (typeof api.saveChart !== "function") {
+      throw new Error("TradingView saveChart API is unavailable");
+    }
+    if (typeof api.subscribe !== "function" || typeof api.unsubscribe !== "function") {
+      throw new Error("TradingView drawing-event subscription API is unavailable");
+    }
+  }
+  function restoreSaveChartMethod(api, wrapper, originalSaveChart, originalDescriptor) {
+    if (api.saveChart !== wrapper) {
+      throw new Error("TradingView saveChart API changed during save coalescing");
+    }
+    if (originalDescriptor) {
+      Object.defineProperty(api, "saveChart", originalDescriptor);
+    } else {
+      delete api.saveChart;
+    }
+    if (api.saveChart !== originalSaveChart) {
+      throw new Error("TradingView saveChart API was not restored");
+    }
+  }
+  async function coalesceTradingViewDrawingSaves(api, action, {
+    timeoutMs = 1800,
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout
+  } = {}) {
+    validateTradingViewApi(api);
+    if (typeof action !== "function") throw new Error("Chart action is unavailable");
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error("TradingView save coalescing timeout is invalid");
+    }
+    const originalSaveChart = api.saveChart;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(api, "saveChart");
+    let drawingEventCount = 0;
+    let saveRequestCount = 0;
+    let pendingSave = null;
+    let actionFinished = false;
+    let waitResolve;
+    let waitTimeout = null;
+    let subscribed = false;
+    const savesReady = new Promise((resolve) => {
+      waitResolve = resolve;
+    });
+    const resolveIfReady = () => {
+      if (actionFinished && saveRequestCount >= drawingEventCount) waitResolve();
+    };
+    const handleDrawingEvent = (_drawingId, eventType) => {
+      if (!IGNORED_DRAWING_EVENT_TYPES.has(eventType)) drawingEventCount += 1;
+    };
+    const saveChartWrapper = function coalescedSaveChart(...args) {
+      saveRequestCount += 1;
+      pendingSave = { thisValue: this, args };
+      resolveIfReady();
+    };
+    api.subscribe("drawing_event", handleDrawingEvent);
+    subscribed = true;
+    try {
+      api.saveChart = saveChartWrapper;
+      if (api.saveChart !== saveChartWrapper) {
+        throw new Error("TradingView saveChart API is not writable");
+      }
+    } catch (error) {
+      api.unsubscribe("drawing_event", handleDrawingEvent);
+      throw error;
+    }
+    try {
+      const actionResult = await action();
+      api.unsubscribe("drawing_event", handleDrawingEvent);
+      subscribed = false;
+      actionFinished = true;
+      resolveIfReady();
+      if (drawingEventCount > saveRequestCount) {
+        await Promise.race([
+          savesReady,
+          new Promise((_, reject) => {
+            waitTimeout = setTimeoutFn(() => {
+              reject(new Error(
+                `Expected ${drawingEventCount} TradingView saveChart requests, received ${saveRequestCount}`
+              ));
+            }, timeoutMs);
+          })
+        ]);
+      }
+      if (pendingSave) {
+        originalSaveChart.apply(pendingSave.thisValue, pendingSave.args);
+      }
+      return {
+        actionResult,
+        drawingEventCount,
+        saveRequestCount,
+        fullSaveCount: pendingSave ? 1 : 0
+      };
+    } finally {
+      if (waitTimeout !== null) clearTimeoutFn(waitTimeout);
+      if (subscribed) api.unsubscribe("drawing_event", handleDrawingEvent);
+      restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
+    }
+  }
+
   // src/binance-orderbook-trade/core/cancel-dialog-decision.js
   function resolveCancelDialogDecision({
     seenDialog,
@@ -1181,6 +1285,14 @@
     const target = findBinanceChartOrdersTarget(document2);
     if (!target) throw new Error("Binance chart orders target is unavailable");
     return target;
+  }
+  function getBinanceTradingViewApi(target) {
+    if (!target?.chartRoot) throw new Error("Binance chart orders target is unavailable");
+    const apis = Array.from(target.chartRoot.querySelectorAll("iframe")).map((frame) => frame.contentWindow?.tradingViewApi).filter(Boolean);
+    if (apis.length !== 1) {
+      throw new Error(`Expected one Binance TradingView API, found ${apis.length}`);
+    }
+    return apis[0];
   }
   function assertSameBinanceChartOrdersTarget(capturedTarget, currentTarget) {
     if (!capturedTarget || !currentTarget) {
@@ -3828,8 +3940,7 @@
       if (current.checked) {
         writeChartOrdersRecoveryRecord();
         state.changed = true;
-        current.checkbox.click();
-        await waitForBinanceChartOrdersPopover(target, false);
+        await toggleBinanceChartOrdersWithCoalescedSave(target, current.checkbox, false);
       }
       await closeBinanceChartOrdersPopover(target);
     }
@@ -3837,11 +3948,26 @@
       assertSameBinanceChartOrdersTarget(target, getBinanceChartOrdersTarget2());
       const current = await openBinanceChartOrdersPopover(target);
       if (current.checked !== state.originalChecked) {
-        current.checkbox.click();
-        await waitForBinanceChartOrdersPopover(target, state.originalChecked);
+        await toggleBinanceChartOrdersWithCoalescedSave(
+          target,
+          current.checkbox,
+          state.originalChecked
+        );
       }
       await closeBinanceChartOrdersPopover(target);
       clearChartOrdersRecoveryRecord();
+    }
+    async function toggleBinanceChartOrdersWithCoalescedSave(target, checkbox, expectedChecked) {
+      const api = getBinanceTradingViewApi(target);
+      const result = await coalesceTradingViewDrawingSaves(api, async () => {
+        checkbox.click();
+        await waitForBinanceChartOrdersPopover(target, expectedChecked);
+      });
+      log("图表当前委托保存已合并", {
+        drawingEvents: result.drawingEventCount,
+        saveRequests: result.saveRequestCount,
+        fullSaves: result.fullSaveCount
+      });
     }
     async function recoverChartOrdersStateAfterReload() {
       const recovery = readChartOrdersRecoveryRecord();

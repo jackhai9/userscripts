@@ -65,6 +65,17 @@ export function getBinanceChartOrdersTarget(document) {
   return target;
 }
 
+export function getBinanceTradingViewApi(target) {
+  if (!target?.chartRoot) throw new Error('Binance chart orders target is unavailable');
+  const apis = Array.from(target.chartRoot.querySelectorAll('iframe'))
+    .map((frame) => frame.contentWindow?.tradingViewApi)
+    .filter(Boolean);
+  if (apis.length !== 1) {
+    throw new Error(`Expected one Binance TradingView API, found ${apis.length}`);
+  }
+  return apis[0];
+}
+
 export function assertSameBinanceChartOrdersTarget(capturedTarget, currentTarget) {
   if (!capturedTarget || !currentTarget) {
     throw new Error('Binance chart orders target is unavailable');

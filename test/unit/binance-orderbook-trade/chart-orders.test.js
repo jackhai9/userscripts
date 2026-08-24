@@ -6,12 +6,13 @@ import {
   assertSameBinanceChartOrdersTarget,
   findActiveBinanceChartOrdersPopover,
   getBinanceChartOrdersTarget,
+  getBinanceTradingViewApi,
 } from '../../../src/binance-orderbook-trade/dom/chart-orders.js';
 
 function createChartMarkup({ mode = 'tradingview', popoverId = 'chart-orders-menu' } = {}) {
   const chartBody = mode === 'tradingview'
     ? '<div id="chart_futures-tradingview"><iframe id="tradingview_fixture"></iframe></div>'
-    : '<div data-testid="basic-chart"></div>';
+    : '<div data-testid="basic-chart"><iframe id="basic_fixture"></iframe></div>';
   return `
     <div class="chart-widget-root">
       <div class="bn-flex h-full flex-col">
@@ -78,6 +79,38 @@ test('locates the shared Binance chart OpenOrders target in TradingView and Basi
     assert.equal(target.trigger.getAttribute('data-testid'), 'orders-trigger');
     assert.equal(target.popoverId, 'chart-orders-menu');
   }
+});
+
+test('locates the one TradingView API used by TradingView and Basic chart modes', () => {
+  for (const mode of ['tradingview', 'basic']) {
+    const dom = loadFixtureDom(createChartMarkup({ mode }));
+    const target = getBinanceChartOrdersTarget(dom.window.document);
+    const api = { saveChart() {}, subscribe() {}, unsubscribe() {} };
+    dom.window.document.querySelector('iframe').contentWindow.tradingViewApi = api;
+
+    assert.equal(getBinanceTradingViewApi(target), api);
+  }
+});
+
+test('TradingView API discovery rejects missing or ambiguous chart runtimes', () => {
+  const missingDom = loadFixtureDom(createChartMarkup());
+  const missingTarget = getBinanceChartOrdersTarget(missingDom.window.document);
+  assert.throws(
+    () => getBinanceTradingViewApi(missingTarget),
+    /Expected one Binance TradingView API, found 0/,
+  );
+
+  const duplicateDom = loadFixtureDom(createChartMarkup());
+  const duplicateTarget = getBinanceChartOrdersTarget(duplicateDom.window.document);
+  const firstFrame = duplicateDom.window.document.querySelector('iframe');
+  firstFrame.contentWindow.tradingViewApi = { saveChart() {} };
+  const secondFrame = duplicateDom.window.document.createElement('iframe');
+  duplicateTarget.chartRoot.append(secondFrame);
+  secondFrame.contentWindow.tradingViewApi = { saveChart() {} };
+  assert.throws(
+    () => getBinanceTradingViewApi(duplicateTarget),
+    /Expected one Binance TradingView API, found 2/,
+  );
 });
 
 test('chart target discovery rejects missing, hidden, ambiguous, or incomplete structural contracts', () => {
