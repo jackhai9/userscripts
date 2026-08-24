@@ -3,10 +3,30 @@ import assert from 'node:assert/strict';
 
 import {
   collectNonZeroPriceMoves,
+  getOrderbookPrecisionDecadeTarget,
   mergePrecisionSamples,
   recommendOrderbookPrecision,
   resolveOrderbookPrecisionSampleState,
 } from '../../../src/binance-orderbook-trade/core/precision.js';
+
+test('selects only an exact native decade precision target', () => {
+  const options = ['1.0', '0.0010', '0.1', '0.010', '0.01'];
+  assert.equal(getOrderbookPrecisionDecadeTarget(options, '0.01', 'DECREASE'), '0.001');
+  assert.equal(getOrderbookPrecisionDecadeTarget(options, '0.01', 'INCREASE'), '0.1');
+  assert.equal(getOrderbookPrecisionDecadeTarget(options, '0.1', 'INCREASE'), '1');
+  assert.equal(getOrderbookPrecisionDecadeTarget(options, '1', 'DECREASE'), '0.1');
+  assert.equal(getOrderbookPrecisionDecadeTarget(['0.01', '1'], '0.01', 'INCREASE'), null);
+  assert.equal(getOrderbookPrecisionDecadeTarget(options, '0.0001', 'INCREASE'), null);
+  assert.equal(getOrderbookPrecisionDecadeTarget(options, '10', 'INCREASE'), null);
+  assert.equal(getOrderbookPrecisionDecadeTarget(options, '0.0001', 'DECREASE'), null);
+});
+
+test('rejects unsupported precision adjustment directions', () => {
+  assert.throws(
+    () => getOrderbookPrecisionDecadeTarget(['0.01', '0.1'], '0.01', 'NEXT'),
+    /Unsupported orderbook precision direction/,
+  );
+});
 
 test('collects only non-zero price moves from consecutive observations', () => {
   assert.deepEqual(

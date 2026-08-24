@@ -554,6 +554,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
   assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3'/);
   assert.match(source, /data-orderbook-precision-apply/);
+  assert.match(source, /data-orderbook-precision-adjust/);
   assert.match(source, /data-orderbook-precision-refresh/);
   assert.match(source, /orderbookPrecisionPendingRequest/);
 
@@ -577,6 +578,9 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(refreshBody, /scheduled: Boolean\(orderbookPrecisionSampleTimer\)/);
   assert.match(refreshBody, /formatOrderbookPrecisionBusyStatus/);
   assert.match(refreshBody, /data-orderbook-precision-refresh="true"[\s\S]*disabled/);
+  assert.match(refreshBody, /data-orderbook-precision-adjust="DECREASE"/);
+  assert.match(refreshBody, /data-orderbook-precision-adjust="INCREASE"/);
+  assert.match(refreshBody, /const controlsBusy = busy \|\| selectionBusy/);
   assert.doesNotMatch(refreshBody, /样本/);
   assert.doesNotMatch(refreshBody, /sampleText/);
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
@@ -584,10 +588,16 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
   assert.match(refreshBody, /buttonBaseStyle = 'height:32px;[^']*padding:0 12px;[^']*font-size:14px;line-height:30px;/);
   assert.match(refreshBody, /margin-top:8px;[^']*font-size:14px;/);
-  const recommendationIndex = refreshBody.indexOf('<span>缩放 推荐 ${recommendationText}</span>');
+  const decreaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="DECREASE"');
+  const currentIndex = refreshBody.indexOf('>\${currentText}</span>');
+  const increaseIndex = refreshBody.indexOf('data-orderbook-precision-adjust="INCREASE"');
+  const recommendationIndex = refreshBody.indexOf('>推荐 \${recommendationText}</span>');
   const applyButtonIndex = refreshBody.indexOf('data-orderbook-precision-apply="true"');
   const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
   const statusTextIndex = refreshBody.lastIndexOf('statusText');
+  assert.ok(decreaseIndex >= 0 && decreaseIndex < currentIndex, 'decrease should stay before the current precision');
+  assert.ok(currentIndex < increaseIndex, 'increase should stay after the current precision');
+  assert.ok(recommendationIndex >= 0, 'recommendation text should be rendered');
   assert.ok(recommendationIndex < applyButtonIndex, 'recommendation text should stay before the Apply button');
   assert.ok(applyButtonIndex < refreshButtonIndex, 'Apply button should stay before the Refresh button');
   assert.ok(refreshButtonIndex < statusTextIndex, 'transient precision status should stay after both buttons');
@@ -596,15 +606,32 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(busyStatusBody, /Math\.ceil\(remainingMs \/ 1000\)/);
   assert.match(busyStatusBody, /刷新中 \$\{remainingSeconds\}s/);
 
-  const applyBody = readFunctionBody('applyRecommendedOrderbookPrecision');
-  assert.match(applyBody, /let option = findVisibleOrderbookPrecisionOption\(recommendation\)/);
-  assert.match(applyBody, /if \(!option\) \{\s*await openOrderbookPrecisionOptions\(trigger\.element\)/);
+  const applyBody = readFunctionBody('runApplyRecommendedOrderbookPrecision');
+  assert.match(applyBody, /ensureVisibleOrderbookPrecisionOptions\(trigger\.element\)/);
+  assert.match(applyBody, /clickAndConfirmOrderbookPrecisionOption\(\{/);
+  assert.match(applyBody, /targetPrecision: recommendation/);
   assert.doesNotMatch(applyBody, /clickDomTarget\(trigger\.element\)/);
-  assert.match(applyBody, /waitForVisibleOrderbookPrecisionOption\(recommendation\)/);
-  assert.doesNotMatch(applyBody, /readVisibleOrderbookPrecisionOptionValues/);
   assert.doesNotMatch(applyBody, /fallbackMovement/);
 
+  const adjustBody = readFunctionBody('runAdjustOrderbookPrecision');
+  assert.match(adjustBody, /readVisibleOrderbookPrecisionOptionValues\(trigger\.element\)/);
+  assert.match(adjustBody, /getOrderbookPrecisionDecadeTarget\(values, startPrecision, direction\)/);
+  assert.match(adjustBody, /clickAndConfirmOrderbookPrecisionOption\(\{/);
+
+  const selectionBody = readFunctionBody('runOrderbookPrecisionSelectionTask');
+  assert.match(selectionBody, /if \(orderbookPrecisionSelectionTask\) return orderbookPrecisionSelectionTask/);
+  assert.match(readFunctionBody('applyRecommendedOrderbookPrecision'), /runOrderbookPrecisionSelectionTask/);
+  assert.match(readFunctionBody('adjustOrderbookPrecision'), /runOrderbookPrecisionSelectionTask/);
+
+  const confirmBody = readFunctionBody('clickAndConfirmOrderbookPrecisionOption');
+  assert.match(confirmBody, /waitForOrderbookPrecisionValue/);
+  const valueWaitBody = readFunctionBody('waitForOrderbookPrecisionValue');
+  assert.match(valueWaitBody, /isCurrentObservedSymbol\(symbol\)/);
+  assert.match(valueWaitBody, /current === targetPrecision/);
+  assert.match(valueWaitBody, /current && current !== startPrecision/);
+
   const openOptionsBody = readFunctionBody('openOrderbookPrecisionOptions');
+  assert.match(openOptionsBody, /if \(getVisibleOrderbookPrecisionOptionNodes\(triggerElement\)\.length\) return true/);
   assert.match(openOptionsBody, /mousedown/);
   assert.match(openOptionsBody, /pointerdown/);
 
@@ -613,7 +640,7 @@ test('orderbook precision recommendation is sampled and manually applied only', 
   assert.match(openEventBody, /MouseEvent/);
 
   const waitOptionsBody = readFunctionBody('waitForVisibleOrderbookPrecisionOptions');
-  assert.match(waitOptionsBody, /getVisibleOrderbookPrecisionOptionNodes\(\)\.length/);
+  assert.match(waitOptionsBody, /getVisibleOrderbookPrecisionOptionNodes\(triggerElement\)\.length/);
   assert.match(waitOptionsBody, /await delay\(50\)/);
 
   const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
@@ -633,20 +660,23 @@ test('orderbook precision recommendation is sampled and manually applied only', 
 
   const optionsBody = readFunctionBody('getVisibleOrderbookPrecisionOptionNodes');
   assert.match(optionsBody, /\.ob-ticksize-item/);
-  assert.match(optionsBody, /\.ob-ticksize-overlay/);
   assert.match(optionsBody, /readOrderbookPrecisionOptionValue\(node\)/);
-  assert.match(optionsBody, /getOrderbookPrecisionOptionClickTarget\(node\)/);
-  assert.match(optionsBody, /ORDERBOOK_PRECISION_CANDIDATE_OPTIONS\.includes/);
-  assert.match(optionsBody, /popupSelector/);
+  assert.match(optionsBody, /getVisibleOrderbookPrecisionOverlay\(triggerElement\)/);
+  assert.match(optionsBody, /node\.closest\('\.ob-ticksize-overlay'\) === overlay/);
+  assert.doesNotMatch(optionsBody, /document\.querySelectorAll/);
+  assert.doesNotMatch(optionsBody, /ORDERBOOK_PRECISION_CANDIDATE_OPTIONS/);
+
+  const overlayBody = readFunctionBody('getVisibleOrderbookPrecisionOverlay');
+  assert.match(overlayBody, /tickSize\.querySelectorAll\('\.ob-ticksize-overlay'\)/);
+  assert.match(overlayBody, /overlays\.length === 1/);
+  assert.match(overlayBody, /tickSize\.closest\('#futuresOrderbook'\)/);
 
   const optionValueBody = readFunctionBody('readOrderbookPrecisionOptionValue');
   assert.match(optionValueBody, /\.ob-ticksize-item/);
   assert.match(optionValueBody, /querySelector\('span'\)/);
 
-  const optionTargetBody = readFunctionBody('getOrderbookPrecisionOptionClickTarget');
-  assert.match(optionTargetBody, /closest\?\.\('\.ob-ticksize-item'\)/);
-
   const findOptionBody = readFunctionBody('findVisibleOrderbookPrecisionOption');
+  assert.match(findOptionBody, /getVisibleOrderbookPrecisionOptionNodes\(triggerElement\)/);
   assert.match(findOptionBody, /readOrderbookPrecisionOptionValue\(node\) === normalized/);
 
   const startBody = readFunctionBody('startLadder');
@@ -769,10 +799,19 @@ test('single-order sizing and submission retain the captured orderbook precision
 });
 
 test('precision apply and sampling do not commit after a symbol switch', () => {
-  const applyBody = readFunctionBody('applyRecommendedOrderbookPrecision');
+  const applyBody = readFunctionBody('runApplyRecommendedOrderbookPrecision');
   assert.match(applyBody, /const symbol = getCurrentSymbol\(\)/);
   assert.match(applyBody, /if \(!isCurrentObservedSymbol\(symbol\)\) return false/);
-  assert.match(applyBody, /if \(!isCurrentObservedSymbol\(symbol\)\) return false;\s*clickDomTarget\(option\)/);
+  assert.match(applyBody, /readCurrentOrderbookPrecisionValue\(\) !== startPrecision/);
+
+  const confirmBody = readFunctionBody('clickAndConfirmOrderbookPrecisionOption');
+  assert.match(confirmBody, /!isCurrentObservedSymbol\(symbol\)/);
+  assert.match(confirmBody, /readCurrentOrderbookPrecisionValue\(\) !== startPrecision/);
+  assert.match(confirmBody, /clickDomTarget\(option\)/);
+
+  const adjustBody = readFunctionBody('runAdjustOrderbookPrecision');
+  assert.match(adjustBody, /const symbol = getCurrentSymbol\(\)/);
+  assert.match(adjustBody, /readCurrentOrderbookPrecisionValue\(\) !== startPrecision/);
 
   const roundBody = readFunctionBody('runOrderbookPrecisionSampleRound');
   assert.match(roundBody, /request\.symbol/);
@@ -816,8 +855,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.62/);
-  assert.match(generatedSource, /@version\s+2\.7\.62/);
+  assert.match(source, /@version\s+2\.7\.63/);
+  assert.match(generatedSource, /@version\s+2\.7\.63/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {
