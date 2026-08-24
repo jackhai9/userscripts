@@ -80,14 +80,46 @@ test('persists the cumulative final snapshot without dropping earlier drawing st
   assert.deepEqual(saved.map((entry) => entry.args[0]), [cumulativeSnapshots.at(-1)]);
 });
 
+test('waits for drawing events that arrive after the visible checkbox state changes', async () => {
+  const { api, saved } = createTradingViewApi();
+
+  const result = await coalesceTradingViewDrawingSaves(
+    api,
+    () => {
+      setTimeout(() => {
+        api.emit('drawing_event', 'order-1', 'remove');
+        api.emit('drawing_event', 'order-2', 'remove');
+        setTimeout(() => {
+          api.saveChart('snapshot-1');
+          api.saveChart('snapshot-2');
+        }, 5);
+      }, 10);
+      return 'checkbox-changed';
+    },
+    { eventDiscoveryTimeoutMs: 50, timeoutMs: 100 },
+  );
+
+  assert.deepEqual(result, {
+    actionResult: 'checkbox-changed',
+    drawingEventCount: 2,
+    saveRequestCount: 2,
+    fullSaveCount: 1,
+  });
+  assert.deepEqual(saved.map((entry) => entry.args), [['snapshot-2']]);
+});
+
 test('ignores click and move drawing events because Binance does not save them', async () => {
   const { api, saved } = createTradingViewApi();
 
-  const result = await coalesceTradingViewDrawingSaves(api, () => {
-    api.emit('drawing_event', 'order-1', 'click');
-    api.emit('drawing_event', 'order-1', 'move');
-    return 'unchanged';
-  });
+  const result = await coalesceTradingViewDrawingSaves(
+    api,
+    () => {
+      api.emit('drawing_event', 'order-1', 'click');
+      api.emit('drawing_event', 'order-1', 'move');
+      return 'unchanged';
+    },
+    { eventDiscoveryTimeoutMs: 5 },
+  );
 
   assert.deepEqual(result, {
     actionResult: 'unchanged',
@@ -101,7 +133,11 @@ test('ignores click and move drawing events because Binance does not save them',
 test('allows a zero-drawing transition without inventing a chart save', async () => {
   const { api, saved } = createTradingViewApi();
 
-  const result = await coalesceTradingViewDrawingSaves(api, () => 'no-orders');
+  const result = await coalesceTradingViewDrawingSaves(
+    api,
+    () => 'no-orders',
+    { eventDiscoveryTimeoutMs: 5 },
+  );
 
   assert.deepEqual(result, {
     actionResult: 'no-orders',
