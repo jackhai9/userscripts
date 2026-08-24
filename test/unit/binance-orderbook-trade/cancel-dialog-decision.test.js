@@ -8,9 +8,9 @@ function resolve(overrides = {}) {
     seenDialog: false,
     action: null,
     dialogVisible: false,
+    aborted: false,
     nowMs: 1_000,
     discoveryDeadlineMs: 2_000,
-    closeDeadlineMs: null,
     ...overrides,
   });
 }
@@ -24,20 +24,26 @@ test('cancel, Escape, backdrop, and empty-area closure resolve as cancelled', ()
   assert.equal(resolve({ seenDialog: true, action: null }), 'cancelled');
 });
 
-test('a clicked primary action must still wait for dialog closure', () => {
+test('a visible dialog keeps waiting regardless of elapsed user decision time', () => {
   assert.equal(resolve({
     seenDialog: true,
     action: 'confirmed',
     dialogVisible: true,
-    closeDeadlineMs: 61_000,
   }), 'waiting');
   assert.equal(resolve({
     seenDialog: true,
     action: 'confirmed',
     dialogVisible: true,
-    nowMs: 61_000,
-    closeDeadlineMs: 61_000,
-  }), 'dialog_not_closed');
+    nowMs: 3_600_000,
+  }), 'waiting');
+});
+
+test('page lifecycle abort is distinct from a dialog contract failure', () => {
+  assert.equal(resolve({
+    seenDialog: true,
+    dialogVisible: true,
+    aborted: true,
+  }), 'aborted');
 });
 
 test('an unseen dialog fails only after its discovery deadline', () => {
