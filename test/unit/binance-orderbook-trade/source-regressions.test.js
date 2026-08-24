@@ -824,7 +824,10 @@ test('orderbook precision recommendation marks one shortcut without applying it 
 
   const openOptionsBody = readFunctionBody('openOrderbookPrecisionOptions');
   assert.match(openOptionsBody, /if \(getVisibleOrderbookPrecisionOptionNodes\(triggerElement\)\.length\) return true/);
-  assert.match(openOptionsBody, /dispatchOrderbookPrecisionToggleSequence\(target\)/);
+  assert.match(openOptionsBody, /triggerElement\.matches\?\.\('\.tick-content'\)/);
+  assert.match(openOptionsBody, /dispatchOrderbookPrecisionToggleSequence\(triggerElement\)/);
+  assert.match(openOptionsBody, /return waitForVisibleOrderbookPrecisionOptions\(triggerElement\)/);
+  assert.doesNotMatch(openOptionsBody, /candidates|for \(const target/);
 
   const openEventBody = readFunctionBody('dispatchOrderbookPrecisionOpenEvent');
   assert.match(openEventBody, /PointerEvent/);
