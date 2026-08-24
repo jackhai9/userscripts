@@ -273,6 +273,26 @@ test('panel keeps direction and multiplier controls in cohesive ordered groups',
   assert.ok(quantityMinIndex > multiplierIndex);
 });
 
+test('multiplier row reads as a labeled value followed by decrement and increment controls', () => {
+  const ensurePanelBody = readFunctionBody('ensurePanel');
+  const refreshBody = readFunctionBody('refreshComputedInfo');
+  const labelIndex = ensurePanelBody.indexOf('id="${MULTIPLIER_HINT_ID}"');
+  const inputIndex = ensurePanelBody.indexOf('id="${INPUT_ID}"');
+  const suffixIndex = ensurePanelBody.indexOf('>倍</span>');
+  const decrementIndex = ensurePanelBody.indexOf('id="${DEC_ID}"');
+  const incrementIndex = ensurePanelBody.indexOf('id="${INC_ID}"');
+
+  assert.ok(labelIndex >= 0);
+  assert.ok(inputIndex > labelIndex);
+  assert.ok(suffixIndex > inputIndex);
+  assert.ok(decrementIndex > suffixIndex);
+  assert.ok(incrementIndex > decrementIndex);
+  assert.match(ensurePanelBody, /data-multiplier-controls style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
+  assert.match(refreshBody, /multiplierHintEl\.textContent = '最小开仓量的'/);
+  assert.match(refreshBody, /multiplierHintEl\.textContent = '最小平仓量的'/);
+  assert.match(refreshBody, /multiplierHintEl\.textContent = '最小下单量的'/);
+});
+
 test('direction selector is a compact mutually exclusive radio group', () => {
   const ensurePanelBody = readFunctionBody('ensurePanel');
   const refreshBody = readFunctionBody('refreshComputedInfo');
@@ -952,8 +972,8 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
   assert.match(generatedSource, /\/bapi\/futures\/v6\/private\/future\/user-data\/user-position/);
   assert.match(generatedSource, /function resolveSymbolPositionStatus/);
   assert.doesNotMatch(generatedSource, /function hasPositionInDom/);
-  assert.match(source, /@version\s+2\.7\.72/);
-  assert.match(generatedSource, /@version\s+2\.7\.72/);
+  assert.match(source, /@version\s+2\.7\.73/);
+  assert.match(generatedSource, /@version\s+2\.7\.73/);
 });
 
 test('account position count changes schedule symbol-specific API checks', () => {

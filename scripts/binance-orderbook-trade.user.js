@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.72
+// @version      2.7.73
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1310,6 +1310,7 @@
     const controlledNativeButtons = /* @__PURE__ */ new Set();
     let lastObservedSymbol = getCurrentSymbol();
     const MODE_HINT_ID = "jh-binance-trade-mode-hint";
+    const MULTIPLIER_HINT_ID = "jh-binance-qty-multiplier-hint";
     const NATIVE_ACTION_DISABLED_ATTR = "data-jh-native-action-disabled";
     const PREFIX = "[订单簿下单]";
     (function injectDisabledControlStyle() {
@@ -4834,6 +4835,7 @@
       const minEl = panel.querySelector("#jh-binance-close-qty-min");
       const finalEl = panel.querySelector("#jh-binance-close-qty-final");
       const hintEl = panel.querySelector(`#${MODE_HINT_ID}`);
+      const multiplierHintEl = panel.querySelector(`#${MULTIPLIER_HINT_ID}`);
       const decBtn = panel.querySelector(`#${DEC_ID}`);
       const incBtn = panel.querySelector(`#${INC_ID}`);
       const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
@@ -4877,6 +4879,15 @@
           finalEl.textContent = "请输入正整数倍数";
         }
         finalEl.title = finalEl.textContent;
+      }
+      if (multiplierHintEl) {
+        if (tradeMode === "OPEN") {
+          multiplierHintEl.textContent = "最小开仓量的";
+        } else if (tradeMode === "CLOSE") {
+          multiplierHintEl.textContent = "最小平仓量的";
+        } else {
+          multiplierHintEl.textContent = "最小下单量的";
+        }
       }
       if (hintEl) {
         if (tradeMode === "OPEN") {
@@ -5032,8 +5043,12 @@
         "</div>",
         "</div>",
         '<div data-panel-group="multiplier" style="margin-top:8px;">',
-        '<div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap;">',
-        `<label style="display:flex;align-items:center;gap:6px;"><button id="${INC_ID}" type="button" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">+</button><button id="${DEC_ID}" type="button" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">-</button><input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:${PRIMARY_EMPHASIS_COLOR};caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:32px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;"><span style="font-size:13px;font-weight:${CONTROL_FONT_WEIGHT};color:${CONTROL_TEXT_COLOR};">倍</span></label>`,
+        '<div data-multiplier-controls style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden;">',
+        `<label id="${MULTIPLIER_HINT_ID}" for="${INPUT_ID}" style="color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;">最小下单量的</label>`,
+        `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:${PRIMARY_EMPHASIS_COLOR};caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:32px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">`,
+        `<span style="font-size:13px;font-weight:${CONTROL_FONT_WEIGHT};color:${CONTROL_TEXT_COLOR};">倍</span>`,
+        `<button id="${DEC_ID}" type="button" aria-label="减少倍数" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">-</button>`,
+        `<button id="${INC_ID}" type="button" aria-label="增加倍数" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">+</button>`,
         "</div>",
         '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:10px;height:18px;margin-top:4px;overflow:hidden;">',
         `<span id="jh-binance-close-qty-min" style="min-width:0;color:${MUTED_TEXT_COLOR};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
