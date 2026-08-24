@@ -18,6 +18,8 @@ test('selects only an exact native decade precision target', () => {
   assert.equal(getOrderbookPrecisionDecadeTarget(['0.01', '1'], '0.01', 'INCREASE'), null);
   assert.equal(getOrderbookPrecisionDecadeTarget(options, '0.0001', 'INCREASE'), null);
   assert.equal(getOrderbookPrecisionDecadeTarget(options, '10', 'INCREASE'), null);
+  assert.equal(getOrderbookPrecisionDecadeTarget(['0.1', '1', '10', '100', '1000'], '1000', 'INCREASE'), null);
+  assert.equal(getOrderbookPrecisionDecadeTarget(['0.1', '1', '10', '100', '1000'], '0.1', 'DECREASE'), null);
   assert.equal(getOrderbookPrecisionDecadeTarget(options, '0.0001', 'DECREASE'), null);
 });
 
