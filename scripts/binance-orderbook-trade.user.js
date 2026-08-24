@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.62
+// @version      2.7.63
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -299,6 +299,18 @@
   }
 
   // src/binance-orderbook-trade/core/precision.js
+  function getOrderbookPrecisionDecadeTarget(options, current, direction) {
+    if (direction !== "DECREASE" && direction !== "INCREASE") {
+      throw new Error(`Unsupported orderbook precision direction: ${direction}`);
+    }
+    const normalizedCurrent = normalizeDecimalString(current);
+    if (!normalizedCurrent || !isPositiveDecimalString(normalizedCurrent)) return null;
+    const target = direction === "INCREASE" ? multiplyDecimalByInt(normalizedCurrent, 10) : multiplyDecimalByRatio(normalizedCurrent, 1, 10);
+    if (!target) return null;
+    const available = new Set((options || []).map((value) => normalizeDecimalString(value)).filter((value) => value && isPositiveDecimalString(value)));
+    if (!available.has(normalizedCurrent)) return null;
+    return available.has(target) ? target : null;
+  }
   function collectNonZeroPriceMoves(prices) {
     const moves = [];
     let previous = null;
@@ -1261,6 +1273,7 @@
     let orderbookPrecisionSampleTimer = 0;
     let orderbookPrecisionActiveRequest = null;
     let orderbookPrecisionPendingRequest = null;
+    let orderbookPrecisionSelectionTask = null;
     let orderbookPrecisionObserver = null;
     let orderbookPrecisionObserverRoot = null;
     let lastObservedOrderbookPrecision = null;
@@ -1909,9 +1922,6 @@
     function isInsideOrderbookPriceRow(node) {
       return !!node?.closest?.("#futuresOrderbook .row-content");
     }
-    function isInsideOwnPanel(node) {
-      return !!node?.closest?.(`#${PANEL_ID}`);
-    }
     function findOrderbookPrecisionTrigger() {
       const tickSize = document.querySelector("#futuresOrderbook .orderbook-tickSize");
       const tickContent = tickSize?.querySelector(".tick-content") || null;
@@ -1968,48 +1978,29 @@
       const textNode = item?.querySelector("span") || node;
       return normalizeDecimalString(textNode?.textContent || "");
     }
-    function getOrderbookPrecisionOptionClickTarget(node) {
-      return node?.closest?.(".ob-ticksize-item") || node;
+    function getVisibleOrderbookPrecisionOverlay(triggerElement = findOrderbookPrecisionTrigger()?.element) {
+      const tickSize = triggerElement?.closest?.(".orderbook-tickSize");
+      if (!tickSize || !tickSize.closest("#futuresOrderbook")) return null;
+      const overlays = Array.from(tickSize.querySelectorAll(".ob-ticksize-overlay")).filter((overlay) => isVisibleElement(overlay));
+      return overlays.length === 1 ? overlays[0] : null;
     }
-    function getVisibleOrderbookPrecisionOptionNodes() {
-      const optionSelector = [
-        '[role="option"]',
-        '[role="menuitem"]',
-        ".ob-ticksize-item",
-        ".bn-sdd-option",
-        ".bn-select-option",
-        '[class*="option"]',
-        '[class*="Option"]'
-      ].join(",");
-      const popupSelector = [
-        '[role="listbox"]',
-        '[role="menu"]',
-        ".ob-ticksize-overlay",
-        '[class*="dropdown"]',
-        '[class*="Dropdown"]',
-        '[class*="popup"]',
-        '[class*="Popup"]',
-        '[class*="menu"]',
-        '[class*="Menu"]'
-      ].join(",");
-      const candidates = [
-        ...Array.from(document.querySelectorAll(optionSelector)),
-        ...Array.from(document.querySelectorAll(popupSelector)).flatMap((popup) => Array.from(popup.querySelectorAll("div,span,li")))
-      ];
-      return candidates.map((node) => getOrderbookPrecisionOptionClickTarget(node)).filter((node, index, nodes) => node && nodes.indexOf(node) === index).filter((node) => isVisibleElement(node) && !isInsideOrderbookPriceRow(node) && !isInsideOwnPanel(node)).filter((node) => isOrderbookPrecisionNumericText(readOrderbookPrecisionOptionValue(node))).filter((node) => ORDERBOOK_PRECISION_CANDIDATE_OPTIONS.includes(readOrderbookPrecisionOptionValue(node)));
+    function getVisibleOrderbookPrecisionOptionNodes(triggerElement = findOrderbookPrecisionTrigger()?.element) {
+      const overlay = getVisibleOrderbookPrecisionOverlay(triggerElement);
+      if (!overlay) return [];
+      return Array.from(overlay.querySelectorAll(".ob-ticksize-item")).filter((node) => node.closest(".ob-ticksize-overlay") === overlay).filter((node) => isVisibleElement(node)).filter((node) => isOrderbookPrecisionNumericText(readOrderbookPrecisionOptionValue(node)));
     }
-    function readVisibleOrderbookPrecisionOptionValues() {
+    function readVisibleOrderbookPrecisionOptionValues(triggerElement = findOrderbookPrecisionTrigger()?.element) {
       const values = /* @__PURE__ */ new Set();
-      for (const node of getVisibleOrderbookPrecisionOptionNodes()) {
+      for (const node of getVisibleOrderbookPrecisionOptionNodes(triggerElement)) {
         const value = readOrderbookPrecisionOptionValue(node);
         if (value) values.add(value);
       }
       return Array.from(values);
     }
-    function findVisibleOrderbookPrecisionOption(value) {
+    function findVisibleOrderbookPrecisionOption(value, triggerElement = findOrderbookPrecisionTrigger()?.element) {
       const normalized = normalizeDecimalString(value);
       if (!normalized) return null;
-      return getVisibleOrderbookPrecisionOptionNodes().find((node) => readOrderbookPrecisionOptionValue(node) === normalized) || null;
+      return getVisibleOrderbookPrecisionOptionNodes(triggerElement).find((node) => readOrderbookPrecisionOptionValue(node) === normalized) || null;
     }
     function dispatchOrderbookPrecisionOpenEvent(target, type) {
       const EventCtor = type.startsWith("pointer") && typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
@@ -2024,10 +2015,10 @@
         isPrimary: true
       }));
     }
-    async function waitForVisibleOrderbookPrecisionOptions(timeoutMs = 250) {
+    async function waitForVisibleOrderbookPrecisionOptions(triggerElement, timeoutMs = 250) {
       const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
       while (!document.hidden && isFuturesTradingPage()) {
-        if (getVisibleOrderbookPrecisionOptionNodes().length) return true;
+        if (getVisibleOrderbookPrecisionOptionNodes(triggerElement).length) return true;
         if (Date.now() >= deadline) return false;
         await delay(50);
       }
@@ -2035,6 +2026,7 @@
     }
     async function openOrderbookPrecisionOptions(triggerElement) {
       if (!triggerElement || !triggerElement.isConnected) return false;
+      if (getVisibleOrderbookPrecisionOptionNodes(triggerElement).length) return true;
       const tickSize = triggerElement.closest?.(".orderbook-tickSize");
       const candidates = [
         tickSize,
@@ -2047,19 +2039,28 @@
         dispatchOrderbookPrecisionOpenEvent(target, "pointerup");
         dispatchOrderbookPrecisionOpenEvent(target, "mouseup");
         dispatchOrderbookPrecisionOpenEvent(target, "click");
-        if (await waitForVisibleOrderbookPrecisionOptions()) return true;
+        if (await waitForVisibleOrderbookPrecisionOptions(triggerElement)) return true;
       }
       return false;
     }
-    async function waitForVisibleOrderbookPrecisionOption(value, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
+    async function ensureVisibleOrderbookPrecisionOptions(triggerElement) {
+      const currentOptions = getVisibleOrderbookPrecisionOptionNodes(triggerElement);
+      if (currentOptions.length) return currentOptions;
+      if (!await openOrderbookPrecisionOptions(triggerElement)) return [];
+      return getVisibleOrderbookPrecisionOptionNodes(triggerElement);
+    }
+    async function waitForOrderbookPrecisionValue(options, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
+      const { symbol, startPrecision, targetPrecision } = options;
       const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
       while (!document.hidden && isFuturesTradingPage()) {
-        const option = findVisibleOrderbookPrecisionOption(value);
-        if (option) return option;
-        if (Date.now() >= deadline) return null;
-        await delay(ORDERBOOK_PRECISION_SAMPLE_POLL_MS);
+        if (!isCurrentObservedSymbol(symbol)) return false;
+        const current = readCurrentOrderbookPrecisionValue();
+        if (current === targetPrecision) return true;
+        if (current && current !== startPrecision) return false;
+        if (Date.now() >= deadline) return false;
+        await delay(50);
       }
-      return null;
+      return false;
     }
     function formatOrderbookPrecisionBusyStatus(status, sampleEndsAt = orderbookPrecisionState.sampleEndsAt) {
       if (status !== "刷新中" && status !== "采样中") return status;
@@ -2098,21 +2099,34 @@
         current,
         status
       };
-      const canApply = !busy && recommendation && current !== recommendation;
-      const canRefresh = !busy;
+      const selectionBusy = Boolean(orderbookPrecisionSelectionTask);
+      const controlsBusy = busy || selectionBusy;
+      const canAdjust = !controlsBusy && Boolean(current);
+      const canApply = !controlsBusy && recommendation && current !== recommendation;
+      const canRefresh = !controlsBusy;
       const activeButtonStyle = "border-color:#d5d9e2;background:#ffffff;color:#5e6673;cursor:pointer;opacity:1;";
       const disabledButtonStyle = `border-color:${DISABLED_CONTROL_BORDER};background:${DISABLED_CONTROL_BG};color:${DISABLED_CONTROL_TEXT};cursor:not-allowed;opacity:${DISABLED_CONTROL_OPACITY};`;
+      const adjustButtonStyle = canAdjust ? activeButtonStyle : disabledButtonStyle;
       const applyButtonStyle = canApply ? activeButtonStyle : disabledButtonStyle;
       const refreshButtonStyle = canRefresh ? activeButtonStyle : disabledButtonStyle;
       const buttonBaseStyle = "height:32px;padding:0 12px;border-radius:6px;border:1px solid #d5d9e2;font-size:14px;line-height:30px;";
+      const adjustButtonBaseStyle = "width:32px;height:32px;padding:0;border-radius:6px;border:1px solid #d5d9e2;font-size:18px;line-height:30px;";
+      const adjustDisabledAttrs = canAdjust ? "" : ' disabled aria-disabled="true"';
+      const currentText = current || "--";
       const recommendationText = recommendation || "--";
-      const displayStatus = busy ? formatOrderbookPrecisionBusyStatus(status) : status;
+      const displayStatus = selectionBusy ? "调整中" : busy ? formatOrderbookPrecisionBusyStatus(status) : status;
       const statusText = displayStatus === "ready" ? "" : displayStatus;
       const statusVisibility = statusText ? "visible" : "hidden";
       const recommendationHtml = [
         '<div style="margin-top:8px;color:#76808f;font-size:14px;">',
-        '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;height:32px;overflow:hidden;">',
-        `<span title="缩放 推荐 ${recommendationText}" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">缩放 推荐 ${recommendationText}</span>`,
+        '<div style="display:grid;grid-template-columns:auto 32px minmax(0,1fr) 32px;align-items:center;gap:6px;height:32px;overflow:hidden;">',
+        "<span>缩放</span>",
+        `<button type="button" data-orderbook-precision-adjust="DECREASE"${adjustDisabledAttrs} aria-label="减小缩放" title="切换到小 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${adjustButtonStyle}">−</button>`,
+        `<span title="当前缩放 ${currentText}" style="min-width:0;text-align:center;font-weight:600;color:#1e2329;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${currentText}</span>`,
+        `<button type="button" data-orderbook-precision-adjust="INCREASE"${adjustDisabledAttrs} aria-label="增大缩放" title="切换到大 10 倍的原生缩放档" style="${adjustButtonBaseStyle}${adjustButtonStyle}">+</button>`,
+        "</div>",
+        '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;height:32px;margin-top:4px;overflow:hidden;">',
+        `<span title="推荐 ${recommendationText}" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">推荐 ${recommendationText}</span>`,
         `<button type="button" data-orderbook-precision-apply="true"${canApply ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${applyButtonStyle}">应用</button>`,
         `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}${refreshButtonStyle}">刷新</button>`,
         "</div>",
@@ -2126,7 +2140,14 @@
         scheduleRenderPanel({ followUpMs: 1e3 });
       }
     }
-    async function applyRecommendedOrderbookPrecision() {
+    async function clickAndConfirmOrderbookPrecisionOption(options) {
+      const { symbol, startPrecision, targetPrecision, triggerElement } = options;
+      if (!isCurrentObservedSymbol(symbol) || readCurrentOrderbookPrecisionValue() !== startPrecision) return false;
+      const option = findVisibleOrderbookPrecisionOption(targetPrecision, triggerElement);
+      if (!option || !clickDomTarget(option)) return false;
+      return waitForOrderbookPrecisionValue({ symbol, startPrecision, targetPrecision });
+    }
+    async function runApplyRecommendedOrderbookPrecision() {
       const symbol = getCurrentSymbol();
       if (!isCurrentObservedSymbol(symbol)) return false;
       const trigger = findOrderbookPrecisionTrigger();
@@ -2135,6 +2156,7 @@
         scheduleRenderPanel();
         return false;
       }
+      const startPrecision = trigger.value;
       const samples = readStoredOrderbookPrecisionSamples(symbol);
       const recommendation = recommendOrderbookPrecision({
         samples,
@@ -2145,24 +2167,90 @@
         scheduleRenderPanel();
         return false;
       }
-      let option = findVisibleOrderbookPrecisionOption(recommendation);
-      if (!option) {
-        await openOrderbookPrecisionOptions(trigger.element);
-        if (!isCurrentObservedSymbol(symbol)) return false;
-        option = await waitForVisibleOrderbookPrecisionOption(recommendation);
-      }
-      if (!isCurrentObservedSymbol(symbol)) return false;
-      if (!option) {
+      const options = await ensureVisibleOrderbookPrecisionOptions(trigger.element);
+      if (!isCurrentObservedSymbol(symbol) || readCurrentOrderbookPrecisionValue() !== startPrecision) return false;
+      if (!options.length || !findVisibleOrderbookPrecisionOption(recommendation, trigger.element)) {
         orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, status: `未找到 ${recommendation} 档` };
         scheduleRenderPanel();
         return false;
       }
-      if (!isCurrentObservedSymbol(symbol)) return false;
-      clickDomTarget(option);
-      if (!isCurrentObservedSymbol(symbol)) return false;
+      const applied = await clickAndConfirmOrderbookPrecisionOption({
+        symbol,
+        startPrecision,
+        targetPrecision: recommendation,
+        triggerElement: trigger.element
+      });
+      if (!applied) {
+        if (isCurrentObservedSymbol(symbol)) {
+          orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, status: `未找到 ${recommendation} 档切换结果` };
+          scheduleRenderPanel();
+        }
+        return false;
+      }
       orderbookPrecisionState = { ...orderbookPrecisionState, recommendation, current: recommendation, status: "已应用" };
-      scheduleRenderPanel({ followUpMs: 350 });
+      scheduleRenderPanel();
       return true;
+    }
+    async function runAdjustOrderbookPrecision(direction) {
+      const symbol = getCurrentSymbol();
+      if (!isCurrentObservedSymbol(symbol)) return false;
+      const trigger = findOrderbookPrecisionTrigger();
+      if (!symbol || !trigger?.element) {
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: "未定位到缩放下拉" };
+        scheduleRenderPanel();
+        return false;
+      }
+      const startPrecision = trigger.value;
+      const options = await ensureVisibleOrderbookPrecisionOptions(trigger.element);
+      if (!isCurrentObservedSymbol(symbol) || readCurrentOrderbookPrecisionValue() !== startPrecision) return false;
+      const values = readVisibleOrderbookPrecisionOptionValues(trigger.element);
+      if (!options.length || !values.includes(startPrecision)) {
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到当前缩放 ${startPrecision} 的原生档位` };
+        scheduleRenderPanel();
+        return false;
+      }
+      const targetPrecision = getOrderbookPrecisionDecadeTarget(values, startPrecision, direction);
+      if (!targetPrecision) {
+        clickDomTarget(findVisibleOrderbookPrecisionOption(startPrecision, trigger.element));
+        const sizeLabel = direction === "DECREASE" ? "小" : "大";
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到${sizeLabel} 10 倍的原生缩放档` };
+        scheduleRenderPanel();
+        return false;
+      }
+      const adjusted = await clickAndConfirmOrderbookPrecisionOption({
+        symbol,
+        startPrecision,
+        targetPrecision,
+        triggerElement: trigger.element
+      });
+      if (!adjusted) {
+        if (isCurrentObservedSymbol(symbol)) {
+          orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到 ${targetPrecision} 档切换结果` };
+          scheduleRenderPanel();
+        }
+        return false;
+      }
+      orderbookPrecisionState = { ...orderbookPrecisionState, current: targetPrecision, status: "ready" };
+      scheduleRenderPanel();
+      return true;
+    }
+    async function runOrderbookPrecisionSelectionTask(operation) {
+      if (orderbookPrecisionSelectionTask) return orderbookPrecisionSelectionTask;
+      const task = operation();
+      orderbookPrecisionSelectionTask = task;
+      scheduleRenderPanel();
+      try {
+        return await task;
+      } finally {
+        if (orderbookPrecisionSelectionTask === task) orderbookPrecisionSelectionTask = null;
+        scheduleRenderPanel();
+      }
+    }
+    function applyRecommendedOrderbookPrecision() {
+      return runOrderbookPrecisionSelectionTask(runApplyRecommendedOrderbookPrecision);
+    }
+    function adjustOrderbookPrecision(direction) {
+      return runOrderbookPrecisionSelectionTask(() => runAdjustOrderbookPrecision(direction));
     }
     async function runOrderbookPrecisionSampleRound(request) {
       orderbookPrecisionSampleTimer = 0;
@@ -5028,6 +5116,12 @@
             optionContext.symbol,
             optionContext.precision
           );
+          return;
+        }
+        const precisionAdjustBtn = target.closest("[data-orderbook-precision-adjust]");
+        if (precisionAdjustBtn) {
+          if (precisionAdjustBtn.disabled || precisionAdjustBtn.getAttribute("aria-disabled") === "true") return;
+          adjustOrderbookPrecision(precisionAdjustBtn.getAttribute("data-orderbook-precision-adjust"));
           return;
         }
         const precisionApplyBtn = target.closest("[data-orderbook-precision-apply]");

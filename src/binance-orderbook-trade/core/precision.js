@@ -1,9 +1,32 @@
 import {
   compareDecimalStrings,
   isPositiveDecimalString,
+  multiplyDecimalByInt,
+  multiplyDecimalByRatio,
   normalizeDecimalString,
   subtractDecimalStrings,
 } from './decimal.js';
+
+/**
+ * Accept only an exact decade step that Binance exposes for the current symbol.
+ * This prevents the shortcut from synthesizing a precision that the native menu cannot select.
+ */
+export function getOrderbookPrecisionDecadeTarget(options, current, direction) {
+  if (direction !== 'DECREASE' && direction !== 'INCREASE') {
+    throw new Error(`Unsupported orderbook precision direction: ${direction}`);
+  }
+  const normalizedCurrent = normalizeDecimalString(current);
+  if (!normalizedCurrent || !isPositiveDecimalString(normalizedCurrent)) return null;
+  const target = direction === 'INCREASE'
+    ? multiplyDecimalByInt(normalizedCurrent, 10)
+    : multiplyDecimalByRatio(normalizedCurrent, 1, 10);
+  if (!target) return null;
+  const available = new Set((options || [])
+    .map((value) => normalizeDecimalString(value))
+    .filter((value) => value && isPositiveDecimalString(value)));
+  if (!available.has(normalizedCurrent)) return null;
+  return available.has(target) ? target : null;
+}
 
 export function collectNonZeroPriceMoves(prices) {
   const moves = [];
