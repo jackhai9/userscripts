@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   hasCurrentSymbolOpenOrdersEvidence,
+  isFilteredCurrentSymbolOpenOrdersEmpty,
   isCurrentSymbolOpenOrdersClearCandidate,
   isCurrentSymbolOpenOrdersDefinitivelyClear,
   isOpenOrdersScopeConfirmedForSymbolText,
@@ -82,18 +83,51 @@ test('visible open-order symbols include USDC perpetual contracts', () => {
   assert.equal(isOpenOrdersScopeLimitedToSymbolText('BTCUSDC 永续 BTCUSDC 永续', 'BTCUSDC'), true);
 });
 
-test('open-orders tab count is evidence only after symbol filter is confirmed', () => {
+test('account open-order count never proves that the current symbol has orders', () => {
   assert.equal(hasCurrentSymbolOpenOrdersEvidence({
     scopeText: '隐藏其他合约 当前委托',
     symbol: 'HYPEUSDT',
     symbolFilterOk: true,
     openOrdersCount: 2,
-  }), true);
+  }), false);
   assert.equal(hasCurrentSymbolOpenOrdersEvidence({
     scopeText: '隐藏其他合约 当前委托',
     symbol: 'HYPEUSDT',
     symbolFilterOk: false,
     openOrdersCount: 2,
+  }), false);
+});
+
+test('confirmed filtered empty state proves only the current symbol has no orders', () => {
+  assert.equal(isFilteredCurrentSymbolOpenOrdersEmpty({
+    scopeText: '基础单(1) 隐藏其他合约 全撤 暂无当前委托。',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: false,
+  }), true);
+  assert.equal(isFilteredCurrentSymbolOpenOrdersEmpty({
+    scopeText: '基础单(1) 隐藏其他合约 全撤 暂无当前委托。',
+    symbol: 'HYPEUSDT',
+    filterChecked: false,
+    cancelAllAvailable: false,
+  }), false);
+  assert.equal(isFilteredCurrentSymbolOpenOrdersEmpty({
+    scopeText: '基础单(1) 隐藏其他合约 HYPEUSDT 永续 暂无当前委托。',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: false,
+  }), false);
+  assert.equal(isFilteredCurrentSymbolOpenOrdersEmpty({
+    scopeText: '基础单(1) 隐藏其他合约 全撤 暂无当前委托。',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: true,
+  }), false);
+  assert.equal(isFilteredCurrentSymbolOpenOrdersEmpty({
+    scopeText: '基础单(1) 隐藏其他合约',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: false,
   }), false);
 });
 

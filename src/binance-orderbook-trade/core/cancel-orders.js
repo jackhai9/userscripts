@@ -77,6 +77,23 @@ export function isOpenOrdersScopeConfirmedForSymbolText(text, symbol, filterChec
 }
 
 /**
+ * Binance renders this explicit empty state only after the active Basic Orders
+ * pane has resolved its current filter. Account-wide order counts are not
+ * current-symbol evidence because other symbols can still have open orders.
+ */
+export function isFilteredCurrentSymbolOpenOrdersEmpty({
+  scopeText,
+  symbol,
+  filterChecked,
+  cancelAllAvailable,
+}) {
+  if (!String(symbol || '').trim()) return false;
+  if (filterChecked !== true || cancelAllAvailable) return false;
+  if (!String(scopeText || '').includes('暂无当前委托。')) return false;
+  return readVisibleOpenOrderSymbolsText(scopeText).length === 0;
+}
+
+/**
  * The active scope must already be confirmed for the current symbol. A zero
  * account count is stronger than stale rendered rows, while a non-zero count
  * may belong entirely to other symbols hidden by the active filter.
@@ -144,7 +161,6 @@ export function hasCurrentSymbolOpenOrdersEvidence({
   scopeText,
   symbol,
   symbolFilterOk,
-  openOrdersCount,
   cancelAllAvailable,
 }) {
   const normalizedSymbol = String(symbol || '').toUpperCase();
@@ -157,8 +173,5 @@ export function hasCurrentSymbolOpenOrdersEvidence({
   ))) return true;
   if (visibleSymbols.length > 0) return false;
 
-  return Boolean(symbolFilterOk && (
-    (openOrdersCount !== null && openOrdersCount > 0) ||
-    cancelAllAvailable
-  ));
+  return Boolean(symbolFilterOk && cancelAllAvailable);
 }
