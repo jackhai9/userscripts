@@ -1021,6 +1021,11 @@ test('pending close actions report position confirmation without starting execut
 test('cancel flow rechecks the captured symbol before destructive click and cleanup', () => {
   const waitBody = readFunctionBody('waitForCurrentSymbolOpenOrders');
   assert.match(waitBody, /isCurrentObservedSymbol\(symbol\)/);
+  assert.match(
+    waitBody,
+    /isCurrentSymbolOpenOrdersDefinitivelyClear\(\{[\s\S]*return \{ hasOrders: false, cancelAllButton: null \}/,
+    'a confirmed account-wide zero count should end the pre-cancel observation immediately',
+  );
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.ok(
