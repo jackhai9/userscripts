@@ -172,6 +172,8 @@ Do not validate orderbook precision selection by opening the dropdown manually f
 
 Live Tampermonkey verification must prove the new userscript is actually active. Opening a raw GitHub URL or landing on Tampermonkey's `script_installation.php` intermediate page is not enough. Confirm through the extension update UI, the userscript panel behavior, or live DOM/status evidence.
 
+After a Binance userscript release, continue through the full local validation loop without waiting for a separate user reminder: patch the existing Tampermonkey script through MCP, read it back, hard-reload the signed-in Chrome trading tab, use raw CDP to confirm the loaded userscript source and version, and exercise the live path directly affected by the change. Stop only for a concrete access, connection, page-state, unresolved-risk, or current financial-confirmation boundary.
+
 For live Binance tests, confirm the target symbol, order mode, script quantity multiplier, orderbook display precision, and far-away test prices before clicking trade controls. When the user says the zoom/precision should be `1` or max, that refers to the Binance orderbook price-display precision dropdown, not the script quantity multiplier. Set the orderbook precision to the largest/coarsest option, such as `1`, so test orders are placed farther from the live price. Do not treat another open futures tab or another symbol's orders as evidence for the current test.
 
 When browser clicking or navigation becomes unreliable, switch to state-based verification instead of repeatedly clicking: inspect the accessibility tree, DOM text, script status, open-order row count, and Binance toast/status changes. For replacement-order flows, useful evidence includes the old error disappearing, a cancel toast appearing, current-symbol rows changing, and the ladder task reaching a completion status.
@@ -190,6 +192,7 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - verify precision decrease/increase selects the exact native divide-by-10/multiply-by-10 option, restores the corresponding symbol-mode-precision panel profile, and stops at a missing native decade option
 - start ladder order, confirm start buttons are disabled while running
 - cancel current-symbol orders, verify only Binance native confirmation opens
+- keep the native cancel-all dialog open for longer than the former decision deadline, verify the script remains in the dialog-tracking state, then cancel and confirm the original order count and temporary page state are restored
 - cancel the native cancel-all dialog through its secondary button, Escape, and backdrop; verify chart and account-order UI state restores immediately without waiting for order clearing
 - reload while the native cancel-all dialog is open; verify the next page load restores the original chart OpenOrders setting from the same-tab recovery journal
 - replace close ladder orders when existing reduce-only close orders occupy the closeable quantity
