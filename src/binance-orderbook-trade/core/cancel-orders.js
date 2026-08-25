@@ -125,6 +125,21 @@ export function shouldContinueOpenOrdersClearObservation({
   return nowMs < deadlineMs || clearCandidate;
 }
 
+export function resolveCancelSymbolButtonPresentation({
+  ladderRunning,
+  cancelRunning,
+  noOrdersFeedback,
+}) {
+  return {
+    disabled: Boolean(ladderRunning || cancelRunning),
+    label: cancelRunning
+      ? '撤单处理中'
+      : noOrdersFeedback && !ladderRunning
+        ? '已检查'
+        : '撤本币挂单',
+  };
+}
+
 export function hasCurrentSymbolOpenOrdersEvidence({
   scopeText,
   symbol,
