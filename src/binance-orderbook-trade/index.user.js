@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.102
+// @version      2.7.103
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -321,6 +321,7 @@ import {
   let tradingViewOrdersRecoveryLastError = null;
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
+  let ladderStatusTitle = '空闲';
   let ladderPanelBodySignature = '';
   let panelPositionInvalidated = true;
   let panelObservedSize = '';
@@ -655,10 +656,12 @@ import {
 
   function setLadderStatus(text, title = null) {
     ladderStatusText = String(text || '空闲');
+    const statusTitle = String(title || ladderStatusText);
+    ladderStatusTitle = statusTitle;
     const statusEl = document.getElementById(LADDER_STATUS_ID);
     if (statusEl) {
-      statusEl.textContent = ladderStatusText;
-      statusEl.title = String(title || ladderStatusText);
+      if (statusEl.textContent !== ladderStatusText) statusEl.textContent = ladderStatusText;
+      if (statusEl.title !== statusTitle) statusEl.title = statusTitle;
     }
   }
 
@@ -3368,6 +3371,10 @@ import {
       setLadderStatus(message);
       return { ok: false, status: 'symbol_changing', message };
     }
+    if (getOpenOrdersTabCount() === 0) {
+      setLadderStatus(`${symbol} 当前币无挂单`);
+      return { ok: true, status: 'no_orders' };
+    }
 
     const previousAccountOrdersTabIdentity = getAccountOrdersTabIdentity(findSelectedAccountOrdersTab());
     let openOrdersScope = null;
@@ -3380,7 +3387,6 @@ import {
     let successStatusMessage = null;
 
     try {
-      setLadderStatus(`查找 ${symbol} 当前委托`);
       const tabReady = await activateOpenOrdersTab();
       if (!tabReady || !isCurrentObservedSymbol(symbol)) {
         const message = '当前委托页未就绪或交易对已变化';
@@ -3451,7 +3457,6 @@ import {
         chartOrdersState = captureTradingViewOrdersVisibility(
           getBinanceTradingViewApi(chartOrdersTarget),
         );
-        setLadderStatus(`正在隐藏 ${symbol} 图表当前委托`);
         await hideBinanceChartOrdersForBulkCancel(chartOrdersTarget, chartOrdersState);
       } catch (e) {
         emit('ERR', '撤单前隐藏图表当前委托失败', e);
@@ -3522,7 +3527,6 @@ import {
       }
       if (dialogDecision.status === 'cancelled') {
         const message = `${symbol} 已取消撤单`;
-        setLadderStatus(`${symbol} 已取消撤单，正在恢复页面状态`);
         successStatusMessage = `${message}，已恢复页面状态`;
         return { ok: false, status: 'cancelled', message };
       }
@@ -3559,7 +3563,6 @@ import {
         setLadderStatus(message);
         return { ok: false, status: 'not_cleared', message };
       }
-      setLadderStatus(`${symbol} 当前币挂单已撤，正在恢复页面状态`);
       successStatusMessage = waitUntilCleared
         ? `${symbol} 当前币挂单已撤，继续重挂`
         : `${symbol} 撤单流程结束，已恢复筛选状态`;
@@ -4679,7 +4682,8 @@ import {
     const symbol = getCurrentSymbol();
     const precision = readCurrentOrderbookPrecisionValue();
     if (toggle) {
-      toggle.textContent = `Maker 阶梯 ${expanded ? '▾' : '▸'}`;
+      const toggleText = `Maker 阶梯 ${expanded ? '▾' : '▸'}`;
+      if (toggle.textContent !== toggleText) toggle.textContent = toggleText;
     }
     if (body) {
       body.style.display = expanded ? 'block' : 'none';
@@ -4712,16 +4716,22 @@ import {
             cancelButton.disabled = cancelPresentation.disabled;
           }
           if (cancelPresentation.disabled) {
-            cancelButton.setAttribute('aria-disabled', 'true');
+            if (cancelButton.getAttribute('aria-disabled') !== 'true') {
+              cancelButton.setAttribute('aria-disabled', 'true');
+            }
           } else {
-            cancelButton.removeAttribute('aria-disabled');
+            if (cancelButton.hasAttribute('aria-disabled')) {
+              cancelButton.removeAttribute('aria-disabled');
+            }
           }
         }
       }
     }
     if (status) {
-      status.textContent = ladderStatusText;
-      status.style.visibility = expanded || ladderTask || ladderStatusText !== '空闲' ? 'visible' : 'hidden';
+      if (status.textContent !== ladderStatusText) status.textContent = ladderStatusText;
+      if (status.title !== ladderStatusTitle) status.title = ladderStatusTitle;
+      const statusVisibility = expanded || ladderTask || ladderStatusText !== '空闲' ? 'visible' : 'hidden';
+      if (status.style.visibility !== statusVisibility) status.style.visibility = statusVisibility;
     }
   }
 
@@ -4774,65 +4784,72 @@ import {
       finalText = '请输入正整数倍数';
     }
     if (formulaPrefixEl) {
-      formulaPrefixEl.textContent = formulaPrefixText;
+      if (formulaPrefixEl.textContent !== formulaPrefixText) {
+        formulaPrefixEl.textContent = formulaPrefixText;
+      }
       formulaPrefixEl.style.display = formulaPrefixText ? 'inline' : 'none';
     }
     if (finalEl) {
-      finalEl.textContent = finalText;
+      if (finalEl.textContent !== finalText) finalEl.textContent = finalText;
       finalEl.style.color = formulaPrefixText ? PRIMARY_EMPHASIS_COLOR : MUTED_TEXT_COLOR;
     }
     if (constraintDividerEl) {
       constraintDividerEl.style.display = constraintText ? 'block' : 'none';
     }
     if (minEl) {
-      minEl.textContent = constraintText;
+      if (minEl.textContent !== constraintText) minEl.textContent = constraintText;
       minEl.style.display = constraintText ? 'block' : 'none';
     }
     if (calculationEl) {
-      calculationEl.title = [formulaPrefixText, finalText, constraintText].filter(Boolean).join(' ');
+      const calculationTitle = [formulaPrefixText, finalText, constraintText].filter(Boolean).join(' ');
+      if (calculationEl.title !== calculationTitle) calculationEl.title = calculationTitle;
     }
+    let multiplierHintText = '最小下单量的';
     if (multiplierHintEl) {
       if (tradeMode === 'OPEN') {
-        multiplierHintEl.textContent = '最小开仓量的';
+        multiplierHintText = '最小开仓量的';
       } else if (tradeMode === 'CLOSE') {
-        multiplierHintEl.textContent = '最小平仓量的';
-      } else {
-        multiplierHintEl.textContent = '最小下单量的';
+        multiplierHintText = '最小平仓量的';
+      }
+      if (multiplierHintEl.textContent !== multiplierHintText) {
+        multiplierHintEl.textContent = multiplierHintText;
       }
     }
+    let hintText = '单击订单簿时';
+    let hintTitle = '';
     if (hintEl) {
       if (tradeMode === 'OPEN') {
         const action = openSide === 'LONG' ? '开多' : '开空';
-        hintEl.textContent = '单击订单簿时';
-        hintEl.title = `开仓模式：单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
+        hintTitle = `开仓模式：单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
       } else if (!rawCloseReady) {
-        hintEl.textContent = '单击订单簿时';
-        hintEl.title = isUsingCache
+        hintTitle = isUsingCache
           ? '平仓模式：正在确认可平仓位，暂沿用上次识别结果'
           : '平仓模式：正在确认可平仓位';
       } else if (closeMode === 'single_long') {
-        hintEl.textContent = '单击订单簿时';
-        hintEl.title = `平仓模式：当前仅有多仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平多'}`;
+        hintTitle = `平仓模式：当前仅有多仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平多'}`;
       } else if (closeMode === 'single_short') {
-        hintEl.textContent = '单击订单簿时';
-        hintEl.title = `平仓模式：当前仅有空仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平空'}`;
+        hintTitle = `平仓模式：当前仅有空仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平空'}`;
       } else if (closeMode === 'dual') {
         const action = closeSide === 'LONG' ? '平多' : '平空';
-        hintEl.textContent = '单击订单簿时';
-        hintEl.title = `平仓模式：双向持仓时单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
+        hintTitle = `平仓模式：双向持仓时单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
       } else {
-        hintEl.textContent = '暂无可平仓位';
-        hintEl.title = '平仓模式：当前币种暂无可平仓位';
+        hintText = '暂无可平仓位';
+        hintTitle = '平仓模式：当前币种暂无可平仓位';
       }
+      if (hintEl.textContent !== hintText) hintEl.textContent = hintText;
+      if (hintEl.title !== hintTitle) hintEl.title = hintTitle;
     }
     if (decBtn) {
-      decBtn.disabled = !numericContextReady || Number(multiplier) <= 1;
+      const decrementDisabled = !numericContextReady || Number(multiplier) <= 1;
+      if (decBtn.disabled !== decrementDisabled) decBtn.disabled = decrementDisabled;
     }
     if (incBtn) {
-      incBtn.disabled = !numericContextReady;
+      const incrementDisabled = !numericContextReady;
+      if (incBtn.disabled !== incrementDisabled) incBtn.disabled = incrementDisabled;
     }
     if (input) {
-      input.disabled = !numericContextReady;
+      const inputDisabled = !numericContextReady;
+      if (input.disabled !== inputDisabled) input.disabled = inputDisabled;
       input.style.opacity = input.disabled ? '0.65' : '1';
       input.style.cursor = input.disabled ? 'not-allowed' : 'text';
     }
@@ -4845,11 +4862,15 @@ import {
       const isActive = isOpenMode
         ? openSide === 'LONG'
         : closeMode === 'single_long' || (closeMode !== 'single_short' && closeSide === 'LONG');
-      sideLongBtn.textContent = isOpenMode ? '开多' : '平多';
+      const sideLongText = isOpenMode ? '开多' : '平多';
+      if (sideLongBtn.textContent !== sideLongText) sideLongBtn.textContent = sideLongText;
       sideLongBtn.style.order = '0';
-      sideLongBtn.disabled = isDisabled;
-      sideLongBtn.setAttribute('aria-checked', String(isActive));
-      sideLongBtn.tabIndex = isActive ? 0 : -1;
+      if (sideLongBtn.disabled !== isDisabled) sideLongBtn.disabled = isDisabled;
+      if (sideLongBtn.getAttribute('aria-checked') !== String(isActive)) {
+        sideLongBtn.setAttribute('aria-checked', String(isActive));
+      }
+      const desiredTabIndex = isActive ? 0 : -1;
+      if (sideLongBtn.tabIndex !== desiredTabIndex) sideLongBtn.tabIndex = desiredTabIndex;
       sideLongBtn.style.boxShadow = isActive && !isDisabled
         ? `inset 0 0 0 1px ${isOpenMode ? 'var(--color-Buy)' : 'var(--color-Sell)'}`
         : 'none';
@@ -4869,11 +4890,15 @@ import {
       const isActive = isOpenMode
         ? openSide === 'SHORT'
         : closeMode === 'single_short' || (closeMode !== 'single_long' && closeSide === 'SHORT');
-      sideShortBtn.textContent = isOpenMode ? '开空' : '平空';
+      const sideShortText = isOpenMode ? '开空' : '平空';
+      if (sideShortBtn.textContent !== sideShortText) sideShortBtn.textContent = sideShortText;
       sideShortBtn.style.order = '1';
-      sideShortBtn.disabled = isDisabled;
-      sideShortBtn.setAttribute('aria-checked', String(isActive));
-      sideShortBtn.tabIndex = isActive ? 0 : -1;
+      if (sideShortBtn.disabled !== isDisabled) sideShortBtn.disabled = isDisabled;
+      if (sideShortBtn.getAttribute('aria-checked') !== String(isActive)) {
+        sideShortBtn.setAttribute('aria-checked', String(isActive));
+      }
+      const desiredTabIndex = isActive ? 0 : -1;
+      if (sideShortBtn.tabIndex !== desiredTabIndex) sideShortBtn.tabIndex = desiredTabIndex;
       sideShortBtn.style.boxShadow = isActive && !isDisabled
         ? `inset 0 0 0 1px ${isOpenMode ? 'var(--color-Sell)' : 'var(--color-Buy)'}`
         : 'none';

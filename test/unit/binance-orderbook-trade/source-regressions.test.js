@@ -308,7 +308,8 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.doesNotMatch(source, /data-orderbook-precision-status/);
 
   const ladderBody = readFunctionBody('refreshLadderPanel');
-  assert.match(ladderBody, /status\.style\.visibility = expanded \|\| ladderTask \|\| ladderStatusText !== '空闲' \? 'visible' : 'hidden'/);
+  assert.match(ladderBody, /const statusVisibility = expanded \|\| ladderTask \|\| ladderStatusText !== '空闲' \? 'visible' : 'hidden'/);
+  assert.match(ladderBody, /status\.style\.visibility !== statusVisibility/);
   assert.doesNotMatch(ladderBody, /status\.style\.display/);
   assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*height:18px;[^>]*visibility:hidden;[^>]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
 });
@@ -351,9 +352,9 @@ test('multiplier row reads as a labeled value followed by decrement and incremen
   assert.ok(decrementIndex > suffixIndex);
   assert.ok(incrementIndex > decrementIndex);
   assert.match(ensurePanelBody, /data-multiplier-controls style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
-  assert.match(refreshBody, /multiplierHintEl\.textContent = '最小开仓量的'/);
-  assert.match(refreshBody, /multiplierHintEl\.textContent = '最小平仓量的'/);
-  assert.match(refreshBody, /multiplierHintEl\.textContent = '最小下单量的'/);
+  assert.match(refreshBody, /multiplierHintText = '最小开仓量的'/);
+  assert.match(refreshBody, /multiplierHintText = '最小平仓量的'/);
+  assert.match(refreshBody, /let multiplierHintText = '最小下单量的'/);
 });
 
 test('multiplier calculation keeps the formula primary and separates the notional constraint visually', () => {
@@ -377,10 +378,10 @@ test('direction selector is a compact mutually exclusive radio group', () => {
   assert.equal((ensurePanelBody.match(/role="radio" aria-checked="false"/g) || []).length, 2);
   assert.equal((ensurePanelBody.match(/border:0;/g) || []).length, 2);
   assert.match(ensurePanelBody, /border-left:1px solid var\(--color-InputLine\)/);
-  assert.match(refreshBody, /hintEl\.textContent = '单击订单簿时'/);
-  assert.doesNotMatch(refreshBody, /hintEl\.textContent = '仓位确认中'/);
-  assert.match(refreshBody, /hintEl\.title = isUsingCache/);
-  assert.match(refreshBody, /hintEl\.textContent = '暂无可平仓位'/);
+  assert.match(refreshBody, /let hintText = '单击订单簿时'/);
+  assert.doesNotMatch(refreshBody, /hintText = '仓位确认中'/);
+  assert.match(refreshBody, /hintTitle = isUsingCache/);
+  assert.match(refreshBody, /hintText = '暂无可平仓位'/);
   assert.doesNotMatch(refreshBody, /正在读取仓位|正在刷新仓位|暂未识别仓位/);
   assert.match(
     refreshBody,
@@ -389,8 +390,8 @@ test('direction selector is a compact mutually exclusive radio group', () => {
   assert.ok(refreshBody.indexOf('!rawCloseReady') < refreshBody.indexOf("closeMode === 'single_long'"));
   assert.match(refreshBody, /sideLongBtn\.setAttribute\('aria-checked', String\(isActive\)\)/);
   assert.match(refreshBody, /sideShortBtn\.setAttribute\('aria-checked', String\(isActive\)\)/);
-  assert.match(refreshBody, /sideLongBtn\.tabIndex = isActive \? 0 : -1/);
-  assert.match(refreshBody, /sideShortBtn\.tabIndex = isActive \? 0 : -1/);
+  assert.match(refreshBody, /const desiredTabIndex = isActive \? 0 : -1/);
+  assert.match(refreshBody, /sideShortBtn\.tabIndex !== desiredTabIndex/);
   assert.match(refreshBody, /sideLongBtn\.style\.boxShadow = isActive && !isDisabled/);
   assert.match(refreshBody, /sideShortBtn\.style\.boxShadow = isActive && !isDisabled/);
   assert.doesNotMatch(refreshBody, /style\.borderColor/);
@@ -767,6 +768,21 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(cancelWrapperBody, /finally\s*\{[\s\S]*cancelCurrentSymbolOpenOrdersBlocksLadderActions = false/);
   const cancelRunBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.doesNotMatch(cancelRunBody, /CANCEL_NO_ORDERS_FEEDBACK_MS|showCancelNoOrdersFeedback/);
+  const zeroCountFastPathIndex = cancelRunBody.indexOf('getOpenOrdersTabCount() === 0');
+  const restoreContextIndex = cancelRunBody.indexOf('const previousAccountOrdersTabIdentity');
+  const activateOpenOrdersTabIndex = cancelRunBody.indexOf('activateOpenOrdersTab()');
+  assert.notEqual(zeroCountFastPathIndex, -1);
+  assert.notEqual(restoreContextIndex, -1);
+  assert.notEqual(activateOpenOrdersTabIndex, -1);
+  assert.ok(zeroCountFastPathIndex < restoreContextIndex);
+  assert.ok(zeroCountFastPathIndex < activateOpenOrdersTabIndex);
+  assert.doesNotMatch(cancelRunBody, /查找 \$\{symbol\} 当前委托/);
+  assert.doesNotMatch(cancelRunBody, /正在隐藏 \$\{symbol\} 图表当前委托/);
+  assert.doesNotMatch(cancelRunBody, /正在恢复页面状态/);
+  assert.match(cancelRunBody, /撤单确认弹窗已打开/);
+  assert.match(cancelRunBody, /已确认撤单，等待当前币挂单清空/);
+  assert.match(cancelRunBody, /未能恢复隐藏其他合约状态/);
+  assert.match(cancelRunBody, /未能恢复图表当前委托显示/);
   const noOrdersReturnIndex = cancelRunBody.indexOf("status: 'no_orders'");
   const blockLadderActionsIndex = cancelRunBody.indexOf('cancelCurrentSymbolOpenOrdersBlocksLadderActions = true');
   assert.notEqual(noOrdersReturnIndex, -1);
@@ -780,6 +796,30 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
   assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
   assert.match(actionRowsBody, /ladderActionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
+});
+
+test('stable panel refreshes avoid writing unchanged text and state attributes', () => {
+  const statusBody = readFunctionBody('setLadderStatus');
+  assert.match(statusBody, /statusEl\.textContent !== ladderStatusText/);
+  assert.match(statusBody, /statusEl\.title !== statusTitle/);
+
+  const panelBody = readFunctionBody('refreshLadderPanel');
+  assert.match(panelBody, /toggle\.textContent !== toggleText/);
+  assert.match(panelBody, /status\.textContent !== ladderStatusText/);
+
+  const computedBody = readFunctionBody('refreshComputedInfo');
+  assert.match(computedBody, /formulaPrefixEl\.textContent !== formulaPrefixText/);
+  assert.match(computedBody, /finalEl\.textContent !== finalText/);
+  assert.match(computedBody, /minEl\.textContent !== constraintText/);
+  assert.match(computedBody, /calculationEl\.title !== calculationTitle/);
+  assert.match(computedBody, /multiplierHintEl\.textContent !== multiplierHintText/);
+  assert.match(computedBody, /hintEl\.textContent !== hintText/);
+  assert.match(computedBody, /hintEl\.title !== hintTitle/);
+  assert.match(computedBody, /decBtn\.disabled !== decrementDisabled/);
+  assert.match(computedBody, /sideLongBtn\.getAttribute\('aria-checked'\) !== String\(isActive\)/);
+  assert.match(computedBody, /sideLongBtn\.tabIndex !== desiredTabIndex/);
+  assert.match(computedBody, /sideShortBtn\.getAttribute\('aria-checked'\) !== String\(isActive\)/);
+  assert.match(computedBody, /sideShortBtn\.tabIndex !== desiredTabIndex/);
 });
 
 test('orderbook precision recommendation marks one shortcut without applying it automatically', () => {
