@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.96
+// @version      2.7.97
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -76,9 +76,10 @@
     return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol || hasVisibleContractText(text, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol));
   }
   function isOpenOrdersScopeConfirmedForSymbolText(text, symbol, filterChecked) {
+    if (filterChecked !== true) return false;
     const visibleSymbols = readVisibleOpenOrderSymbolsText(text);
     if (visibleSymbols.length > 0) return isOpenOrdersScopeLimitedToSymbolText(text, symbol);
-    return filterChecked === true;
+    return true;
   }
   function isCurrentSymbolOpenOrdersClearCandidate({ scopeText, symbol, openOrdersCount }) {
     const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
@@ -658,6 +659,38 @@
   function getNormalizedText(el) {
     return normalizeText(el?.textContent || "");
   }
+  function getTabIdentity(el) {
+    return getNormalizedText(el).replace(/\s*\(\d+\)$/, "").toLocaleLowerCase();
+  }
+  function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs) {
+    const currentState = readState();
+    if (currentState) return Promise.resolve(currentState);
+    const MutationObserverClass = observationRoot?.ownerDocument?.defaultView?.MutationObserver;
+    if (!observationRoot || !MutationObserverClass) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const check = () => {
+        const value = readState();
+        if (value) finish(value);
+      };
+      const observer = new MutationObserverClass(check);
+      const timer = setTimeout(() => finish(readState()), timeoutMs);
+      observer.observe(observationRoot, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["aria-selected", "aria-checked", "class", "style"]
+      });
+      check();
+    });
+  }
   function hasAccountOrdersTabs(node, isVisibleElement) {
     const tabTexts = Array.from(node.querySelectorAll('[role="tab"]')).filter(isVisibleElement).map(getNormalizedText).join(" ");
     return /(仓位|Positions)/i.test(tabTexts) && /(当前\s*委托|Open Orders)/i.test(tabTexts) && /(历史委托|Order History|历史成交|Trade History|资金流水|Transaction)/i.test(tabTexts);
@@ -697,6 +730,16 @@
   function findSelectedOpenOrdersSubTab(root, { isVisibleElement }) {
     return Array.from(root.querySelectorAll('[role="tab"][aria-selected="true"]')).find((tab) => isVisibleElement(tab) && (isOpenOrdersBasicSubTabText(getNormalizedText(tab)) || isOpenOrdersConditionalSubTabText(getNormalizedText(tab)))) || null;
   }
+  function getOpenOrdersSubTabIdentity(tab) {
+    const text = getNormalizedText(tab);
+    if (!isOpenOrdersBasicSubTabText(text) && !isOpenOrdersConditionalSubTabText(text)) return null;
+    return getTabIdentity(tab);
+  }
+  function findOpenOrdersSubTabByIdentity(root, identity, { isVisibleElement }) {
+    if (!root || !identity) return null;
+    const tabs = Array.from(root.querySelectorAll('[role="tab"]')).filter((tab) => isVisibleElement(tab) && getOpenOrdersSubTabIdentity(tab) === identity);
+    return tabs.length === 1 ? tabs[0] : null;
+  }
   function isAccountOrdersTab(tab, { isVisibleElement }) {
     let node = tab.parentElement;
     let depth = 0;
@@ -723,7 +766,20 @@
   }
   function findOpenOrdersTab(root, { isVisibleElement }) {
     const tabs = Array.from(root.querySelectorAll('[role="tab"]')).filter((tab) => isVisibleElement(tab) && isOpenOrdersTabText(getNormalizedText(tab)));
-    return tabs.find((tab) => isAccountOrdersTab(tab, { isVisibleElement })) || tabs[0] || null;
+    const accountTabs = tabs.filter((tab) => isAccountOrdersTab(tab, { isVisibleElement }));
+    return accountTabs.length === 1 ? accountTabs[0] : null;
+  }
+  function getAccountOrdersTabIdentity(tab) {
+    return tab ? getTabIdentity(tab) : null;
+  }
+  function findAccountOrdersTabByIdentity(root, identity, { isVisibleElement }) {
+    if (!identity) return null;
+    const openOrdersTab = findOpenOrdersTab(root, { isVisibleElement });
+    if (!openOrdersTab) return null;
+    const tabGroup = getAccountOrdersTabGroup(openOrdersTab, { isVisibleElement });
+    if (!tabGroup) return null;
+    const tabs = Array.from(tabGroup.querySelectorAll('[role="tab"]')).filter((tab) => isVisibleElement(tab) && getAccountOrdersTabIdentity(tab) === identity);
+    return tabs.length === 1 ? tabs[0] : null;
   }
   function findAccountPositionTab(root, { isVisibleElement }) {
     const accountGroups = /* @__PURE__ */ new Set();
@@ -751,28 +807,11 @@
   }) {
     const tab = findOpenOrdersTab(root, { isVisibleElement });
     if (!tab || tab.getAttribute("aria-selected") !== "true") return null;
-    const doc = root.ownerDocument || root;
-    const paneId = tab.getAttribute("aria-controls");
-    const pane = paneId ? doc.getElementById(paneId) : null;
-    if (pane && isVisibleElement(pane) && hasOpenOrdersPanelEvidence(pane, {
+    const scopes = Array.from(root.querySelectorAll('[id="OPEN_ORDERS"]')).filter((scope) => isVisibleElement(scope) && hasOpenOrdersPanelEvidence(scope, {
       findHideOtherSymbolCheckbox,
       findCurrentSymbolCancelAllButton
-    })) {
-      return pane;
-    }
-    let node = tab.parentElement;
-    let depth = 0;
-    while (node && node !== doc.body && depth < 8) {
-      if (hasOpenOrdersPanelEvidence(node, {
-        findHideOtherSymbolCheckbox,
-        findCurrentSymbolCancelAllButton
-      })) {
-        return node;
-      }
-      node = node.parentElement;
-      depth += 1;
-    }
-    return null;
+    }));
+    return scopes.length === 1 ? scopes[0] : null;
   }
 
   // src/binance-orderbook-trade/dom/trade-form.js
@@ -3316,23 +3355,6 @@
       setLadderStatus("停止中");
       scheduleRenderPanel();
     }
-    function findVisibleElementByText(selector, patterns, root = document) {
-      for (const el of root.querySelectorAll(selector)) {
-        if (!isVisibleElement(el)) continue;
-        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (patterns.some((pattern) => pattern.test(text))) return el;
-      }
-      return null;
-    }
-    function findVisibleTextElement(patterns, root = document) {
-      const candidates = Array.from(root.querySelectorAll('button, [role="button"], a, [tabindex], div, span')).filter(isVisibleElement).map((el) => ({
-        el,
-        text: (el.textContent || "").replace(/\s+/g, " ").trim(),
-        rect: el.getBoundingClientRect()
-      })).filter(({ text }) => patterns.some((pattern) => pattern.test(text)));
-      candidates.sort((a, b) => a.rect.width * a.rect.height - b.rect.width * b.rect.height);
-      return candidates[0]?.el || null;
-    }
     function getNormalizedText2(el) {
       return normalizeText(el?.textContent || "");
     }
@@ -3350,24 +3372,46 @@
     function findSelectedAccountOrdersTab2() {
       return findSelectedAccountOrdersTab(document, { isVisibleElement });
     }
+    function getAccountOrdersTabIdentity2(tab) {
+      return getAccountOrdersTabIdentity(tab);
+    }
+    function findAccountOrdersTabByIdentity2(identity) {
+      return findAccountOrdersTabByIdentity(document, identity, { isVisibleElement });
+    }
+    function getAccountOrdersObservationRoot() {
+      const tab = findOpenOrdersTab2();
+      const tabGroup = getAccountOrdersTabGroup2(tab);
+      return tabGroup?.closest(".react-grid-item") || tabGroup?.parentElement || null;
+    }
+    function waitForAccountOrdersState(readState, timeoutMs) {
+      const observationRoot = getAccountOrdersObservationRoot() || document.body;
+      return waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs);
+    }
     async function activateOpenOrdersTab() {
       const tab = findOpenOrdersTab2();
       if (!tab) return false;
       if (tab.getAttribute("aria-selected") === "true") return true;
       tab.click();
-      await delay(350);
-      const activeTab = findOpenOrdersTab2();
-      return activeTab?.getAttribute("aria-selected") === "true";
+      const activeTab = await waitForAccountOrdersState(() => {
+        const freshTab = findOpenOrdersTab2();
+        return freshTab?.getAttribute("aria-selected") === "true" ? freshTab : null;
+      }, 2200);
+      return Boolean(activeTab);
     }
-    async function restoreAccountOrdersTab(previousTab, symbol = null) {
+    async function restoreAccountOrdersTab(previousTabIdentity, symbol = null) {
       if (symbol && !isCurrentObservedSymbol(symbol)) return false;
-      if (!previousTab || !previousTab.isConnected || !isVisibleElement(previousTab)) return true;
+      if (!previousTabIdentity) return true;
+      const previousTab = findAccountOrdersTabByIdentity2(previousTabIdentity);
+      if (!previousTab) return false;
       if (previousTab.getAttribute("aria-selected") === "true") return true;
       if (symbol && !isCurrentObservedSymbol(symbol)) return false;
       previousTab.click();
-      await delay(250);
-      if (symbol && !isCurrentObservedSymbol(symbol)) return false;
-      return previousTab.getAttribute("aria-selected") === "true";
+      const restoredTab = await waitForAccountOrdersState(() => {
+        if (symbol && !isCurrentObservedSymbol(symbol)) return null;
+        const freshTab = findAccountOrdersTabByIdentity2(previousTabIdentity);
+        return freshTab?.getAttribute("aria-selected") === "true" ? freshTab : null;
+      }, 2200);
+      return Boolean(restoredTab) && (!symbol || isCurrentObservedSymbol(symbol));
     }
     function getActiveOpenOrdersScope2() {
       return getActiveOpenOrdersScope(document, {
@@ -3385,51 +3429,60 @@
     function findSelectedOpenOrdersSubTab2(root) {
       return findSelectedOpenOrdersSubTab(root, { isVisibleElement });
     }
+    function getOpenOrdersSubTabIdentity2(tab) {
+      return getOpenOrdersSubTabIdentity(tab);
+    }
+    function findOpenOrdersSubTabByIdentity2(root, identity) {
+      return findOpenOrdersSubTabByIdentity(root, identity, { isVisibleElement });
+    }
     async function waitForActiveOpenOrdersScope() {
-      const deadline = Date.now() + 2200;
-      while (Date.now() < deadline) {
-        const scope = getActiveOpenOrdersScope2();
-        if (scope) return scope;
-        await delay(100);
-      }
-      return getActiveOpenOrdersScope2();
+      return waitForAccountOrdersState(() => getActiveOpenOrdersScope2(), 2200);
     }
     async function activateOpenOrdersBasicSubTab(root) {
-      const previousSubTab = findSelectedOpenOrdersSubTab2(root);
+      const previousSubTabIdentity = getOpenOrdersSubTabIdentity2(findSelectedOpenOrdersSubTab2(root));
       const basicTab = findOpenOrdersBasicSubTab2(root);
       if (!basicTab) {
         return {
           ready: !findOpenOrdersConditionalSubTab2(root),
-          previousSubTab
+          previousSubTabIdentity
         };
       }
       if (basicTab.getAttribute("aria-selected") === "true") {
-        return { ready: true, previousSubTab };
+        return { ready: true, previousSubTabIdentity };
       }
       basicTab.click();
-      await delay(250);
+      const selectedBasicTab = await waitForAccountOrdersState(() => {
+        const scope = getActiveOpenOrdersScope2();
+        const freshBasicTab = scope ? findOpenOrdersBasicSubTab2(scope) : null;
+        return freshBasicTab?.getAttribute("aria-selected") === "true" ? freshBasicTab : null;
+      }, 2200);
       return {
-        ready: findOpenOrdersBasicSubTab2(root)?.getAttribute("aria-selected") === "true",
-        previousSubTab
+        ready: Boolean(selectedBasicTab),
+        previousSubTabIdentity
       };
     }
-    async function restoreOpenOrdersSubTab(previousSubTab, symbol = null) {
+    async function restoreOpenOrdersSubTab(previousSubTabIdentity, symbol = null) {
       if (symbol && !isCurrentObservedSymbol(symbol)) return false;
-      if (!previousSubTab || !previousSubTab.isConnected || !isVisibleElement(previousSubTab)) return true;
+      if (!previousSubTabIdentity) return true;
+      const scope = getActiveOpenOrdersScope2();
+      const previousSubTab = scope ? findOpenOrdersSubTabByIdentity2(scope, previousSubTabIdentity) : null;
+      if (!previousSubTab) return false;
       if (previousSubTab.getAttribute("aria-selected") === "true") return true;
       if (symbol && !isCurrentObservedSymbol(symbol)) return false;
       previousSubTab.click();
-      await delay(250);
-      if (symbol && !isCurrentObservedSymbol(symbol)) return false;
-      return previousSubTab.getAttribute("aria-selected") === "true";
+      const restoredSubTab = await waitForAccountOrdersState(() => {
+        if (symbol && !isCurrentObservedSymbol(symbol)) return null;
+        const freshScope = getActiveOpenOrdersScope2();
+        const freshSubTab = freshScope ? findOpenOrdersSubTabByIdentity2(freshScope, previousSubTabIdentity) : null;
+        return freshSubTab?.getAttribute("aria-selected") === "true" ? freshSubTab : null;
+      }, 2200);
+      return Boolean(restoredSubTab) && (!symbol || isCurrentObservedSymbol(symbol));
     }
     function findCurrentSymbolCancelAllButton(root) {
       if (!root) return null;
-      const button = findVisibleElementByText(
-        'button, [role="button"], a',
-        [/^全撤$/, /^全部撤单$/, /^撤销全部$/, /^Cancel All$/i],
-        root
-      ) || findVisibleTextElement([/^全撤$/, /^全部撤单$/, /^撤销全部$/, /^Cancel All$/i], root);
+      const buttons = Array.from(root.querySelectorAll('[class~="cursor-pointer"]')).filter(isVisibleElement).filter((element) => /^全撤$|^全部撤单$|^撤销全部$|^Cancel All$/i.test(getNormalizedText2(element)));
+      if (buttons.length !== 1) return null;
+      const [button] = buttons;
       if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return null;
       return button;
     }
@@ -3442,10 +3495,6 @@
       const ariaChecked = checkbox.getAttribute("aria-checked");
       if (ariaChecked === "true") return true;
       if (ariaChecked === "false") return false;
-      if (typeof checkbox.checked === "boolean") return checkbox.checked;
-      const input = checkbox.matches('input[type="checkbox"]') ? checkbox : checkbox.querySelector('input[type="checkbox"]');
-      if (input && typeof input.checked === "boolean") return input.checked;
-      if (checkbox.hasAttribute("checked")) return true;
       return null;
     }
     function readVisibleOpenOrderSymbols(root) {
@@ -3467,16 +3516,18 @@
       const deadline = Date.now() + 1600;
       while (Date.now() < deadline) {
         if (!isCurrentObservedSymbol(symbol)) return { hasOrders: false, cancelAllButton: null };
-        const cancelAllButton2 = findCurrentSymbolCancelAllButton(root);
-        if (hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton2)) {
+        const currentRoot2 = getActiveOpenOrdersScope2();
+        const cancelAllButton2 = findCurrentSymbolCancelAllButton(currentRoot2);
+        if (hasCurrentSymbolOpenOrders(currentRoot2, symbol, symbolFilterOk, cancelAllButton2)) {
           return { hasOrders: true, cancelAllButton: cancelAllButton2 };
         }
         await delay(100);
       }
       if (!isCurrentObservedSymbol(symbol)) return { hasOrders: false, cancelAllButton: null };
-      const cancelAllButton = findCurrentSymbolCancelAllButton(root);
+      const currentRoot = getActiveOpenOrdersScope2();
+      const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
       return {
-        hasOrders: hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton),
+        hasOrders: hasCurrentSymbolOpenOrders(currentRoot, symbol, symbolFilterOk, cancelAllButton),
         cancelAllButton
       };
     }
@@ -3746,33 +3797,35 @@
       if (currentChecked === null) return false;
       if (!isCurrentObservedSymbol(symbol)) return false;
       checkbox.click();
-      const deadline = Date.now() + 1e3;
-      while (Date.now() < deadline) {
-        await delay(80);
-        if (!isCurrentObservedSymbol(symbol)) return false;
-        const nextChecked = getCheckboxCheckedState(findHideOtherSymbolCheckbox(root));
-        if (nextChecked === desiredChecked) return true;
-      }
-      return false;
+      const updatedCheckbox = await waitForAccountOrdersState(() => {
+        if (!isCurrentObservedSymbol(symbol)) return null;
+        const currentRoot = getActiveOpenOrdersScope2();
+        const currentCheckbox = findHideOtherSymbolCheckbox(currentRoot);
+        return getCheckboxCheckedState(currentCheckbox) === desiredChecked ? currentCheckbox : null;
+      }, 1e3);
+      return Boolean(updatedCheckbox) && isCurrentObservedSymbol(symbol);
     }
     async function ensureOpenOrdersLimitedToCurrentSymbol(root, symbol) {
       const checkbox = findHideOtherSymbolCheckbox(root);
       if (!checkbox) {
         return {
-          ok: isOpenOrdersScopeLimitedToSymbol(root, symbol),
+          ok: false,
           originalChecked: null
         };
       }
       const originalChecked = getCheckboxCheckedState(checkbox);
       if (originalChecked === null) {
         return {
-          ok: isOpenOrdersScopeLimitedToSymbol(root, symbol),
+          ok: false,
           originalChecked
         };
       }
-      const ok = originalChecked || await setHideOtherSymbolChecked(root, true, symbol);
+      if (!originalChecked && !await setHideOtherSymbolChecked(root, true, symbol)) {
+        return { ok: false, originalChecked };
+      }
+      const currentRoot = getActiveOpenOrdersScope2();
       return {
-        ok: ok || isOpenOrdersScopeLimitedToSymbol(root, symbol),
+        ok: isOpenOrdersScopeConfirmedForSymbol(currentRoot, symbol),
         originalChecked
       };
     }
@@ -4065,9 +4118,9 @@
         setLadderStatus(message);
         return { ok: false, status: "symbol_changing", message };
       }
-      const previousAccountOrdersTab = findSelectedAccountOrdersTab2();
+      const previousAccountOrdersTabIdentity = getAccountOrdersTabIdentity2(findSelectedAccountOrdersTab2());
       let openOrdersScope = null;
-      let previousOpenOrdersSubTab = null;
+      let previousOpenOrdersSubTabIdentity = null;
       let symbolFilterOriginalChecked = null;
       let restoreTemporaryUiState = true;
       let chartOrdersTarget = null;
@@ -4090,7 +4143,7 @@
           return { ok: false, status: "scope_not_found", message };
         }
         const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
-        previousOpenOrdersSubTab = basicSubTabState.previousSubTab;
+        previousOpenOrdersSubTabIdentity = basicSubTabState.previousSubTabIdentity;
         if (!basicSubTabState.ready || !isCurrentObservedSymbol(symbol)) {
           const message = "未定位到当前委托基础单";
           setLadderStatus(message);
@@ -4245,6 +4298,23 @@
         successStatusMessage = waitUntilCleared ? `${symbol} 当前币挂单已撤，继续重挂` : `${symbol} 撤单流程结束，已恢复筛选状态`;
         return { ok: true, status: "cleared" };
       } finally {
+        let temporaryUiRestoreSucceeded = true;
+        if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol)) {
+          openOrdersScope = await waitForActiveOpenOrdersScope();
+          if (openOrdersScope && symbolFilterOriginalChecked === false) {
+            const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
+            if (!restored) {
+              temporaryUiRestoreSucceeded = false;
+              setLadderStatus("未能恢复隐藏其他合约状态");
+            }
+          }
+          if (previousOpenOrdersSubTabIdentity) {
+            temporaryUiRestoreSucceeded = await restoreOpenOrdersSubTab(previousOpenOrdersSubTabIdentity, symbol) && temporaryUiRestoreSucceeded;
+          }
+          if (isCurrentObservedSymbol(symbol)) {
+            temporaryUiRestoreSucceeded = await restoreAccountOrdersTab(previousAccountOrdersTabIdentity, symbol) && temporaryUiRestoreSucceeded;
+          }
+        }
         let chartOrdersRestoreSucceeded = true;
         if (restoreChartOrdersState && chartOrdersState.changed) {
           try {
@@ -4260,25 +4330,8 @@
             setLadderStatus("未能恢复图表当前委托显示");
           }
         }
-        if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol)) {
-          let restoreSucceeded = true;
-          openOrdersScope = await waitForActiveOpenOrdersScope();
-          if (openOrdersScope && symbolFilterOriginalChecked === false) {
-            const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
-            if (!restored) {
-              restoreSucceeded = false;
-              setLadderStatus("未能恢复隐藏其他合约状态");
-            }
-          }
-          if (previousOpenOrdersSubTab) {
-            await restoreOpenOrdersSubTab(previousOpenOrdersSubTab, symbol);
-          }
-          if (isCurrentObservedSymbol(symbol)) {
-            await restoreAccountOrdersTab(previousAccountOrdersTab, symbol);
-          }
-          if (chartOrdersRestoreSucceeded && restoreSucceeded && successStatusMessage) {
-            setLadderStatus(successStatusMessage);
-          }
+        if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol) && chartOrdersRestoreSucceeded && temporaryUiRestoreSucceeded && successStatusMessage) {
+          setLadderStatus(successStatusMessage);
         }
       }
     }
@@ -4306,9 +4359,9 @@
         setLadderStatus(message);
         return { ok: false, status: "symbol_changed", message };
       }
-      const previousAccountOrdersTab = findSelectedAccountOrdersTab2();
+      const previousAccountOrdersTabIdentity = getAccountOrdersTabIdentity2(findSelectedAccountOrdersTab2());
       let openOrdersScope = null;
-      let previousOpenOrdersSubTab = null;
+      let previousOpenOrdersSubTabIdentity = null;
       let symbolFilterOriginalChecked = null;
       let restoreTemporaryUiState = true;
       try {
@@ -4326,7 +4379,7 @@
           return { ok: false, status: "scope_not_found", message };
         }
         const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
-        previousOpenOrdersSubTab = basicSubTabState.previousSubTab;
+        previousOpenOrdersSubTabIdentity = basicSubTabState.previousSubTabIdentity;
         if (!basicSubTabState.ready) {
           const message = "未定位到当前委托基础单";
           setLadderStatus(message);
@@ -4384,11 +4437,11 @@
             const restored = openOrdersScope ? await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol) : false;
             if (!restored) setLadderStatus("未能恢复隐藏其他合约状态");
           }
-          if (previousOpenOrdersSubTab) {
-            await restoreOpenOrdersSubTab(previousOpenOrdersSubTab, symbol);
+          if (previousOpenOrdersSubTabIdentity) {
+            await restoreOpenOrdersSubTab(previousOpenOrdersSubTabIdentity, symbol);
           }
           if (isCurrentObservedSymbol(symbol)) {
-            await restoreAccountOrdersTab(previousAccountOrdersTab, symbol);
+            await restoreAccountOrdersTab(previousAccountOrdersTabIdentity, symbol);
           }
         }
       }

@@ -120,7 +120,8 @@ test('scope is limited only when all visible symbols match current symbol', () =
 
 test('checked current-symbol filter rejects transient rows from another symbol', () => {
   assert.equal(isOpenOrdersScopeConfirmedForSymbolText('BTCUSDT 永续', 'HYPEUSDT', true), false);
-  assert.equal(isOpenOrdersScopeConfirmedForSymbolText('HYPEUSDT 永续', 'HYPEUSDT', false), true);
+  assert.equal(isOpenOrdersScopeConfirmedForSymbolText('HYPEUSDT 永续', 'HYPEUSDT', false), false);
+  assert.equal(isOpenOrdersScopeConfirmedForSymbolText('HYPEUSDT 永续', 'HYPEUSDT', true), true);
   assert.equal(isOpenOrdersScopeConfirmedForSymbolText('隐藏其他合约', 'HYPEUSDT', true), true);
   assert.equal(isOpenOrdersScopeConfirmedForSymbolText('隐藏其他合约', 'HYPEUSDT', false), false);
 });

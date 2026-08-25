@@ -3,12 +3,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  findAccountOrdersTabByIdentity,
   findAccountPositionTab,
   findOpenOrdersBasicSubTab,
+  findOpenOrdersSubTabByIdentity,
   findOpenOrdersTab,
   findSelectedOpenOrdersSubTab,
+  getAccountOrdersTabIdentity,
   getActiveOpenOrdersScope,
+  getOpenOrdersSubTabIdentity,
   parseAccountPositionTabCount,
+  waitForAccountOrdersMutationState,
 } from '../../../src/binance-orderbook-trade/dom/account-orders.js';
 import { isVisibleElement, loadFixtureDom } from '../../helpers/dom.js';
 
@@ -69,8 +74,19 @@ test('does not trust aria-controls alone when resolving current-orders pane', ()
     findCurrentSymbolCancelAllButton: (root) => Array.from(root.querySelectorAll('button')).find((button) => button.textContent.trim() === '全撤') || null,
   });
 
-  assert.equal(scope?.id, 'account-orders');
-  assert.equal(scope.querySelector('#wrong-pane') != null, true);
+  assert.equal(scope?.id, 'OPEN_ORDERS');
+  assert.equal(scope.querySelector('#wrong-pane'), null);
+});
+
+test('rejects ambiguous visible OPEN_ORDERS panes', () => {
+  const { window } = loadFixtureDom(`${openOrdersHtml}<div id="OPEN_ORDERS"><button>全撤</button></div>`);
+  const scope = getActiveOpenOrdersScope(window.document, {
+    isVisibleElement,
+    findHideOtherSymbolCheckbox: (root) => root.querySelector('[role="checkbox"][name="hideOtherSymbol"]'),
+    findCurrentSymbolCancelAllButton: (root) => Array.from(root.querySelectorAll('button')).find((button) => button.textContent.trim() === '全撤') || null,
+  });
+
+  assert.equal(scope, null);
 });
 
 test('returns no active open-orders scope when current-orders tab is not active', () => {
@@ -120,7 +136,7 @@ test('finds basic open-orders sub tab when conditional sub tab is selected', () 
         <div role="tab" aria-selected="false">历史成交</div>
         <div role="tab" aria-selected="false">资金流水</div>
       </div>
-      <div id="open-orders-pane">
+      <div id="OPEN_ORDERS">
         <div role="tab" aria-selected="false">基础单(5)</div>
         <div role="tab" aria-selected="true">条件委托(0)</div>
         <label role="checkbox" name="hideOtherSymbol" aria-checked="true">隐藏其他合约</label>
@@ -138,4 +154,53 @@ test('finds basic open-orders sub tab when conditional sub tab is selected', () 
 
   assert.equal(basicTab?.textContent.trim(), '基础单(5)');
   assert.equal(selectedSubTab?.textContent.trim(), '条件委托(0)');
+});
+
+test('reacquires account and open-orders tabs by semantic identity after rerender', () => {
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const selectedAccountTab = window.document.querySelector('#account-orders [role="tab"][aria-selected="true"]');
+  const accountIdentity = getAccountOrdersTabIdentity(selectedAccountTab);
+  const replacementAccountTab = selectedAccountTab.cloneNode(true);
+  replacementAccountTab.textContent = '当前委托(7)';
+  selectedAccountTab.replaceWith(replacementAccountTab);
+
+  const accountTab = findAccountOrdersTabByIdentity(window.document, accountIdentity, { isVisibleElement });
+  assert.equal(selectedAccountTab.isConnected, false);
+  assert.notEqual(accountTab, selectedAccountTab);
+  assert.equal(accountTab?.textContent.trim(), '当前委托(7)');
+
+  const scope = window.document.querySelector('#OPEN_ORDERS');
+  scope.insertAdjacentHTML('afterbegin', `
+    <div role="tab" aria-selected="false">基础单(7)</div>
+    <div role="tab" aria-selected="true">条件委托(2)</div>
+  `);
+  const selectedSubTab = findSelectedOpenOrdersSubTab(scope, { isVisibleElement });
+  const subTabIdentity = getOpenOrdersSubTabIdentity(selectedSubTab);
+  const replacementSubTab = selectedSubTab.cloneNode(true);
+  replacementSubTab.textContent = '条件委托(3)';
+  selectedSubTab.replaceWith(replacementSubTab);
+
+  const subTab = findOpenOrdersSubTabByIdentity(scope, subTabIdentity, { isVisibleElement });
+  assert.equal(selectedSubTab.isConnected, false);
+  assert.notEqual(subTab, selectedSubTab);
+  assert.equal(subTab?.textContent.trim(), '条件委托(3)');
+});
+
+test('mutation wait survives replacement of the OPEN_ORDERS subtree', async () => {
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const observationRoot = window.document.querySelector('#account-orders');
+  const oldScope = window.document.querySelector('#OPEN_ORDERS');
+  const wait = waitForAccountOrdersMutationState(
+    observationRoot,
+    () => window.document.querySelector('#OPEN_ORDERS[data-ready="true"]'),
+    200,
+  );
+
+  const replacementScope = oldScope.cloneNode(true);
+  replacementScope.dataset.ready = 'true';
+  oldScope.replaceWith(replacementScope);
+
+  const resolvedScope = await wait;
+  assert.equal(oldScope.isConnected, false);
+  assert.equal(resolvedScope, replacementScope);
 });

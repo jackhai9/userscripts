@@ -615,9 +615,11 @@ test('bulk cancel hides Binance OpenOrders before opening the native dialog and 
   assert.match(cancelBody, /restoreChartOrdersState = false[\s\S]*status: 'aborted'/);
   assert.ok(chartRestoreIndex !== -1 && symbolGuardedRestoreIndex !== -1);
   assert.ok(
-    chartRestoreIndex < symbolGuardedRestoreIndex,
-    'chart OpenOrders restoration must not depend on the captured Binance symbol'
+    symbolGuardedRestoreIndex < chartRestoreIndex,
+    'temporary account UI must recover before the heavier chart redraw'
   );
+  assert.match(cancelBody, /if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)[\s\S]*await restoreAccountOrdersTab\([\s\S]*let chartOrdersRestoreSucceeded/);
+  assert.match(cancelBody, /let chartOrdersRestoreSucceeded[\s\S]*await restoreBinanceChartOrdersAfterBulkCancel\(/);
 });
 
 test('bulk cancel distinguishes native confirm from cancellation before clear polling', () => {
@@ -1030,8 +1032,22 @@ test('cancel flow rechecks the captured symbol before destructive click and clea
   );
   assert.match(cancelBody, /if \(!isCurrentObservedSymbol\(symbol\)\)[\s\S]*cancelAllButton\.click\(\)/);
   assert.match(cancelBody, /finally\s*\{[\s\S]*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\) \{/);
-  assert.match(cancelBody, /restoreOpenOrdersSubTab\(previousOpenOrdersSubTab, symbol\)/);
-  assert.match(cancelBody, /restoreAccountOrdersTab\(previousAccountOrdersTab, symbol\)/);
+  assert.match(cancelBody, /restoreOpenOrdersSubTab\(previousOpenOrdersSubTabIdentity, symbol\)/);
+  assert.match(cancelBody, /restoreAccountOrdersTab\(previousAccountOrdersTabIdentity, symbol\)/);
+  assert.match(cancelBody, /getAccountOrdersTabIdentity\(findSelectedAccountOrdersTab\(\)\)/);
+
+  const accountWaitBody = readFunctionBody('waitForAccountOrdersState');
+  assert.match(accountWaitBody, /getAccountOrdersObservationRoot\(\) \|\| document\.body/);
+  assert.match(accountWaitBody, /waitForAccountOrdersMutationState\(observationRoot, readState, timeoutMs\)/);
+
+  const activateTabBody = readFunctionBody('activateOpenOrdersTab');
+  assert.doesNotMatch(activateTabBody, /delay\(/);
+  const activateBasicBody = readFunctionBody('activateOpenOrdersBasicSubTab');
+  assert.doesNotMatch(activateBasicBody, /delay\(/);
+
+  const filterBody = readFunctionBody('ensureOpenOrdersLimitedToCurrentSymbol');
+  assert.match(filterBody, /if \(!checkbox\)[\s\S]*ok: false/);
+  assert.doesNotMatch(filterBody, /ok: isOpenOrdersScopeLimitedToSymbol/);
 });
 
 test('multiplier edits retain their captured symbol, mode, and orderbook precision', () => {
