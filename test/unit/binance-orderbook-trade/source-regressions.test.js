@@ -266,12 +266,19 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
   assert.match(precisionBody, /if \(el\.innerHTML !== recommendationHtml\)/);
 
   const renderBody = readFunctionBody('renderPanel');
-  const signatureIndex = renderBody.indexOf('if (panelPositionSignature !== panelHtml ||');
+  const invalidationIndex = renderBody.indexOf('if (panelPositionInvalidated ||');
   const positionIndex = renderBody.indexOf('positionPanel(panel)');
-  assert.notEqual(signatureIndex, -1);
+  assert.notEqual(invalidationIndex, -1);
   assert.notEqual(positionIndex, -1);
-  assert.ok(signatureIndex < positionIndex);
-  assert.match(renderBody, /panelPositionSignature !== panelHtml \|\| !isPanelPositionCurrent\(\)/);
+  assert.ok(invalidationIndex < positionIndex);
+  assert.match(renderBody, /panelPositionInvalidated \|\| !isPanelPositionCurrent\(\)/);
+  assert.doesNotMatch(renderBody, /panel\.innerHTML|panelHtml/);
+
+  const observeSizeBody = readFunctionBody('observePanelSize');
+  assert.match(observeSizeBody, /new ResizeObserver/);
+  assert.match(observeSizeBody, /panelObservedSize === nextSize/);
+  assert.match(observeSizeBody, /panelPositionInvalidated = true/);
+  assert.match(observeSizeBody, /scheduleRenderPanel\(\)/);
 
   const currentPositionBody = readFunctionBody('isPanelPositionCurrent');
   assert.match(currentPositionBody, /findTradePanelInsertionPoint\(document\)/);
@@ -288,7 +295,7 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /data-multiplier-calculation style="display:flex;align-items:center;gap:7px;height:18px;margin-top:4px;overflow:hidden;white-space:nowrap/);
   assert.match(source, /data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /data-side-selector role="radiogroup"[^>]*display:grid;grid-template-columns:54px 54px;[^>]*border-radius:6px;[^>]*overflow:hidden/);
-  assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="min-width:0;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
+  assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="width:78px;flex:0 0 78px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
   assert.match(source, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);align-items:center;gap:4px;height:32px;overflow:hidden/);
   assert.match(source, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);align-items:center;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
   assert.match(source, /buttonBaseStyle = `width:68px;height:24px;[^`]*font-size:12px;line-height:22px;`/);
@@ -367,7 +374,8 @@ test('direction selector is a compact mutually exclusive radio group', () => {
   assert.equal((ensurePanelBody.match(/border:0;/g) || []).length, 2);
   assert.match(ensurePanelBody, /border-left:1px solid var\(--color-InputLine\)/);
   assert.match(refreshBody, /hintEl\.textContent = '单击订单簿时'/);
-  assert.match(refreshBody, /hintEl\.textContent = '仓位确认中'/);
+  assert.doesNotMatch(refreshBody, /hintEl\.textContent = '仓位确认中'/);
+  assert.match(refreshBody, /hintEl\.title = isUsingCache/);
   assert.match(refreshBody, /hintEl\.textContent = '暂无可平仓位'/);
   assert.doesNotMatch(refreshBody, /正在读取仓位|正在刷新仓位|暂未识别仓位/);
   assert.match(
