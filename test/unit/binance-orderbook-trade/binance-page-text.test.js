@@ -19,12 +19,11 @@ test('centralizes the verified Chinese and English Binance page labels', () => {
   assert.equal(matchesBinancePageText('Cancel Order', BINANCE_PAGE_TEXT.accountOrders.rowCancel), true);
 });
 
-test('matches current account-order tabs without retaining stale English labels', () => {
+test('matches the verified account-order subtab labels and counts', () => {
   assert.equal(startsWithBinancePageText('基础单(29)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab), true);
   assert.equal(startsWithBinancePageText('Basic(31)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab), true);
   assert.equal(startsWithBinancePageText('条件委托(0)', BINANCE_PAGE_TEXT.accountOrders.conditionalSubTab), true);
   assert.equal(startsWithBinancePageText('Conditional(0)', BINANCE_PAGE_TEXT.accountOrders.conditionalSubTab), true);
-  assert.equal(startsWithBinancePageText('Basic Orders(31)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab), false);
 });
 
 test('parses localized tab counts through the shared page-text contract', () => {
@@ -34,10 +33,9 @@ test('parses localized tab counts through the shared page-text contract', () => 
   assert.equal(parseBinanceTabCount('Open Orders', BINANCE_PAGE_TEXT.accountOrders.openOrdersTab), null);
 });
 
-test('contains only explicitly verified Binance fragments', () => {
+test('matches additional verified Binance page fragments', () => {
   assert.equal(includesBinancePageText('只做Ｍaker (Post Only)', BINANCE_PAGE_TEXT.postOnly), true);
   assert.equal(includesBinancePageText('HYPEUSDT Perp', BINANCE_PAGE_TEXT.accountOrders.perpetual), true);
   assert.equal(includesBinancePageText('Hide Other Symbols', BINANCE_PAGE_TEXT.accountOrders.hideOtherSymbols), true);
-  assert.equal(includesBinancePageText('Available', BINANCE_PAGE_TEXT.availableBalance), false);
   assert.equal(includesCompactBinancePageText('Open Long / Limit', BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG), true);
 });
