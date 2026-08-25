@@ -1118,6 +1118,14 @@ test('cancel flow rechecks the captured symbol before destructive click and clea
   const filterBody = readFunctionBody('ensureOpenOrdersLimitedToCurrentSymbol');
   assert.match(filterBody, /if \(!checkbox\)[\s\S]*ok: false/);
   assert.doesNotMatch(filterBody, /ok: isOpenOrdersScopeLimitedToSymbol/);
+  assert.match(filterBody, /await waitForAccountOrdersState/);
+  assert.match(filterBody, /getActiveOpenOrdersScope\(\)/);
+  assert.match(filterBody, /isCurrentSymbolOpenOrdersFilterReady/);
+  assert.doesNotMatch(filterBody, /delay\(/);
+
+  const restoreFilterBody = readFunctionBody('restoreOpenOrdersSymbolFilter');
+  assert.match(restoreFilterBody, /setHideOtherSymbolChecked\(root, false, symbol\)/);
+  assert.doesNotMatch(restoreFilterBody, /isCurrentSymbolOpenOrdersFilterReady/);
 });
 
 test('multiplier edits retain their captured symbol, mode, and orderbook precision', () => {

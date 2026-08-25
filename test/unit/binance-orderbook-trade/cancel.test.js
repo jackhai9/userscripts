@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   hasCurrentSymbolOpenOrdersEvidence,
   isFilteredCurrentSymbolOpenOrdersEmpty,
+  isCurrentSymbolOpenOrdersFilterReady,
   isCurrentSymbolOpenOrdersClearCandidate,
   isCurrentSymbolOpenOrdersDefinitivelyClear,
   isOpenOrdersScopeConfirmedForSymbolText,
@@ -16,6 +17,10 @@ import {
   shouldContinueOpenOrdersClearObservation,
   updateOpenOrdersClearStability,
 } from '../../../src/binance-orderbook-trade/core/cancel-orders.js';
+import {
+  hasBinanceCurrentSymbolOpenOrdersEmptyText,
+  isBinanceCancelAllText,
+} from '../../../src/binance-orderbook-trade/contracts/account-orders.js';
 
 test('cancel button exposes no-order completion feedback without disabling new actions', () => {
   assert.deepEqual(resolveCancelSymbolButtonPresentation({
@@ -66,6 +71,7 @@ test('visible current-symbol rows are direct open-order evidence', () => {
 test('parses symbol when Binance joins time text and contract text', () => {
   assert.deepEqual(readVisibleOpenOrderSymbolsText('2026-05-30 10:27HYPEUSDT永续 限价'), ['HYPEUSDT']);
   assert.deepEqual(readVisibleOpenOrderSymbolsText('2026-08-23 09:07BTCUSDC永续 限价'), ['BTCUSDC']);
+  assert.deepEqual(readVisibleOpenOrderSymbolsText('2026-08-25 17:08:51HYPEUSDTPerp Limit'), ['HYPEUSDT']);
   assert.equal(hasCurrentSymbolOpenOrdersEvidence({
     scopeText: '2026-05-30 10:27HYPEUSDT永续 限价',
     symbol: 'HYPEUSDT',
@@ -134,6 +140,54 @@ test('confirmed filtered empty state proves only the current symbol has no order
     symbol: 'HYPEUSDT',
     filterChecked: true,
     cancelAllAvailable: false,
+  }), false);
+});
+
+test('centralizes verified Binance account-order page texts', () => {
+  assert.equal(hasBinanceCurrentSymbolOpenOrdersEmptyText('暂无当前委托。'), true);
+  assert.equal(hasBinanceCurrentSymbolOpenOrdersEmptyText('You have no open orders.'), true);
+  assert.equal(hasBinanceCurrentSymbolOpenOrdersEmptyText('当前没有订单'), false);
+  assert.equal(isBinanceCancelAllText('全撤'), true);
+  assert.equal(isBinanceCancelAllText('Cancel All'), true);
+  assert.equal(isBinanceCancelAllText('撤本币挂单'), false);
+});
+
+test('current-symbol filter readiness rejects stale and transient React states', () => {
+  assert.equal(isCurrentSymbolOpenOrdersFilterReady({
+    scopeText: 'BTCUSDT 永续 隐藏其他合约',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: true,
+  }), false);
+  assert.equal(isCurrentSymbolOpenOrdersFilterReady({
+    scopeText: '隐藏其他合约',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: false,
+  }), false);
+  assert.equal(isCurrentSymbolOpenOrdersFilterReady({
+    scopeText: 'HYPEUSDT 永续 隐藏其他合约 全撤',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: true,
+  }), true);
+  assert.equal(isCurrentSymbolOpenOrdersFilterReady({
+    scopeText: '隐藏其他合约 暂无当前委托。',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: false,
+  }), true);
+  assert.equal(isCurrentSymbolOpenOrdersFilterReady({
+    scopeText: 'Hide Other Symbols You have no open orders.',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: false,
+  }), true);
+  assert.equal(isCurrentSymbolOpenOrdersFilterReady({
+    scopeText: 'HYPEUSDT 永续',
+    symbol: 'HYPEUSDT',
+    filterChecked: false,
+    cancelAllAvailable: true,
   }), false);
 });
 
