@@ -58,6 +58,8 @@
 - 涉及定时器、重试、缓存、前后台切换时，优先保证时间语义闭合，再考虑 UI 表现。
 - 不要把“缓存命中”“回退成功”“页面没报错”误判成“拿到了最新数据”。
 - Codex Chrome 的 Playwright `evaluate` sandbox 和 raw CDP 是不同执行面。需要验证页面内 `fetch`、`XMLHttpRequest`、`DOMParser`、DOM mutation、事件或 `postMessage` 时，有 raw CDP 就优先直接用 `Runtime.evaluate` 和 Network events；只有 raw CDP 不可用或目标浏览器没有所需登录态时，才改用 live DOM/截图/console/page assets、真实 DevTools、Tampermonkey、临时 helper extension 或带 referer 的命令行请求。某个受限 evaluation surface 缺少 API，不代表目标页面不能运行该代码。
+- Treat Chrome/CDP diagnostics as scoped resources. Enable only the CDP domains required by the current measurement, use filtered and bounded event reads, dispose page probes after collecting evidence, and disable every enabled domain when the measurement ends. Do not retain broad event batches or full script-source payloads in persistent `node_repl` bindings longer than needed.
+- A long-running Codex `cua_node` process above one CPU core is not evidence that the userscript or target page is busy. First attribute the PID by parent process and working directory, check whether the JavaScript event loop is actually active, and use a short read-only stack sample. In the 2026-08-25 incident, the REPL event loop was about `0.1%` busy while native stacks were dominated by pipe/file reads, Buffer/UTF-8 conversion, typed-array copies, and GC; disabling CDP domains did not recover it, but resetting that task's `node_repl` kernel terminated the hot helper while leaving Chrome and the Binance page open. Use kernel reset only after the browser checkpoint is complete because it clears all REPL bindings and requires reconnecting Chrome. Verify that the hot PID disappears after cleanup; do not kill Node processes as the first diagnostic step.
 
 ## Validation
 
