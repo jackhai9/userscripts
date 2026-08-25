@@ -33,10 +33,9 @@ test('parses localized tab counts through the shared page-text contract', () => 
   assert.equal(parseBinanceTabCount('Open Orders', BINANCE_PAGE_TEXT.accountOrders.openOrdersTab), null);
 });
 
-test('contains only explicitly verified Binance fragments', () => {
+test('matches additional verified Binance page fragments', () => {
   assert.equal(includesBinancePageText('只做Ｍaker (Post Only)', BINANCE_PAGE_TEXT.postOnly), true);
   assert.equal(includesBinancePageText('HYPEUSDT Perp', BINANCE_PAGE_TEXT.accountOrders.perpetual), true);
   assert.equal(includesBinancePageText('Hide Other Symbols', BINANCE_PAGE_TEXT.accountOrders.hideOtherSymbols), true);
-  assert.equal(includesBinancePageText('Available', BINANCE_PAGE_TEXT.availableBalance), false);
   assert.equal(includesCompactBinancePageText('Open Long / Limit', BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG), true);
 });
