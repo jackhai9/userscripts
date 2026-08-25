@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.95
+// @version      2.7.96
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -310,7 +310,9 @@ import {
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
   let ladderPanelBodySignature = '';
-  let panelPositionSignature = '';
+  let panelPositionInvalidated = true;
+  let panelObservedSize = '';
+  let panelResizeObserver = null;
   let ladderSubmitCaptureSequence = 0;
   let activeLadderSubmitCapture = null;
   let orderbookPrecisionSampling = false;
@@ -4781,7 +4783,7 @@ import {
         hintEl.textContent = '单击订单簿时';
         hintEl.title = `开仓模式：单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
       } else if (!rawCloseReady) {
-        hintEl.textContent = '仓位确认中';
+        hintEl.textContent = '单击订单簿时';
         hintEl.title = isUsingCache
           ? '平仓模式：正在确认可平仓位，暂沿用上次识别结果'
           : '平仓模式：正在确认可平仓位';
@@ -4940,6 +4942,21 @@ import {
     return Boolean(anchorRect?.width && anchorRect?.height);
   }
 
+  function observePanelSize(panel) {
+    panelResizeObserver?.disconnect();
+    panelObservedSize = '';
+    panelResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries.find((candidate) => candidate.target === panel);
+      if (!entry) return;
+      const nextSize = `${Math.round(entry.contentRect.width)}:${Math.round(entry.contentRect.height)}`;
+      if (panelObservedSize === nextSize) return;
+      panelObservedSize = nextSize;
+      panelPositionInvalidated = true;
+      scheduleRenderPanel();
+    });
+    panelResizeObserver.observe(panel);
+  }
+
   function isPanelPositionCurrent() {
     const spacer = document.getElementById(SPACER_ID);
     const insertionPoint = findTradePanelInsertionPoint(document);
@@ -4972,7 +4989,7 @@ import {
     panel.style.visibility = 'hidden';
     panel.innerHTML = [
       '<div data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden;">',
-      `<span id="${MODE_HINT_ID}" style="min-width:0;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
+      `<span id="${MODE_HINT_ID}" style="width:78px;flex:0 0 78px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
       `<div data-side-selector role="radiogroup" aria-labelledby="${MODE_HINT_ID}" style="box-sizing:border-box;display:grid;grid-template-columns:54px 54px;height:32px;border:1px solid var(--color-InputLine);border-radius:6px;overflow:hidden;background:${CONTROL_BACKGROUND_COLOR};">`,
       `<button id="${SIDE_LONG_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-radius:5px 0 0 5px;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平多</button>`,
       `<button id="${SIDE_SHORT_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-left:1px solid var(--color-InputLine);border-radius:0 5px 5px 0;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平空</button>`,
@@ -5000,8 +5017,9 @@ import {
       `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:hidden;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
       '</div>',
     ].join('');
-    panelPositionSignature = '';
+    panelPositionInvalidated = true;
     document.body.appendChild(panel);
+    observePanelSize(panel);
 
     const input = panel.querySelector(`#${INPUT_ID}`);
     const decBtn = panel.querySelector(`#${DEC_ID}`);
@@ -5172,10 +5190,13 @@ import {
   }
 
   function removePanel() {
+    panelResizeObserver?.disconnect();
+    panelResizeObserver = null;
+    panelObservedSize = '';
     document.getElementById(PANEL_ID)?.remove();
     document.getElementById(SPACER_ID)?.remove();
     ladderPanelBodySignature = '';
-    panelPositionSignature = '';
+    panelPositionInvalidated = true;
   }
 
   function pauseForNonTradingPage() {
@@ -5215,9 +5236,8 @@ import {
     if (input) {
       applyInputVisualState(input, multiplier);
     }
-    const panelHtml = panel.innerHTML;
-    if (panelPositionSignature !== panelHtml || !isPanelPositionCurrent()) {
-      if (positionPanel(panel)) panelPositionSignature = panelHtml;
+    if (panelPositionInvalidated || !isPanelPositionCurrent()) {
+      if (positionPanel(panel)) panelPositionInvalidated = false;
     }
   }
 
@@ -5282,7 +5302,7 @@ import {
         closeGuard.snapshotReady = true;
         confirmedCloseSnapshot = true;
       }
-      panelPositionSignature = '';
+      panelPositionInvalidated = true;
 
       if (confirmedCloseSnapshot) {
         window.clearTimeout(tradeUiMutationDebounceTimer);
@@ -5728,13 +5748,13 @@ import {
       stopRouteWatcher();
       return;
     }
-    panelPositionSignature = '';
+    panelPositionInvalidated = true;
     startRouteWatcher();
     syncRouteState();
   });
 
   window.addEventListener('resize', () => {
-    panelPositionSignature = '';
+    panelPositionInvalidated = true;
     scheduleRenderPanel();
   }, { passive: true });
 
