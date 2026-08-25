@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.101
+// @version      2.7.102
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1461,6 +1461,7 @@
     let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
     let ladderTask = null;
     let cancelCurrentSymbolOpenOrdersTask = null;
+    let cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
     let cancelNoOrdersFeedbackActive = false;
     let cancelNoOrdersFeedbackTimer = 0;
     let tradingViewOrdersRecoveryPendingAtStartup = sessionStorage.getItem(TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY) !== null;
@@ -4044,6 +4045,8 @@
           setLadderStatus(message);
           return { ok: false, status: "symbol_changed", message };
         }
+        cancelCurrentSymbolOpenOrdersBlocksLadderActions = true;
+        scheduleRenderPanel();
         try {
           chartOrdersTarget = getBinanceChartOrdersTarget2();
           chartOrdersState = captureTradingViewOrdersVisibility(
@@ -4195,6 +4198,7 @@
         return { ok: false, status: "ladder_running", message };
       }
       clearCancelNoOrdersFeedback();
+      cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
       const task = runCancelCurrentSymbolOpenOrders(options);
       cancelCurrentSymbolOpenOrdersTask = task;
       scheduleRenderPanel();
@@ -4203,7 +4207,10 @@
         if (result?.status === "no_orders") showCancelNoOrdersFeedback();
         return result;
       } finally {
-        if (cancelCurrentSymbolOpenOrdersTask === task) cancelCurrentSymbolOpenOrdersTask = null;
+        if (cancelCurrentSymbolOpenOrdersTask === task) {
+          cancelCurrentSymbolOpenOrdersTask = null;
+          cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
+        }
         scheduleRenderPanel();
       }
     }
@@ -5044,7 +5051,7 @@
     }
     function getLadderActionRows(tradeMode, closeContext, symbol, precision) {
       const ladderRunning = !!ladderTask;
-      const actionDisabled = ladderRunning || !!cancelCurrentSymbolOpenOrdersTask;
+      const actionDisabled = ladderRunning || cancelCurrentSymbolOpenOrdersBlocksLadderActions;
       if (!["OPEN", "CLOSE"].includes(tradeMode)) {
         return [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待开仓/平仓状态</div>`];
       }
@@ -5104,18 +5111,30 @@
             cancelRunning,
             noOrdersFeedback: cancelNoOrdersFeedbackActive
           });
-          const cancelDisabled = cancelPresentation.disabled;
-          const cancelDisabledAttrs = cancelDisabled ? ' disabled aria-disabled="true"' : "";
           const bodyHtml = [
             ...getLadderActionRows(mode, closeContext, symbol, precision),
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
             `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">停止阶梯挂单</button>`,
-            `<button type="button" data-ladder-cancel-symbol="true"${cancelDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${cancelPresentation.label}</button>`,
+            `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">撤本币挂单</button>`,
             "</div>"
           ].join("");
-          if (ladderPanelBodySignature !== bodyHtml || body.innerHTML !== bodyHtml) {
+          if (ladderPanelBodySignature !== bodyHtml) {
             body.innerHTML = bodyHtml;
             ladderPanelBodySignature = bodyHtml;
+          }
+          const cancelButton = body.querySelector('[data-ladder-cancel-symbol="true"]');
+          if (cancelButton) {
+            if (cancelButton.textContent !== cancelPresentation.label) {
+              cancelButton.textContent = cancelPresentation.label;
+            }
+            if (cancelButton.disabled !== cancelPresentation.disabled) {
+              cancelButton.disabled = cancelPresentation.disabled;
+            }
+            if (cancelPresentation.disabled) {
+              cancelButton.setAttribute("aria-disabled", "true");
+            } else {
+              cancelButton.removeAttribute("aria-disabled");
+            }
           }
         }
       }
@@ -5569,6 +5588,7 @@
     }
     function pauseForNonTradingPage() {
       clearCancelNoOrdersFeedback();
+      cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
       removePanel();
       stopTradingTimers();
       invalidateTradeButtonCache();
@@ -5912,6 +5932,7 @@
     installUiSyncObservers();
     function clearSymbolOwnedRuntimeState(symbol) {
       clearCancelNoOrdersFeedback();
+      cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
       stopMultiplierEdit();
       lastConfirmedCloseState = null;
       lastDisplayCloseState = null;

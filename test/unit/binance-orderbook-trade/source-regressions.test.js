@@ -78,6 +78,9 @@ test('expanded ladder panel avoids rebuilding unchanged body markup', () => {
   const ladderBody = readFunctionBody('refreshLadderPanel');
   assert.match(ladderBody, /ladderPanelBodySignature/);
   assert.match(ladderBody, /body\.innerHTML = bodyHtml/);
+  assert.doesNotMatch(ladderBody, /body\.innerHTML !== bodyHtml/);
+  assert.match(ladderBody, /cancelButton\.textContent = cancelPresentation\.label/);
+  assert.match(ladderBody, /cancelButton\.disabled = cancelPresentation\.disabled/);
 });
 
 test('panel primary values and ladder selections share the Binance emphasis standard', () => {
@@ -750,8 +753,8 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(panelBody, /cancelCurrentSymbolOpenOrdersTask/);
   assert.match(panelBody, /resolveCancelSymbolButtonPresentation\(\{/);
   assert.match(panelBody, /noOrdersFeedback: cancelNoOrdersFeedbackActive/);
-  assert.match(panelBody, /data-ladder-cancel-symbol="true"\$\{cancelDisabledAttrs\}/);
-  assert.match(panelBody, /cancelPresentation\.label/);
+  assert.match(panelBody, /data-ladder-cancel-symbol="true"[^`]*>撤本币挂单<\/button>/);
+  assert.match(panelBody, /cancelButton\.textContent = cancelPresentation\.label/);
 
   assert.match(source, /const CANCEL_NO_ORDERS_FEEDBACK_MS = 600/);
   const feedbackBody = readFunctionBody('showCancelNoOrdersFeedback');
@@ -760,13 +763,22 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   const cancelWrapperBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
   assert.match(cancelWrapperBody, /result\?\.status === 'no_orders'/);
   assert.match(cancelWrapperBody, /showCancelNoOrdersFeedback\(\)/);
+  assert.match(cancelWrapperBody, /cancelCurrentSymbolOpenOrdersBlocksLadderActions = false[\s\S]*runCancelCurrentSymbolOpenOrders/);
+  assert.match(cancelWrapperBody, /finally\s*\{[\s\S]*cancelCurrentSymbolOpenOrdersBlocksLadderActions = false/);
   const cancelRunBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.doesNotMatch(cancelRunBody, /CANCEL_NO_ORDERS_FEEDBACK_MS|showCancelNoOrdersFeedback/);
+  const noOrdersReturnIndex = cancelRunBody.indexOf("status: 'no_orders'");
+  const blockLadderActionsIndex = cancelRunBody.indexOf('cancelCurrentSymbolOpenOrdersBlocksLadderActions = true');
+  assert.notEqual(noOrdersReturnIndex, -1);
+  assert.notEqual(blockLadderActionsIndex, -1);
+  assert.ok(noOrdersReturnIndex < blockLadderActionsIndex);
+  assert.match(cancelRunBody, /cancelCurrentSymbolOpenOrdersBlocksLadderActions = true;[\s\S]*scheduleRenderPanel\(\);/);
 
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*撤本币挂单处理中，请等待完成/);
   const actionRowsBody = readFunctionBody('getLadderActionRows');
-  assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| !!cancelCurrentSymbolOpenOrdersTask/);
+  assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
+  assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
   assert.match(actionRowsBody, /ladderActionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
 });
 
