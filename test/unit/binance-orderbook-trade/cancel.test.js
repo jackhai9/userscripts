@@ -11,9 +11,33 @@ import {
   normalizeText,
   parseOpenOrdersTabCount,
   readVisibleOpenOrderSymbolsText,
+  resolveCancelSymbolButtonPresentation,
   shouldContinueOpenOrdersClearObservation,
   updateOpenOrdersClearStability,
 } from '../../../src/binance-orderbook-trade/core/cancel-orders.js';
+
+test('cancel button exposes no-order completion feedback without disabling new actions', () => {
+  assert.deepEqual(resolveCancelSymbolButtonPresentation({
+    ladderRunning: false,
+    cancelRunning: false,
+    noOrdersFeedback: false,
+  }), { disabled: false, label: '撤本币挂单' });
+  assert.deepEqual(resolveCancelSymbolButtonPresentation({
+    ladderRunning: false,
+    cancelRunning: true,
+    noOrdersFeedback: false,
+  }), { disabled: true, label: '撤单处理中' });
+  assert.deepEqual(resolveCancelSymbolButtonPresentation({
+    ladderRunning: false,
+    cancelRunning: false,
+    noOrdersFeedback: true,
+  }), { disabled: false, label: '已检查' });
+  assert.deepEqual(resolveCancelSymbolButtonPresentation({
+    ladderRunning: true,
+    cancelRunning: false,
+    noOrdersFeedback: true,
+  }), { disabled: true, label: '撤本币挂单' });
+});
 
 test('normalizes text and recognizes open-orders tab labels', () => {
   assert.equal(normalizeText(' 当前\n委托 (2) '), '当前 委托 (2)');

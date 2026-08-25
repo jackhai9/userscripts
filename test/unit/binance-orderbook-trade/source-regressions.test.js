@@ -748,8 +748,20 @@ test('cancel current-symbol open orders are single-flight and follow the native 
 
   const panelBody = readFunctionBody('refreshLadderPanel');
   assert.match(panelBody, /cancelCurrentSymbolOpenOrdersTask/);
+  assert.match(panelBody, /resolveCancelSymbolButtonPresentation\(\{/);
+  assert.match(panelBody, /noOrdersFeedback: cancelNoOrdersFeedbackActive/);
   assert.match(panelBody, /data-ladder-cancel-symbol="true"\$\{cancelDisabledAttrs\}/);
-  assert.match(panelBody, /撤单处理中/);
+  assert.match(panelBody, /cancelPresentation\.label/);
+
+  assert.match(source, /const CANCEL_NO_ORDERS_FEEDBACK_MS = 600/);
+  const feedbackBody = readFunctionBody('showCancelNoOrdersFeedback');
+  assert.match(feedbackBody, /cancelNoOrdersFeedbackActive = true/);
+  assert.match(feedbackBody, /CANCEL_NO_ORDERS_FEEDBACK_MS/);
+  const cancelWrapperBody = readFunctionBody('cancelCurrentSymbolOpenOrders');
+  assert.match(cancelWrapperBody, /result\?\.status === 'no_orders'/);
+  assert.match(cancelWrapperBody, /showCancelNoOrdersFeedback\(\)/);
+  const cancelRunBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
+  assert.doesNotMatch(cancelRunBody, /CANCEL_NO_ORDERS_FEEDBACK_MS|showCancelNoOrdersFeedback/);
 
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*撤本币挂单处理中，请等待完成/);

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.99
+// @version      2.7.100
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -115,6 +115,16 @@
     clearCandidate
   }) {
     return nowMs < deadlineMs || clearCandidate;
+  }
+  function resolveCancelSymbolButtonPresentation({
+    ladderRunning,
+    cancelRunning,
+    noOrdersFeedback
+  }) {
+    return {
+      disabled: Boolean(ladderRunning || cancelRunning),
+      label: cancelRunning ? "撤单处理中" : noOrdersFeedback && !ladderRunning ? "已检查" : "撤本币挂单"
+    };
   }
   function hasCurrentSymbolOpenOrdersEvidence({
     scopeText,
@@ -1369,6 +1379,7 @@
     const ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 6e4;
     const CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS = 1800;
     const CANCEL_DIALOG_DECISION_POLL_MS = 50;
+    const CANCEL_NO_ORDERS_FEEDBACK_MS = 600;
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_REPRICE_MAX_ATTEMPTS = 5;
     const LADDER_REPRICE_DELAY_MS = 180;
@@ -1450,6 +1461,8 @@
     let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
     let ladderTask = null;
     let cancelCurrentSymbolOpenOrdersTask = null;
+    let cancelNoOrdersFeedbackActive = false;
+    let cancelNoOrdersFeedbackTimer = 0;
     let tradingViewOrdersRecoveryPendingAtStartup = sessionStorage.getItem(TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY) !== null;
     let tradingViewOrdersRecoveryTask = null;
     let tradingViewOrdersRecoveryLastError = null;
@@ -4181,15 +4194,33 @@
         setLadderStatus(message);
         return { ok: false, status: "ladder_running", message };
       }
+      clearCancelNoOrdersFeedback();
       const task = runCancelCurrentSymbolOpenOrders(options);
       cancelCurrentSymbolOpenOrdersTask = task;
       scheduleRenderPanel();
       try {
-        return await task;
+        const result = await task;
+        if (result?.status === "no_orders") showCancelNoOrdersFeedback();
+        return result;
       } finally {
         if (cancelCurrentSymbolOpenOrdersTask === task) cancelCurrentSymbolOpenOrdersTask = null;
         scheduleRenderPanel();
       }
+    }
+    function clearCancelNoOrdersFeedback() {
+      window.clearTimeout(cancelNoOrdersFeedbackTimer);
+      cancelNoOrdersFeedbackTimer = 0;
+      cancelNoOrdersFeedbackActive = false;
+    }
+    function showCancelNoOrdersFeedback() {
+      clearCancelNoOrdersFeedback();
+      cancelNoOrdersFeedbackActive = true;
+      cancelNoOrdersFeedbackTimer = window.setTimeout(() => {
+        cancelNoOrdersFeedbackTimer = 0;
+        cancelNoOrdersFeedbackActive = false;
+        scheduleRenderPanel();
+      }, CANCEL_NO_ORDERS_FEEDBACK_MS);
+      scheduleRenderPanel();
     }
     async function cancelCurrentSymbolOpenOrdersForPlan(plan) {
       const symbol = getCurrentSymbol();
@@ -5068,13 +5099,18 @@
           const stopDisabled = !ladderTask;
           const stopDisabledAttrs = stopDisabled ? ' disabled aria-disabled="true"' : "";
           const cancelRunning = !!cancelCurrentSymbolOpenOrdersTask;
-          const cancelDisabled = !!ladderTask || cancelRunning;
+          const cancelPresentation = resolveCancelSymbolButtonPresentation({
+            ladderRunning: !!ladderTask,
+            cancelRunning,
+            noOrdersFeedback: cancelNoOrdersFeedbackActive
+          });
+          const cancelDisabled = cancelPresentation.disabled;
           const cancelDisabledAttrs = cancelDisabled ? ' disabled aria-disabled="true"' : "";
           const bodyHtml = [
             ...getLadderActionRows(mode, closeContext, symbol, precision),
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
             `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">停止阶梯挂单</button>`,
-            `<button type="button" data-ladder-cancel-symbol="true"${cancelDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${cancelRunning ? "撤单处理中" : "撤本币挂单"}</button>`,
+            `<button type="button" data-ladder-cancel-symbol="true"${cancelDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${cancelPresentation.label}</button>`,
             "</div>"
           ].join("");
           if (ladderPanelBodySignature !== bodyHtml || body.innerHTML !== bodyHtml) {
@@ -5532,6 +5568,7 @@
       panelPositionInvalidated = true;
     }
     function pauseForNonTradingPage() {
+      clearCancelNoOrdersFeedback();
       removePanel();
       stopTradingTimers();
       invalidateTradeButtonCache();
@@ -5874,6 +5911,7 @@
     });
     installUiSyncObservers();
     function clearSymbolOwnedRuntimeState(symbol) {
+      clearCancelNoOrdersFeedback();
       stopMultiplierEdit();
       lastConfirmedCloseState = null;
       lastDisplayCloseState = null;
