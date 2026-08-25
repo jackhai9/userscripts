@@ -89,7 +89,8 @@ export function isFilteredCurrentSymbolOpenOrdersEmpty({
 }) {
   if (!String(symbol || '').trim()) return false;
   if (filterChecked !== true || cancelAllAvailable) return false;
-  if (!String(scopeText || '').includes('暂无当前委托。')) return false;
+  const text = String(scopeText || '');
+  if (!text.includes('暂无当前委托。') && !text.includes('You have no open orders.')) return false;
   return readVisibleOpenOrderSymbolsText(scopeText).length === 0;
 }
 

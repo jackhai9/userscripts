@@ -106,6 +106,12 @@ test('confirmed filtered empty state proves only the current symbol has no order
     cancelAllAvailable: false,
   }), true);
   assert.equal(isFilteredCurrentSymbolOpenOrdersEmpty({
+    scopeText: 'Basic(1) Hide Other Symbols Cancel All You have no open orders.',
+    symbol: 'HYPEUSDT',
+    filterChecked: true,
+    cancelAllAvailable: false,
+  }), true);
+  assert.equal(isFilteredCurrentSymbolOpenOrdersEmpty({
     scopeText: '基础单(1) 隐藏其他合约 全撤 暂无当前委托。',
     symbol: 'HYPEUSDT',
     filterChecked: false,
