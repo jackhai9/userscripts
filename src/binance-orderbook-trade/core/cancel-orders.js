@@ -1,3 +1,7 @@
+import {
+  hasBinanceCurrentSymbolOpenOrdersEmptyText,
+} from '../contracts/account-orders.js';
+
 export function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -40,14 +44,14 @@ function hasVisibleContractText(text, symbol) {
   const normalizedSymbol = String(symbol || '').toUpperCase();
   if (!normalizedSymbol) return false;
   const symbolPattern = escapeRegExp(normalizedSymbol);
-  return new RegExp(`(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*永续`, 'i')
+  return new RegExp(`(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*(?:永续|PERP\\b)`, 'i')
     .test(String(text || ''));
 }
 
 export function readVisibleOpenOrderSymbolsText(text) {
   const normalized = String(text || '').toUpperCase();
   const symbols = new Set();
-  const pattern = /([A-Z0-9]{2,30}(?:USDT|USDC))\s*永续/g;
+  const pattern = /([A-Z0-9]{2,30}(?:USDT|USDC))\s*(?:永续|PERP\b)/g;
   let match = pattern.exec(normalized);
   while (match) {
     const separator = normalized[match.index - 1] || '';
@@ -77,6 +81,27 @@ export function isOpenOrdersScopeConfirmedForSymbolText(text, symbol, filterChec
 }
 
 /**
+ * React commits the checkbox state before replacing the filtered order rows.
+ * Treat only current-symbol rows or Binance's explicit empty state as settled.
+ */
+export function isCurrentSymbolOpenOrdersFilterReady({
+  scopeText,
+  symbol,
+  filterChecked,
+  cancelAllAvailable,
+}) {
+  if (filterChecked !== true) return false;
+  const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
+  if (visibleSymbols.length > 0) {
+    return isOpenOrdersScopeLimitedToSymbolText(scopeText, symbol);
+  }
+  return (
+    !cancelAllAvailable &&
+    hasBinanceCurrentSymbolOpenOrdersEmptyText(scopeText)
+  );
+}
+
+/**
  * Binance renders this explicit empty state only after the active Basic Orders
  * pane has resolved its current filter. Account-wide order counts are not
  * current-symbol evidence because other symbols can still have open orders.
@@ -89,8 +114,7 @@ export function isFilteredCurrentSymbolOpenOrdersEmpty({
 }) {
   if (!String(symbol || '').trim()) return false;
   if (filterChecked !== true || cancelAllAvailable) return false;
-  const text = String(scopeText || '');
-  if (!text.includes('暂无当前委托。') && !text.includes('You have no open orders.')) return false;
+  if (!hasBinanceCurrentSymbolOpenOrdersEmptyText(scopeText)) return false;
   return readVisibleOpenOrderSymbolsText(scopeText).length === 0;
 }
 

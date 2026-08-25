@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.105
+// @version      2.7.106
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -16,6 +16,30 @@
 // @grant        none
 // ==/UserScript==
 (() => {
+  // src/binance-orderbook-trade/contracts/account-orders.js
+  var BINANCE_ACCOUNT_ORDERS_TEXT = Object.freeze({
+    currentSymbolEmpty: Object.freeze([
+      "暂无当前委托。",
+      "You have no open orders."
+    ]),
+    cancelAll: Object.freeze([
+      "全撤",
+      "全部撤单",
+      "撤销全部",
+      "Cancel All"
+    ])
+  });
+  function hasBinanceCurrentSymbolOpenOrdersEmptyText(value) {
+    const text = String(value || "");
+    return BINANCE_ACCOUNT_ORDERS_TEXT.currentSymbolEmpty.some((label) => text.includes(label));
+  }
+  function isBinanceCancelAllText(value) {
+    const normalized = String(value || "").trim().toLocaleLowerCase();
+    return BINANCE_ACCOUNT_ORDERS_TEXT.cancelAll.some(
+      (label) => label.toLocaleLowerCase() === normalized
+    );
+  }
+
   // src/binance-orderbook-trade/core/cancel-orders.js
   function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -53,12 +77,12 @@
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const symbolPattern = escapeRegExp(normalizedSymbol);
-    return new RegExp(`(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*永续`, "i").test(String(text || ""));
+    return new RegExp(`(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*(?:永续|PERP\\b)`, "i").test(String(text || ""));
   }
   function readVisibleOpenOrderSymbolsText(text) {
     const normalized = String(text || "").toUpperCase();
     const symbols = /* @__PURE__ */ new Set();
-    const pattern = /([A-Z0-9]{2,30}(?:USDT|USDC))\s*永续/g;
+    const pattern = /([A-Z0-9]{2,30}(?:USDT|USDC))\s*(?:永续|PERP\b)/g;
     let match = pattern.exec(normalized);
     while (match) {
       const separator = normalized[match.index - 1] || "";
@@ -81,6 +105,19 @@
     if (visibleSymbols.length > 0) return isOpenOrdersScopeLimitedToSymbolText(text, symbol);
     return true;
   }
+  function isCurrentSymbolOpenOrdersFilterReady({
+    scopeText,
+    symbol,
+    filterChecked,
+    cancelAllAvailable
+  }) {
+    if (filterChecked !== true) return false;
+    const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
+    if (visibleSymbols.length > 0) {
+      return isOpenOrdersScopeLimitedToSymbolText(scopeText, symbol);
+    }
+    return !cancelAllAvailable && hasBinanceCurrentSymbolOpenOrdersEmptyText(scopeText);
+  }
   function isFilteredCurrentSymbolOpenOrdersEmpty({
     scopeText,
     symbol,
@@ -89,8 +126,7 @@
   }) {
     if (!String(symbol || "").trim()) return false;
     if (filterChecked !== true || cancelAllAvailable) return false;
-    const text = String(scopeText || "");
-    if (!text.includes("暂无当前委托。") && !text.includes("You have no open orders.")) return false;
+    if (!hasBinanceCurrentSymbolOpenOrdersEmptyText(scopeText)) return false;
     return readVisibleOpenOrderSymbolsText(scopeText).length === 0;
   }
   function isCurrentSymbolOpenOrdersClearCandidate({ scopeText, symbol, openOrdersCount }) {
@@ -3412,7 +3448,7 @@
     }
     function findCurrentSymbolCancelAllButton(root) {
       if (!root) return null;
-      const buttons = Array.from(root.querySelectorAll('[class~="cursor-pointer"]')).filter(isVisibleElement).filter((element) => /^全撤$|^全部撤单$|^撤销全部$|^Cancel All$/i.test(getNormalizedText2(element)));
+      const buttons = Array.from(root.querySelectorAll('[class~="cursor-pointer"]')).filter(isVisibleElement).filter((element) => isBinanceCancelAllText(getNormalizedText2(element)));
       if (buttons.length !== 1) return null;
       const [button] = buttons;
       if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return null;
@@ -3779,9 +3815,20 @@
       if (!originalChecked && !await setHideOtherSymbolChecked(root, true, symbol)) {
         return { ok: false, originalChecked };
       }
-      const currentRoot = getActiveOpenOrdersScope2();
+      const settledRoot = await waitForAccountOrdersState(() => {
+        if (!isCurrentObservedSymbol(symbol)) return null;
+        const currentRoot = getActiveOpenOrdersScope2();
+        const currentCheckbox = findHideOtherSymbolCheckbox(currentRoot);
+        const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
+        return isCurrentSymbolOpenOrdersFilterReady({
+          scopeText: currentRoot?.textContent || "",
+          symbol,
+          filterChecked: getCheckboxCheckedState(currentCheckbox),
+          cancelAllAvailable: Boolean(cancelAllButton)
+        }) ? currentRoot : null;
+      }, 1600);
       return {
-        ok: isOpenOrdersScopeConfirmedForSymbol(currentRoot, symbol),
+        ok: Boolean(settledRoot) && isCurrentObservedSymbol(symbol),
         originalChecked
       };
     }
