@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.108
+// @version      2.7.109
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -644,6 +644,40 @@
       }
     }
     return { allocation: null, minimumPercent, maxPercent };
+  }
+
+  // src/binance-orderbook-trade/core/interaction-feedback.js
+  function remainingInteractionFeedbackMs({
+    startedAtMs,
+    nowMs,
+    minimumMs
+  }) {
+    return Math.max(0, minimumMs - Math.max(0, nowMs - startedAtMs));
+  }
+  async function waitForRemainingFeedback({
+    startedAtMs,
+    minimumMs,
+    now,
+    delay
+  }) {
+    const remainingMs = remainingInteractionFeedbackMs({
+      startedAtMs,
+      nowMs: now(),
+      minimumMs
+    });
+    if (remainingMs > 0) await delay(remainingMs);
+  }
+  function keepInteractionFeedbackVisible(task, options) {
+    return Promise.resolve(task).then(
+      async (value) => {
+        await waitForRemainingFeedback(options);
+        return value;
+      },
+      async (error) => {
+        await waitForRemainingFeedback(options);
+        throw error;
+      }
+    );
   }
 
   // src/binance-orderbook-trade/core/order-feedback.js
@@ -1446,6 +1480,7 @@
     const LADDER_ORDER_DELAY_MS = 520;
     const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
     const LADDER_SUBMIT_POLL_MS = 80;
+    const LADDER_ACTION_FEEDBACK_MIN_MS = 240;
     const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
     const LADDER_REPLACE_ROW_SETTLE_MS = 240;
     const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
@@ -3296,7 +3331,8 @@
       return { done, repriceAttempts, lastRepriceApiErrorCode };
     }
     async function startLadder(actionType) {
-      if (!isCurrentObservedSymbol(getCurrentSymbol())) {
+      const actionSymbol = getCurrentSymbol();
+      if (!isCurrentObservedSymbol(actionSymbol)) {
         setLadderStatus("交易对正在切换");
         return;
       }
@@ -3309,25 +3345,54 @@
         return;
       }
       const spec = getLadderActionSpec2(actionType);
-      if (spec?.mode === "CLOSE" && !isCloseSnapshotReady(getCurrentSymbol())) {
+      if (spec?.mode === "CLOSE" && !isCloseSnapshotReady(actionSymbol)) {
         setLadderStatus("仓位确认中");
         return;
       }
       ladderStopRequested = false;
+      const feedbackStartedAt = performance.now();
       setLadderStatus(`${spec?.label || "阶梯"} 准备中`);
-      ladderTask = (async () => {
+      const executionTask = (async () => {
         const {
           plan,
           done,
           repriceAttempts,
           lastRepriceApiErrorCode
         } = await runLadderPlanWithOpenOrderReplacement(actionType);
+        return {
+          plan,
+          done,
+          repriceAttempts,
+          lastRepriceApiErrorCode,
+          wasStopped: ladderStopRequested
+        };
+      })();
+      ladderTask = keepInteractionFeedbackVisible(executionTask, {
+        startedAtMs: feedbackStartedAt,
+        minimumMs: LADDER_ACTION_FEEDBACK_MIN_MS,
+        now: () => performance.now(),
+        delay
+      }).then(({
+        plan,
+        done,
+        repriceAttempts,
+        lastRepriceApiErrorCode,
+        wasStopped
+      }) => {
+        if (!isCurrentObservedSymbol(actionSymbol)) {
+          setLadderStatus("交易对已切换");
+          return;
+        }
         const diagnostics = formatLadderRepriceDiagnostics(repriceAttempts, lastRepriceApiErrorCode);
         setLadderStatus(
-          ladderStopRequested ? `已停止 ${done}/${plan.orders.length}${diagnostics}` : `完成 ${done}/${plan.orders.length}${diagnostics}`
+          wasStopped ? `已停止 ${done}/${plan.orders.length}${diagnostics}` : `完成 ${done}/${plan.orders.length}${diagnostics}`
         );
-      })().catch((e) => {
+      }).catch((e) => {
         err("Maker 阶梯执行失败:", e);
+        if (!isCurrentObservedSymbol(actionSymbol)) {
+          setLadderStatus("交易对已切换");
+          return;
+        }
         setLadderStatus(e?.message || "执行失败", e?.statusTitle);
       }).finally(() => {
         ladderTask = null;
