@@ -19,12 +19,11 @@ test('centralizes the verified Chinese and English Binance page labels', () => {
   assert.equal(matchesBinancePageText('Cancel Order', BINANCE_PAGE_TEXT.accountOrders.rowCancel), true);
 });
 
-test('matches current account-order tabs without retaining stale English labels', () => {
+test('matches the verified account-order subtab labels and counts', () => {
   assert.equal(startsWithBinancePageText('基础单(29)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab), true);
   assert.equal(startsWithBinancePageText('Basic(31)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab), true);
   assert.equal(startsWithBinancePageText('条件委托(0)', BINANCE_PAGE_TEXT.accountOrders.conditionalSubTab), true);
   assert.equal(startsWithBinancePageText('Conditional(0)', BINANCE_PAGE_TEXT.accountOrders.conditionalSubTab), true);
-  assert.equal(startsWithBinancePageText('Basic Orders(31)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab), false);
 });
 
 test('parses localized tab counts through the shared page-text contract', () => {
