@@ -1085,6 +1085,10 @@ test('pending close actions report position confirmation without starting execut
 test('cancel flow rechecks the captured symbol before destructive click and cleanup', () => {
   const waitBody = readFunctionBody('waitForCurrentSymbolOpenOrders');
   assert.match(waitBody, /isCurrentObservedSymbol\(symbol\)/);
+  assert.match(waitBody, /isFilteredCurrentSymbolOpenOrdersEmpty/);
+  assert.match(waitBody, /getCheckboxCheckedState\(findHideOtherSymbolCheckbox\(currentRoot\)\)/);
+  const hasOrdersBody = readFunctionBody('hasCurrentSymbolOpenOrders');
+  assert.doesNotMatch(hasOrdersBody, /getOpenOrdersTabCount\(\)/);
   assert.match(
     waitBody,
     /isCurrentSymbolOpenOrdersDefinitivelyClear\(\{[\s\S]*return \{ hasOrders: false, cancelAllButton: null \}/,
