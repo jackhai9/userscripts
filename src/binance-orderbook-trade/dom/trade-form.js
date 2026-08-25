@@ -9,6 +9,18 @@ function isOwnPanelButton(button, panelId) {
 
 const CLOSE_QUANTITY_SELECTOR = '[data-testid="max-sell-amount"], [data-testid="max-buy-amount"]';
 
+const TRADE_MODE_LABELS = Object.freeze({
+  OPEN: new Set(['开仓', 'open']),
+  CLOSE: new Set(['平仓', 'close']),
+});
+
+export function parseTradeModeLabel(value) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (TRADE_MODE_LABELS.OPEN.has(normalized)) return 'OPEN';
+  if (TRADE_MODE_LABELS.CLOSE.has(normalized)) return 'CLOSE';
+  return null;
+}
+
 function isCloseQuantityNode(node) {
   const element = node?.nodeType === 1 ? node : node?.parentElement;
   if (!element) return false;
@@ -55,8 +67,11 @@ export function findTradePanelInsertionPoint(root) {
   const modeAndOrderTypeRow = modeAndOrderTypeColumn?.parentElement;
   const tradeHeader = modeAndOrderTypeRow?.parentElement;
   const ownerDocument = modeTabs.ownerDocument;
-  const modeLabels = Array.from(modeTabs.querySelectorAll('[role="tab"]'))
-    .map((tab) => (tab.textContent || '').trim());
+  const tradeModes = new Set(
+    Array.from(modeTabs.querySelectorAll('[role="tab"]'))
+      .map((tab) => parseTradeModeLabel(tab.textContent))
+      .filter(Boolean),
+  );
 
   if (
     !modeAndOrderTypeColumn
@@ -67,8 +82,8 @@ export function findTradePanelInsertionPoint(root) {
     || modeAndOrderTypeRow.firstElementChild !== modeAndOrderTypeColumn
     || modeAndOrderTypeRow.children.length !== 1
     || tradeHeader.firstElementChild === modeAndOrderTypeRow
-    || !modeLabels.some((text) => text.includes('开仓'))
-    || !modeLabels.some((text) => text.includes('平仓'))
+    || !tradeModes.has('OPEN')
+    || !tradeModes.has('CLOSE')
   ) {
     return null;
   }
@@ -96,8 +111,7 @@ export function isTradeModeTab(node, { panelId }) {
   ) {
     return false;
   }
-  const text = (node.textContent || '').trim();
-  return text.includes('开仓') || text.includes('平仓');
+  return parseTradeModeLabel(node.textContent) !== null;
 }
 
 export function isTradeActionButton(node, { panelId }) {

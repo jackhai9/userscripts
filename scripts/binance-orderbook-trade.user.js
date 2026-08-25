@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.106
+// @version      2.7.107
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -880,6 +880,16 @@
     return !!button?.closest?.(`#${panelId}`);
   }
   var CLOSE_QUANTITY_SELECTOR = '[data-testid="max-sell-amount"], [data-testid="max-buy-amount"]';
+  var TRADE_MODE_LABELS = Object.freeze({
+    OPEN: /* @__PURE__ */ new Set(["开仓", "open"]),
+    CLOSE: /* @__PURE__ */ new Set(["平仓", "close"])
+  });
+  function parseTradeModeLabel(value) {
+    const normalized = String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (TRADE_MODE_LABELS.OPEN.has(normalized)) return "OPEN";
+    if (TRADE_MODE_LABELS.CLOSE.has(normalized)) return "CLOSE";
+    return null;
+  }
   function isCloseQuantityNode(node) {
     const element = node?.nodeType === 1 ? node : node?.parentElement;
     if (!element) return false;
@@ -910,8 +920,10 @@
     const modeAndOrderTypeRow = modeAndOrderTypeColumn?.parentElement;
     const tradeHeader = modeAndOrderTypeRow?.parentElement;
     const ownerDocument = modeTabs.ownerDocument;
-    const modeLabels = Array.from(modeTabs.querySelectorAll('[role="tab"]')).map((tab) => (tab.textContent || "").trim());
-    if (!modeAndOrderTypeColumn || !modeAndOrderTypeRow || !tradeHeader || modeAndOrderTypeRow === ownerDocument?.body || tradeHeader === ownerDocument?.documentElement || modeAndOrderTypeRow.firstElementChild !== modeAndOrderTypeColumn || modeAndOrderTypeRow.children.length !== 1 || tradeHeader.firstElementChild === modeAndOrderTypeRow || !modeLabels.some((text) => text.includes("开仓")) || !modeLabels.some((text) => text.includes("平仓"))) {
+    const tradeModes = new Set(
+      Array.from(modeTabs.querySelectorAll('[role="tab"]')).map((tab) => parseTradeModeLabel(tab.textContent)).filter(Boolean)
+    );
+    if (!modeAndOrderTypeColumn || !modeAndOrderTypeRow || !tradeHeader || modeAndOrderTypeRow === ownerDocument?.body || tradeHeader === ownerDocument?.documentElement || modeAndOrderTypeRow.firstElementChild !== modeAndOrderTypeColumn || modeAndOrderTypeRow.children.length !== 1 || tradeHeader.firstElementChild === modeAndOrderTypeRow || !tradeModes.has("OPEN") || !tradeModes.has("CLOSE")) {
       return null;
     }
     return {
@@ -933,8 +945,7 @@
     if (!node.matches('#position-direction [role="tab"], .bn-tabs__buySell [role="tab"], [role="tab"].bn-tab__buySell')) {
       return false;
     }
-    const text = (node.textContent || "").trim();
-    return text.includes("开仓") || text.includes("平仓");
+    return parseTradeModeLabel(node.textContent) !== null;
   }
   function isTradeActionButton(node, { panelId }) {
     if (!node?.matches) return false;
@@ -1816,10 +1827,7 @@
     }
     function getActiveTradeMode() {
       const activeTab = document.querySelector('#position-direction [role="tab"][aria-selected="true"]') || document.querySelector('.bn-tabs__buySell [role="tab"][aria-selected="true"]') || document.querySelector('[role="tab"].bn-tab__buySell[aria-selected="true"]');
-      const text = (activeTab?.textContent || "").trim();
-      if (text.includes("开仓")) return "OPEN";
-      if (text.includes("平仓")) return "CLOSE";
-      return "UNKNOWN";
+      return parseTradeModeLabel(activeTab?.textContent) || "UNKNOWN";
     }
     function getCurrentOrderType() {
       const activeTab = findVisibleTradeScopeElement(
@@ -2789,11 +2797,10 @@
       };
     }
     function findTradeModeTabByMode(mode) {
-      const label = mode === "OPEN" ? "开仓" : "平仓";
       const tabs = document.querySelectorAll(
         '#position-direction [role="tab"], .bn-tabs__buySell [role="tab"], [role="tab"].bn-tab__buySell'
       );
-      return Array.from(tabs).find((tab) => (tab.textContent || "").includes(label)) || null;
+      return Array.from(tabs).find((tab) => parseTradeModeLabel(tab.textContent) === mode) || null;
     }
     function findConditionalOrderTab() {
       return findVisibleTradeScopeElement('[role="tab"]', (tab) => {
@@ -5859,9 +5866,9 @@
           if (mutation.type !== "attributes" || mutation.attributeName !== "aria-selected") continue;
           if (!isTradeModeTab2(mutation.target)) continue;
           const isSelected = mutation.target.getAttribute("aria-selected") === "true";
-          const text = mutation.target.textContent || "";
-          const isEnteringClose = isSelected && text.includes("平仓");
-          const isEnteringOpen = isSelected && text.includes("开仓");
+          const mode = parseTradeModeLabel(mutation.target.textContent);
+          const isEnteringClose = isSelected && mode === "CLOSE";
+          const isEnteringOpen = isSelected && mode === "OPEN";
           if (handleTradeModeTabTransition(mutation.target, isEnteringClose, isEnteringOpen, "mutation")) return;
         }
       });
@@ -5875,9 +5882,9 @@
       document.addEventListener("click", (event) => {
         const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
         if (!isTradeModeTab2(tab)) return;
-        const text = tab.textContent || "";
-        const isEnteringClose = text.includes("平仓") && tab.getAttribute("aria-selected") !== "true";
-        const isEnteringOpen = text.includes("开仓") && tab.getAttribute("aria-selected") !== "true";
+        const mode = parseTradeModeLabel(tab.textContent);
+        const isEnteringClose = mode === "CLOSE" && tab.getAttribute("aria-selected") !== "true";
+        const isEnteringOpen = mode === "OPEN" && tab.getAttribute("aria-selected") !== "true";
         handleTradeModeTabTransition(tab, isEnteringClose, isEnteringOpen, "click");
         ensureTradeModeTabObserver();
       }, true);
