@@ -8,7 +8,7 @@ const ladderPlanSource = await readFile(new URL('../../../src/binance-orderbook-
 const tradingViewOrdersSource = await readFile(new URL('../../../src/binance-orderbook-trade/core/tradingview-orders.js', import.meta.url), 'utf8');
 
 function readFunctionBody(name, sourceText = source) {
-  const start = sourceText.indexOf(`function ${name}`);
+  const start = sourceText.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `${name} should exist`);
   const braceStart = sourceText.indexOf('{', start);
   let depth = 0;
@@ -470,6 +470,23 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(startBody, /setLadderStatus\(e\?\.message \|\| '执行失败',\s*e\?\.statusTitle\)/);
 });
 
+test('open ladder stops immediately only for a confirmed zero available balance', () => {
+  const readOpenQtyBody = readFunctionBody('readOpenBaseQtyForLadder');
+  assert.match(readOpenQtyBody, /isConfirmedZeroOpenBalance\(qty\)/);
+  assert.match(readOpenQtyBody, /return \{ qty, qtySource \}/);
+
+  const confirmedZeroBody = readFunctionBody('isConfirmedZeroOpenBalance');
+  assert.match(confirmedZeroBody, /readTradeAvailableBalance/);
+  assert.match(confirmedZeroBody, /normalizeDecimalString/);
+  assert.match(confirmedZeroBody, /compareDecimalStrings\(normalizedQty, '0'\) === 0/);
+  assert.match(confirmedZeroBody, /compareDecimalStrings\(normalizedBalance, '0'\) === 0/);
+
+  const readOpenableBody = readFunctionBody('readOpenableQty');
+  assert.match(readOpenableBody, /readOpenableQtyByTestIds\(\)/);
+  const readOpenableByTestIdsBody = readFunctionBody('readOpenableQtyByTestIds');
+  assert.match(readOpenableByTestIdsBody, /qtySource: 'testid'/);
+});
+
 test('ladder replacement cancels visible current-symbol same-direction rows up to planned quantity', () => {
   const readRowsBody = readFunctionBody('readCurrentSymbolOpenOrderRows');
   assert.match(readRowsBody, /querySelectorAll\('\.list-item-container'\)/);
@@ -513,12 +530,21 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.doesNotMatch(directionBody, /includes\('BUY'\)/);
 
   const waitRowsBody = readFunctionBody('waitForCurrentSymbolOpenOrderRows');
-  assert.match(waitRowsBody, /openOrdersCount/);
-  assert.match(waitRowsBody, /LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS/);
-  assert.match(waitRowsBody, /let currentRoot = root/);
-  assert.match(waitRowsBody, /readCurrentSymbolOpenOrderRows\(currentRoot,\s*symbol,\s*plan\)/);
-  assert.match(waitRowsBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
-  assert.match(waitRowsBody, /if \(refreshedRoot\) currentRoot = refreshedRoot/);
+  assert.match(waitRowsBody, /waitForAccountOrdersState/);
+  assert.match(waitRowsBody, /readCurrentSymbolOpenOrderRowsState\(root,\s*symbol,\s*plan\)/);
+  assert.match(waitRowsBody, /status !== 'other_direction'/);
+  assert.match(waitRowsBody, /LADDER_REPLACE_ROW_SETTLE_MS/);
+  assert.doesNotMatch(waitRowsBody, /openOrdersCount/);
+  assert.doesNotMatch(waitRowsBody, /LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS/);
+
+  const rowStateBody = readFunctionBody('readCurrentSymbolOpenOrderRowsState');
+  assert.match(rowStateBody, /readCurrentSymbolOpenOrderRows\(currentRoot,\s*symbol,\s*plan\)/);
+  assert.match(rowStateBody, /readCurrentSymbolOpenOrderRows\(currentRoot,\s*symbol\)/);
+  assert.match(rowStateBody, /isFilteredCurrentSymbolOpenOrdersEmpty/);
+  assert.match(rowStateBody, /status: 'matched'/);
+  assert.match(rowStateBody, /status: 'other_direction'/);
+  assert.match(rowStateBody, /status: 'empty'/);
+  assert.match(rowStateBody, /rows: \[\]/);
 
   const cancelOpenOrderRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
   assert.match(cancelOpenOrderRowsBody, /let currentRoot = root/);
@@ -544,10 +570,10 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   assert.match(cancelRowsBody, /if \(!isCurrentObservedSymbol\(symbol\) \|\| symbol !== plan\?\.symbol\)/);
-  assert.match(cancelRowsBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
   assert.match(cancelRowsBody, /activateOpenOrdersBasicSubTab\(openOrdersScope\)[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(\)/);
   assert.match(cancelRowsBody, /if \(!openOrdersScope\) \{\s*const message = '未定位到当前委托面板'/);
-  assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(openOrdersScope,\s*symbol,\s*plan,\s*\{\s*openOrdersCount,\s*\}\)/);
+  assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(openOrdersScope,\s*symbol,\s*plan\)/);
+  assert.doesNotMatch(cancelRowsBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
   assert.match(cancelRowsBody, /getPlanDirectionLabel\(plan\)/);
   assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows\)/);
   assert.match(cancelRowsBody, /finally\s*\{[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(\)[\s\S]*restoreOpenOrdersSymbolFilter\(openOrdersScope/);

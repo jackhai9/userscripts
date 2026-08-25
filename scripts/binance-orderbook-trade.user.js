@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.107
+// @version      2.7.108
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -742,6 +742,7 @@
       observer.observe(observationRoot, {
         subtree: true,
         childList: true,
+        characterData: true,
         attributes: true,
         attributeFilter: ["aria-selected", "aria-checked", "class", "style"]
       });
@@ -884,11 +885,24 @@
     OPEN: /* @__PURE__ */ new Set(["开仓", "open"]),
     CLOSE: /* @__PURE__ */ new Set(["平仓", "close"])
   });
+  var AVAILABLE_BALANCE_LABELS = /* @__PURE__ */ new Set(["可用", "avbl"]);
   function parseTradeModeLabel(value) {
     const normalized = String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
     if (TRADE_MODE_LABELS.OPEN.has(normalized)) return "OPEN";
     if (TRADE_MODE_LABELS.CLOSE.has(normalized)) return "CLOSE";
     return null;
+  }
+  function readTradeAvailableBalance(root, { isVisibleElement }) {
+    if (!root?.querySelectorAll || typeof isVisibleElement !== "function") return null;
+    const candidates = Array.from(root.querySelectorAll("span")).filter((label) => isVisibleElement(label) && AVAILABLE_BALANCE_LABELS.has(String(label.textContent || "").trim().toLowerCase())).map((label) => {
+      const valueNodes = Array.from(label.parentElement?.children || []).filter((node) => node !== label && isVisibleElement(node));
+      if (valueNodes.length !== 1) return null;
+      const match = /^([\d,]+(?:\.\d+)?)\s+([A-Z0-9]+)$/.exec(
+        String(valueNodes[0].textContent || "").replace(/\s+/g, " ").trim()
+      );
+      return match ? { amount: match[1].replace(/,/g, ""), asset: match[2] } : null;
+    }).filter(Boolean);
+    return candidates.length === 1 ? candidates[0] : null;
   }
   function isCloseQuantityNode(node) {
     const element = node?.nodeType === 1 ? node : node?.parentElement;
@@ -1433,6 +1447,7 @@
     const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
     const LADDER_SUBMIT_POLL_MS = 80;
     const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
+    const LADDER_REPLACE_ROW_SETTLE_MS = 240;
     const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
     const ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 6e4;
     const CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS = 1800;
@@ -2876,6 +2891,7 @@
         if (qty != null && isPositiveDecimalString(String(qty))) {
           return { qty, qtySource: qtySource2 };
         }
+        if (isConfirmedZeroOpenBalance(qty)) return { qty, qtySource: qtySource2 };
         await delay(LADDER_OPEN_QTY_POLL_MS);
       }
       const openLongBtn = findOpenLongButton();
@@ -3693,19 +3709,39 @@
       }
       return false;
     }
-    async function waitForCurrentSymbolOpenOrderRows(root, symbol, plan = null, options = null) {
-      const { openOrdersCount = null } = options || {};
-      const timeoutMs = openOrdersCount > 0 ? LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS : 1600;
-      const deadline = Date.now() + timeoutMs;
-      let currentRoot = root;
-      while (Date.now() < deadline) {
-        const refreshedRoot = getActiveOpenOrdersScope2();
-        if (refreshedRoot) currentRoot = refreshedRoot;
-        const rows = readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
-        if (rows.length) return rows;
-        await delay(100);
+    function readCurrentSymbolOpenOrderRowsState(root, symbol, plan = null) {
+      const currentRoot = getActiveOpenOrdersScope2() || root;
+      if (!currentRoot) return null;
+      const rows = readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
+      if (rows.length) return { root: currentRoot, rows, status: "matched" };
+      const currentSymbolRows = readCurrentSymbolOpenOrderRows(currentRoot, symbol);
+      if (currentSymbolRows.length) {
+        return { root: currentRoot, rows: [], status: "other_direction" };
       }
-      return readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
+      const checkbox = findHideOtherSymbolCheckbox(currentRoot);
+      const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
+      if (isFilteredCurrentSymbolOpenOrdersEmpty({
+        scopeText: currentRoot.textContent || "",
+        symbol,
+        filterChecked: getCheckboxCheckedState(checkbox),
+        cancelAllAvailable: Boolean(cancelAllButton)
+      })) {
+        return { root: currentRoot, rows: [], status: "empty" };
+      }
+      return null;
+    }
+    async function waitForCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
+      let state = await waitForAccountOrdersState(
+        () => readCurrentSymbolOpenOrderRowsState(root, symbol, plan),
+        1600
+      );
+      if (state?.status !== "other_direction") return state?.rows || [];
+      const transitioned = await waitForAccountOrdersState(() => {
+        const nextState = readCurrentSymbolOpenOrderRowsState(root, symbol, plan);
+        return nextState?.status !== "other_direction" ? nextState : null;
+      }, LADDER_REPLACE_ROW_SETTLE_MS);
+      state = transitioned || readCurrentSymbolOpenOrderRowsState(root, symbol, plan);
+      return state?.rows || [];
     }
     function selectOpenOrderRowsToCancelForPlan(plan, rows, options = null) {
       const { allowPartial = false } = options || {};
@@ -4366,10 +4402,7 @@
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
-        const openOrdersCount = getOpenOrdersTabCount();
-        const rows = await waitForCurrentSymbolOpenOrderRows(openOrdersScope, symbol, plan, {
-          openOrdersCount
-        });
+        const rows = await waitForCurrentSymbolOpenOrderRows(openOrdersScope, symbol, plan);
         if (!rows.length) {
           const directionLabel = getPlanDirectionLabel(plan);
           const message = `未定位到 ${symbol}${directionLabel ? ` ${directionLabel}` : ""} 当前币可逐行撤单的基础单`;
@@ -4479,6 +4512,12 @@
       if (longQty == null && shortQty == null) return null;
       return { longQty, shortQty, qtySource: "testid" };
     }
+    function readOpenableQtyByTestIds() {
+      const longQty = readQtyByDataTestId("max-buy-amount");
+      const shortQty = readQtyByDataTestId("max-sell-amount");
+      if (longQty == null && shortQty == null) return null;
+      return { longQty, shortQty, qtySource: "testid" };
+    }
     function getButtonTextSearchRoot(button) {
       if (!button) return null;
       const localRoot = button.closest('[class*="order"], [data-testid*="order"]');
@@ -4556,11 +4595,19 @@
       return best;
     }
     function readOpenableQty(openLongBtn, openShortBtn) {
+      const fromTestId = readOpenableQtyByTestIds();
+      if (fromTestId) return fromTestId;
       return {
         longQty: readQtyTextNearButton(openLongBtn, "可开"),
         shortQty: readQtyTextNearButton(openShortBtn, "可开"),
         qtySource: "near_button"
       };
+    }
+    function isConfirmedZeroOpenBalance(qty) {
+      const available = readTradeAvailableBalance(getTradeMutationRoot(), { isVisibleElement });
+      const normalizedQty = normalizeDecimalString(String(qty ?? ""));
+      const normalizedBalance = normalizeDecimalString(available?.amount || "");
+      return normalizedQty !== null && normalizedBalance !== null && compareDecimalStrings(normalizedQty, "0") === 0 && compareDecimalStrings(normalizedBalance, "0") === 0;
     }
     function loadCloseSide(symbol = getCurrentSymbol()) {
       return loadSymbolSide(localStorage, LOCAL_CLOSE_SIDE_KEY, symbol, DEFAULT_CLOSE_SIDE);
