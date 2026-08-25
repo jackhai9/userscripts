@@ -7,6 +7,41 @@ function getNormalizedText(el) {
   return normalizeText(el?.textContent || '');
 }
 
+function getTabIdentity(el) {
+  return getNormalizedText(el).replace(/\s*\(\d+\)$/, '').toLocaleLowerCase();
+}
+
+export function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs) {
+  const currentState = readState();
+  if (currentState) return Promise.resolve(currentState);
+  const MutationObserverClass = observationRoot?.ownerDocument?.defaultView?.MutationObserver;
+  if (!observationRoot || !MutationObserverClass) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      observer.disconnect();
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const check = () => {
+      const value = readState();
+      if (value) finish(value);
+    };
+    const observer = new MutationObserverClass(check);
+    const timer = setTimeout(() => finish(readState()), timeoutMs);
+    observer.observe(observationRoot, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['aria-selected', 'aria-checked', 'class', 'style'],
+    });
+    check();
+  });
+}
+
 function hasAccountOrdersTabs(node, isVisibleElement) {
   const tabTexts = Array.from(node.querySelectorAll('[role="tab"]'))
     .filter(isVisibleElement)
@@ -76,6 +111,22 @@ export function findSelectedOpenOrdersSubTab(root, { isVisibleElement }) {
     )) || null;
 }
 
+export function getOpenOrdersSubTabIdentity(tab) {
+  const text = getNormalizedText(tab);
+  if (!isOpenOrdersBasicSubTabText(text) && !isOpenOrdersConditionalSubTabText(text)) return null;
+  return getTabIdentity(tab);
+}
+
+export function findOpenOrdersSubTabByIdentity(root, identity, { isVisibleElement }) {
+  if (!root || !identity) return null;
+  const tabs = Array.from(root.querySelectorAll('[role="tab"]'))
+    .filter((tab) => (
+      isVisibleElement(tab) &&
+      getOpenOrdersSubTabIdentity(tab) === identity
+    ));
+  return tabs.length === 1 ? tabs[0] : null;
+}
+
 export function isAccountOrdersTab(tab, { isVisibleElement }) {
   let node = tab.parentElement;
   let depth = 0;
@@ -111,7 +162,23 @@ export function getAccountOrdersTabGroup(tab, { isVisibleElement }) {
 export function findOpenOrdersTab(root, { isVisibleElement }) {
   const tabs = Array.from(root.querySelectorAll('[role="tab"]'))
     .filter((tab) => isVisibleElement(tab) && isOpenOrdersTabText(getNormalizedText(tab)));
-  return tabs.find((tab) => isAccountOrdersTab(tab, { isVisibleElement })) || tabs[0] || null;
+  const accountTabs = tabs.filter((tab) => isAccountOrdersTab(tab, { isVisibleElement }));
+  return accountTabs.length === 1 ? accountTabs[0] : null;
+}
+
+export function getAccountOrdersTabIdentity(tab) {
+  return tab ? getTabIdentity(tab) : null;
+}
+
+export function findAccountOrdersTabByIdentity(root, identity, { isVisibleElement }) {
+  if (!identity) return null;
+  const openOrdersTab = findOpenOrdersTab(root, { isVisibleElement });
+  if (!openOrdersTab) return null;
+  const tabGroup = getAccountOrdersTabGroup(openOrdersTab, { isVisibleElement });
+  if (!tabGroup) return null;
+  const tabs = Array.from(tabGroup.querySelectorAll('[role="tab"]'))
+    .filter((tab) => isVisibleElement(tab) && getAccountOrdersTabIdentity(tab) === identity);
+  return tabs.length === 1 ? tabs[0] : null;
 }
 
 export function findAccountPositionTab(root, { isVisibleElement }) {
@@ -146,33 +213,13 @@ export function getActiveOpenOrdersScope(root, {
   const tab = findOpenOrdersTab(root, { isVisibleElement });
   if (!tab || tab.getAttribute('aria-selected') !== 'true') return null;
 
-  const doc = root.ownerDocument || root;
-  const paneId = tab.getAttribute('aria-controls');
-  const pane = paneId ? doc.getElementById(paneId) : null;
-  if (
-    pane &&
-    isVisibleElement(pane) &&
-    hasOpenOrdersPanelEvidence(pane, {
+  const scopes = Array.from(root.querySelectorAll('[id="OPEN_ORDERS"]'))
+    .filter((scope) => (
+      isVisibleElement(scope) &&
+      hasOpenOrdersPanelEvidence(scope, {
       findHideOtherSymbolCheckbox,
       findCurrentSymbolCancelAllButton,
-    })
-  ) {
-    return pane;
-  }
-
-  let node = tab.parentElement;
-  let depth = 0;
-  while (node && node !== doc.body && depth < 8) {
-    if (
-      hasOpenOrdersPanelEvidence(node, {
-        findHideOtherSymbolCheckbox,
-        findCurrentSymbolCancelAllButton,
       })
-    ) {
-      return node;
-    }
-    node = node.parentElement;
-    depth += 1;
-  }
-  return null;
+    ));
+  return scopes.length === 1 ? scopes[0] : null;
 }
