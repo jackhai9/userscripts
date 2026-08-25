@@ -30,6 +30,14 @@ test('finds one semantic Binance cancel-all action pair through nested modal wra
   assert.equal(contract.confirmButton.textContent.trim(), '确认');
 });
 
+test('finds the verified English cancel-all dialog contract', () => {
+  const dom = loadFixtureDom(createDialogMarkup({ text: 'Cancel all orders?' }));
+  const contract = findBinanceCancelAllDialog(dom.window.document, isVisibleElement);
+
+  assert.equal(contract.dialog.getAttribute('data-testid'), 'dialog');
+  assert.equal(contract.confirmButton.classList.contains('bn-button__primary'), true);
+});
+
 test('classifies nested confirm targets and the secondary cancel button', () => {
   const dom = loadFixtureDom(createDialogMarkup());
   const contract = findBinanceCancelAllDialog(dom.window.document, isVisibleElement);

@@ -1,6 +1,10 @@
+import {
+  BINANCE_PAGE_TEXT,
+  includesBinancePageText,
+} from '../contracts/binance-page-text.js';
+
 const DIALOG_CANDIDATE_SELECTOR =
   '[role="dialog"], [class*="modal"], [class*="Modal"]';
-const CANCEL_ALL_DIALOG_TEXT_PATTERN = /(?:确定取消全部订单|Cancel all orders)/i;
 const PRIMARY_BUTTON_SELECTOR = 'button.bn-button.bn-button__primary';
 
 function normalizeText(value) {
@@ -9,7 +13,10 @@ function normalizeText(value) {
 
 function getDialogContract(dialog, isVisibleElement) {
   if (!isVisibleElement(dialog)) return null;
-  if (!CANCEL_ALL_DIALOG_TEXT_PATTERN.test(normalizeText(dialog.textContent))) return null;
+  if (!includesBinancePageText(
+    normalizeText(dialog.textContent),
+    BINANCE_PAGE_TEXT.cancelAllDialog,
+  )) return null;
 
   const buttons = Array.from(dialog.querySelectorAll('button')).filter(isVisibleElement);
   if (!buttons.length) return null;

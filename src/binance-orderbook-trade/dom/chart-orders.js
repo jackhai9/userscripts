@@ -1,7 +1,11 @@
+import {
+  BINANCE_PAGE_TEXT,
+  matchesBinancePageText,
+} from '../contracts/binance-page-text.js';
+
 const CHART_ROOT_SELECTOR = '.chart-widget-root';
 const CHART_TOOLBAR_SELECTOR = '.flex.items-center.gap-\\[--space-m\\]';
 const ACTIVE_POPOVER_SELECTOR = '.bn-bubble.active';
-const OPEN_ORDERS_LABEL_PATTERN = /^(?:当前委托|Open Orders)$/i;
 
 function normalizeLabel(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -103,7 +107,10 @@ export function findActiveBinanceChartOrdersPopover(document, target, isVisibleE
 
   const checkboxes = Array.from(popover.querySelectorAll('[role="checkbox"]'))
     .filter(isVisibleElement)
-    .filter((checkbox) => OPEN_ORDERS_LABEL_PATTERN.test(normalizeLabel(checkbox.textContent)));
+    .filter((checkbox) => matchesBinancePageText(
+      normalizeLabel(checkbox.textContent),
+      BINANCE_PAGE_TEXT.accountOrders.openOrdersTab,
+    ));
   if (!checkboxes.length) return null;
   if (checkboxes.length > 1) {
     throw new Error(`Expected one Binance chart OpenOrders checkbox, found ${checkboxes.length}`);

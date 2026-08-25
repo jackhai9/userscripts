@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.109
+// @version      2.7.110
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -31,7 +31,14 @@ import {
   shouldContinueOpenOrdersClearObservation,
   updateOpenOrdersClearStability,
 } from './core/cancel-orders.js';
-import { isBinanceCancelAllText } from './contracts/account-orders.js';
+import {
+  BINANCE_PAGE_TEXT,
+  buildBinanceTextAlternation,
+  includesBinancePageText,
+  includesCompactBinancePageText,
+  isBinanceCancelAllText,
+  matchesBinancePageText,
+} from './contracts/binance-page-text.js';
 import {
   resolveCloseDisplayQuantities,
   resolveConfirmedCloseDirection,
@@ -178,6 +185,12 @@ import {
   const LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3';
   const BINANCE_PERSIST_KEY = 'persist:futures-trade-ui';
   const BINANCE_POST_ONLY_ORDER_TYPE = 'POST_ONLY';
+  const BINANCE_CLOSEABLE_QUANTITY_LABEL_PATTERN = buildBinanceTextAlternation(
+    BINANCE_PAGE_TEXT.closeableQuantity,
+  );
+  const BINANCE_OPENABLE_QUANTITY_LABEL_PATTERN = buildBinanceTextAlternation(
+    BINANCE_PAGE_TEXT.openableQuantity,
+  );
   const BINANCE_POST_ONLY_TIME_IN_FORCE = 'GTC';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
   const SPACER_ID = 'jh-binance-close-qty-multiplier-spacer';
@@ -737,7 +750,7 @@ import {
     if (!orderType.includes('CONDITIONAL') && !orderType.includes(BINANCE_POST_ONLY_ORDER_TYPE)) return false;
     return !!findVisibleTradeScopeElement(
       '[role="tab"], [role="combobox"], .bn-select-field-input, .bn-select-trigger, .bn-select-field',
-      (el) => /只做Maker|Post Only/i.test((el.textContent || '').replace(/\s+/g, ' ').trim())
+      (el) => includesBinancePageText(el.textContent, BINANCE_PAGE_TEXT.postOnly)
     );
   }
 
@@ -764,9 +777,8 @@ import {
     return rects.some((rect) => rect.width > 0 && rect.height > 0);
   }
 
-  function buttonTextMatches(button, patterns) {
-    const text = (button?.textContent || '').trim().toLowerCase();
-    return patterns.some((pattern) => text.includes(pattern));
+  function buttonTextMatches(button, labels) {
+    return includesBinancePageText(button?.textContent, labels);
   }
 
   function isTradeActionButton(node) {
@@ -896,24 +908,24 @@ import {
     return buttons;
   }
 
-  function findTradeButton(patterns, mode) {
-    return collectTradeButtons(mode).find((candidate) => buttonTextMatches(candidate, patterns)) || null;
+  function findTradeButton(labels, mode) {
+    return collectTradeButtons(mode).find((candidate) => buttonTextMatches(candidate, labels)) || null;
   }
 
   function findCloseLongButton() {
-    return findTradeButton(['平多', 'close long'], 'CLOSE');
+    return findTradeButton(BINANCE_PAGE_TEXT.tradeAction.CLOSE_LONG, 'CLOSE');
   }
 
   function findCloseShortButton() {
-    return findTradeButton(['平空', 'close short'], 'CLOSE');
+    return findTradeButton(BINANCE_PAGE_TEXT.tradeAction.CLOSE_SHORT, 'CLOSE');
   }
 
   function findOpenLongButton() {
-    return findTradeButton(['开多', 'open long'], 'OPEN');
+    return findTradeButton(BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG, 'OPEN');
   }
 
   function findOpenShortButton() {
-    return findTradeButton(['开空', 'open short'], 'OPEN');
+    return findTradeButton(BINANCE_PAGE_TEXT.tradeAction.OPEN_SHORT, 'OPEN');
   }
 
   // ── bapi header 缓存 ──
@@ -1932,7 +1944,9 @@ import {
     return findVisibleTradeScopeElement('[role="tab"]', (tab) => {
       const text = (tab.textContent || '').trim();
       const key = String(tab.getAttribute('data-tab-key') || '').toUpperCase();
-      return key === 'CONDITIONAL' || text.includes('条件委托') || /只做Maker|Post Only/i.test(text);
+      return key === 'CONDITIONAL'
+        || includesBinancePageText(text, BINANCE_PAGE_TEXT.conditionalOrderTab)
+        || includesBinancePageText(text, BINANCE_PAGE_TEXT.postOnly);
     });
   }
 
@@ -1961,7 +1975,7 @@ import {
     return Array.from(options).find((el) => {
       if (!isVisibleElement(el)) return false;
       const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      return /只做Maker|Post Only/i.test(text) && text.length < 120;
+      return includesBinancePageText(text, BINANCE_PAGE_TEXT.postOnly) && text.length < 120;
     }) || null;
   }
 
@@ -2318,9 +2332,7 @@ import {
       button.disabled ||
       button.getAttribute('aria-disabled') === 'true' ||
       button.getAttribute('data-loading') === 'true' ||
-      text.includes('提交中') ||
-      text.includes('placing') ||
-      text.includes('loading') ||
+      includesBinancePageText(text, BINANCE_PAGE_TEXT.submitBusy) ||
       cls.includes('loading') ||
       !!button.querySelector('[class*="loading"], [class*="spinner"], [aria-busy="true"]')
     );
@@ -2943,7 +2955,11 @@ import {
   }
 
   function findOpenOrderRowCancelButton(row) {
-    const icon = row.querySelector('svg[aria-label="撤销挂单"]');
+    const icon = Array.from(row.querySelectorAll('svg[aria-label]'))
+      .find((candidate) => matchesBinancePageText(
+        candidate.getAttribute('aria-label'),
+        BINANCE_PAGE_TEXT.accountOrders.rowCancel,
+      ));
     if (!icon || !isVisibleElement(icon)) return null;
     const target = icon.closest('button, [role="button"], a, [tabindex]') || icon;
     if (!target || !row.contains(target) || !isVisibleElement(target)) return null;
@@ -3009,18 +3025,17 @@ import {
 
   function isOpenOrderRowForPlan(sideText, plan) {
     if (!plan) return true;
-    const normalized = String(sideText || '').replace(/\s+/g, '').toUpperCase();
     if (plan.spec?.mode === 'OPEN' && plan.spec.side === 'LONG') {
-      return normalized.includes('开多') || normalized.includes('OPENLONG');
+      return includesCompactBinancePageText(sideText, BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG);
     }
     if (plan.spec?.mode === 'OPEN' && plan.spec.side === 'SHORT') {
-      return normalized.includes('开空') || normalized.includes('OPENSHORT');
+      return includesCompactBinancePageText(sideText, BINANCE_PAGE_TEXT.tradeAction.OPEN_SHORT);
     }
     if (plan.spec?.mode === 'CLOSE' && plan.spec.side === 'LONG') {
-      return normalized.includes('平多') || normalized.includes('CLOSELONG');
+      return includesCompactBinancePageText(sideText, BINANCE_PAGE_TEXT.tradeAction.CLOSE_LONG);
     }
     if (plan.spec?.mode === 'CLOSE' && plan.spec.side === 'SHORT') {
-      return normalized.includes('平空') || normalized.includes('CLOSESHORT');
+      return includesCompactBinancePageText(sideText, BINANCE_PAGE_TEXT.tradeAction.CLOSE_SHORT);
     }
     return false;
   }
@@ -3963,8 +3978,11 @@ import {
     const nodes = root.querySelectorAll('div, span, p, small');
     for (const node of nodes) {
       const text = (node.textContent || '').trim();
-      if (!text.includes('可平')) continue;
-      const m = text.match(/可平\s*([\d,]*\.?\d+)/);
+      if (!includesBinancePageText(text, BINANCE_PAGE_TEXT.closeableQuantity)) continue;
+      const m = text.match(new RegExp(
+        `(?:${BINANCE_CLOSEABLE_QUANTITY_LABEL_PATTERN})\\s*([\\d,]*\\.?\\d+)`,
+        'i',
+      ));
       if (!m) continue;
       const qty = parseNumber(m[1]);
       if (!(qty >= 0)) continue;
@@ -3994,7 +4012,7 @@ import {
     };
   }
 
-  function readQtyTextNearButton(button, label) {
+  function readQtyTextNearButton(button, labels, labelPattern) {
     if (!button) return null;
     const btnRect = button.getBoundingClientRect();
     const root = getButtonTextSearchRoot(button);
@@ -4002,10 +4020,11 @@ import {
     let best = null;
     let bestScore = Infinity;
     const nodes = root.querySelectorAll('div, span, p, small');
-    const re = new RegExp(`${label}\\s*([\\d,]*\\.?\\d+)`, 'g');
+    const re = new RegExp(`(?:${labelPattern})\\s*([\\d,]*\\.?\\d+)`, 'gi');
     for (const node of nodes) {
       const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!text.includes(label)) continue;
+      if (!includesBinancePageText(text, labels)) continue;
+      re.lastIndex = 0;
       const matches = Array.from(text.matchAll(re));
       if (!matches.length) continue;
       const r = node.getBoundingClientRect();
@@ -4030,8 +4049,16 @@ import {
     const fromTestId = readOpenableQtyByTestIds();
     if (fromTestId) return fromTestId;
     return {
-      longQty: readQtyTextNearButton(openLongBtn, '可开'),
-      shortQty: readQtyTextNearButton(openShortBtn, '可开'),
+      longQty: readQtyTextNearButton(
+        openLongBtn,
+        BINANCE_PAGE_TEXT.openableQuantity,
+        BINANCE_OPENABLE_QUANTITY_LABEL_PATTERN,
+      ),
+      shortQty: readQtyTextNearButton(
+        openShortBtn,
+        BINANCE_PAGE_TEXT.openableQuantity,
+        BINANCE_OPENABLE_QUANTITY_LABEL_PATTERN,
+      ),
       qtySource: 'near_button',
     };
   }

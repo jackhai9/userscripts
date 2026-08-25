@@ -136,6 +136,12 @@ test('Post Only synthetic click helper dispatches a single click event', () => {
   assert.doesNotMatch(clickBody, /\.click\?\.\(\)/);
 });
 
+test('labeled quantity matching resets its global regexp for every DOM node', () => {
+  const readBody = readFunctionBody('readQtyTextNearButton');
+  assert.match(readBody, /new RegExp\([^;]+, 'gi'\)/);
+  assert.match(readBody, /re\.lastIndex = 0;\s*const matches = Array\.from\(text\.matchAll\(re\)\)/);
+});
+
 test('visible SVG controls do not require offset dimensions', () => {
   const visibleBody = readFunctionBody('isVisibleElement');
   assert.match(visibleBody, /Array\.from\(el\.getClientRects\(\)\)/);
@@ -514,7 +520,8 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.doesNotMatch(readRowsBody, /symbolText\.includes\(symbol\)/);
 
   const cancelButtonBody = readFunctionBody('findOpenOrderRowCancelButton');
-  assert.match(cancelButtonBody, /aria-label="撤销挂单"/);
+  assert.match(cancelButtonBody, /matchesBinancePageText/);
+  assert.match(cancelButtonBody, /BINANCE_PAGE_TEXT\.accountOrders\.rowCancel/);
   assert.match(cancelButtonBody, /const target = icon\.closest\('button, \[role="button"\], a, \[tabindex\]'\) \|\| icon/);
   assert.doesNotMatch(cancelButtonBody, /\|\| icon\.parentElement \|\| icon/);
 
@@ -534,15 +541,12 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
 
   const directionBody = readFunctionBody('isOpenOrderRowForPlan');
   assert.match(directionBody, /plan\.spec\?\.mode === 'OPEN'/);
-  assert.match(directionBody, /includes\('开多'\)/);
-  assert.match(directionBody, /includes\('OPENLONG'\)/);
-  assert.match(directionBody, /includes\('开空'\)/);
-  assert.match(directionBody, /includes\('OPENSHORT'\)/);
   assert.match(directionBody, /plan\.spec\?\.mode === 'CLOSE'/);
-  assert.match(directionBody, /includes\('平多'\)/);
-  assert.match(directionBody, /includes\('CLOSELONG'\)/);
-  assert.match(directionBody, /includes\('平空'\)/);
-  assert.match(directionBody, /includes\('CLOSESHORT'\)/);
+  assert.match(directionBody, /includesCompactBinancePageText/);
+  assert.match(directionBody, /BINANCE_PAGE_TEXT\.tradeAction\.OPEN_LONG/);
+  assert.match(directionBody, /BINANCE_PAGE_TEXT\.tradeAction\.OPEN_SHORT/);
+  assert.match(directionBody, /BINANCE_PAGE_TEXT\.tradeAction\.CLOSE_LONG/);
+  assert.match(directionBody, /BINANCE_PAGE_TEXT\.tradeAction\.CLOSE_SHORT/);
   assert.doesNotMatch(directionBody, /includes\('SELL'\)/);
   assert.doesNotMatch(directionBody, /includes\('BUY'\)/);
 

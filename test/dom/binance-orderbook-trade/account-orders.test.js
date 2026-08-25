@@ -156,6 +156,41 @@ test('finds basic open-orders sub tab when conditional sub tab is selected', () 
   assert.equal(selectedSubTab?.textContent.trim(), '条件委托(0)');
 });
 
+test('finds the verified English Basic and Conditional labels with live counts', () => {
+  const { window } = loadFixtureDom(`
+    <section id="account-orders">
+      <div class="account-tab-group">
+        <div role="tab" aria-selected="false">Positions(1)</div>
+        <div role="tab" aria-selected="true">Open Orders(31)</div>
+        <div role="tab" aria-selected="false">Order History</div>
+        <div role="tab" aria-selected="false">Trade History</div>
+        <div role="tab" aria-selected="false">Transaction History</div>
+      </div>
+      <div id="OPEN_ORDERS">
+        <div role="tab" aria-selected="false">Basic(31)</div>
+        <div role="tab" aria-selected="true">Conditional(0)</div>
+        <label role="checkbox" name="hideOtherSymbol" aria-checked="true">Hide Other Symbols</label>
+        <button>Cancel All</button>
+      </div>
+    </section>
+  `);
+  const scope = getActiveOpenOrdersScope(window.document, {
+    isVisibleElement,
+    findHideOtherSymbolCheckbox: (root) => root.querySelector('[role="checkbox"][name="hideOtherSymbol"]'),
+    findCurrentSymbolCancelAllButton: (root) => Array.from(root.querySelectorAll('button'))
+      .find((button) => button.textContent.trim() === 'Cancel All') || null,
+  });
+
+  assert.equal(
+    findOpenOrdersBasicSubTab(scope, { isVisibleElement })?.textContent.trim(),
+    'Basic(31)',
+  );
+  assert.equal(
+    findSelectedOpenOrdersSubTab(scope, { isVisibleElement })?.textContent.trim(),
+    'Conditional(0)',
+  );
+});
+
 test('reacquires account and open-orders tabs by semantic identity after rerender', () => {
   const { window } = loadFixtureDom(openOrdersHtml);
   const selectedAccountTab = window.document.querySelector('#account-orders [role="tab"][aria-selected="true"]');
