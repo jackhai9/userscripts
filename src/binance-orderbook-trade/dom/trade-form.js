@@ -14,11 +14,33 @@ const TRADE_MODE_LABELS = Object.freeze({
   CLOSE: new Set(['平仓', 'close']),
 });
 
+const AVAILABLE_BALANCE_LABELS = new Set(['可用', 'avbl']);
+
 export function parseTradeModeLabel(value) {
   const normalized = String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
   if (TRADE_MODE_LABELS.OPEN.has(normalized)) return 'OPEN';
   if (TRADE_MODE_LABELS.CLOSE.has(normalized)) return 'CLOSE';
   return null;
+}
+
+export function readTradeAvailableBalance(root, { isVisibleElement }) {
+  if (!root?.querySelectorAll || typeof isVisibleElement !== 'function') return null;
+  const candidates = Array.from(root.querySelectorAll('span'))
+    .filter((label) => (
+      isVisibleElement(label)
+      && AVAILABLE_BALANCE_LABELS.has(String(label.textContent || '').trim().toLowerCase())
+    ))
+    .map((label) => {
+      const valueNodes = Array.from(label.parentElement?.children || [])
+        .filter((node) => node !== label && isVisibleElement(node));
+      if (valueNodes.length !== 1) return null;
+      const match = /^([\d,]+(?:\.\d+)?)\s+([A-Z0-9]+)$/.exec(
+        String(valueNodes[0].textContent || '').replace(/\s+/g, ' ').trim(),
+      );
+      return match ? { amount: match[1].replace(/,/g, ''), asset: match[2] } : null;
+    })
+    .filter(Boolean);
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 function isCloseQuantityNode(node) {

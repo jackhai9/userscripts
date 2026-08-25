@@ -9,6 +9,7 @@ import {
   mutationTouchesCloseQuantity,
   parseTradeModeLabel,
   placeTradePanelSpacer,
+  readTradeAvailableBalance,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
 import { loadFixtureDom } from '../../helpers/dom.js';
 
@@ -47,6 +48,44 @@ test('trade-mode parsing rejects action labels instead of guessing a mode', () =
   assert.equal(parseTradeModeLabel('Close Short'), null);
   assert.equal(parseTradeModeLabel('开多'), null);
   assert.equal(parseTradeModeLabel('平空'), null);
+});
+
+test('reads the exact Chinese and English available-balance contract', () => {
+  for (const label of ['可用', 'Avbl']) {
+    const dom = loadFixtureDom(`
+      <section id="trade-form">
+        <div class="bn-flex items-center gap-[4px]">
+          <span>${label}</span>
+          <span>0.00 USDT</span>
+        </div>
+      </section>
+    `);
+    const { document } = dom.window;
+
+    assert.deepEqual(
+      readTradeAvailableBalance(document.querySelector('#trade-form'), {
+        isVisibleElement: () => true,
+      }),
+      { amount: '0.00', asset: 'USDT' },
+    );
+  }
+});
+
+test('rejects missing, malformed, or ambiguous available-balance contracts', () => {
+  const dom = loadFixtureDom(`
+    <section id="trade-form">
+      <div><span>可用</span><span>0.00 USDT</span></div>
+      <div><span>可用</span><span>1.00 USDT</span></div>
+      <div><span>Available</span><span>not-a-balance</span></div>
+    </section>
+  `);
+
+  assert.equal(
+    readTradeAvailableBalance(dom.window.document.querySelector('#trade-form'), {
+      isVisibleElement: () => true,
+    }),
+    null,
+  );
 });
 
 test('panel spacer is restored before native trade mode after a rerender moves it', () => {

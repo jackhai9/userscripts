@@ -35,6 +35,7 @@ export function waitForAccountOrdersMutationState(observationRoot, readState, ti
     observer.observe(observationRoot, {
       subtree: true,
       childList: true,
+      characterData: true,
       attributes: true,
       attributeFilter: ['aria-selected', 'aria-checked', 'class', 'style'],
     });

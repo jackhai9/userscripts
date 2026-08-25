@@ -204,3 +204,23 @@ test('mutation wait survives replacement of the OPEN_ORDERS subtree', async () =
   assert.equal(oldScope.isConnected, false);
   assert.equal(resolvedScope, replacementScope);
 });
+
+test('mutation wait reacts when Binance updates row text in place', async () => {
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const observationRoot = window.document.querySelector('#account-orders');
+  const scope = window.document.querySelector('#OPEN_ORDERS');
+  const marker = window.document.createElement('span');
+  marker.textContent = 'loading';
+  scope.append(marker);
+  const wait = waitForAccountOrdersMutationState(
+    observationRoot,
+    () => marker.textContent === 'ready' ? marker : null,
+    200,
+  );
+  const startedAt = Date.now();
+
+  marker.firstChild.data = 'ready';
+
+  assert.equal(await wait, marker);
+  assert.ok(Date.now() - startedAt < 100, 'characterData should resolve through the observer, not timeout');
+});
