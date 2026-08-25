@@ -135,7 +135,7 @@ export function resolveCancelSymbolButtonPresentation({
     label: cancelRunning
       ? '撤单处理中'
       : noOrdersFeedback && !ladderRunning
-        ? '已检查'
+        ? '无挂单'
         : '撤本币挂单',
   };
 }

@@ -31,7 +31,7 @@ test('cancel button exposes no-order completion feedback without disabling new a
     ladderRunning: false,
     cancelRunning: false,
     noOrdersFeedback: true,
-  }), { disabled: false, label: '已检查' });
+  }), { disabled: false, label: '无挂单' });
   assert.deepEqual(resolveCancelSymbolButtonPresentation({
     ladderRunning: true,
     cancelRunning: false,
