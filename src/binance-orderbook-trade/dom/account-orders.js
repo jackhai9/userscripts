@@ -2,6 +2,13 @@ import {
   isOpenOrdersTabText,
   normalizeText,
 } from '../core/cancel-orders.js';
+import {
+  BINANCE_PAGE_TEXT,
+  includesBinancePageText,
+  matchesBinancePageText,
+  parseBinanceTabCount,
+  startsWithBinancePageText,
+} from '../contracts/binance-page-text.js';
 
 function getNormalizedText(el) {
   return normalizeText(el?.textContent || '');
@@ -49,9 +56,9 @@ function hasAccountOrdersTabs(node, isVisibleElement) {
     .map(getNormalizedText)
     .join(' ');
   return (
-    /(仓位|Positions)/i.test(tabTexts) &&
-    /(当前\s*委托|Open Orders)/i.test(tabTexts) &&
-    /(历史委托|Order History|历史成交|Trade History|资金流水|Transaction)/i.test(tabTexts)
+    includesBinancePageText(tabTexts, BINANCE_PAGE_TEXT.accountOrders.positionTab) &&
+    includesBinancePageText(tabTexts, BINANCE_PAGE_TEXT.accountOrders.openOrdersTab) &&
+    includesBinancePageText(tabTexts, BINANCE_PAGE_TEXT.accountOrders.historyTab)
   );
 }
 
@@ -62,8 +69,10 @@ function containsNestedAccountOrdersGroupOutsideTab(node, tab, isVisibleElement)
 }
 
 function hasOpenOrdersPanelText(node) {
-  return /(基础单|条件委托|Open Orders|成交数量|只减仓|只做Maker|生效时间|追单)/i
-    .test(getNormalizedText(node));
+  return includesBinancePageText(
+    getNormalizedText(node),
+    BINANCE_PAGE_TEXT.accountOrders.panelEvidence,
+  );
 }
 
 function hasOpenOrdersPanelEvidence(node, {
@@ -75,20 +84,20 @@ function hasOpenOrdersPanelEvidence(node, {
 }
 
 function isOpenOrdersBasicSubTabText(text) {
-  return /^(基础单|Basic Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
+  return startsWithBinancePageText(text, BINANCE_PAGE_TEXT.accountOrders.basicSubTab);
 }
 
 function isOpenOrdersConditionalSubTabText(text) {
-  return /^(条件委托|Conditional Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
+  return startsWithBinancePageText(text, BINANCE_PAGE_TEXT.accountOrders.conditionalSubTab);
 }
 
 function isAccountPositionTabText(text) {
-  return /^(仓位|Positions)(?:\s*\(\d+\))?$/i.test(normalizeText(text));
+  return matchesBinancePageText(text, BINANCE_PAGE_TEXT.accountOrders.positionTab)
+    || parseBinanceTabCount(text, BINANCE_PAGE_TEXT.accountOrders.positionTab) !== null;
 }
 
 export function parseAccountPositionTabCount(text) {
-  const match = normalizeText(text).match(/^(?:仓位|Positions)\s*\((\d+)\)$/i);
-  return match ? Number(match[1]) : null;
+  return parseBinanceTabCount(text, BINANCE_PAGE_TEXT.accountOrders.positionTab);
 }
 
 export function findOpenOrdersBasicSubTab(root, { isVisibleElement }) {

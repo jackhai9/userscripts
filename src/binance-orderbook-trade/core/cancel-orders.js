@@ -1,20 +1,25 @@
 import {
+  BINANCE_PAGE_TEXT,
+  buildBinanceTextAlternation,
   hasBinanceCurrentSymbolOpenOrdersEmptyText,
-} from '../contracts/account-orders.js';
+  parseBinanceTabCount,
+  startsWithBinancePageText,
+} from '../contracts/binance-page-text.js';
+
+const PERPETUAL_LABEL_PATTERN = buildBinanceTextAlternation(
+  BINANCE_PAGE_TEXT.accountOrders.perpetual,
+);
 
 export function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
 export function isOpenOrdersTabText(text) {
-  const normalized = normalizeText(text);
-  return /^当前\s*委托(?:\(|\s|$)/.test(normalized) || /^Open Orders(?:\(|\s|$)/i.test(normalized);
+  return startsWithBinancePageText(text, BINANCE_PAGE_TEXT.accountOrders.openOrdersTab);
 }
 
 export function parseOpenOrdersTabCount(text) {
-  const normalized = normalizeText(text);
-  const match = /(?:当前\s*委托|Open Orders)\s*\(?\s*(\d+)\s*\)?/i.exec(normalized);
-  return match ? Number(match[1]) : null;
+  return parseBinanceTabCount(text, BINANCE_PAGE_TEXT.accountOrders.openOrdersTab);
 }
 
 function escapeRegExp(value) {
@@ -44,14 +49,20 @@ function hasVisibleContractText(text, symbol) {
   const normalizedSymbol = String(symbol || '').toUpperCase();
   if (!normalizedSymbol) return false;
   const symbolPattern = escapeRegExp(normalizedSymbol);
-  return new RegExp(`(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*(?:永续|PERP\\b)`, 'i')
+  return new RegExp(
+    `(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`,
+    'i',
+  )
     .test(String(text || ''));
 }
 
 export function readVisibleOpenOrderSymbolsText(text) {
   const normalized = String(text || '').toUpperCase();
   const symbols = new Set();
-  const pattern = /([A-Z0-9]{2,30}(?:USDT|USDC))\s*(?:永续|PERP\b)/g;
+  const pattern = new RegExp(
+    `([A-Z0-9]{2,30}(?:USDT|USDC))\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`,
+    'gi',
+  );
   let match = pattern.exec(normalized);
   while (match) {
     const separator = normalized[match.index - 1] || '';
@@ -102,7 +113,7 @@ export function isCurrentSymbolOpenOrdersFilterReady({
 }
 
 /**
- * Binance renders this explicit empty state only after the active Basic Orders
+ * Binance renders this explicit empty state only after the active basic-order
  * pane has resolved its current filter. Account-wide order counts are not
  * current-symbol evidence because other symbols can still have open orders.
  */

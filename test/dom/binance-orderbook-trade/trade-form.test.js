@@ -33,6 +33,30 @@ test('collects trade action buttons from explicit trade scopes and ignores own p
   assert.deepEqual(openButtons.map((button) => button.textContent.trim()), ['开多', '开空']);
 });
 
+test('collects the verified English trade action labels', () => {
+  const { window } = loadFixtureDom(`
+    <section id="trade-form">
+      <button>Open Long</button>
+      <button>Open Short</button>
+      <button>Close Long</button>
+      <button>Close Short</button>
+    </section>
+  `);
+  const scope = window.document.querySelector('#trade-form');
+
+  const openButtons = collectTradeButtonsFromScopes([scope], 'OPEN', {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement,
+  });
+  const closeButtons = collectTradeButtonsFromScopes([scope], 'CLOSE', {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement,
+  });
+
+  assert.deepEqual(openButtons.map((button) => button.textContent.trim()), ['Open Long', 'Open Short']);
+  assert.deepEqual(closeButtons.map((button) => button.textContent.trim()), ['Close Long', 'Close Short']);
+});
+
 test('reads the unique split leverage button from the active trade scope', () => {
   const { window } = loadFixtureDom(`
     <section id="trade-form">

@@ -20,7 +20,7 @@ import {
 import {
   hasBinanceCurrentSymbolOpenOrdersEmptyText,
   isBinanceCancelAllText,
-} from '../../../src/binance-orderbook-trade/contracts/account-orders.js';
+} from '../../../src/binance-orderbook-trade/contracts/binance-page-text.js';
 
 test('cancel button exposes no-order completion feedback without disabling new actions', () => {
   assert.deepEqual(resolveCancelSymbolButtonPresentation({

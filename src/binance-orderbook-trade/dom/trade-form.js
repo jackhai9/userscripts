@@ -1,6 +1,11 @@
-function buttonTextMatches(button, patterns) {
-  const text = (button?.textContent || '').trim().toLowerCase();
-  return patterns.some((pattern) => text.includes(pattern));
+import {
+  BINANCE_PAGE_TEXT,
+  includesBinancePageText,
+  matchesBinancePageText,
+} from '../contracts/binance-page-text.js';
+
+function buttonTextMatches(button, labels) {
+  return includesBinancePageText(button?.textContent, labels);
 }
 
 function isOwnPanelButton(button, panelId) {
@@ -9,17 +14,9 @@ function isOwnPanelButton(button, panelId) {
 
 const CLOSE_QUANTITY_SELECTOR = '[data-testid="max-sell-amount"], [data-testid="max-buy-amount"]';
 
-const TRADE_MODE_LABELS = Object.freeze({
-  OPEN: new Set(['开仓', 'open']),
-  CLOSE: new Set(['平仓', 'close']),
-});
-
-const AVAILABLE_BALANCE_LABELS = new Set(['可用', 'avbl']);
-
 export function parseTradeModeLabel(value) {
-  const normalized = String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-  if (TRADE_MODE_LABELS.OPEN.has(normalized)) return 'OPEN';
-  if (TRADE_MODE_LABELS.CLOSE.has(normalized)) return 'CLOSE';
+  if (matchesBinancePageText(value, BINANCE_PAGE_TEXT.tradeMode.OPEN)) return 'OPEN';
+  if (matchesBinancePageText(value, BINANCE_PAGE_TEXT.tradeMode.CLOSE)) return 'CLOSE';
   return null;
 }
 
@@ -28,7 +25,7 @@ export function readTradeAvailableBalance(root, { isVisibleElement }) {
   const candidates = Array.from(root.querySelectorAll('span'))
     .filter((label) => (
       isVisibleElement(label)
-      && AVAILABLE_BALANCE_LABELS.has(String(label.textContent || '').trim().toLowerCase())
+      && matchesBinancePageText(label.textContent, BINANCE_PAGE_TEXT.availableBalance)
     ))
     .map((label) => {
       const valueNodes = Array.from(label.parentElement?.children || [])
@@ -140,25 +137,17 @@ export function isTradeActionButton(node, { panelId }) {
   if (!node?.matches) return false;
   const button = node.matches('button') ? node : node.closest('button');
   if (!button || isOwnPanelButton(button, panelId)) return false;
-  return buttonTextMatches(button, [
-    '开多',
-    'open long',
-    '开空',
-    'open short',
-    '平多',
-    'close long',
-    '平空',
-    'close short',
-  ]);
+  return Object.values(BINANCE_PAGE_TEXT.tradeAction)
+    .some((labels) => buttonTextMatches(button, labels));
 }
 
 export function collectTradeButtonsFromScopes(scopes, mode, {
   panelId,
   isVisibleElement,
 }) {
-  const modePatterns = mode === 'OPEN'
-    ? ['开多', 'open long', '开空', 'open short']
-    : ['平多', 'close long', '平空', 'close short'];
+  const modeLabels = mode === 'OPEN'
+    ? [BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG, BINANCE_PAGE_TEXT.tradeAction.OPEN_SHORT]
+    : [BINANCE_PAGE_TEXT.tradeAction.CLOSE_LONG, BINANCE_PAGE_TEXT.tradeAction.CLOSE_SHORT];
   const buttons = [];
   const seen = new Set();
   const collectFrom = (scope) => {
@@ -166,7 +155,7 @@ export function collectTradeButtonsFromScopes(scopes, mode, {
     for (const candidate of scope.querySelectorAll('button')) {
       if (seen.has(candidate) || isOwnPanelButton(candidate, panelId) || !isVisibleElement(candidate)) continue;
       seen.add(candidate);
-      if (buttonTextMatches(candidate, modePatterns)) buttons.push(candidate);
+      if (modeLabels.some((labels) => buttonTextMatches(candidate, labels))) buttons.push(candidate);
     }
   };
 

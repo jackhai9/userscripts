@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.109
+// @version      2.7.110
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -16,42 +16,126 @@
 // @grant        none
 // ==/UserScript==
 (() => {
-  // src/binance-orderbook-trade/contracts/account-orders.js
-  var BINANCE_ACCOUNT_ORDERS_TEXT = Object.freeze({
-    currentSymbolEmpty: Object.freeze([
-      "暂无当前委托。",
-      "You have no open orders."
-    ]),
-    cancelAll: Object.freeze([
-      "全撤",
-      "全部撤单",
-      "撤销全部",
-      "Cancel All"
-    ])
+  // src/binance-orderbook-trade/contracts/binance-page-text.js
+  var freezeLabels = (labels) => Object.freeze(labels);
+  var BINANCE_PAGE_TEXT = Object.freeze({
+    tradeMode: Object.freeze({
+      OPEN: freezeLabels(["开仓", "Open"]),
+      CLOSE: freezeLabels(["平仓", "Close"])
+    }),
+    tradeAction: Object.freeze({
+      OPEN_LONG: freezeLabels(["开多", "Open Long"]),
+      OPEN_SHORT: freezeLabels(["开空", "Open Short"]),
+      CLOSE_LONG: freezeLabels(["平多", "Close Long"]),
+      CLOSE_SHORT: freezeLabels(["平空", "Close Short"])
+    }),
+    availableBalance: freezeLabels(["可用", "Avbl"]),
+    postOnly: freezeLabels(["只做Maker", "Post Only"]),
+    conditionalOrderTab: freezeLabels(["条件委托", "Conditional"]),
+    submitBusy: freezeLabels(["提交中", "Placing", "Loading"]),
+    openableQuantity: freezeLabels(["可开"]),
+    closeableQuantity: freezeLabels(["可平"]),
+    cancelAllDialog: freezeLabels(["确定取消全部订单", "Cancel all orders"]),
+    accountOrders: Object.freeze({
+      positionTab: freezeLabels(["仓位", "Positions"]),
+      openOrdersTab: freezeLabels(["当前委托", "Open Orders"]),
+      historyTab: freezeLabels([
+        "历史委托",
+        "Order History",
+        "历史成交",
+        "Trade History",
+        "资金流水",
+        "Transaction History"
+      ]),
+      basicSubTab: freezeLabels(["基础单", "Basic"]),
+      conditionalSubTab: freezeLabels(["条件委托", "Conditional"]),
+      panelEvidence: freezeLabels([
+        "基础单",
+        "Basic",
+        "条件委托",
+        "Conditional",
+        "Open Orders",
+        "成交数量",
+        "只减仓",
+        "只做Maker",
+        "Post Only",
+        "生效时间",
+        "追单",
+        "Chase"
+      ]),
+      currentSymbolEmpty: freezeLabels([
+        "暂无当前委托。",
+        "You have no open orders."
+      ]),
+      cancelAll: freezeLabels([
+        "全撤",
+        "全部撤单",
+        "撤销全部",
+        "Cancel All"
+      ]),
+      hideOtherSymbols: freezeLabels(["隐藏其他合约", "Hide Other Symbols"]),
+      rowCancel: freezeLabels(["撤销挂单", "Cancel Order"]),
+      perpetual: freezeLabels(["永续", "Perp"])
+    })
   });
+  function normalizeBinancePageText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+  function normalizeForComparison(value) {
+    return normalizeBinancePageText(value).toLocaleLowerCase();
+  }
+  function matchesBinancePageText(value, labels) {
+    const normalized = normalizeForComparison(value);
+    return labels.some((label) => normalizeForComparison(label) === normalized);
+  }
+  function includesBinancePageText(value, labels) {
+    const normalized = normalizeForComparison(value);
+    return labels.some((label) => normalized.includes(normalizeForComparison(label)));
+  }
+  function includesCompactBinancePageText(value, labels) {
+    const normalized = normalizeForComparison(value).replace(/\s+/g, "");
+    return labels.some((label) => normalized.includes(normalizeForComparison(label).replace(/\s+/g, "")));
+  }
+  function startsWithBinancePageText(value, labels) {
+    const normalized = normalizeForComparison(value);
+    return labels.some((label) => {
+      const normalizedLabel = normalizeForComparison(label);
+      return normalized === normalizedLabel || normalized.startsWith(`${normalizedLabel}(`) || normalized.startsWith(`${normalizedLabel} (`);
+    });
+  }
+  function parseBinanceTabCount(value, labels) {
+    const normalized = normalizeForComparison(value);
+    for (const label of labels) {
+      const normalizedLabel = normalizeForComparison(label);
+      if (!normalized.startsWith(normalizedLabel)) continue;
+      const suffix = normalized.slice(normalizedLabel.length);
+      const match = /^\s*\(\s*(\d+)\s*\)$/.exec(suffix);
+      return match ? Number(match[1]) : null;
+    }
+    return null;
+  }
+  function buildBinanceTextAlternation(labels) {
+    return labels.map((label) => String(label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  }
   function hasBinanceCurrentSymbolOpenOrdersEmptyText(value) {
-    const text = String(value || "");
-    return BINANCE_ACCOUNT_ORDERS_TEXT.currentSymbolEmpty.some((label) => text.includes(label));
+    return includesBinancePageText(value, BINANCE_PAGE_TEXT.accountOrders.currentSymbolEmpty);
   }
   function isBinanceCancelAllText(value) {
-    const normalized = String(value || "").trim().toLocaleLowerCase();
-    return BINANCE_ACCOUNT_ORDERS_TEXT.cancelAll.some(
-      (label) => label.toLocaleLowerCase() === normalized
-    );
+    return matchesBinancePageText(value, BINANCE_PAGE_TEXT.accountOrders.cancelAll);
   }
 
   // src/binance-orderbook-trade/core/cancel-orders.js
+  var PERPETUAL_LABEL_PATTERN = buildBinanceTextAlternation(
+    BINANCE_PAGE_TEXT.accountOrders.perpetual
+  );
   function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
   function isOpenOrdersTabText(text) {
-    const normalized = normalizeText(text);
-    return /^当前\s*委托(?:\(|\s|$)/.test(normalized) || /^Open Orders(?:\(|\s|$)/i.test(normalized);
+    return startsWithBinancePageText(text, BINANCE_PAGE_TEXT.accountOrders.openOrdersTab);
   }
   function parseOpenOrdersTabCount(text) {
-    const normalized = normalizeText(text);
-    const match = /(?:当前\s*委托|Open Orders)\s*\(?\s*(\d+)\s*\)?/i.exec(normalized);
-    return match ? Number(match[1]) : null;
+    return parseBinanceTabCount(text, BINANCE_PAGE_TEXT.accountOrders.openOrdersTab);
   }
   function escapeRegExp(value) {
     return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -77,12 +161,18 @@
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const symbolPattern = escapeRegExp(normalizedSymbol);
-    return new RegExp(`(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*(?:永续|PERP\\b)`, "i").test(String(text || ""));
+    return new RegExp(
+      `(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`,
+      "i"
+    ).test(String(text || ""));
   }
   function readVisibleOpenOrderSymbolsText(text) {
     const normalized = String(text || "").toUpperCase();
     const symbols = /* @__PURE__ */ new Set();
-    const pattern = /([A-Z0-9]{2,30}(?:USDT|USDC))\s*(?:永续|PERP\b)/g;
+    const pattern = new RegExp(
+      `([A-Z0-9]{2,30}(?:USDT|USDC))\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`,
+      "gi"
+    );
     let match = pattern.exec(normalized);
     while (match) {
       const separator = normalized[match.index - 1] || "";
@@ -785,13 +875,16 @@
   }
   function hasAccountOrdersTabs(node, isVisibleElement) {
     const tabTexts = Array.from(node.querySelectorAll('[role="tab"]')).filter(isVisibleElement).map(getNormalizedText).join(" ");
-    return /(仓位|Positions)/i.test(tabTexts) && /(当前\s*委托|Open Orders)/i.test(tabTexts) && /(历史委托|Order History|历史成交|Trade History|资金流水|Transaction)/i.test(tabTexts);
+    return includesBinancePageText(tabTexts, BINANCE_PAGE_TEXT.accountOrders.positionTab) && includesBinancePageText(tabTexts, BINANCE_PAGE_TEXT.accountOrders.openOrdersTab) && includesBinancePageText(tabTexts, BINANCE_PAGE_TEXT.accountOrders.historyTab);
   }
   function containsNestedAccountOrdersGroupOutsideTab(node, tab, isVisibleElement) {
     return Array.from(node.children).some((child) => !child.contains(tab) && hasAccountOrdersTabs(child, isVisibleElement));
   }
   function hasOpenOrdersPanelText(node) {
-    return /(基础单|条件委托|Open Orders|成交数量|只减仓|只做Maker|生效时间|追单)/i.test(getNormalizedText(node));
+    return includesBinancePageText(
+      getNormalizedText(node),
+      BINANCE_PAGE_TEXT.accountOrders.panelEvidence
+    );
   }
   function hasOpenOrdersPanelEvidence(node, {
     findHideOtherSymbolCheckbox,
@@ -801,17 +894,16 @@
     return Boolean(findHideOtherSymbolCheckbox(node) && hasOpenOrdersPanelText(node));
   }
   function isOpenOrdersBasicSubTabText(text) {
-    return /^(基础单|Basic Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
+    return startsWithBinancePageText(text, BINANCE_PAGE_TEXT.accountOrders.basicSubTab);
   }
   function isOpenOrdersConditionalSubTabText(text) {
-    return /^(条件委托|Conditional Orders?)(?:\(|\s|$)/i.test(normalizeText(text));
+    return startsWithBinancePageText(text, BINANCE_PAGE_TEXT.accountOrders.conditionalSubTab);
   }
   function isAccountPositionTabText(text) {
-    return /^(仓位|Positions)(?:\s*\(\d+\))?$/i.test(normalizeText(text));
+    return matchesBinancePageText(text, BINANCE_PAGE_TEXT.accountOrders.positionTab) || parseBinanceTabCount(text, BINANCE_PAGE_TEXT.accountOrders.positionTab) !== null;
   }
   function parseAccountPositionTabCount(text) {
-    const match = normalizeText(text).match(/^(?:仓位|Positions)\s*\((\d+)\)$/i);
-    return match ? Number(match[1]) : null;
+    return parseBinanceTabCount(text, BINANCE_PAGE_TEXT.accountOrders.positionTab);
   }
   function findOpenOrdersBasicSubTab(root, { isVisibleElement }) {
     return Array.from(root.querySelectorAll('[role="tab"]')).find((tab) => isVisibleElement(tab) && isOpenOrdersBasicSubTabText(getNormalizedText(tab))) || null;
@@ -907,28 +999,21 @@
   }
 
   // src/binance-orderbook-trade/dom/trade-form.js
-  function buttonTextMatches(button, patterns) {
-    const text = (button?.textContent || "").trim().toLowerCase();
-    return patterns.some((pattern) => text.includes(pattern));
+  function buttonTextMatches(button, labels) {
+    return includesBinancePageText(button?.textContent, labels);
   }
   function isOwnPanelButton(button, panelId) {
     return !!button?.closest?.(`#${panelId}`);
   }
   var CLOSE_QUANTITY_SELECTOR = '[data-testid="max-sell-amount"], [data-testid="max-buy-amount"]';
-  var TRADE_MODE_LABELS = Object.freeze({
-    OPEN: /* @__PURE__ */ new Set(["开仓", "open"]),
-    CLOSE: /* @__PURE__ */ new Set(["平仓", "close"])
-  });
-  var AVAILABLE_BALANCE_LABELS = /* @__PURE__ */ new Set(["可用", "avbl"]);
   function parseTradeModeLabel(value) {
-    const normalized = String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
-    if (TRADE_MODE_LABELS.OPEN.has(normalized)) return "OPEN";
-    if (TRADE_MODE_LABELS.CLOSE.has(normalized)) return "CLOSE";
+    if (matchesBinancePageText(value, BINANCE_PAGE_TEXT.tradeMode.OPEN)) return "OPEN";
+    if (matchesBinancePageText(value, BINANCE_PAGE_TEXT.tradeMode.CLOSE)) return "CLOSE";
     return null;
   }
   function readTradeAvailableBalance(root, { isVisibleElement }) {
     if (!root?.querySelectorAll || typeof isVisibleElement !== "function") return null;
-    const candidates = Array.from(root.querySelectorAll("span")).filter((label) => isVisibleElement(label) && AVAILABLE_BALANCE_LABELS.has(String(label.textContent || "").trim().toLowerCase())).map((label) => {
+    const candidates = Array.from(root.querySelectorAll("span")).filter((label) => isVisibleElement(label) && matchesBinancePageText(label.textContent, BINANCE_PAGE_TEXT.availableBalance)).map((label) => {
       const valueNodes = Array.from(label.parentElement?.children || []).filter((node) => node !== label && isVisibleElement(node));
       if (valueNodes.length !== 1) return null;
       const match = /^([\d,]+(?:\.\d+)?)\s+([A-Z0-9]+)$/.exec(
@@ -999,22 +1084,13 @@
     if (!node?.matches) return false;
     const button = node.matches("button") ? node : node.closest("button");
     if (!button || isOwnPanelButton(button, panelId)) return false;
-    return buttonTextMatches(button, [
-      "开多",
-      "open long",
-      "开空",
-      "open short",
-      "平多",
-      "close long",
-      "平空",
-      "close short"
-    ]);
+    return Object.values(BINANCE_PAGE_TEXT.tradeAction).some((labels) => buttonTextMatches(button, labels));
   }
   function collectTradeButtonsFromScopes(scopes, mode, {
     panelId,
     isVisibleElement
   }) {
-    const modePatterns = mode === "OPEN" ? ["开多", "open long", "开空", "open short"] : ["平多", "close long", "平空", "close short"];
+    const modeLabels = mode === "OPEN" ? [BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG, BINANCE_PAGE_TEXT.tradeAction.OPEN_SHORT] : [BINANCE_PAGE_TEXT.tradeAction.CLOSE_LONG, BINANCE_PAGE_TEXT.tradeAction.CLOSE_SHORT];
     const buttons = [];
     const seen = /* @__PURE__ */ new Set();
     const collectFrom = (scope) => {
@@ -1022,7 +1098,7 @@
       for (const candidate of scope.querySelectorAll("button")) {
         if (seen.has(candidate) || isOwnPanelButton(candidate, panelId) || !isVisibleElement(candidate)) continue;
         seen.add(candidate);
-        if (buttonTextMatches(candidate, modePatterns)) buttons.push(candidate);
+        if (modeLabels.some((labels) => buttonTextMatches(candidate, labels))) buttons.push(candidate);
       }
     };
     for (const scope of scopes) collectFrom(scope);
@@ -1292,14 +1368,16 @@
 
   // src/binance-orderbook-trade/dom/cancel-all-dialog.js
   var DIALOG_CANDIDATE_SELECTOR = '[role="dialog"], [class*="modal"], [class*="Modal"]';
-  var CANCEL_ALL_DIALOG_TEXT_PATTERN = /(?:确定取消全部订单|Cancel all orders)/i;
   var PRIMARY_BUTTON_SELECTOR = "button.bn-button.bn-button__primary";
   function normalizeText2(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
   function getDialogContract(dialog, isVisibleElement) {
     if (!isVisibleElement(dialog)) return null;
-    if (!CANCEL_ALL_DIALOG_TEXT_PATTERN.test(normalizeText2(dialog.textContent))) return null;
+    if (!includesBinancePageText(
+      normalizeText2(dialog.textContent),
+      BINANCE_PAGE_TEXT.cancelAllDialog
+    )) return null;
     const buttons = Array.from(dialog.querySelectorAll("button")).filter(isVisibleElement);
     if (!buttons.length) return null;
     if (buttons.length !== 2) {
@@ -1428,6 +1506,12 @@
     const LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = "jh_binance_orderbook_precision_samples_v3";
     const BINANCE_PERSIST_KEY = "persist:futures-trade-ui";
     const BINANCE_POST_ONLY_ORDER_TYPE = "POST_ONLY";
+    const BINANCE_CLOSEABLE_QUANTITY_LABEL_PATTERN = buildBinanceTextAlternation(
+      BINANCE_PAGE_TEXT.closeableQuantity
+    );
+    const BINANCE_OPENABLE_QUANTITY_LABEL_PATTERN = buildBinanceTextAlternation(
+      BINANCE_PAGE_TEXT.openableQuantity
+    );
     const BINANCE_POST_ONLY_TIME_IN_FORCE = "GTC";
     const PANEL_ID = "jh-binance-close-qty-multiplier-panel";
     const SPACER_ID = "jh-binance-close-qty-multiplier-spacer";
@@ -1891,7 +1975,7 @@
       if (!orderType.includes("CONDITIONAL") && !orderType.includes(BINANCE_POST_ONLY_ORDER_TYPE)) return false;
       return !!findVisibleTradeScopeElement(
         '[role="tab"], [role="combobox"], .bn-select-field-input, .bn-select-trigger, .bn-select-field',
-        (el) => /只做Maker|Post Only/i.test((el.textContent || "").replace(/\s+/g, " ").trim())
+        (el) => includesBinancePageText(el.textContent, BINANCE_PAGE_TEXT.postOnly)
       );
     }
     function getActiveTradeTab() {
@@ -1909,9 +1993,8 @@
       if (el.offsetWidth || el.offsetHeight) return true;
       return rects.some((rect) => rect.width > 0 && rect.height > 0);
     }
-    function buttonTextMatches2(button, patterns) {
-      const text = (button?.textContent || "").trim().toLowerCase();
-      return patterns.some((pattern) => text.includes(pattern));
+    function buttonTextMatches2(button, labels) {
+      return includesBinancePageText(button?.textContent, labels);
     }
     function isTradeActionButton2(node) {
       return isTradeActionButton(node, { panelId: PANEL_ID });
@@ -2015,20 +2098,20 @@
       };
       return buttons;
     }
-    function findTradeButton(patterns, mode) {
-      return collectTradeButtons(mode).find((candidate) => buttonTextMatches2(candidate, patterns)) || null;
+    function findTradeButton(labels, mode) {
+      return collectTradeButtons(mode).find((candidate) => buttonTextMatches2(candidate, labels)) || null;
     }
     function findCloseLongButton() {
-      return findTradeButton(["平多", "close long"], "CLOSE");
+      return findTradeButton(BINANCE_PAGE_TEXT.tradeAction.CLOSE_LONG, "CLOSE");
     }
     function findCloseShortButton() {
-      return findTradeButton(["平空", "close short"], "CLOSE");
+      return findTradeButton(BINANCE_PAGE_TEXT.tradeAction.CLOSE_SHORT, "CLOSE");
     }
     function findOpenLongButton() {
-      return findTradeButton(["开多", "open long"], "OPEN");
+      return findTradeButton(BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG, "OPEN");
     }
     function findOpenShortButton() {
-      return findTradeButton(["开空", "open short"], "OPEN");
+      return findTradeButton(BINANCE_PAGE_TEXT.tradeAction.OPEN_SHORT, "OPEN");
     }
     let cachedBncHeaders = null;
     const HEADER_KEYS_TO_CACHE = [
@@ -2856,7 +2939,7 @@
       return findVisibleTradeScopeElement('[role="tab"]', (tab) => {
         const text = (tab.textContent || "").trim();
         const key = String(tab.getAttribute("data-tab-key") || "").toUpperCase();
-        return key === "CONDITIONAL" || text.includes("条件委托") || /只做Maker|Post Only/i.test(text);
+        return key === "CONDITIONAL" || includesBinancePageText(text, BINANCE_PAGE_TEXT.conditionalOrderTab) || includesBinancePageText(text, BINANCE_PAGE_TEXT.postOnly);
       });
     }
     function findConditionalSubtypeCombobox() {
@@ -2881,7 +2964,7 @@
       return Array.from(options).find((el) => {
         if (!isVisibleElement(el)) return false;
         const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        return /只做Maker|Post Only/i.test(text) && text.length < 120;
+        return includesBinancePageText(text, BINANCE_PAGE_TEXT.postOnly) && text.length < 120;
       }) || null;
     }
     async function activateTradeMode(mode) {
@@ -3175,7 +3258,7 @@
       if (!button) return false;
       const text = (button.textContent || "").toLowerCase();
       const cls = String(button.className || "").toLowerCase();
-      return button.disabled || button.getAttribute("aria-disabled") === "true" || button.getAttribute("data-loading") === "true" || text.includes("提交中") || text.includes("placing") || text.includes("loading") || cls.includes("loading") || !!button.querySelector('[class*="loading"], [class*="spinner"], [aria-busy="true"]');
+      return button.disabled || button.getAttribute("aria-disabled") === "true" || button.getAttribute("data-loading") === "true" || includesBinancePageText(text, BINANCE_PAGE_TEXT.submitBusy) || cls.includes("loading") || !!button.querySelector('[class*="loading"], [class*="spinner"], [aria-busy="true"]');
     }
     function readVisibleOrderFeedbackEntries() {
       const selectors = [
@@ -3710,7 +3793,10 @@
       return getVisibleDirectChildren(rowBody);
     }
     function findOpenOrderRowCancelButton(row) {
-      const icon = row.querySelector('svg[aria-label="撤销挂单"]');
+      const icon = Array.from(row.querySelectorAll("svg[aria-label]")).find((candidate) => matchesBinancePageText(
+        candidate.getAttribute("aria-label"),
+        BINANCE_PAGE_TEXT.accountOrders.rowCancel
+      ));
       if (!icon || !isVisibleElement(icon)) return null;
       const target = icon.closest('button, [role="button"], a, [tabindex]') || icon;
       if (!target || !row.contains(target) || !isVisibleElement(target)) return null;
@@ -3759,18 +3845,17 @@
     }
     function isOpenOrderRowForPlan(sideText, plan) {
       if (!plan) return true;
-      const normalized = String(sideText || "").replace(/\s+/g, "").toUpperCase();
       if (plan.spec?.mode === "OPEN" && plan.spec.side === "LONG") {
-        return normalized.includes("开多") || normalized.includes("OPENLONG");
+        return includesCompactBinancePageText(sideText, BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG);
       }
       if (plan.spec?.mode === "OPEN" && plan.spec.side === "SHORT") {
-        return normalized.includes("开空") || normalized.includes("OPENSHORT");
+        return includesCompactBinancePageText(sideText, BINANCE_PAGE_TEXT.tradeAction.OPEN_SHORT);
       }
       if (plan.spec?.mode === "CLOSE" && plan.spec.side === "LONG") {
-        return normalized.includes("平多") || normalized.includes("CLOSELONG");
+        return includesCompactBinancePageText(sideText, BINANCE_PAGE_TEXT.tradeAction.CLOSE_LONG);
       }
       if (plan.spec?.mode === "CLOSE" && plan.spec.side === "SHORT") {
-        return normalized.includes("平空") || normalized.includes("CLOSESHORT");
+        return includesCompactBinancePageText(sideText, BINANCE_PAGE_TEXT.tradeAction.CLOSE_SHORT);
       }
       return false;
     }
@@ -4599,8 +4684,11 @@
       const nodes = root.querySelectorAll("div, span, p, small");
       for (const node of nodes) {
         const text = (node.textContent || "").trim();
-        if (!text.includes("可平")) continue;
-        const m = text.match(/可平\s*([\d,]*\.?\d+)/);
+        if (!includesBinancePageText(text, BINANCE_PAGE_TEXT.closeableQuantity)) continue;
+        const m = text.match(new RegExp(
+          `(?:${BINANCE_CLOSEABLE_QUANTITY_LABEL_PATTERN})\\s*([\\d,]*\\.?\\d+)`,
+          "i"
+        ));
         if (!m) continue;
         const qty = parseNumber(m[1]);
         if (!(qty >= 0)) continue;
@@ -4628,7 +4716,7 @@
         qtySource: "near_button"
       };
     }
-    function readQtyTextNearButton(button, label) {
+    function readQtyTextNearButton(button, labels, labelPattern) {
       if (!button) return null;
       const btnRect = button.getBoundingClientRect();
       const root = getButtonTextSearchRoot(button);
@@ -4636,10 +4724,11 @@
       let best = null;
       let bestScore = Infinity;
       const nodes = root.querySelectorAll("div, span, p, small");
-      const re = new RegExp(`${label}\\s*([\\d,]*\\.?\\d+)`, "g");
+      const re = new RegExp(`(?:${labelPattern})\\s*([\\d,]*\\.?\\d+)`, "gi");
       for (const node of nodes) {
         const text = (node.textContent || "").replace(/\s+/g, " ").trim();
-        if (!text.includes(label)) continue;
+        if (!includesBinancePageText(text, labels)) continue;
+        re.lastIndex = 0;
         const matches = Array.from(text.matchAll(re));
         if (!matches.length) continue;
         const r = node.getBoundingClientRect();
@@ -4663,8 +4752,16 @@
       const fromTestId = readOpenableQtyByTestIds();
       if (fromTestId) return fromTestId;
       return {
-        longQty: readQtyTextNearButton(openLongBtn, "可开"),
-        shortQty: readQtyTextNearButton(openShortBtn, "可开"),
+        longQty: readQtyTextNearButton(
+          openLongBtn,
+          BINANCE_PAGE_TEXT.openableQuantity,
+          BINANCE_OPENABLE_QUANTITY_LABEL_PATTERN
+        ),
+        shortQty: readQtyTextNearButton(
+          openShortBtn,
+          BINANCE_PAGE_TEXT.openableQuantity,
+          BINANCE_OPENABLE_QUANTITY_LABEL_PATTERN
+        ),
         qtySource: "near_button"
       };
     }
