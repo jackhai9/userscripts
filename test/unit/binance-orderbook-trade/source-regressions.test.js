@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 const source = await readFile(new URL('../../../src/binance-orderbook-trade/index.user.js', import.meta.url), 'utf8');
 const generatedSource = await readFile(new URL('../../../scripts/binance-orderbook-trade.user.js', import.meta.url), 'utf8');
 const ladderPlanSource = await readFile(new URL('../../../src/binance-orderbook-trade/core/ladder-plan.js', import.meta.url), 'utf8');
+const tradingViewOrdersSource = await readFile(new URL('../../../src/binance-orderbook-trade/core/tradingview-orders.js', import.meta.url), 'utf8');
 
 function readFunctionBody(name, sourceText = source) {
   const start = sourceText.indexOf(`function ${name}`);
@@ -554,37 +555,32 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
 });
 
-test('bulk cancel hides Binance OpenOrders before opening the native dialog and restores it independently', () => {
-  assert.doesNotMatch(source, /applyOverrides|tradingProperties\.showOrders/);
+test('bulk cancel hides TradingView orders before opening the native dialog and restores them independently', () => {
+  assert.match(tradingViewOrdersSource, /applyOverrides/);
+  assert.match(tradingViewOrdersSource, /tradingProperties\.showOrders/);
+  assert.doesNotMatch(source, /coalesceTradingViewDrawingSaves/);
 
   const hideBody = readFunctionBody('hideBinanceChartOrdersForBulkCancel');
-  assert.match(hideBody, /const current = await openBinanceChartOrdersPopover\(target\)/);
-  assert.match(hideBody, /state\.originalChecked = current\.checked/);
-  assert.match(hideBody, /writeChartOrdersRecoveryRecord\(\)[\s\S]*state\.changed = true/);
-  assert.match(hideBody, /state\.changed = true[\s\S]*toggleBinanceChartOrdersWithCoalescedSave\(target, current\.checkbox, false, true\)/);
-  assert.match(hideBody, /await closeBinanceChartOrdersPopover\(target\)/);
-
-  const closeBody = readFunctionBody('closeBinanceChartOrdersPopover');
-  assert.match(closeBody, /currentTarget\.chartRoot/);
-  assert.doesNotMatch(closeBody, /currentTarget\.frame/);
-  assert.match(closeBody, /throw new Error\('Binance chart OpenOrders popover did not close'\)/);
-
-  const waitBody = readFunctionBody('waitForBinanceChartOrdersPopover');
-  assert.match(
-    waitBody,
-    /findActiveBinanceChartOrdersPopover\(document, target, isVisibleElement\)/,
-  );
+  assert.match(hideBody, /const api = getBinanceTradingViewApi\(target\)/);
+  assert.match(hideBody, /assertTradingViewOrdersTarget\(api, state\)[\s\S]*state\.originalVisible[\s\S]*writeTradingViewOrdersRecoveryRecord\(\)/);
+  assert.match(hideBody, /hideTradingViewOrders\(api, state\)/);
+  assert.match(hideBody, /catch \(error\)[\s\S]*if \(!state\.changed\) clearTradingViewOrdersRecoveryRecord\(\)[\s\S]*throw error/);
+  assert.match(hideBody, /waitForTwoAnimationFrames\(\)/);
+  assert.match(hideBody, /assertTradingViewOrdersVisibility\(state, false\)/);
+  assert.doesNotMatch(hideBody, /checkbox|popover|saveChart/);
 
   const restoreBody = readFunctionBody('restoreBinanceChartOrdersAfterBulkCancel');
-  assert.match(restoreBody, /assertSameBinanceChartOrdersTarget\(target, getBinanceChartOrdersTarget\(\)\)/);
-  assert.match(restoreBody, /const current = await openBinanceChartOrdersPopover\(target\)/);
-  assert.match(restoreBody, /current\.checked !== state\.originalChecked/);
-  assert.match(restoreBody, /toggleBinanceChartOrdersWithCoalescedSave\([\s\S]*state\.originalChecked/);
-  assert.match(restoreBody, /await closeBinanceChartOrdersPopover\(target\)/);
-  assert.match(restoreBody, /clearChartOrdersRecoveryRecord\(\)/);
+  assert.match(restoreBody, /const api = getCurrentBinanceTradingViewApi\(\)/);
+  assert.match(restoreBody, /assertTradingViewOrdersTarget\(api, state\)/);
+  assert.match(restoreBody, /restoreTradingViewOrders\(api, state\)/);
+  assert.match(restoreBody, /assertTradingViewOrdersVisibility\(state, state\.originalVisible\)/);
+  assert.doesNotMatch(restoreBody, /assertSameBinanceChartOrdersTarget/);
+  assert.match(restoreBody, /clearTradingViewOrdersRecoveryRecord\(\)/);
+  assert.doesNotMatch(restoreBody, /checkbox|popover|saveChart/);
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   const captureIndex = cancelBody.indexOf('chartOrdersTarget = getBinanceChartOrdersTarget()');
+  const visibilityCaptureIndex = cancelBody.indexOf('chartOrdersState = captureTradingViewOrdersVisibility(');
   const hideIndex = cancelBody.indexOf(
     'await hideBinanceChartOrdersForBulkCancel(chartOrdersTarget, chartOrdersState)'
   );
@@ -600,8 +596,10 @@ test('bulk cancel hides Binance OpenOrders before opening the native dialog and 
   );
   const postHideClickIndex = postHideBody.indexOf('cancelAllButton.click()');
 
-  assert.ok(captureIndex !== -1 && hideIndex !== -1 && watcherIndex !== -1 && destructiveClickIndex !== -1);
-  assert.ok(captureIndex < hideIndex && hideIndex < destructiveClickIndex);
+  assert.ok(captureIndex !== -1 && visibilityCaptureIndex !== -1 && hideIndex !== -1);
+  assert.ok(watcherIndex !== -1 && destructiveClickIndex !== -1);
+  assert.ok(captureIndex < visibilityCaptureIndex && visibilityCaptureIndex < hideIndex);
+  assert.ok(hideIndex < destructiveClickIndex);
   assert.ok(watcherIndex < destructiveClickIndex, 'dialog decision watcher must exist before destructive click');
   assert.ok(freshScopeIndex !== -1 && freshFilterIndex !== -1 && freshButtonIndex !== -1);
   assert.ok(
@@ -616,7 +614,7 @@ test('bulk cancel hides Binance OpenOrders before opening the native dialog and 
   assert.ok(chartRestoreIndex !== -1 && symbolGuardedRestoreIndex !== -1);
   assert.ok(
     symbolGuardedRestoreIndex < chartRestoreIndex,
-    'temporary account UI must recover before the heavier chart redraw'
+    'temporary account UI must recover before chart-order visibility'
   );
   assert.match(cancelBody, /if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)[\s\S]*await restoreAccountOrdersTab\([\s\S]*let chartOrdersRestoreSucceeded/);
   assert.match(cancelBody, /let chartOrdersRestoreSucceeded[\s\S]*await restoreBinanceChartOrdersAfterBulkCancel\(/);
@@ -648,23 +646,30 @@ test('bulk cancel distinguishes native confirm from cancellation before clear po
   assert.match(cancelBody, /status: 'dialog_contract_invalid'/);
 });
 
-test('chart OpenOrders reload recovery is journaled, bounded, and retried only from startup state', () => {
-  assert.match(source, /chartOrdersRecoveryPendingAtStartup =\s*sessionStorage\.getItem\(CHART_ORDERS_RECOVERY_STORAGE_KEY\) !== null/);
+test('TradingView showOrders reload recovery is journaled, bounded, and retried only from startup state', () => {
+  assert.match(source, /tradingViewOrdersRecoveryPendingAtStartup =\s*sessionStorage\.getItem\(TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY\) !== null/);
 
   const hideBody = readFunctionBody('hideBinanceChartOrdersForBulkCancel');
-  const writeIndex = hideBody.indexOf('writeChartOrdersRecoveryRecord()');
-  const stateChangeIndex = hideBody.indexOf('state.changed = true');
-  const coalescedToggleIndex = hideBody.indexOf('toggleBinanceChartOrdersWithCoalescedSave(');
-  assert.ok(writeIndex < stateChangeIndex && stateChangeIndex < coalescedToggleIndex);
+  const validateIndex = hideBody.indexOf('assertTradingViewOrdersTarget(api, state)');
+  const writeIndex = hideBody.indexOf('writeTradingViewOrdersRecoveryRecord()');
+  const hideIndex = hideBody.indexOf('hideTradingViewOrders(');
+  assert.ok(
+    validateIndex !== -1
+      && writeIndex !== -1
+      && hideIndex !== -1
+      && validateIndex < writeIndex
+      && writeIndex < hideIndex,
+  );
 
   const recoverBody = readFunctionBody('recoverChartOrdersStateAfterReload');
   assert.match(recoverBody, /recovery\.status === 'invalid' \|\| recovery\.status === 'expired'/);
-  assert.match(recoverBody, /clearChartOrdersRecoveryRecord\(\)/);
+  assert.match(recoverBody, /clearTradingViewOrdersRecoveryRecord\(\)/);
   assert.match(recoverBody, /findBinanceChartOrdersTargetDom\(document\)/);
-  assert.match(recoverBody, /originalChecked: recovery\.record\.originalChecked/);
+  assert.match(recoverBody, /state\.originalVisible = recovery\.record\.originalVisible/);
+  assert.match(recoverBody, /restoreBinanceChartOrdersAfterBulkCancel\(state\)/);
 
   const scheduleBody = readFunctionBody('scheduleChartOrdersRecovery');
-  assert.match(scheduleBody, /!chartOrdersRecoveryPendingAtStartup/);
+  assert.match(scheduleBody, /!tradingViewOrdersRecoveryPendingAtStartup/);
   assert.match(scheduleBody, /cancelCurrentSymbolOpenOrdersTask/);
   assert.match(scheduleBody, /document\.hidden/);
   assert.match(scheduleBody, /recoverChartOrdersStateAfterReload\(\)/);
@@ -707,15 +712,7 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   assert.ok(clearWaitIndex < successIndex, 'clearing must be confirmed before success');
   assert.ok(successIndex < cleanupIndex && cleanupIndex < restoreIndex, 'page state restores only after the clear result');
 
-  assert.match(cancelBody, /let chartOrdersDefinitivelyCleared = false/);
-  assert.match(cancelBody, /chartOrdersDefinitivelyCleared = clearResult\.definitivelyCleared === true/);
-  assert.match(cancelBody, /chartOrdersStillDefinitivelyCleared =[\s\S]*chartOrdersDefinitivelyCleared && getOpenOrdersTabCount\(\) === 0/);
-  assert.match(cancelBody, /restoreBinanceChartOrdersAfterBulkCancel\([\s\S]*!chartOrdersStillDefinitivelyCleared/);
-
-  const restoreChartOrdersBody = readFunctionBody('restoreBinanceChartOrdersAfterBulkCancel');
-  assert.match(restoreChartOrdersBody, /expectDrawingEvents/);
-  const toggleChartOrdersBody = readFunctionBody('toggleBinanceChartOrdersWithCoalescedSave');
-  assert.match(toggleChartOrdersBody, /expectDrawingEvents \? \{\} : \{ eventDiscoveryTimeoutMs: 0 \}/);
+  assert.doesNotMatch(cancelBody, /chartOrdersDefinitivelyCleared|expectDrawingEvents/);
 });
 
 test('cancel current-symbol open orders are single-flight and follow the native dialog lifecycle', () => {
