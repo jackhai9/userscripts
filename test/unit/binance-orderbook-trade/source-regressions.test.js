@@ -470,6 +470,23 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(startBody, /setLadderStatus\(e\?\.message \|\| '执行失败',\s*e\?\.statusTitle\)/);
 });
 
+test('ladder actions keep only their final UI feedback visible for a minimum window', () => {
+  const startBody = readFunctionBody('startLadder');
+  assert.match(startBody, /const actionSymbol = getCurrentSymbol\(\)/);
+  assert.match(startBody, /keepInteractionFeedbackVisible\(/);
+  assert.match(startBody, /minimumMs: LADDER_ACTION_FEEDBACK_MIN_MS/);
+  assert.match(startBody, /wasStopped/);
+  assert.match(startBody, /isCurrentObservedSymbol\(actionSymbol\)/);
+
+  for (const name of [
+    'runLadderPlanWithOpenOrderReplacement',
+    'executeLadderPlan',
+    'cancelCurrentSymbolOpenOrdersForPlan',
+  ]) {
+    assert.doesNotMatch(readFunctionBody(name), /keepInteractionFeedbackVisible/);
+  }
+});
+
 test('open ladder stops immediately only for a confirmed zero available balance', () => {
   const readOpenQtyBody = readFunctionBody('readOpenBaseQtyForLadder');
   assert.match(readOpenQtyBody, /isConfirmedZeroOpenBalance\(qty\)/);
@@ -1102,7 +1119,7 @@ test('confirmed close-quantity mutations bypass the generic trade UI debounce', 
 
 test('pending close actions report position confirmation without starting execution', () => {
   const startBody = readFunctionBody('startLadder');
-  assert.match(startBody, /spec\?\.mode === 'CLOSE' && !isCloseSnapshotReady\(getCurrentSymbol\(\)\)/);
+  assert.match(startBody, /spec\?\.mode === 'CLOSE' && !isCloseSnapshotReady\(actionSymbol\)/);
   assert.match(startBody, /setLadderStatus\('仓位确认中'\)/);
 
   assert.match(source, /if \(getActiveTradeMode\(\) === 'CLOSE' && !isCloseSnapshotReady\(clickedSymbol\)\) \{\s*warn\('仓位确认中'\);\s*return;/);
