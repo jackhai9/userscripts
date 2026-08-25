@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import {
   findTradeFormRoot,
   findTradePanelInsertionPoint,
+  isTradeModeTab,
   mutationTouchesCloseQuantity,
+  parseTradeModeLabel,
   placeTradePanelSpacer,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
 import { loadFixtureDom } from '../../helpers/dom.js';
@@ -22,6 +24,29 @@ test('panel insertion point is immediately before the native trade-mode row', ()
   assert.equal(insertionPoint.parent.className, 'trade-header');
   assert.equal(insertionPoint.before.className, 'trade-mode-row');
   assert.equal(insertionPoint.before.previousElementSibling.className, 'quick-controls');
+});
+
+test('English trade-mode labels use the same panel insertion contract', () => {
+  const dom = loadFixtureDom(
+    fixture.replace('>开仓<', '>Open<').replace('>平仓<', '>Close<'),
+  );
+  const { document } = dom.window;
+  const insertionPoint = findTradePanelInsertionPoint(document);
+  const tabs = Array.from(document.querySelectorAll('#position-direction [role="tab"]'));
+
+  assert.equal(insertionPoint.parent.className, 'trade-header');
+  assert.equal(insertionPoint.before.className, 'trade-mode-row');
+  assert.equal(parseTradeModeLabel('Open'), 'OPEN');
+  assert.equal(parseTradeModeLabel('Close'), 'CLOSE');
+  assert.equal(isTradeModeTab(tabs[0], { panelId: 'jh-binance-close-qty-multiplier-panel' }), true);
+  assert.equal(isTradeModeTab(tabs[1], { panelId: 'jh-binance-close-qty-multiplier-panel' }), true);
+});
+
+test('trade-mode parsing rejects action labels instead of guessing a mode', () => {
+  assert.equal(parseTradeModeLabel('Open Long'), null);
+  assert.equal(parseTradeModeLabel('Close Short'), null);
+  assert.equal(parseTradeModeLabel('开多'), null);
+  assert.equal(parseTradeModeLabel('平空'), null);
 });
 
 test('panel spacer is restored before native trade mode after a rerender moves it', () => {
