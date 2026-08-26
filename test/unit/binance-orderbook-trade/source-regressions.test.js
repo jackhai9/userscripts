@@ -788,17 +788,19 @@ test('cancel current-symbol open orders are single-flight and follow the native 
 
   const waitDialogBody = readFunctionBody('waitForDialogToClose');
   assert.match(source, /ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS/);
-  assert.match(waitDialogBody, /const deadline = Date\.now\(\) \+ timeoutMs/);
-  assert.match(waitDialogBody, /return false/);
+  assert.match(waitDialogBody, /waitForDialogMutationState/);
+  assert.doesNotMatch(waitDialogBody, /delay\(/);
 
   const watcherBody = readFunctionBody('createBinanceCancelAllDialogDecisionWatcher');
   assert.match(watcherBody, /new AbortController\(\)/);
   assert.match(watcherBody, /window\.addEventListener\('pagehide', handlePageHide\)/);
-  assert.match(watcherBody, /if \(!event\.persisted\) lifecycleController\.abort\(\)/);
+  assert.match(watcherBody, /if \(!event\.persisted\) \{[\s\S]*lifecycleController\.abort\(\)[\s\S]*dialogSignal\.notify\(\)/);
   assert.match(watcherBody, /window\.removeEventListener\('pagehide', handlePageHide\)/);
 
   const decisionBody = readFunctionBody('waitForBinanceCancelAllDialogDecision');
   assert.match(decisionBody, /aborted: lifecycleSignal\.aborted/);
+  assert.match(decisionBody, /watcher\.dialogSignal\.waitForChange/);
+  assert.doesNotMatch(decisionBody, /delay\(/);
   assert.doesNotMatch(decisionBody, /closeDeadline/);
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');

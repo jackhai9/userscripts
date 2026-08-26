@@ -5,7 +5,9 @@ import { isVisibleElement, loadFixtureDom } from '../../helpers/dom.js';
 import {
   classifyBinanceCancelAllDialogAction,
   classifyBinanceCancelAllDialogKeyboardAction,
+  createDialogMutationSignal,
   findBinanceCancelAllDialog,
+  waitForDialogMutationState,
 } from '../../../src/binance-orderbook-trade/dom/cancel-all-dialog.js';
 
 function createDialogMarkup({ text = '确定取消全部订单？', extraButton = '' } = {}) {
@@ -96,4 +98,35 @@ test('rejects multiple semantic cancel-all dialogs with distinct action pairs', 
     () => findBinanceCancelAllDialog(dom.window.document, isVisibleElement),
     /Expected one Binance cancel-all dialog action pair, found 2/,
   );
+});
+
+test('dialog mutation signal ignores unrelated DOM churn and reports dialog insertion', async () => {
+  const dom = loadFixtureDom('<main id="app"></main>');
+  const { document } = dom.window;
+  const signal = createDialogMutationSignal(document);
+  const initialVersion = signal.version;
+
+  document.querySelector('#app').append(document.createElement('span'));
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  assert.equal(signal.version, initialVersion);
+
+  document.body.insertAdjacentHTML('beforeend', createDialogMarkup());
+  await signal.waitForChange(initialVersion, 100);
+  assert.ok(signal.version > initialVersion);
+  signal.dispose();
+});
+
+test('dialog mutation state resolves when React removes the dialog wrapper', async () => {
+  const dom = loadFixtureDom(createDialogMarkup());
+  const { document } = dom.window;
+  const dialog = document.querySelector('[role="dialog"]');
+  const pending = waitForDialogMutationState(
+    document,
+    () => (!dialog.isConnected ? 'closed' : null),
+    100,
+  );
+
+  dialog.parentElement.remove();
+
+  assert.equal(await pending, 'closed');
 });

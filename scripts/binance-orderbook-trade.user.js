@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.112
+// @version      2.7.113
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1424,7 +1424,14 @@
   }
 
   // src/binance-orderbook-trade/dom/cancel-all-dialog.js
-  var DIALOG_CANDIDATE_SELECTOR = '[role="dialog"], [class*="modal"], [class*="Modal"]';
+  var CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR = '[role="dialog"], [class*="modal"], [class*="Modal"]';
+  var DIALOG_MUTATION_CANDIDATE_SELECTOR = [
+    CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR,
+    '[class*="popover"]',
+    '[class*="Popover"]',
+    '[class*="drawer"]',
+    '[class*="Drawer"]'
+  ].join(", ");
   var PRIMARY_BUTTON_SELECTOR = "button.bn-button.bn-button__primary";
   function normalizeText2(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -1449,7 +1456,7 @@
     return { dialog, confirmButton, cancelButton };
   }
   function findBinanceCancelAllDialog(document2, isVisibleElement) {
-    const contracts = Array.from(document2.querySelectorAll(DIALOG_CANDIDATE_SELECTOR)).map((dialog) => getDialogContract(dialog, isVisibleElement)).filter(Boolean);
+    const contracts = Array.from(document2.querySelectorAll(CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR)).map((dialog) => getDialogContract(dialog, isVisibleElement)).filter(Boolean);
     if (!contracts.length) return null;
     const actionPairs = [];
     for (const contract of contracts) {
@@ -1460,6 +1467,80 @@
       throw new Error(`Expected one Binance cancel-all dialog action pair, found ${actionPairs.length}`);
     }
     return contracts.reduce((innermost, contract) => innermost.dialog.contains(contract.dialog) ? contract : innermost);
+  }
+  function elementTouchesDialogCandidate(node) {
+    const element = node?.nodeType === 1 ? node : node?.parentElement;
+    if (!element) return false;
+    return element.matches?.(DIALOG_MUTATION_CANDIDATE_SELECTOR) || !!element.closest?.(DIALOG_MUTATION_CANDIDATE_SELECTOR) || !!element.querySelector?.(DIALOG_MUTATION_CANDIDATE_SELECTOR);
+  }
+  function mutationTouchesDialogCandidate(mutation) {
+    if (!mutation) return false;
+    if (mutation.type === "attributes") return elementTouchesDialogCandidate(mutation.target);
+    if (mutation.type !== "childList") return false;
+    if (elementTouchesDialogCandidate(mutation.target)) return true;
+    return [...mutation.addedNodes, ...mutation.removedNodes].some(elementTouchesDialogCandidate);
+  }
+  function createDialogMutationSignal(document2) {
+    const MutationObserverClass = document2?.defaultView?.MutationObserver;
+    if (!document2?.body || !MutationObserverClass) return null;
+    let version = 0;
+    let pendingFinish = null;
+    const notify = () => {
+      version += 1;
+      pendingFinish?.("changed");
+    };
+    const observer = new MutationObserverClass((mutations) => {
+      if (mutations.some(mutationTouchesDialogCandidate)) notify();
+    });
+    observer.observe(document2.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "role", "aria-hidden", "hidden"]
+    });
+    return {
+      get version() {
+        return version;
+      },
+      notify,
+      waitForChange(afterVersion, timeoutMs = null) {
+        if (version !== afterVersion) return Promise.resolve("changed");
+        return new Promise((resolve) => {
+          let timer = null;
+          const finish = (result) => {
+            if (pendingFinish !== finish) return;
+            pendingFinish = null;
+            if (timer) clearTimeout(timer);
+            resolve(result);
+          };
+          pendingFinish = finish;
+          if (timeoutMs !== null) timer = setTimeout(() => finish("timeout"), timeoutMs);
+        });
+      },
+      dispose() {
+        observer.disconnect();
+        pendingFinish?.("disposed");
+      }
+    };
+  }
+  async function waitForDialogMutationState(document2, readState, timeoutMs) {
+    const currentState = readState();
+    if (currentState) return currentState;
+    const signal = createDialogMutationSignal(document2);
+    if (!signal) return null;
+    const deadline = Date.now() + timeoutMs;
+    try {
+      while (true) {
+        const version = signal.version;
+        const state = readState();
+        if (state) return state;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) return readState();
+        await signal.waitForChange(version, remainingMs);
+      }
+    } finally {
+      signal.dispose();
+    }
   }
   function classifyBinanceCancelAllDialogAction(contract, eventTarget) {
     const button = eventTarget?.closest?.("button");
@@ -1627,7 +1708,6 @@
     const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
     const ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 6e4;
     const CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS = 1800;
-    const CANCEL_DIALOG_DECISION_POLL_MS = 50;
     const CANCEL_NO_ORDERS_FEEDBACK_MS = 600;
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_REPRICE_MAX_ATTEMPTS = 5;
@@ -4074,28 +4154,28 @@
       return null;
     }
     async function waitForNewVisibleDialog(dialogsBefore) {
-      const deadline = Date.now() + 1800;
-      while (Date.now() < deadline) {
-        const dialog = findNewVisibleDialog(dialogsBefore);
-        if (dialog) return dialog;
-        await delay(100);
-      }
-      return findNewVisibleDialog(dialogsBefore);
+      return waitForDialogMutationState(
+        document,
+        () => findNewVisibleDialog(dialogsBefore),
+        1800
+      );
     }
     async function waitForDialogToClose(dialog, timeoutMs = ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline && dialog.isConnected && isVisibleElement(dialog)) {
-        await delay(500);
-      }
-      if (dialog.isConnected && isVisibleElement(dialog)) return false;
-      return true;
+      return Boolean(await waitForDialogMutationState(
+        document,
+        () => !dialog.isConnected || !isVisibleElement(dialog) ? true : null,
+        timeoutMs
+      ));
     }
     function createBinanceCancelAllDialogDecisionWatcher() {
       const lifecycleController = new AbortController();
+      const dialogSignal = createDialogMutationSignal(document);
+      if (!dialogSignal) throw new Error("Cancel-all dialog observer root is unavailable");
       const watcher = {
         action: null,
         error: null,
-        seenDialog: false
+        seenDialog: false,
+        dialogSignal
       };
       const recordAction = (eventTarget) => {
         try {
@@ -4106,6 +4186,8 @@
           if (action && !watcher.action) watcher.action = action;
         } catch (error) {
           watcher.error = error;
+        } finally {
+          dialogSignal.notify();
         }
       };
       const handleClick = (event) => recordAction(event.target);
@@ -4123,10 +4205,15 @@
           if (action && !watcher.action) watcher.action = action;
         } catch (error) {
           watcher.error = error;
+        } finally {
+          dialogSignal.notify();
         }
       };
       const handlePageHide = (event) => {
-        if (!event.persisted) lifecycleController.abort();
+        if (!event.persisted) {
+          lifecycleController.abort();
+          dialogSignal.notify();
+        }
       };
       document.addEventListener("click", handleClick, true);
       document.addEventListener("keydown", handleKeydown, true);
@@ -4138,6 +4225,7 @@
           document.removeEventListener("click", handleClick, true);
           document.removeEventListener("keydown", handleKeydown, true);
           window.removeEventListener("pagehide", handlePageHide);
+          dialogSignal.dispose();
         }
       };
     }
@@ -4145,6 +4233,7 @@
       const discoveryDeadline = Date.now() + CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS;
       let reportedDialog = false;
       while (true) {
+        const observedVersion = watcher.dialogSignal.version;
         if (lifecycleSignal.aborted) return { status: "aborted" };
         if (watcher.error) throw watcher.error;
         const contract = findBinanceCancelAllDialog(document, isVisibleElement);
@@ -4164,7 +4253,8 @@
           discoveryDeadlineMs: discoveryDeadline
         });
         if (status !== "waiting") return { status };
-        await delay(CANCEL_DIALOG_DECISION_POLL_MS);
+        const remainingDiscoveryMs = watcher.seenDialog ? null : Math.max(0, discoveryDeadline - Date.now());
+        await watcher.dialogSignal.waitForChange(observedVersion, remainingDiscoveryMs);
       }
     }
     function getBinanceChartOrdersTarget2() {
