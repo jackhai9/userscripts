@@ -71,6 +71,7 @@ export function installBinanceLivePerformanceProbe(options = {}) {
   const panelSelector = options.panelSelector || '#jh-binance-close-qty-multiplier-panel';
   const cancelButtonSelector = options.cancelButtonSelector
     || '[data-ladder-cancel-symbol="true"]';
+  const statusSelector = options.statusSelector || '#jh-binance-ladder-status';
   const dialogSelector = options.dialogSelector
     || '[role="dialog"], [class*="modal"], [class*="Modal"]';
   const eventLimit = options.eventLimit || 200;
@@ -108,6 +109,7 @@ export function installBinanceLivePerformanceProbe(options = {}) {
   };
   const readPanel = () => document.querySelector(panelSelector);
   const readCancelButton = (panel = readPanel()) => panel?.querySelector(cancelButtonSelector) || null;
+  const readStatus = (panel = readPanel()) => panel?.querySelector(statusSelector) || null;
   const readDialog = () => Array.from(document.querySelectorAll(dialogSelector))
     .filter(isVisible)
     .filter((dialog) => matchesDialogText(normalizeText(dialog.textContent)))
@@ -123,7 +125,7 @@ export function installBinanceLivePerformanceProbe(options = {}) {
       cancelButtonPresent: Boolean(cancelButton),
       cancelButtonText: normalizeText(cancelButton?.textContent),
       cancelButtonDisabled: Boolean(cancelButton?.disabled),
-      statusText: normalizeText(panel?.lastElementChild?.textContent),
+      statusText: normalizeText(readStatus(panel)?.textContent),
       dialogVisible: Boolean(dialog),
       dialogText: normalizeText(dialog?.textContent),
     };

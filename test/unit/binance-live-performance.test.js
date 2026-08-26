@@ -124,6 +124,18 @@ test('live performance capture requires three complete isolated samples', () => 
   );
 });
 
+test('scenario kind fixes the exact wall-clock segment contract', () => {
+  const invalid = capture();
+  invalid.scenarios[0].applicableSegments = ['clickToFirstFeedback', 'decisionToFinalReady'];
+  for (const entry of invalid.scenarios[0].samples) {
+    delete entry.segmentsMs.clickToDialog;
+  }
+  assert.throws(
+    () => validateLivePerformanceCapture(invalid),
+    /applicableSegments must match the dialog-cancel contract/,
+  );
+});
+
 test('live performance capture models no-orders, dialog-cancel, and dialog-confirm explicitly', () => {
   const dialogCancel = capture();
   assert.equal(validateLivePerformanceCapture(dialogCancel).scenarios[0].parameters.kind, 'dialog-cancel');
@@ -136,9 +148,17 @@ test('live performance capture models no-orders, dialog-cancel, and dialog-confi
   const noOrders = structuredClone(dialogCancel);
   noOrders.scenarios[0].name = 'cancel-current-symbol-no-orders';
   noOrders.scenarios[0].parameters = { kind: 'no-orders' };
+  noOrders.scenarios[0].applicableSegments = [
+    'clickToFirstFeedback',
+    'clickToFinalReady',
+  ];
   for (const entry of noOrders.scenarios[0].samples) {
     entry.capacityEvidence = null;
     entry.testOrderLedger = structuredClone(EMPTY_ORDER_LEDGER);
+    entry.segmentsMs = {
+      clickToFirstFeedback: entry.segmentsMs.clickToFirstFeedback,
+      clickToFinalReady: entry.segmentsMs.decisionToFinalReady,
+    };
   }
   assert.equal(validateLivePerformanceCapture(noOrders).scenarios[0].parameters.kind, 'no-orders');
 });

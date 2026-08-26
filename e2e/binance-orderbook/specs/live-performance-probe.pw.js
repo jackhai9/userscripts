@@ -27,6 +27,7 @@ test('live probe captures a no-order run and destroys every listener', async ({ 
   const snapshot = await finishLivePerformanceProbe(page);
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
   expect(snapshot.events.map((event) => event.kind)).toContain('first-feedback');
+  expect(snapshot.lastSemanticState.statusText).toBe('HYPEUSDT 当前币无挂单');
 
   const finishedEventCount = snapshot.events.length;
   await page.evaluate(() => {
@@ -99,12 +100,13 @@ test('live probe follows a userscript panel replaced after arm and before click'
   await page.evaluate(() => {
     const panel = document.createElement('section');
     panel.id = 'probe-panel';
-    panel.innerHTML = '<button data-probe-cancel="true">Probe cancel</button><p>Idle</p>';
+    panel.innerHTML = '<button data-probe-cancel="true">Probe cancel</button><p id="probe-status">Idle</p>';
     document.body.append(panel);
   });
   await installLivePerformanceProbe(page, {
     panelSelector: '#probe-panel',
     cancelButtonSelector: '[data-probe-cancel="true"]',
+    statusSelector: '#probe-status',
   });
   await armLivePerformanceProbe(page, 'replaced-panel-before-click');
   await page.evaluate(() => {
