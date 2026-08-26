@@ -122,6 +122,37 @@ export function placeTradePanelSpacer(spacer, insertionPoint) {
   return true;
 }
 
+export function calculateFloatingPanelLayout({
+  anchorRect,
+  panelHeight,
+  viewportWidth,
+  viewportHeight,
+  minimumWidth = 280,
+  margin = 8,
+}) {
+  if (!anchorRect?.width || !anchorRect?.height) return null;
+
+  const width = Math.min(
+    Math.max(anchorRect.width, minimumWidth),
+    viewportWidth - margin * 2,
+  );
+  const estimatedHeight = Math.max(panelHeight, 76);
+  const left = Math.max(
+    margin,
+    Math.min(anchorRect.left, viewportWidth - width - margin),
+  );
+  const top = Math.max(
+    margin,
+    Math.min(anchorRect.top, viewportHeight - estimatedHeight - margin),
+  );
+
+  return {
+    width: Math.round(width),
+    left: Math.round(left),
+    top: Math.round(top),
+  };
+}
+
 export function isTradeModeTab(node, { panelId }) {
   if (!node?.matches?.('[role="tab"]')) return false;
   if (node.closest(`#${panelId}`)) return false;

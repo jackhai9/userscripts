@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  calculateFloatingPanelLayout,
   findTradeFormRoot,
   findTradePanelInsertionPoint,
   isTradeModeTab,
@@ -104,6 +105,41 @@ test('panel spacer is restored before native trade mode after a rerender moves i
   assert.equal(placeTradePanelSpacer(spacer, findTradePanelInsertionPoint(document)), true);
   assert.equal(spacer.parentElement, insertionPoint.parent);
   assert.equal(spacer.nextElementSibling, insertionPoint.before);
+});
+
+test('floating panel layout follows anchor movement without changing its size contract', () => {
+  const base = {
+    panelHeight: 466,
+    viewportWidth: 1684,
+    viewportHeight: 900,
+  };
+
+  assert.deepEqual(
+    calculateFloatingPanelLayout({
+      ...base,
+      anchorRect: { left: 1430, top: 112, width: 241, height: 478 },
+    }),
+    { width: 280, left: 1396, top: 112 },
+  );
+  assert.deepEqual(
+    calculateFloatingPanelLayout({
+      ...base,
+      anchorRect: { left: 1430, top: 45, width: 241, height: 478 },
+    }),
+    { width: 280, left: 1396, top: 45 },
+  );
+});
+
+test('floating panel layout rejects a hidden anchor', () => {
+  assert.equal(
+    calculateFloatingPanelLayout({
+      anchorRect: { left: 0, top: 0, width: 0, height: 0 },
+      panelHeight: 466,
+      viewportWidth: 1684,
+      viewportHeight: 900,
+    }),
+    null,
+  );
 });
 
 test('unexpected trade-mode structure is rejected instead of inserting at a guessed location', () => {
