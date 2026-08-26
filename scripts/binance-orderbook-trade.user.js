@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.111
+// @version      2.7.112
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -31,7 +31,6 @@
     }),
     availableBalance: freezeLabels(["可用", "Avbl"]),
     postOnly: freezeLabels(["只做Maker", "Post Only"]),
-    conditionalOrderTab: freezeLabels(["条件委托", "Conditional"]),
     submitBusy: freezeLabels(["提交中", "Placing", "Loading"]),
     openableQuantity: freezeLabels(["可开"]),
     closeableQuantity: freezeLabels(["可平"]),
@@ -1100,6 +1099,36 @@
       top: Math.round(top)
     };
   }
+  function waitForTradeFormMutationState(observationRoot, readState, timeoutMs) {
+    const currentState = readState();
+    if (currentState) return Promise.resolve(currentState);
+    const MutationObserverClass = observationRoot?.ownerDocument?.defaultView?.MutationObserver;
+    if (!observationRoot || !MutationObserverClass) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const check = () => {
+        const value = readState();
+        if (value) finish(value);
+      };
+      const observer = new MutationObserverClass(check);
+      const timer = setTimeout(() => finish(readState()), timeoutMs);
+      observer.observe(observationRoot, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["aria-selected", "class"]
+      });
+      check();
+    });
+  }
   function isTradeModeTab(node, { panelId }) {
     if (!node?.matches?.('[role="tab"]')) return false;
     if (node.closest(`#${panelId}`)) return false;
@@ -1655,6 +1684,7 @@
     const LADDER_CONTROL_BUTTON_HEIGHT = 32;
     const LADDER_CONTROL_BUTTON_FONT_SIZE = 14;
     const PANEL_BOTTOM_TOOLTIP_GAP = 12;
+    const TRADE_UI_STATE_TIMEOUT_MS = 1e3;
     let lastTs = 0;
     let isEditingMultiplier = false;
     let multiplierEditContext = null;
@@ -1999,11 +2029,10 @@
       return String(activeTab?.getAttribute("data-tab-key") || "LIMIT").toUpperCase();
     }
     function isPostOnlyOrderTypeActive() {
-      const orderType = getCurrentOrderType();
-      if (!orderType.includes("CONDITIONAL") && !orderType.includes(BINANCE_POST_ONLY_ORDER_TYPE)) return false;
+      if (getCurrentOrderType() !== BINANCE_POST_ONLY_ORDER_TYPE) return false;
       return !!findVisibleTradeScopeElement(
-        '[role="tab"], [role="combobox"], .bn-select-field-input, .bn-select-trigger, .bn-select-field',
-        (el) => includesBinancePageText(el.textContent, BINANCE_PAGE_TEXT.postOnly)
+        '[role="tab"][aria-selected="true"][data-tab-key]',
+        (tab) => String(tab.getAttribute("data-tab-key") || "").toUpperCase() === BINANCE_POST_ONLY_ORDER_TYPE && includesBinancePageText(tab.textContent, BINANCE_PAGE_TEXT.postOnly)
       );
     }
     function getActiveTradeTab() {
@@ -2963,66 +2992,40 @@
       );
       return Array.from(tabs).find((tab) => parseTradeModeLabel(tab.textContent) === mode) || null;
     }
-    function findConditionalOrderTab() {
+    function findPostOnlyOrderTab() {
       return findVisibleTradeScopeElement('[role="tab"]', (tab) => {
         const text = (tab.textContent || "").trim();
         const key = String(tab.getAttribute("data-tab-key") || "").toUpperCase();
-        return key === "CONDITIONAL" || includesBinancePageText(text, BINANCE_PAGE_TEXT.conditionalOrderTab) || includesBinancePageText(text, BINANCE_PAGE_TEXT.postOnly);
+        return key === BINANCE_POST_ONLY_ORDER_TYPE && includesBinancePageText(text, BINANCE_PAGE_TEXT.postOnly);
       });
-    }
-    function findConditionalSubtypeCombobox() {
-      const tab = findConditionalOrderTab();
-      if (!tab) return null;
-      return Array.from(tab.querySelectorAll('[role="combobox"], .bn-select-trigger, .bn-select-field')).find(isVisibleElement) || null;
-    }
-    function clickElementLikeUser(el) {
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const clientX = (rect.left + rect.right) / 2;
-      const clientY = (rect.top + rect.bottom) / 2;
-      const PointerCtor = window.PointerEvent || MouseEvent;
-      el.dispatchEvent(new PointerCtor("pointerdown", { bubbles: true, clientX, clientY }));
-      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX, clientY }));
-      el.dispatchEvent(new PointerCtor("pointerup", { bubbles: true, clientX, clientY }));
-      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX, clientY }));
-      el.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX, clientY }));
-    }
-    function findPostOnlyOption() {
-      const options = document.querySelectorAll('[role="option"], [role="menuitem"], .bn-select-option');
-      return Array.from(options).find((el) => {
-        if (!isVisibleElement(el)) return false;
-        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        return includesBinancePageText(text, BINANCE_PAGE_TEXT.postOnly) && text.length < 120;
-      }) || null;
     }
     async function activateTradeMode(mode) {
       if (getActiveTradeMode() === mode) return true;
       const tab = findTradeModeTabByMode(mode);
       if (!tab) return false;
+      const mutationRoot = getTradeMutationRoot();
       tab.click();
-      await delay(260);
+      const activeMode = await waitForTradeFormMutationState(
+        mutationRoot,
+        () => getActiveTradeMode() === mode ? mode : null,
+        TRADE_UI_STATE_TIMEOUT_MS
+      );
       invalidateTradeButtonCache();
       scheduleRenderPanel();
-      return getActiveTradeMode() === mode;
+      return activeMode === mode;
     }
     async function ensurePostOnlyOrderType() {
       if (isPostOnlyOrderTypeActive()) return true;
-      const tab = findConditionalOrderTab();
+      const tab = findPostOnlyOrderTab();
       if (!tab) return false;
-      if (!getCurrentOrderType().includes("CONDITIONAL")) {
-        tab.click();
-        await delay(320);
-      }
-      if (isPostOnlyOrderTypeActive()) return true;
-      const combo = findConditionalSubtypeCombobox();
-      if (!combo) return false;
-      clickElementLikeUser(combo);
-      await delay(260);
-      const option = findPostOnlyOption();
-      if (!option) return false;
-      clickElementLikeUser(option);
-      await delay(360);
-      return isPostOnlyOrderTypeActive();
+      const mutationRoot = getTradeMutationRoot();
+      tab.click();
+      const active = await waitForTradeFormMutationState(
+        mutationRoot,
+        () => isPostOnlyOrderTypeActive() ? true : null,
+        TRADE_UI_STATE_TIMEOUT_MS
+      );
+      return active === true;
     }
     async function readOpenBaseQtyForLadder(spec, referencePrice) {
       const priceInput = findPriceInput();

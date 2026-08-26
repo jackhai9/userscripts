@@ -130,10 +130,18 @@ test('route watcher owns non-trading page pause instead of business timers spinn
   assert.doesNotMatch(pauseBody, /stopRouteWatcher\(\)/);
 });
 
-test('Post Only synthetic click helper dispatches a single click event', () => {
-  const clickBody = readFunctionBody('clickElementLikeUser');
-  assert.match(clickBody, /dispatchEvent\(new MouseEvent\('click'/);
-  assert.doesNotMatch(clickBody, /\.click\?\.\(\)/);
+test('trade mode and Post Only switches wait for observed state instead of fixed sleeps', () => {
+  const activateBody = readFunctionBody('activateTradeMode');
+  const ensureBody = readFunctionBody('ensurePostOnlyOrderType');
+  const findPostOnlyBody = readFunctionBody('findPostOnlyOrderTab');
+
+  assert.match(activateBody, /waitForTradeFormMutationState/);
+  assert.doesNotMatch(activateBody, /delay\(/);
+  assert.match(ensureBody, /waitForTradeFormMutationState/);
+  assert.doesNotMatch(ensureBody, /delay\(/);
+  assert.match(findPostOnlyBody, /BINANCE_POST_ONLY_ORDER_TYPE/);
+  assert.match(findPostOnlyBody, /BINANCE_PAGE_TEXT\.postOnly/);
+  assert.doesNotMatch(source, /findConditionalSubtypeCombobox|findPostOnlyOption|clickElementLikeUser/);
 });
 
 test('labeled quantity matching resets its global regexp for every DOM node', () => {
