@@ -9,7 +9,11 @@ on:
       - "playwright.config.js"
       - "src/binance-orderbook-trade/**"
       - "scripts/binance-orderbook-trade.user.js"
+      - "scripts/binance-*.mjs"
       - "e2e/binance-orderbook/**"
+      - "test/unit/binance-*.test.js"
+      - "test/unit/binance-orderbook-trade/**"
+      - "test/dom/binance-orderbook-trade/**"
   push:
     branches:
       - main
@@ -20,7 +24,11 @@ on:
       - "playwright.config.js"
       - "src/binance-orderbook-trade/**"
       - "scripts/binance-orderbook-trade.user.js"
+      - "scripts/binance-*.mjs"
       - "e2e/binance-orderbook/**"
+      - "test/unit/binance-*.test.js"
+      - "test/unit/binance-orderbook-trade/**"
+      - "test/dom/binance-orderbook-trade/**"
 
 permissions:
   contents: read
@@ -37,7 +45,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:binance-orderbook-trade
+      - run: npm run test:binance-orderbook-ui-toolchain
       - run: npm run build:binance-orderbook-trade
       - run: git diff --exit-code -- scripts/binance-orderbook-trade.user.js
       - run: npm run test:ui

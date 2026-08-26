@@ -20,6 +20,7 @@
     "check:m3u8-downloader": "node --check scripts/m3u8-downloader.user.js",
     "test": "node --test",
     "test:binance-orderbook-trade": "node --test test/unit/binance-orderbook-trade/*.test.js test/dom/binance-orderbook-trade/*.test.js",
+    "test:binance-orderbook-ui-toolchain": "node --test test/unit/binance-orderbook-trade/*.test.js test/dom/binance-orderbook-trade/*.test.js test/unit/binance-*.test.js",
     "test:ui": "playwright test",
     "test:ui:headed": "playwright test --headed",
     "test:ui:debug": "playwright test --debug"
