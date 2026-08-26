@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.113
+// @version      2.7.114
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3761,49 +3761,44 @@
         cancelAllAvailable: Boolean(cancelAllButton)
       });
     }
-    async function waitForCurrentSymbolOpenOrders(root, symbol) {
-      const deadline = Date.now() + 1600;
-      while (Date.now() < deadline) {
-        if (!isCurrentObservedSymbol(symbol)) return { hasOrders: false, cancelAllButton: null };
-        const currentRoot2 = getActiveOpenOrdersScope2();
-        const cancelAllButton2 = findCurrentSymbolCancelAllButton(currentRoot2);
-        const filterChecked2 = getCheckboxCheckedState(findHideOtherSymbolCheckbox(currentRoot2));
+    async function waitForCurrentSymbolOpenOrders(symbol) {
+      const readEvidence = ({ final = false } = {}) => {
+        if (!isCurrentObservedSymbol(symbol)) {
+          return { hasOrders: false, cancelAllButton: null };
+        }
+        const currentRoot = getActiveOpenOrdersScope2();
+        const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
+        const filterChecked = getCheckboxCheckedState(findHideOtherSymbolCheckbox(currentRoot));
         if (isFilteredCurrentSymbolOpenOrdersEmpty({
-          scopeText: currentRoot2?.textContent || "",
+          scopeText: currentRoot?.textContent || "",
           symbol,
-          filterChecked: filterChecked2,
-          cancelAllAvailable: Boolean(cancelAllButton2)
+          filterChecked,
+          cancelAllAvailable: Boolean(cancelAllButton)
         })) {
           return { hasOrders: false, cancelAllButton: null };
         }
-        if (hasCurrentSymbolOpenOrders(currentRoot2, symbol, filterChecked2 === true, cancelAllButton2)) {
-          return { hasOrders: true, cancelAllButton: cancelAllButton2 };
+        if (hasCurrentSymbolOpenOrders(currentRoot, symbol, filterChecked === true, cancelAllButton)) {
+          return { hasOrders: true, cancelAllButton };
         }
-        if (filterChecked2 === true && isOpenOrdersScopeConfirmedForSymbol(currentRoot2, symbol) && isCurrentSymbolOpenOrdersDefinitivelyClear({
-          scopeText: currentRoot2?.textContent || "",
+        if (filterChecked === true && isOpenOrdersScopeConfirmedForSymbol(currentRoot, symbol) && isCurrentSymbolOpenOrdersDefinitivelyClear({
+          scopeText: currentRoot?.textContent || "",
           symbol,
           openOrdersCount: getOpenOrdersTabCount()
         })) {
           return { hasOrders: false, cancelAllButton: null };
         }
-        await delay(100);
-      }
-      if (!isCurrentObservedSymbol(symbol)) return { hasOrders: false, cancelAllButton: null };
-      const currentRoot = getActiveOpenOrdersScope2();
-      const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
-      const filterChecked = getCheckboxCheckedState(findHideOtherSymbolCheckbox(currentRoot));
-      if (isFilteredCurrentSymbolOpenOrdersEmpty({
-        scopeText: currentRoot?.textContent || "",
-        symbol,
-        filterChecked,
-        cancelAllAvailable: Boolean(cancelAllButton)
-      })) {
-        return { hasOrders: false, cancelAllButton: null };
-      }
-      return {
-        hasOrders: hasCurrentSymbolOpenOrders(currentRoot, symbol, filterChecked === true, cancelAllButton),
-        cancelAllButton
+        return final ? {
+          hasOrders: hasCurrentSymbolOpenOrders(
+            currentRoot,
+            symbol,
+            filterChecked === true,
+            cancelAllButton
+          ),
+          cancelAllButton
+        } : null;
       };
+      const evidence = await waitForAccountOrdersState(readEvidence, 1600);
+      return evidence || readEvidence({ final: true });
     }
     function isOpenOrdersScopeConfirmedForSymbol(root, symbol) {
       const checkbox = findHideOtherSymbolCheckbox(root);
@@ -4419,7 +4414,7 @@
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
-        const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(openOrdersScope, symbol);
+        const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(symbol);
         if (!isCurrentObservedSymbol(symbol)) {
           const message = "读取当前币挂单时交易对已变化";
           setLadderStatus(message);
