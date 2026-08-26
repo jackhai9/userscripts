@@ -11,6 +11,7 @@ import {
   parseTradeModeLabel,
   placeTradePanelSpacer,
   readTradeAvailableBalance,
+  waitForTradeFormFrameState,
   waitForTradeFormMutationState,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
 import { loadFixtureDom } from '../../helpers/dom.js';
@@ -170,6 +171,50 @@ test('trade form mutation wait returns the final state at its deadline', async (
 
   assert.equal(
     await waitForTradeFormMutationState(root, () => null, 5),
+    null,
+  );
+});
+
+test('trade form frame wait requires consecutive live-state confirmations', async () => {
+  const dom = loadFixtureDom('<section id="trade-form"></section>');
+  const root = dom.window.document.querySelector('#trade-form');
+  const states = [
+    { price: '81.9', qty: '0.01' },
+    null,
+    { price: '81.9', qty: '0.01' },
+    { price: '81.9', qty: '0.01' },
+  ];
+  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(callback, 0);
+  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+
+  const result = await waitForTradeFormFrameState(
+    root,
+    () => states.shift() ?? null,
+    100,
+    2,
+  );
+
+  assert.deepEqual(result, { price: '81.9', qty: '0.01' });
+  assert.equal(states.length, 0);
+});
+
+test('trade form frame wait rejects a value that never remains synchronized', async () => {
+  const dom = loadFixtureDom('<section id="trade-form"></section>');
+  const root = dom.window.document.querySelector('#trade-form');
+  let matches = false;
+  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(() => {
+    matches = !matches;
+    callback();
+  }, 0);
+  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+
+  assert.equal(
+    await waitForTradeFormFrameState(
+      root,
+      () => (matches ? { price: '81.9', qty: '0.01' } : null),
+      20,
+      2,
+    ),
     null,
   );
 });

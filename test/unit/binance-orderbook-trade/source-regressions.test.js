@@ -144,6 +144,27 @@ test('trade mode and Post Only switches wait for observed state instead of fixed
   assert.doesNotMatch(source, /findConditionalSubtypeCombobox|findPostOnlyOption|clickElementLikeUser/);
 });
 
+test('trade input synchronization confirms live controlled values instead of sleeping', () => {
+  const syncBody = readFunctionBody('syncTradeInputs');
+  const executeBody = readFunctionBody('executeLadderPlan');
+
+  assert.match(syncBody, /setInputValueReact\(qtyInput,\s*expectedQty\)/);
+  assert.match(syncBody, /waitForTradeFormFrameState/);
+  assert.match(syncBody, /setInputValueReact\(priceInput,\s*expectedPrice\)/);
+  assert.ok(
+    syncBody.indexOf('setInputValueReact(qtyInput, expectedQty)')
+      < syncBody.indexOf('setInputValueReact(priceInput, expectedPrice)'),
+  );
+  assert.match(syncBody, /findPriceInput\(\)/);
+  assert.match(syncBody, /findQtyInput\(\)/);
+  assert.match(syncBody, /assertSubmittedPriceMatchesExpectedPrice/);
+  assert.match(syncBody, /assertSubmittedQtyMatchesExpectedQty/);
+  assert.doesNotMatch(syncBody, /delay\(/);
+  assert.match(executeBody, /syncTradeInputs\(order\.price,\s*order\.qty,\s*\{[\s\S]*priceLabel:\s*'计划价'/);
+  assert.doesNotMatch(executeBody, /await delay\(90\)|await delay\(120\)/);
+  assert.match(source, /syncTradeInputs\(clickedPrice,\s*qtyPlan\.qty,\s*\{[\s\S]*priceLabel:\s*'点击价'/);
+});
+
 test('labeled quantity matching resets its global regexp for every DOM node', () => {
   const readBody = readFunctionBody('readQtyTextNearButton');
   assert.match(readBody, /new RegExp\([^;]+, 'gi'\)/);

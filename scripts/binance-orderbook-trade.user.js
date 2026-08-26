@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.119
+// @version      2.7.120
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1159,6 +1159,47 @@
       check();
     });
   }
+  function waitForTradeFormFrameState(observationRoot, readState, timeoutMs, requiredStableFrames = 2) {
+    const view = observationRoot?.ownerDocument?.defaultView;
+    if (!view || typeof view.requestAnimationFrame !== "function" || typeof view.cancelAnimationFrame !== "function") {
+      throw new Error("Trade form frame scheduler is unavailable");
+    }
+    if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
+      throw new Error("requiredStableFrames must be a positive integer");
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      let frameHandle = 0;
+      let timer = 0;
+      let stableFrames = 0;
+      let stableState = null;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        if (frameHandle) view.cancelAnimationFrame(frameHandle);
+        view.clearTimeout(timer);
+        resolve(value);
+      };
+      const check = () => {
+        frameHandle = 0;
+        const state = readState();
+        if (state) {
+          stableFrames += 1;
+          stableState = state;
+          if (stableFrames >= requiredStableFrames) {
+            finish(stableState);
+            return;
+          }
+        } else {
+          stableFrames = 0;
+          stableState = null;
+        }
+        frameHandle = view.requestAnimationFrame(check);
+      };
+      timer = view.setTimeout(() => finish(null), timeoutMs);
+      frameHandle = view.requestAnimationFrame(check);
+    });
+  }
   function isTradeModeTab(node, { panelId }) {
     if (!node?.matches?.('[role="tab"]')) return false;
     if (node.closest(`#${panelId}`)) return false;
@@ -1746,8 +1787,8 @@
     const BINANCE_PLACE_ORDER_BAPI_PATH = "/bapi/futures/v1/private/future/order/place-order";
     const BINANCE_USER_POSITION_BAPI_PATH = "/bapi/futures/v6/private/future/user-data/user-position";
     const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
-    const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
-    const SINGLE_ORDER_QTY_SYNC_DELAY_MS = 120;
+    const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
+    const TRADE_INPUT_SYNC_STABLE_FRAMES = 2;
     const ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6e3;
     const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS;
     const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
@@ -3389,13 +3430,72 @@
       }
       if (!isPostOnlyOrderTypeActive()) throw new Error("执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试");
     }
-    function assertSubmittedPriceMatchesClickedPrice(clickedPrice, submittedPrice) {
-      const clicked = normalizeDecimalString(clickedPrice);
+    function assertSubmittedPriceMatchesExpectedPrice(expectedPrice, submittedPrice, expectedLabel = "点击价") {
+      const expected = normalizeDecimalString(expectedPrice);
       const submitted = normalizeDecimalString(submittedPrice);
-      const cmp = compareDecimalStrings(clicked, submitted);
+      const cmp = compareDecimalStrings(expected, submitted);
       if (cmp !== 0) {
-        throw new Error(`价格框未同步，点击价 ${clicked || clickedPrice}，当前提交价 ${submitted || submittedPrice || "-"}`);
+        throw new Error(`价格框未同步，${expectedLabel} ${expected || expectedPrice}，当前提交价 ${submitted || submittedPrice || "-"}`);
       }
+    }
+    function assertSubmittedQtyMatchesExpectedQty(expectedQty, submittedQty, expectedLabel = "目标量") {
+      const expected = normalizeDecimalString(expectedQty);
+      const submitted = normalizeDecimalString(submittedQty);
+      const cmp = compareDecimalStrings(expected, submitted);
+      if (cmp !== 0) {
+        throw new Error(`数量框未同步，${expectedLabel} ${expected || expectedQty}，当前提交量 ${submitted || submittedQty || "-"}`);
+      }
+    }
+    function readSynchronizedTradeInputs(expectedPrice, expectedQty) {
+      const priceInput = findPriceInput();
+      const qtyInput = findQtyInput();
+      if (!priceInput || !qtyInput) return null;
+      const submittedPrice = normalizeDecimalString(priceInput.value);
+      const submittedQty = normalizeDecimalString(qtyInput.value);
+      if (compareDecimalStrings(expectedPrice, submittedPrice) !== 0 || compareDecimalStrings(expectedQty, submittedQty) !== 0) {
+        return null;
+      }
+      return { priceInput, qtyInput, submittedPrice, submittedQty };
+    }
+    async function syncTradeInputs(expectedPrice, expectedQty, options = null) {
+      const priceLabel = options?.priceLabel || "点击价";
+      const qtyLabel = options?.qtyLabel || "目标量";
+      let observationRoot = getTradeMutationRoot();
+      const qtyInput = findQtyInput();
+      if (!observationRoot || !qtyInput) throw new Error("未找到当前交易表单或数量输入框");
+      setInputValueReact(qtyInput, expectedQty);
+      const qtyReady = await waitForTradeFormFrameState(
+        observationRoot,
+        () => {
+          const liveQtyInput = findQtyInput();
+          const submittedQty = normalizeDecimalString(liveQtyInput?.value || "");
+          return compareDecimalStrings(expectedQty, submittedQty) === 0 ? { qtyInput: liveQtyInput, submittedQty } : null;
+        },
+        TRADE_INPUT_SYNC_TIMEOUT_MS,
+        TRADE_INPUT_SYNC_STABLE_FRAMES
+      );
+      if (!qtyReady) {
+        assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || "", qtyLabel);
+        throw new Error("数量框状态未稳定，已停止提交");
+      }
+      observationRoot = getTradeMutationRoot();
+      const priceInput = findPriceInput();
+      if (!observationRoot || !priceInput) throw new Error("未找到当前交易表单或价格输入框");
+      setInputValueReact(priceInput, expectedPrice);
+      const synchronized = await waitForTradeFormFrameState(
+        observationRoot,
+        () => readSynchronizedTradeInputs(expectedPrice, expectedQty),
+        TRADE_INPUT_SYNC_TIMEOUT_MS,
+        TRADE_INPUT_SYNC_STABLE_FRAMES
+      );
+      if (synchronized) return synchronized;
+      assertSubmittedPriceMatchesExpectedPrice(
+        expectedPrice,
+        findPriceInput()?.value || "",
+        priceLabel
+      );
+      assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || "", qtyLabel);
+      throw new Error("价格和数量状态未稳定，已停止提交");
     }
     function isSubmitButtonBusy(button) {
       if (!button) return false;
@@ -3503,13 +3603,11 @@
           const currentPriceInput = findPriceInput();
           const currentQtyInput = findQtyInput();
           if (!currentPriceInput || !currentQtyInput) throw new Error("执行中价格或数量输入框丢失");
-          setInputValueReact(currentPriceInput, order.price);
-          await delay(90);
-          setInputValueReact(currentQtyInput, order.qty);
-          await delay(120);
-          const submittedPrice = normalizeDecimalString(currentPriceInput.value);
-          if (!submittedPrice) throw new Error("执行中价格输入框值无效");
-          assertSubmittedPriceMatchesClickedPrice(order.price, submittedPrice);
+          const synchronizedInputs = await syncTradeInputs(order.price, order.qty, {
+            priceLabel: "计划价",
+            qtyLabel: "计划量"
+          });
+          const submittedPrice = synchronizedInputs.submittedPrice;
           assertLadderExecutionContext(plan);
           assertLadderMakerPrice(plan, submittedPrice);
           const button = plan.spec.buttonGetter();
@@ -6333,12 +6431,10 @@
           return;
         }
         lastTs = now;
-        setInputValueReact(priceInput, clickedPrice);
-        await delay(SINGLE_ORDER_PRICE_SYNC_DELAY_MS);
-        setInputValueReact(qtyInput, qtyPlan.qty);
-        await delay(SINGLE_ORDER_QTY_SYNC_DELAY_MS);
-        const submittedPriceInput = findPriceInput() || priceInput;
-        assertSubmittedPriceMatchesClickedPrice(clickedPrice, submittedPriceInput.value);
+        await syncTradeInputs(clickedPrice, qtyPlan.qty, {
+          priceLabel: "点击价",
+          qtyLabel: "目标量"
+        });
         const currentSymbol = getCurrentSymbol();
         if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
           throw new Error(`交易对已变化，点击时 ${qtyPlan.symbol}，当前 ${currentSymbol || "-"}`);
