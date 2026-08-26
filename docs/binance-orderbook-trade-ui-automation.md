@@ -44,6 +44,11 @@ Do not generate the Cartesian product. Maintain a mandatory risk-core matrix for
 business invariants, then generate pairwise or three-way covering combinations for
 the remaining axes. Production regressions become permanent named scenarios.
 
+The deterministic cancel matrix currently reduces 1,536 Cartesian combinations to
+19 scenarios while proving complete pairwise coverage. The generator is stable and
+seedless: the same ordered axes always produce the same named vectors. A unit test
+fails if a future axis/value change leaves any required pair uncovered.
+
 ## Required Invariants
 
 Every cancel-current-symbol scenario must assert all applicable invariants:
@@ -102,6 +107,11 @@ Failed L2 tests retain:
 - interaction timing and long-task JSON;
 - before/after control geometry;
 - final fixture state and event ledger.
+
+The Playwright auto fixture writes these JSON attachments only on failure. Visual
+regression uses semantic layout/style snapshots for the canonical open-expanded,
+close-expanded, and collapsed panels; this avoids platform font rasterization noise
+while still detecting group movement, size changes, disabled styling, and state text.
 
 Live tests additionally retain a test-owned order ledger keyed by symbol, side,
 price, quantity, and creation time. Concurrent user orders are not inferred to be

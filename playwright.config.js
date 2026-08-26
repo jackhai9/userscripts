@@ -8,6 +8,7 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   timeout: 15_000,
+  snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
   expect: {
     timeout: 3_000,
   },

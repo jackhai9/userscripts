@@ -61,6 +61,14 @@
 - Chrome/CDP 诊断资源必须限制在当前测量范围内：只启用本轮需要的 CDP domain，事件读取必须带过滤条件和数量上限，证据收集完成后销毁页面探针，并关闭本轮启用的所有 domain。不要在持久 `node_repl` 绑定中长期保留大批事件或完整脚本源码。
 - Codex `cua_node` 进程长时间占用超过一个 CPU 核心，并不能证明 userscript 或目标页面仍在忙。应先根据父进程和工作目录确认 PID 归属，检查 JavaScript 事件循环是否真的繁忙，再做短时只读堆栈采样。2026-08-25 的故障中，REPL 事件循环占用只有约 `0.1%`，原生堆栈热点却集中在管道/文件读取、Buffer/UTF-8 转换、typed array 复制和垃圾回收；关闭 CDP domain 后没有恢复，而重置该任务的 `node_repl` 内核会终止高负载 helper，同时保留 Chrome 和 Binance 页面。内核重置会清空所有 REPL 绑定并要求重新连接 Chrome，所以只能在浏览器验证节点完成后使用；清理后必须确认热点 PID 已消失，不要把直接结束 Node 进程作为第一步。
 
+## Git Worktree 使用边界
+
+- 默认不创建 worktree。单 Agent、串行任务、主工作区可以安全切换分支时，直接在主项目目录创建 feature branch 开发。
+- 项目或改动“看起来复杂”不是创建 worktree 的理由。必须有具体的并行、隔离或并排验证需求。
+- 只在以下情况使用 worktree：同时开发或验证多个分支；长时间测试/CDP/审查期间需要处理另一任务；多 Agent 并行且需要写入隔离；主工作区有用户未提交改动、无法安全 checkout；或必须并排比较两个版本。
+- 创建前先说明本次的具体必要性。如果不能指出上述需求，就不创建。
+- 确实需要时，手动 worktree 放在主项目同级目录，命名为 `<repo>-<task>`；合并并授权清理后，删除 worktree、已合并本地/远程分支并 prune 元数据，不留空容器目录。
+
 ## Validation
 
 - `binance-orderbook-trade` 最低门槛：`npm test`、`npm run build:binance-orderbook-trade`、`npm run check:binance-orderbook-trade`。
