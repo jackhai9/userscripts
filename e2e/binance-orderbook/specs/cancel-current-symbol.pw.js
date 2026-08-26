@@ -11,6 +11,7 @@ import {
   readFixtureState,
 } from '../helpers/userscript-page.js';
 import {
+  assertResponsiveInteraction,
   assertStableGeometry,
   finishInteractionProbe,
   installInteractionProbe,
@@ -52,9 +53,7 @@ test('no position and no orders returns immediate stable no-order feedback', asy
   expect(state.orders).toEqual([]);
   await expectRestoredState(page, scenario);
   const probe = await finishInteractionProbe(page);
-  expect(probe.firstFeedbackMs).not.toBeNull();
-  expect(probe.firstFeedbackMs).toBeLessThanOrEqual(100);
-  expect(probe.longTasks).toEqual([]);
+  assertResponsiveInteraction(expect, probe);
   assertStableGeometry(expect, probe.baseline, probe.current);
   expect(errors).toEqual([]);
 });
@@ -101,9 +100,7 @@ test('cancelling the native dialog preserves current and other orders and restor
   expect(state.orders).toEqual(ORDER_SETS.both);
   await expectRestoredState(page, scenario);
   const probe = await finishInteractionProbe(page);
-  expect(probe.firstFeedbackMs).not.toBeNull();
-  expect(probe.firstFeedbackMs).toBeLessThanOrEqual(100);
-  expect(probe.longTasks).toEqual([]);
+  assertResponsiveInteraction(expect, probe);
   assertStableGeometry(expect, probe.baseline, probe.current);
   expect(errors).toEqual([]);
 });

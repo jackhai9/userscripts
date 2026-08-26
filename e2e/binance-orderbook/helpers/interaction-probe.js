@@ -8,6 +8,7 @@ export async function installInteractionProbe(page, targetSelector) {
       startedAt: null,
       firstFeedbackAt: null,
       longTasks: [],
+      longAnimationFrames: [],
       baseline: {},
     };
     for (const button of panel.querySelectorAll('[data-ladder-action], [data-ladder-stop]')) {
@@ -45,10 +46,32 @@ export async function installInteractionProbe(page, targetSelector) {
       longTaskObserver.observe({ type: 'longtask', buffered: true });
     }
 
+    let longAnimationFrameObserver = null;
+    if (PerformanceObserver.supportedEntryTypes?.includes('long-animation-frame')) {
+      longAnimationFrameObserver = new PerformanceObserver((list) => {
+        state.longAnimationFrames.push(...list.getEntries().map((entry) => ({
+          startTime: entry.startTime,
+          duration: entry.duration,
+          blockingDuration: entry.blockingDuration,
+          forcedStyleAndLayoutDuration: entry.scripts?.reduce(
+            (total, script) => total + (script.forcedStyleAndLayoutDuration || 0),
+            0
+          ) || 0,
+          scripts: entry.scripts?.map((script) => ({
+            sourceURL: script.sourceURL,
+            functionName: script.functionName,
+            duration: script.duration,
+          })) || [],
+        })));
+      });
+      longAnimationFrameObserver.observe({ type: 'long-animation-frame', buffered: true });
+    }
+
     window.__UI_INTERACTION_PROBE__ = {
       finish() {
         mutationObserver.disconnect();
         longTaskObserver?.disconnect();
+        longAnimationFrameObserver?.disconnect();
         const current = {};
         for (const button of panel.querySelectorAll('[data-ladder-action], [data-ladder-stop]')) {
           const key = button.getAttribute('data-ladder-action') || 'stop';
@@ -62,6 +85,9 @@ export async function installInteractionProbe(page, targetSelector) {
           longTasks: state.longTasks.filter((entry) => (
             state.startedAt !== null && entry.startTime >= state.startedAt
           )),
+          longAnimationFrames: state.longAnimationFrames.filter((entry) => (
+            state.startedAt !== null && entry.startTime >= state.startedAt
+          )),
           baseline: state.baseline,
           current,
         };
@@ -72,6 +98,13 @@ export async function installInteractionProbe(page, targetSelector) {
 
 export async function finishInteractionProbe(page) {
   return page.evaluate(() => window.__UI_INTERACTION_PROBE__.finish());
+}
+
+export function assertResponsiveInteraction(expect, probe) {
+  expect(probe.firstFeedbackMs).not.toBeNull();
+  expect(probe.firstFeedbackMs).toBeLessThanOrEqual(200);
+  expect(Math.max(0, ...probe.longTasks.map((entry) => entry.duration))).toBeLessThanOrEqual(200);
+  expect(Math.max(0, ...probe.longAnimationFrames.map((entry) => entry.duration))).toBeLessThanOrEqual(200);
 }
 
 export function assertStableGeometry(expect, baseline, current) {

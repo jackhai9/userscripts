@@ -21,6 +21,39 @@ export async function openUserscriptScenario(page, scenario) {
       });
       return;
     }
+    if (url.pathname === '/bapi/fixture-bootstrap') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+      return;
+    }
+    if (url.pathname === '/bapi/futures/v6/private/future/user-data/user-position') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: scenario.positions.map((position) => ({
+            symbol: position.symbol,
+            positionSide: position.side,
+            positionAmount: position.side === 'SHORT'
+              ? `-${position.quantity}`
+              : position.quantity,
+          })),
+        }),
+      });
+      return;
+    }
+    if (url.pathname === '/bapi/futures/v1/private/future/user-data/adjustLeverage') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'text/html',

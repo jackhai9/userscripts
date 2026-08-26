@@ -27,6 +27,10 @@ export function renderBinanceFuturesFixture(scenario) {
     .order-entry button { width: 48%; height: 36px; }
     #futuresOrderbook { width: 300px; min-height: 300px; }
     .orderbook-tickSize, .row-content, .tradew-tradelist { min-height: 24px; }
+    .orderbook-tickSize { position: relative; width: 120px; }
+    .bn-tooltips-ele { display: inline-block; min-width: 70px; min-height: 24px; }
+    .ob-ticksize-overlay { position: absolute; top: 24px; left: 0; z-index: 20; width: 120px; padding: 4px; background: #fff; border: 1px solid #d8dce1; }
+    .ob-ticksize-item { display: block; min-height: 28px; padding: 4px; }
     .row-content { display: flex; gap: 16px; }
     .emit-price { display: inline-block; min-width: 70px; min-height: 20px; }
     .chart-widget-root { width: 700px; height: 300px; margin-top: 20px; border: 1px solid #d8dce1; }
@@ -47,11 +51,19 @@ export function renderBinanceFuturesFixture(scenario) {
   <div id="fixture-layout">
     <main id="fixture-main">
       <section id="futuresOrderbook">
-        <div class="orderbook-tickSize"><span class="tick-content">0.1</span></div>
+        <div class="orderbook-tickSize"><div class="bn-tooltips-ele"><span class="tick-content">0.1</span></div></div>
         <div class="row-content"><span class="ask-light emit-price">81.2</span></div>
         <div class="row-content"><span class="ask-light emit-price">81.1</span></div>
+        <div class="row-content"><span class="ask-light emit-price">81.05</span></div>
+        <div class="row-content"><span class="ask-light emit-price">81.04</span></div>
+        <div class="row-content"><span class="ask-light emit-price">81.03</span></div>
+        <div class="row-content"><span class="ask-light emit-price">81.02</span></div>
         <div class="row-content"><span class="bid-light emit-price">81.0</span></div>
         <div class="row-content"><span class="bid-light emit-price">80.9</span></div>
+        <div class="row-content"><span class="bid-light emit-price">80.8</span></div>
+        <div class="row-content"><span class="bid-light emit-price">80.7</span></div>
+        <div class="row-content"><span class="bid-light emit-price">80.6</span></div>
+        <div class="row-content"><span class="bid-light emit-price">80.5</span></div>
       </section>
       <section class="tradew-tradelist">
         <span class="price emit-price">81.00</span><span class="price emit-price">81.01</span>
@@ -66,8 +78,8 @@ export function renderBinanceFuturesFixture(scenario) {
         <div class="trade-mode-row">
           <div class="trade-mode-column">
             <div id="position-direction">
-              <div role="tab" aria-selected="true">开仓</div>
-              <div role="tab" aria-selected="false">平仓</div>
+              <div role="tab" data-trade-mode="OPEN" aria-selected="true">开仓</div>
+              <div role="tab" data-trade-mode="CLOSE" aria-selected="false">平仓</div>
             </div>
             <div class="order-type-tabs"><div role="tab" data-tab-key="POST_ONLY" aria-selected="true">只做Maker</div></div>
           </div>
@@ -92,6 +104,9 @@ export function renderBinanceFuturesFixture(scenario) {
         openOrdersSubTab: scenario.ui.openOrdersSubTab,
         hideOtherSymbols: scenario.ui.hideOtherSymbols,
         showOrders: scenario.ui.showOrders,
+        tradeMode: scenario.ui.tradeMode,
+        orderbookPrecision: scenario.ui.orderbookPrecision,
+        leverage: scenario.ui.leverage,
         dialogOpen: false,
         events: [],
       };
@@ -105,6 +120,90 @@ export function renderBinanceFuturesFixture(scenario) {
       const visibleOrders = () => state.hideOtherSymbols ? currentOrders() : state.orders;
       const selected = (value, expected) => String(value === expected);
       const scheduleCommit = (callback) => setTimeout(callback, scenario.host.mutationDelayMs);
+      const userscriptFetch = window.fetch;
+      window.fetch = async (...args) => {
+        const response = await userscriptFetch(...args);
+        const url = new URL(typeof args[0] === 'string' ? args[0] : args[0].url, location.href);
+        if (url.pathname === '/bapi/futures/v1/private/future/user-data/adjustLeverage' && response.ok) {
+          const body = JSON.parse(args[1].body);
+          state.leverage = body.leverage;
+          document.querySelector('.quick-controls button:nth-child(2)').textContent = body.leverage + 'x';
+          record('leverage-adjusted', { symbol: body.symbol, leverage: body.leverage });
+        }
+        return response;
+      };
+
+      function currentPositionQuantity(side) {
+        return state.positions
+          .filter((item) => item.symbol === scenario.currentSymbol && item.side === side)
+          .reduce((total, item) => total + Number(item.quantity), 0);
+      }
+
+      function renderTradeMode() {
+        const direction = document.querySelector('#position-direction');
+        direction.innerHTML =
+          '<div role="tab" data-trade-mode="OPEN" aria-selected="' + selected(state.tradeMode, 'OPEN') + '">开仓</div>' +
+          '<div role="tab" data-trade-mode="CLOSE" aria-selected="' + selected(state.tradeMode, 'CLOSE') + '">平仓</div>';
+        const orderEntry = document.querySelector('.order-entry');
+        if (state.tradeMode === 'OPEN') {
+          orderEntry.innerHTML =
+            '<input id="limitPrice-open" value="81.0"><input id="unitAmount-open" value="">' +
+            '<button type="button">开多</button><button type="button">开空</button>' +
+            '<div data-testid="max-buy-amount">可开 10 HYPE</div>' +
+            '<div data-testid="max-sell-amount">可开 10 HYPE</div>';
+        } else {
+          orderEntry.innerHTML =
+            '<input id="limitPrice-close" value="81.0"><input id="unitAmount-close" value="">' +
+            '<button type="button">平多</button><button type="button">平空</button>' +
+            '<div data-testid="max-sell-amount">可平 ' + currentPositionQuantity('LONG') + ' HYPE</div>' +
+            '<div data-testid="max-buy-amount">可平 ' + currentPositionQuantity('SHORT') + ' HYPE</div>';
+        }
+        direction.querySelectorAll('[data-trade-mode]').forEach((tab) => {
+          tab.addEventListener('click', () => scheduleCommit(() => {
+            state.tradeMode = tab.dataset.tradeMode;
+            record('trade-mode', { value: state.tradeMode });
+            renderTradeMode();
+          }));
+        });
+        orderEntry.querySelectorAll('button').forEach((button) => {
+          button.addEventListener('click', () => {
+            const feedback = document.createElement('div');
+            feedback.setAttribute('role', 'alert');
+            feedback.textContent = '订单已提交成功';
+            document.body.append(feedback);
+            record('order-submitted', {
+              action: button.textContent.trim(),
+              price: orderEntry.querySelector('input[id^="limitPrice-"]')?.value || '',
+              quantity: orderEntry.querySelector('input[id^="unitAmount-"]')?.value || '',
+            });
+          });
+        });
+      }
+
+      function renderPrecisionOverlay() {
+        const tickSize = document.querySelector('#futuresOrderbook .orderbook-tickSize');
+        const existing = tickSize.querySelector('.ob-ticksize-overlay');
+        if (existing) {
+          existing.remove();
+          record('precision-overlay-closed');
+          return;
+        }
+        const overlay = document.createElement('div');
+        overlay.className = 'ob-ticksize-overlay';
+        overlay.innerHTML = scenario.host.precisionOptions.map((value) => (
+          '<div class="ob-ticksize-item" data-precision-value="' + value + '"><span>' + value + '</span></div>'
+        )).join('');
+        tickSize.append(overlay);
+        record('precision-overlay-opened');
+        overlay.querySelectorAll('[data-precision-value]').forEach((option) => {
+          option.addEventListener('click', () => {
+            state.orderbookPrecision = option.dataset.precisionValue;
+            tickSize.querySelector('.tick-content').textContent = state.orderbookPrecision;
+            record('precision-selected', { value: state.orderbookPrecision });
+            overlay.remove();
+          });
+        });
+      }
 
       localStorage.setItem('jh_binance_ladder_expanded', scenario.ui.ladderExpanded ? 'true' : 'false');
       localStorage.setItem('jh_binance_orderbook_precision_samples_v3:' + scenario.currentSymbol, '["81.0","81.01","81.02","81.03","81.04","81.05"]');
@@ -243,11 +342,21 @@ export function renderBinanceFuturesFixture(scenario) {
           openOrdersSubTab: state.openOrdersSubTab,
           hideOtherSymbols: state.hideOtherSymbols,
           showOrders: state.showOrders,
+          tradeMode: state.tradeMode,
+          orderbookPrecision: state.orderbookPrecision,
+          leverage: state.leverage,
           dialogOpen: state.dialogOpen,
           events: state.events,
         })),
       };
+      document.querySelector('.tick-content').textContent = state.orderbookPrecision;
+      document.querySelector('.quick-controls button:nth-child(2)').textContent = state.leverage + 'x';
+      document.querySelector('.bn-tooltips-ele').addEventListener('click', renderPrecisionOverlay);
+      renderTradeMode();
       renderAccountWidget();
+      window.fetch('/bapi/fixture-bootstrap', {
+        headers: { csrftoken: 'fixture' },
+      });
     })();
   </script>
 </body>

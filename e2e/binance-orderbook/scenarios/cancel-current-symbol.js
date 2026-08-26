@@ -45,6 +45,9 @@ export function createCancelScenario(overrides = {}) {
       hideOtherSymbols: false,
       showOrders: true,
       ladderExpanded: true,
+      tradeMode: 'OPEN',
+      orderbookPrecision: '0.1',
+      leverage: 2,
       ...overrides.ui,
     },
     host: {
@@ -53,6 +56,7 @@ export function createCancelScenario(overrides = {}) {
       dialogMode: 'normal',
       dialogReplacementDelayMs: null,
       clearMode: 'currentSymbol',
+      precisionOptions: ['0.001', '0.01', '0.1', '1'],
       ...overrides.host,
     },
   };
@@ -62,6 +66,15 @@ export function createCancelScenario(overrides = {}) {
   }
   if (!['basic', 'conditional'].includes(scenario.ui.openOrdersSubTab)) {
     throw new Error(`Unsupported open-orders sub-tab: ${scenario.ui.openOrdersSubTab}`);
+  }
+  if (!['OPEN', 'CLOSE'].includes(scenario.ui.tradeMode)) {
+    throw new Error(`Unsupported trade mode: ${scenario.ui.tradeMode}`);
+  }
+  if (!Number.isInteger(scenario.ui.leverage) || scenario.ui.leverage <= 0) {
+    throw new Error('Leverage must be a positive integer');
+  }
+  if (!scenario.host.precisionOptions.includes(scenario.ui.orderbookPrecision)) {
+    throw new Error('Current orderbook precision must be one of the native options');
   }
   if (!Array.isArray(scenario.positions) || !Array.isArray(scenario.orders)) {
     throw new Error('Scenario positions and orders must be arrays');
