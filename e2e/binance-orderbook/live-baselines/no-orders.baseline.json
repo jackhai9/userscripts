@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-26T08:30:11.000Z",
+  "environment": {
+    "browser": "Chrome 151.0.0.0",
+    "os": "macOS (MacIntel)",
+    "route": "https://www.binance.com/zh-CN/futures/HYPEUSDT",
+    "symbol": "HYPEUSDT",
+    "userscriptSha256": "cc4135902ad4ad62eb6188828479780a8e194713be8067dc10c8c73428c5dcdb",
+    "userscriptVersion": "2.7.119"
+  },
+  "scenarios": [
+    {
+      "name": "cancel-current-symbol-no-orders",
+      "sampleCount": 3,
+      "segmentsMs": {
+        "clickToFirstFeedback": {
+          "min": 30.6,
+          "median": 33,
+          "p95": 38.3,
+          "max": 38.3
+        },
+        "clickToFinalReady": {
+          "min": 630.8,
+          "median": 637.1,
+          "p95": 646.7,
+          "max": 646.7
+        }
+      },
+      "maxLongTaskMs": {
+        "min": 0,
+        "median": 0,
+        "p95": 54,
+        "max": 54
+      },
+      "maxLongAnimationFrameMs": {
+        "min": 0,
+        "median": 0,
+        "p95": 56.1,
+        "max": 56.1
+      }
+    }
+  ],
+  "comparisonPolicy": {
+    "absoluteToleranceMs": 50,
+    "medianRatio": 1.5,
+    "p95Ratio": 1.5
+  }
+}
