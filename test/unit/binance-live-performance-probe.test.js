@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  createLivePerformanceCompletionExpression,
+  createLivePerformanceCompletionPreparationExpression,
+  createLivePerformanceCompletionResultExpression,
   createLivePerformanceProbeExpression,
   validateLivePerformanceProbeSnapshot,
 } from '../../e2e/binance-orderbook/helpers/live-performance-probe.js';
@@ -67,5 +70,30 @@ test('live probe Runtime.evaluate expression is self-contained', () => {
 
   assert.match(expression, /^\(function installBinanceLivePerformanceProbe/);
   assert.match(expression, /"eventLimit":25/);
+  assert.doesNotMatch(expression, /DEFAULT_GLOBAL_NAME/);
+});
+
+test('live completion preparation and result expressions remove the action race', () => {
+  const preparation = createLivePerformanceCompletionPreparationExpression({
+    kind: 'no-orders',
+  });
+  const result = createLivePerformanceCompletionResultExpression();
+
+  assert.match(preparation, /window\[completionGlobalName\] = \(function waitForBinanceLivePerformanceCompletion/);
+  assert.match(preparation, /prepared: true/);
+  assert.match(result, /return await completion/);
+  assert.match(result, /delete window\[completionGlobalName\]/);
+});
+
+test('live completion Runtime.evaluate expression owns the page-ready contract', () => {
+  const expression = createLivePerformanceCompletionExpression({
+    kind: 'dialog-confirm',
+  });
+
+  assert.match(expression, /^\(function waitForBinanceLivePerformanceCompletion/);
+  assert.match(expression, /"kind":"dialog-confirm"/);
+  assert.match(expression, /finishAfterPerformanceTail/);
+  assert.match(expression, /dialog-action/);
+  assert.match(expression, /已恢复筛选状态/);
   assert.doesNotMatch(expression, /DEFAULT_GLOBAL_NAME/);
 });

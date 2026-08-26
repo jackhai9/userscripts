@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-26T20:14:42.922Z",
+  "environment": {
+    "browser": "Chrome 151.0.0.0",
+    "os": "macOS (MacIntel)",
+    "route": "https://www.binance.com/zh-CN/futures/HYPEUSDT",
+    "symbol": "HYPEUSDT",
+    "userscriptSha256": "f4bb60af07044e21f684d1978535795363ade1c240dde0de6b904767cfa87a18",
+    "userscriptVersion": "2.7.126"
+  },
+  "scenarios": [
+    {
+      "name": "cancel-current-symbol-no-orders",
+      "parameters": {
+        "kind": "no-orders"
+      },
+      "applicableSegments": [
+        "clickToFirstFeedback",
+        "clickToFinalReady"
+      ],
+      "samples": [
+        {
+          "capacityEvidence": null,
+          "segmentsMs": {
+            "clickToFirstFeedback": 7.5,
+            "clickToFinalReady": 7.8999998569488525
+          },
+          "testOrderLedger": {
+            "created": [],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 0
+        },
+        {
+          "capacityEvidence": null,
+          "segmentsMs": {
+            "clickToFirstFeedback": 5.599999904632568,
+            "clickToFinalReady": 6
+          },
+          "testOrderLedger": {
+            "created": [],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 0
+        },
+        {
+          "capacityEvidence": null,
+          "segmentsMs": {
+            "clickToFirstFeedback": 6.6000001430511475,
+            "clickToFinalReady": 7
+          },
+          "testOrderLedger": {
+            "created": [],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 0
+        }
+      ]
+    }
+  ]
+}

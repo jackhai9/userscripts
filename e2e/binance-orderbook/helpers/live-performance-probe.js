@@ -1,4 +1,5 @@
 const DEFAULT_GLOBAL_NAME = '__BINANCE_LIVE_PERFORMANCE_PROBE__';
+const DEFAULT_COMPLETION_GLOBAL_NAME = '__BINANCE_LIVE_PERFORMANCE_COMPLETION__';
 
 function assertRecord(value, path) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -66,11 +67,122 @@ export function validateLivePerformanceProbeSnapshot(snapshot) {
   return snapshot;
 }
 
+export function waitForBinanceLivePerformanceCompletion(options = {}) {
+  const globalName = options.globalName || '__BINANCE_LIVE_PERFORMANCE_PROBE__';
+  const kind = options.kind;
+  const timeoutMs = options.timeoutMs || 5_000;
+  const panelSelector = options.panelSelector || '#jh-binance-close-qty-multiplier-panel';
+  const cancelButtonSelector = options.cancelButtonSelector
+    || '[data-ladder-cancel-symbol="true"]';
+  const statusSelector = options.statusSelector || '#jh-binance-ladder-status';
+  const dialogSelector = options.dialogSelector
+    || '[role="dialog"], [class*="modal"], [class*="Modal"]';
+  const supportedKinds = ['no-orders', 'dialog-cancel', 'dialog-confirm'];
+  if (!supportedKinds.includes(kind)) {
+    throw new Error(`Unsupported live completion kind: ${kind}`);
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('timeoutMs must be a positive integer');
+  }
+  if (!document.body) throw new Error('Live completion wait requires document.body');
+  const probe = window[globalName];
+  if (!probe) throw new Error(`Live performance probe is not installed: ${globalName}`);
+
+  const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const isVisible = (element) => Boolean(element && element.getClientRects().length);
+  const matchesDialogText = (value) => /取消全部订单|Cancel all orders/i.test(value);
+  const readVisibleDialog = () => Array.from(document.querySelectorAll(dialogSelector))
+    .filter(isVisible)
+    .find((dialog) => matchesDialogText(normalizeText(dialog.textContent))) || null;
+  const readState = () => {
+    const panel = document.querySelector(panelSelector);
+    const cancelButton = panel?.querySelector(cancelButtonSelector) || null;
+    return {
+      cancelButtonPresent: Boolean(cancelButton),
+      cancelButtonDisabled: Boolean(cancelButton?.disabled),
+      cancelButtonText: normalizeText(cancelButton?.textContent),
+      statusText: normalizeText(panel?.querySelector(statusSelector)?.textContent),
+      dialogVisible: Boolean(readVisibleDialog()),
+    };
+  };
+  const hasEvent = (snapshot, eventKind) => (
+    snapshot.events.some((event) => event.kind === eventKind)
+  );
+  const isReady = () => {
+    const snapshot = probe.snapshot();
+    if (snapshot.startedAtMonotonicMs === null || snapshot.finishedAtMonotonicMs !== null) {
+      return false;
+    }
+    if (!snapshot.firstFeedbackCaptured || !hasEvent(snapshot, 'first-feedback')) return false;
+    const state = readState();
+    if (!state.cancelButtonPresent || state.cancelButtonDisabled || state.dialogVisible) return false;
+
+    if (kind === 'no-orders') {
+      if (hasEvent(snapshot, 'dialog-visible') || hasEvent(snapshot, 'dialog-action')) return false;
+      return state.cancelButtonText === '无挂单' || /当前币无挂单/.test(state.statusText);
+    }
+
+    const dialogActions = snapshot.events.filter((event) => event.kind === 'dialog-action');
+    if (dialogActions.length !== 1 || !hasEvent(snapshot, 'dialog-hidden')) return false;
+    const expectsPrimary = kind === 'dialog-confirm';
+    if (dialogActions[0].detail?.primary !== expectsPrimary) return false;
+    return kind === 'dialog-cancel'
+      ? /已取消撤单.*已恢复页面状态/.test(state.statusText)
+      : /撤单流程结束.*已恢复筛选状态/.test(state.statusText);
+  };
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let checkQueued = false;
+    const queueAttempt = () => {
+      if (settled || checkQueued) return;
+      checkQueued = true;
+      queueMicrotask(() => {
+        checkQueued = false;
+        attemptFinish();
+      });
+    };
+    const observer = new MutationObserver(queueAttempt);
+    const cleanup = () => {
+      observer.disconnect();
+      window.clearTimeout(timeoutId);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    function attemptFinish() {
+      if (settled || !isReady()) return;
+      settled = true;
+      cleanup();
+      try {
+        resolve(probe.finishAfterPerformanceTail());
+      } catch (error) {
+        reject(error);
+      }
+    }
+    const timeoutId = window.setTimeout(() => {
+      fail(new Error(`Live completion timed out for ${kind}`));
+    }, timeoutMs);
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['disabled', 'aria-disabled', 'class', 'style'],
+    });
+    attemptFinish();
+  });
+}
+
 export function installBinanceLivePerformanceProbe(options = {}) {
   const globalName = options.globalName || '__BINANCE_LIVE_PERFORMANCE_PROBE__';
   const panelSelector = options.panelSelector || '#jh-binance-close-qty-multiplier-panel';
   const cancelButtonSelector = options.cancelButtonSelector
     || '[data-ladder-cancel-symbol="true"]';
+  const readyCancelButtonText = options.readyCancelButtonText || '撤单';
   const statusSelector = options.statusSelector || '#jh-binance-ladder-status';
   const dialogSelector = options.dialogSelector
     || '[role="dialog"], [class*="modal"], [class*="Modal"]';
@@ -139,6 +251,8 @@ export function installBinanceLivePerformanceProbe(options = {}) {
   let observedDialogRoot = null;
   let longTaskObserver = null;
   let longAnimationFrameObserver = null;
+  let performanceCollectionActive = false;
+  let finalizationPromise = null;
   let sampleQueued = false;
   const hasStarted = () => Boolean(run && run.startedAtMonotonicMs !== null);
   const isCollecting = () => Boolean(hasStarted() && run.finishedAtMonotonicMs === null);
@@ -159,40 +273,57 @@ export function installBinanceLivePerformanceProbe(options = {}) {
     if (!isCollecting()) return;
     appendBounded('events', { kind, atMs: relativeNow(), detail }, eventLimit);
   };
+  const recordLongTasks = (entries) => {
+    if (!performanceCollectionActive) return;
+    const cutoff = run.finishedAtMonotonicMs ?? Number.POSITIVE_INFINITY;
+    for (const entry of entries) {
+      if (entry.startTime > cutoff) continue;
+      appendBounded('longTasks', {
+        startTime: entry.startTime,
+        duration: entry.duration,
+      }, performanceLimit);
+    }
+  };
+  const recordLongAnimationFrames = (entries) => {
+    if (!performanceCollectionActive) return;
+    const cutoff = run.finishedAtMonotonicMs ?? Number.POSITIVE_INFINITY;
+    for (const entry of entries) {
+      if (entry.startTime > cutoff) continue;
+      appendBounded('longAnimationFrames', {
+        startTime: entry.startTime,
+        duration: entry.duration,
+        blockingDuration: entry.blockingDuration,
+        forcedStyleAndLayoutDuration: entry.scripts?.reduce(
+          (total, script) => total + (script.forcedStyleAndLayoutDuration || 0),
+          0,
+        ) || 0,
+      }, performanceLimit);
+    }
+  };
+  const flushPerformanceObservers = () => {
+    recordLongTasks(longTaskObserver?.takeRecords?.() || []);
+    recordLongAnimationFrames(longAnimationFrameObserver?.takeRecords?.() || []);
+  };
   const stopPerformanceObservers = () => {
+    flushPerformanceObservers();
     longTaskObserver?.disconnect();
     longAnimationFrameObserver?.disconnect();
     longTaskObserver = null;
     longAnimationFrameObserver = null;
+    performanceCollectionActive = false;
   };
   const startPerformanceObservers = () => {
     stopPerformanceObservers();
+    performanceCollectionActive = true;
     if (run.performanceSupport.longTask) {
       longTaskObserver = new PerformanceObserver((list) => {
-        if (!isCollecting()) return;
-        for (const entry of list.getEntries()) {
-          appendBounded('longTasks', {
-            startTime: entry.startTime,
-            duration: entry.duration,
-          }, performanceLimit);
-        }
+        recordLongTasks(list.getEntries());
       });
       longTaskObserver.observe({ type: 'longtask' });
     }
     if (run.performanceSupport.longAnimationFrame) {
       longAnimationFrameObserver = new PerformanceObserver((list) => {
-        if (!isCollecting()) return;
-        for (const entry of list.getEntries()) {
-          appendBounded('longAnimationFrames', {
-            startTime: entry.startTime,
-            duration: entry.duration,
-            blockingDuration: entry.blockingDuration,
-            forcedStyleAndLayoutDuration: entry.scripts?.reduce(
-              (total, script) => total + (script.forcedStyleAndLayoutDuration || 0),
-              0,
-            ) || 0,
-          }, performanceLimit);
-        }
+        recordLongAnimationFrames(list.getEntries());
       });
       longAnimationFrameObserver.observe({ type: 'long-animation-frame' });
     }
@@ -346,15 +477,37 @@ export function installBinanceLivePerformanceProbe(options = {}) {
   window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
   const cloneRun = () => structuredClone(run);
+  const markRunFinished = () => {
+    if (!hasStarted()) throw new Error('Live performance probe has not started');
+    if (run.finishedAtMonotonicMs === null) {
+      recordSemanticState('finish');
+      appendEvent('finished');
+      run.finishedAtMonotonicMs = performance.now();
+      stopMutationObservers();
+    }
+  };
   const api = {
     arm(scenarioName) {
       if (destroyed) throw new Error('Live performance probe is destroyed');
+      if (finalizationPromise) {
+        throw new Error('Cannot arm while live performance evidence is finalizing');
+      }
       if (typeof scenarioName !== 'string' || scenarioName.length === 0) {
         throw new Error('scenarioName must be a non-empty string');
       }
       if (run && run.finishedAtMonotonicMs === null) {
         if (run.startedAtMonotonicMs === null && run.scenarioName === scenarioName) return cloneRun();
         throw new Error('Cannot arm while a live performance run is active');
+      }
+      const initialState = readSemanticState();
+      if (
+        !initialState.panelPresent
+        || !initialState.cancelButtonPresent
+        || initialState.cancelButtonDisabled
+        || initialState.cancelButtonText !== readyCancelButtonText
+        || initialState.dialogVisible
+      ) {
+        throw new Error('Live performance probe cannot arm before the cancel UI is fully ready');
       }
       stopPerformanceObservers();
       const armedAtMonotonicMs = performance.now();
@@ -391,15 +544,25 @@ export function installBinanceLivePerformanceProbe(options = {}) {
       return cloneRun();
     },
     finish() {
-      if (!hasStarted()) throw new Error('Live performance probe has not started');
-      if (run.finishedAtMonotonicMs === null) {
-        recordSemanticState('finish');
-        appendEvent('finished');
-        run.finishedAtMonotonicMs = performance.now();
-        stopPerformanceObservers();
-        stopMutationObservers();
+      if (finalizationPromise) {
+        throw new Error('Live performance evidence is still finalizing');
       }
+      markRunFinished();
+      stopPerformanceObservers();
       return cloneRun();
+    },
+    finishAfterPerformanceTail() {
+      if (finalizationPromise) return finalizationPromise;
+      markRunFinished();
+      finalizationPromise = new Promise((resolve) => {
+        window.setTimeout(() => {
+          stopPerformanceObservers();
+          const snapshot = cloneRun();
+          finalizationPromise = null;
+          resolve(snapshot);
+        }, 0);
+      });
+      return finalizationPromise;
     },
     destroy() {
       if (destroyed) return run ? cloneRun() : null;
@@ -421,6 +584,39 @@ export function createLivePerformanceProbeExpression(options = {}) {
   return `(${installBinanceLivePerformanceProbe.toString()})(${JSON.stringify(options)})`;
 }
 
+export function createLivePerformanceCompletionExpression(options = {}) {
+  return `(${waitForBinanceLivePerformanceCompletion.toString()})(${JSON.stringify(options)})`;
+}
+
+export function createLivePerformanceCompletionPreparationExpression(options = {}) {
+  const completionGlobalName = options.completionGlobalName || DEFAULT_COMPLETION_GLOBAL_NAME;
+  const waitOptions = { ...options };
+  delete waitOptions.completionGlobalName;
+  const waitExpression = createLivePerformanceCompletionExpression(waitOptions);
+  return `(() => {
+    const completionGlobalName = ${JSON.stringify(completionGlobalName)};
+    if (window[completionGlobalName]) {
+      throw new Error('Live performance completion is already prepared');
+    }
+    window[completionGlobalName] = ${waitExpression};
+    return { completionGlobalName, prepared: true };
+  })()`;
+}
+
+export function createLivePerformanceCompletionResultExpression(options = {}) {
+  const completionGlobalName = options.completionGlobalName || DEFAULT_COMPLETION_GLOBAL_NAME;
+  return `(async () => {
+    const completionGlobalName = ${JSON.stringify(completionGlobalName)};
+    const completion = window[completionGlobalName];
+    if (!completion) throw new Error('Live performance completion is not prepared');
+    try {
+      return await completion;
+    } finally {
+      delete window[completionGlobalName];
+    }
+  })()`;
+}
+
 export async function installLivePerformanceProbe(page, options = {}) {
   return page.evaluate(installBinanceLivePerformanceProbe, options);
 }
@@ -434,6 +630,18 @@ export async function armLivePerformanceProbe(page, scenarioName) {
 
 export async function finishLivePerformanceProbe(page) {
   return page.evaluate((globalName) => window[globalName].finish(), DEFAULT_GLOBAL_NAME);
+}
+
+export async function prepareLivePerformanceProbeCompletion(page, kind, options = {}) {
+  return page.evaluate(createLivePerformanceCompletionPreparationExpression({
+    ...options,
+    globalName: DEFAULT_GLOBAL_NAME,
+    kind,
+  }));
+}
+
+export async function finishLivePerformanceProbeWhenReady(page, options = {}) {
+  return page.evaluate(createLivePerformanceCompletionResultExpression(options));
 }
 
 export async function destroyLivePerformanceProbe(page) {

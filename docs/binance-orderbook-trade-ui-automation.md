@@ -245,6 +245,29 @@ exposes overflow counts for every bounded stream. A capture is invalid when the
 browser does not support Long Task or Long Animation Frame evidence, any stream
 overflows, or any uncaught error is observed.
 
+Before clicking, use `createLivePerformanceCompletionPreparationExpression()` with
+raw CDP or `prepareLivePerformanceProbeCompletion()` in Playwright and wait for its
+immediate `{ prepared: true }` result. After the business action, collect the stored
+promise with `createLivePerformanceCompletionResultExpression()` or
+`finishLivePerformanceProbeWhenReady()`. This explicit prepare/action/collect order
+prevents observer-installation latency from entering the sample. The completion
+observer runs inside the target page, verifies the exact
+no-order/cancel/confirm terminal contract, marks semantic completion immediately, and
+keeps only the performance observers alive through the next page task. This preserves
+the true completion timestamp while still collecting the tail of the click task,
+without adding browser-control or animation-frame scheduling jitter. Do not poll the
+page from the automation process and call
+`finish()` afterward: browser-control round trips would be counted as application
+latency and would corrupt `clickToFinalReady` or `decisionToFinalReady`. Probe finish
+also drains `PerformanceObserver.takeRecords()` before disconnecting, so a final long
+task or long animation frame cannot disappear merely because its callback has not run.
+The completion observer rechecks in a microtask after relevant DOM mutations so it
+sees the probe's semantic sample from the same mutation batch; it must not wait for an
+unrelated later mutation to discover that the action already finished.
+Each isolated sample must begin from the normal enabled `撤单` state with no native
+dialog visible. `arm()` rejects a sample while the prior `无挂单` feedback window is
+still active, rather than recording that carry-over as the next run's first feedback.
+
 Pass the validated probe snapshots to
 `e2e/binance-orderbook/helpers/live-capture-builder.js`. The builder derives every
 wall-clock segment from the recorded semantic events and verifies that the dialog
@@ -265,9 +288,11 @@ The assembler rejects unknown bundle fields and refuses to overwrite its input f
 or an existing capture. This command is the standard boundary between CDP collection
 and capture summary; do not replace it with an ad hoc Node snippet.
 
-The current checked-in L4 reference is the isolated zero-order HYPEUSDT run:
+The current checked-in L4 reference is the isolated zero-order HYPEUSDT run. The
+older captures remain immutable evidence; the active baseline comes from the latest
+page-owned completion sample:
 
-- `e2e/binance-orderbook/live-baselines/no-orders-2026-08-27.capture.json`
+- `e2e/binance-orderbook/live-baselines/no-orders-2026-08-27-page-ready.capture.json`
 - `e2e/binance-orderbook/live-baselines/no-orders.baseline.json`
 
 Each scenario kind owns one exact wall-clock segment contract. A scenario cannot add,
