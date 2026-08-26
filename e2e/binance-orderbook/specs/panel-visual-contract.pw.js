@@ -19,30 +19,22 @@ async function expectVisualContract(page, name) {
   expect(`${JSON.stringify(contract, null, 2)}\n`).toMatchSnapshot(name);
 }
 
-test('open expanded panel matches the stable visual contract', async ({ page }) => {
+test('open panel matches the fixed visual contract', async ({ page }) => {
   await openUserscriptScenario(page, createCancelScenario({
-    ui: { tradeMode: 'OPEN', ladderExpanded: true },
+    ui: { tradeMode: 'OPEN' },
   }));
   await expectPrecisionReady(page);
-  await expectVisualContract(page, 'open-expanded.visual.json');
+  await expectVisualContract(page, 'open-fixed.visual.json');
 });
 
-test('close expanded panel matches the disabled-state visual contract', async ({ page }) => {
+test('close panel matches the disabled-state visual contract', async ({ page }) => {
   await openUserscriptScenario(page, createCancelScenario({
     positions: POSITION_SETS.current,
-    ui: { tradeMode: 'CLOSE', ladderExpanded: true },
+    ui: { tradeMode: 'CLOSE' },
   }));
   const panel = page.locator(PANEL_SELECTOR);
   await expect(panel.getByRole('radio', { name: '平多' })).toBeEnabled();
   await expect(panel.getByRole('radio', { name: '平空' })).toBeDisabled();
   await expectPrecisionReady(page);
-  await expectVisualContract(page, 'close-expanded.visual.json');
-});
-
-test('collapsed ladder keeps the compact panel visual contract', async ({ page }) => {
-  await openUserscriptScenario(page, createCancelScenario({
-    ui: { tradeMode: 'OPEN', ladderExpanded: false },
-  }));
-  await expectPrecisionReady(page);
-  await expectVisualContract(page, 'open-collapsed.visual.json');
+  await expectVisualContract(page, 'close-fixed.visual.json');
 });

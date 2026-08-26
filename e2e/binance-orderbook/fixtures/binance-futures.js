@@ -205,7 +205,6 @@ export function renderBinanceFuturesFixture(scenario) {
         });
       }
 
-      localStorage.setItem('jh_binance_ladder_expanded', scenario.ui.ladderExpanded ? 'true' : 'false');
       localStorage.setItem('jh_binance_orderbook_precision_samples_v3:' + scenario.currentSymbol, '["81.0","81.01","81.02","81.03","81.04","81.05"]');
 
       function renderOrdersRows() {

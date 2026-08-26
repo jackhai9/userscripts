@@ -93,7 +93,7 @@ test('a precision shortcut selects the exact native orderbook option once', asyn
 
 test('starting a ladder disables every start action and exposes one stop control', async ({ page }) => {
   const scenario = createCancelScenario({
-    ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1', ladderExpanded: true },
+    ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },
   });
   const { errors } = await openUserscriptScenario(page, scenario);
   const panel = page.locator(PANEL_SELECTOR);
@@ -103,11 +103,11 @@ test('starting a ladder disables every start action and exposes one stop control
 
   await expect(startLong).toBeEnabled();
   await expect(startShort).toBeEnabled();
-  await expect(stop).toBeDisabled();
+  await expect(stop).toHaveCount(0);
   await installInteractionProbe(page, '[data-ladder-action="OPEN_LONG"]');
   await startLong.click();
-  await expect(startLong).toBeDisabled();
-  await expect(startShort).toBeDisabled();
+  await expect(startLong).toHaveCount(0);
+  await expect(startShort).toHaveCount(0);
   await expect(stop).toBeEnabled();
   const submissionsBeforeStop = (await readFixtureState(page)).events
     .filter((event) => event.type === 'order-submitted').length;
@@ -115,7 +115,7 @@ test('starting a ladder disables every start action and exposes one stop control
   await expect(panel.locator('#jh-binance-ladder-status')).toContainText('已停止');
   await expect(startLong).toBeEnabled();
   await expect(startShort).toBeEnabled();
-  await expect(stop).toBeDisabled();
+  await expect(stop).toHaveCount(0);
   const probe = await finishInteractionProbe(page);
   assertResponsiveInteraction(expect, probe);
 
@@ -132,7 +132,7 @@ test('starting a ladder disables every start action and exposes one stop control
 test('a complete ladder submits the planned five native orders and restores controls', async ({ page }) => {
   test.setTimeout(15_000);
   const scenario = createCancelScenario({
-    ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1', ladderExpanded: true },
+    ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },
   });
   const { errors } = await openUserscriptScenario(page, scenario);
   const panel = page.locator(PANEL_SELECTOR);
@@ -144,7 +144,7 @@ test('a complete ladder submits the planned five native orders and restores cont
     timeout: 12_000,
   });
   await expect(startLong).toBeEnabled();
-  await expect(stop).toBeDisabled();
+  await expect(stop).toHaveCount(0);
 
   const submissions = (await readFixtureState(page)).events
     .filter((event) => event.type === 'order-submitted');

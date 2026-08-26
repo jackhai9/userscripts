@@ -27,7 +27,7 @@ test('cancel button exposes no-order completion feedback without disabling new a
     ladderRunning: false,
     cancelRunning: false,
     noOrdersFeedback: false,
-  }), { disabled: false, label: '撤本币挂单' });
+  }), { disabled: false, label: '撤单' });
   assert.deepEqual(resolveCancelSymbolButtonPresentation({
     ladderRunning: false,
     cancelRunning: true,
@@ -42,7 +42,7 @@ test('cancel button exposes no-order completion feedback without disabling new a
     ladderRunning: true,
     cancelRunning: false,
     noOrdersFeedback: true,
-  }), { disabled: true, label: '撤本币挂单' });
+  }), { disabled: true, label: '撤单' });
 });
 
 test('normalizes text and recognizes open-orders tab labels', () => {

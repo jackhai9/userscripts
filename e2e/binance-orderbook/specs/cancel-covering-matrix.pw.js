@@ -46,7 +46,7 @@ for (const entry of CANCEL_COVERING_SCENARIOS) {
     const { errors } = await openUserscriptScenario(page, scenario);
     await installInteractionProbe(page, CANCEL_BUTTON_SELECTOR);
 
-    await page.getByRole('button', { name: '撤本币挂单' }).click();
+    await page.getByRole('button', { name: '撤单' }).click();
     if (!hasCurrentOrders) {
       await expect(page.getByRole('button', { name: '无挂单' })).toBeVisible();
     } else {

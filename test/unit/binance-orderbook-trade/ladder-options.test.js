@@ -230,24 +230,24 @@ test('ladder execution and UI updates use one captured mode-symbol-precision con
   assert.match(source, /plan\.ladderStep === DEFAULT_LADDER_STEP \? '' : `\/幅\$\{plan\.ladderStep\}`/);
 });
 
-test('open and close ladder percentage rows share the quantity label', () => {
-  assert.equal((source.match(/ladderOptionRow\('量',/g) || []).length, 2);
-  assert.doesNotMatch(source, /ladderOptionRow\('[开平]',/);
+test('open and close ladder percentage rows share the centralized ratio label', () => {
+  assert.equal((source.match(/ladderOptionRow\(PANEL_COPY\.field\.ratio, PANEL_COPY\.tooltip\.ratio,/g) || []).length, 2);
 });
 
 test('ladder quantity levels and step options share one stable five-slot grid', () => {
   const optionRow = source.match(/function ladderOptionRow[\s\S]*?\n  }/)?.[0] || '';
 
-  assert.match(optionRow, /grid-template-columns:28px repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(optionRow, /grid-template-columns:48px repeat\(5,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(optionRow, /flex-wrap/);
   assert.match(source, /data-ladder-value="\$\{value\}" style="box-sizing:border-box;width:100%;min-width:0;height:28px/);
-  assert.equal((source.match(/ladderOptionRow\('幅', LADDER_STEP_OPTIONS/g) || []).length, 2);
+  assert.equal((source.match(/ladderOptionRow\(PANEL_COPY\.field\.orderCount, PANEL_COPY\.tooltip\.orderCount, LADDER_LEVEL_OPTIONS/g) || []).length, 2);
+  assert.equal((source.match(/ladderOptionRow\(PANEL_COPY\.field\.interval, PANEL_COPY\.tooltip\.interval, LADDER_STEP_OPTIONS/g) || []).length, 2);
   assert.doesNotMatch(source, /data-ladder-step-action|function ladderStepRow/);
 });
 
 test('close ladder buttons match the Binance native long-short order', () => {
-  const closeLongButton = "ladderActionButton('CLOSE_LONG', '阶梯平多', 'SELL', closeLongDisabled)";
-  const closeShortButton = "ladderActionButton('CLOSE_SHORT', '阶梯平空', 'BUY', closeShortDisabled)";
+  const closeLongButton = "ladderActionButton('CLOSE_LONG', PANEL_COPY.action.closeLong, 'SELL', closeLongDisabled)";
+  const closeShortButton = "ladderActionButton('CLOSE_SHORT', PANEL_COPY.action.closeShort, 'BUY', closeShortDisabled)";
 
   assert.notEqual(source.indexOf(closeLongButton), -1);
   assert.notEqual(source.indexOf(closeShortButton), -1);

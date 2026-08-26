@@ -74,7 +74,7 @@ test('cancel-symbol flow restores temporary symbol filter through cleanup path',
   assert.match(cancelBody, /restoreOpenOrdersSymbolFilter\(openOrdersScope,\s*symbolFilterOriginalChecked,\s*symbol\)/);
 });
 
-test('expanded ladder panel avoids rebuilding unchanged body markup', () => {
+test('fixed ladder panel avoids rebuilding unchanged body markup', () => {
   const ladderBody = readFunctionBody('refreshLadderPanel');
   assert.match(ladderBody, /ladderPanelBodySignature/);
   assert.match(ladderBody, /body\.innerHTML = bodyHtml/);
@@ -96,7 +96,7 @@ test('panel primary values and ladder selections share the Binance emphasis stan
   const panelBody = readFunctionBody('ensurePanel');
   assert.match(panelBody, /id="\$\{INPUT_ID\}"[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}/);
   assert.match(panelBody, /id="jh-binance-close-qty-final"[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}/);
-  assert.match(panelBody, /id="\$\{LADDER_TOGGLE_ID\}"[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}/);
+  assert.match(panelBody, /title="\$\{PANEL_COPY\.tooltip\.ladderMaker\}"[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}[^`]*\$\{PANEL_COPY\.section\.ladderMaker\}/);
 });
 
 test('panel buttons inherit one scoped disabled-state contract', () => {
@@ -338,41 +338,49 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /data-side-selector role="radiogroup"[^>]*display:grid;grid-template-columns:54px 54px;[^>]*border-radius:6px;[^>]*overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="width:78px;flex:0 0 78px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
-  assert.match(source, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);align-items:center;gap:4px;height:32px;overflow:hidden/);
-  assert.match(source, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);align-items:center;gap:4px;height:24px;margin-top:6px;overflow:hidden/);
-  assert.match(source, /buttonBaseStyle = `width:68px;height:24px;[^`]*font-size:12px;line-height:22px;`/);
+  assert.match(source, /grid-template-columns:62px repeat\(4,minmax\(0,1fr\)\) 32px;align-items:center;gap:4px;height:32px;overflow:hidden/);
+  assert.doesNotMatch(source, /buttonBaseStyle = `width:68px;height:24px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcut'), /height:32px[^`]*font-size:12px;line-height:30px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcutSlots'), /while \(slots\.length < ORDERBOOK_PRECISION_SHORTCUT_LIMIT\)/);
   assert.doesNotMatch(source, /data-orderbook-precision-status/);
 
   const ladderBody = readFunctionBody('refreshLadderPanel');
-  assert.match(ladderBody, /const statusVisibility = expanded \|\| ladderTask \|\| ladderStatusText !== '空闲' \? 'visible' : 'hidden'/);
-  assert.match(ladderBody, /status\.style\.visibility !== statusVisibility/);
+  assert.match(ladderBody, /status\.style\.visibility !== 'visible'/);
   assert.doesNotMatch(ladderBody, /status\.style\.display/);
-  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*height:18px;[^>]*visibility:hidden;[^>]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
+  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*height:18px;[^>]*visibility:visible;[^>]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
 });
 
 test('panel keeps controls in cohesive ordered semantic groups', () => {
   const ensurePanelBody = readFunctionBody('ensurePanel');
   const precisionBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
-  const ladderRowsBody = readFunctionBody('getLadderActionRows');
+  const ladderRowsBody = readFunctionBody('getLadderControlSections');
+  const ladderPanelBody = readFunctionBody('refreshLadderPanel');
+  const singleZoneIndex = ensurePanelBody.indexOf('data-panel-zone="single-order"');
   const directionIndex = ensurePanelBody.indexOf('data-panel-group="direction"');
   const modeHintIndex = ensurePanelBody.indexOf('id="${MODE_HINT_ID}"');
   const multiplierIndex = ensurePanelBody.indexOf('data-panel-group="multiplier"');
   const quantityMinIndex = ensurePanelBody.indexOf('id="jh-binance-close-qty-min"');
-  const precisionIndex = ensurePanelBody.indexOf('data-panel-group="precision"');
   const ladderIndex = ensurePanelBody.indexOf('data-panel-group="ladder"');
 
-  assert.ok(directionIndex >= 0);
+  assert.ok(singleZoneIndex >= 0);
+  assert.ok(directionIndex > singleZoneIndex);
   assert.ok(modeHintIndex > directionIndex);
   assert.ok(multiplierIndex > modeHintIndex);
   assert.ok(quantityMinIndex > multiplierIndex);
-  assert.ok(precisionIndex > quantityMinIndex);
-  assert.ok(ladderIndex > precisionIndex);
-  assert.match(ensurePanelBody, /data-panel-group="multiplier" style="margin-top:12px;"/);
-  assert.match(precisionBody, /margin-top:12px;/);
+  assert.ok(ladderIndex > quantityMinIndex);
+  assert.match(ensurePanelBody, /data-panel-group="multiplier" style="margin-top:8px;"/);
+  assert.match(precisionBody, /margin-top:10px;/);
   assert.match(ensurePanelBody, /data-panel-group="ladder" style="margin-top:12px;padding-top:12px;border-top:/);
-  assert.equal((ladderRowsBody.match(/gap:4px;margin-top:12px/g) || []).length, 2);
+  assert.match(ensurePanelBody, /PANEL_COPY\.section\.singleOrder/);
+  assert.match(ensurePanelBody, /PANEL_COPY\.section\.ladderMaker/);
+  assert.match(ladderPanelBody, /ORDERBOOK_PRECISION_RECOMMENDATION_ID/);
+  assert.ok(
+    ladderPanelBody.indexOf('...controlSections.optionRows')
+      < ladderPanelBody.indexOf('ORDERBOOK_PRECISION_RECOMMENDATION_ID'),
+  );
+  assert.match(ladderRowsBody, /PANEL_COPY\.field\.ratio/);
+  assert.match(ladderRowsBody, /PANEL_COPY\.field\.orderCount/);
+  assert.match(ladderRowsBody, /PANEL_COPY\.field\.interval/);
 });
 
 test('multiplier row reads as a labeled value followed by decrement and increment controls', () => {
@@ -390,9 +398,9 @@ test('multiplier row reads as a labeled value followed by decrement and incremen
   assert.ok(decrementIndex > suffixIndex);
   assert.ok(incrementIndex > decrementIndex);
   assert.match(ensurePanelBody, /data-multiplier-controls style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
-  assert.match(refreshBody, /multiplierHintText = '最小开仓量的'/);
-  assert.match(refreshBody, /multiplierHintText = '最小平仓量的'/);
-  assert.match(refreshBody, /let multiplierHintText = '最小下单量的'/);
+  assert.match(refreshBody, /multiplierHintText = PANEL_COPY\.field\.minimumOpenQuantity/);
+  assert.match(refreshBody, /multiplierHintText = PANEL_COPY\.field\.minimumCloseQuantity/);
+  assert.match(refreshBody, /let multiplierHintText = PANEL_COPY\.field\.minimumOrderQuantity/);
 });
 
 test('multiplier calculation keeps the formula primary and separates the notional constraint visually', () => {
@@ -416,7 +424,7 @@ test('direction selector is a compact mutually exclusive radio group', () => {
   assert.equal((ensurePanelBody.match(/role="radio" aria-checked="false"/g) || []).length, 2);
   assert.equal((ensurePanelBody.match(/border:0;/g) || []).length, 2);
   assert.match(ensurePanelBody, /border-left:1px solid var\(--color-InputLine\)/);
-  assert.match(refreshBody, /let hintText = '单击订单簿时'/);
+  assert.match(refreshBody, /let hintText = PANEL_COPY\.field\.clickOrderbook/);
   assert.doesNotMatch(refreshBody, /hintText = '仓位确认中'/);
   assert.match(refreshBody, /hintTitle = isUsingCache/);
   assert.match(refreshBody, /hintText = '暂无可平仓位'/);
@@ -848,7 +856,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(panelBody, /cancelCurrentSymbolOpenOrdersTask/);
   assert.match(panelBody, /resolveCancelSymbolButtonPresentation\(\{/);
   assert.match(panelBody, /noOrdersFeedback: cancelNoOrdersFeedbackActive/);
-  assert.match(panelBody, /data-ladder-cancel-symbol="true"[^`]*>撤本币挂单<\/button>/);
+  assert.match(panelBody, /data-ladder-cancel-symbol="true"[^`]*>\$\{PANEL_COPY\.action\.cancel\}<\/button>/);
   assert.match(panelBody, /cancelButton\.textContent = cancelPresentation\.label/);
 
   assert.match(source, /const CANCEL_NO_ORDERS_FEEDBACK_MS = 600/);
@@ -886,7 +894,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
 
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*撤本币挂单处理中，请等待完成/);
-  const actionRowsBody = readFunctionBody('getLadderActionRows');
+  const actionRowsBody = readFunctionBody('getLadderControlSections');
   assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
   assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
   assert.match(actionRowsBody, /ladderActionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
@@ -898,7 +906,7 @@ test('stable panel refreshes avoid writing unchanged text and state attributes',
   assert.match(statusBody, /statusEl\.title !== statusTitle/);
 
   const panelBody = readFunctionBody('refreshLadderPanel');
-  assert.match(panelBody, /toggle\.textContent !== toggleText/);
+  assert.doesNotMatch(panelBody, /toggle|expanded/);
   assert.match(panelBody, /status\.textContent !== ladderStatusText/);
 
   const computedBody = readFunctionBody('refreshComputedInfo');
@@ -918,7 +926,7 @@ test('stable panel refreshes avoid writing unchanged text and state attributes',
 
 test('orderbook precision recommendation marks one shortcut without applying it automatically', () => {
   assert.match(source, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6000/);
-  assert.match(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS/);
+  assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
   assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3'/);
   assert.match(source, /ORDERBOOK_PRECISION_SHORTCUT_LIMIT = 4/);
@@ -934,7 +942,7 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(sampleBody, /saveStoredOrderbookPrecisionSamples\(symbol,\s*newSamples\)/);
   assert.doesNotMatch(sampleBody, /mergePrecisionSamples\(\s*readStoredOrderbookPrecisionSamples/);
   assert.match(sampleBody, /waitForLatestTradePricesReady/);
-  assert.match(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
+  assert.match(sampleBody, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS/);
   assert.match(sampleBody, /getLatestTradePrices/);
   assert.doesNotMatch(sampleBody, /getCurrentOrderbookDisplayStep/);
   assert.doesNotMatch(sampleBody, /fallbackMovement/);
@@ -947,12 +955,11 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(refreshBody, /recommendOrderbookPrecision/);
   assert.match(refreshBody, /resolveOrderbookPrecisionSampleState/);
   assert.match(refreshBody, /scheduled: Boolean\(orderbookPrecisionSampleTimer\)/);
-  assert.match(refreshBody, /formatOrderbookPrecisionBusyStatus/);
   assert.match(refreshBody, /data-orderbook-precision-refresh="true"[\s\S]*disabled/);
   assert.match(refreshBody, /const controlsBusy = busy \|\| selectionBusy/);
   assert.match(refreshBody, /getOrderbookPrecisionShortcutOptions\([\s\S]*ORDERBOOK_PRECISION_SHORTCUT_LIMIT/);
   assert.match(refreshBody, /queueOrderbookPrecisionOptionsLoad\(symbol\)/);
-  assert.match(refreshBody, /shortcutOptions\.includes\(recommendation\)/);
+  assert.match(refreshBody, /formatPrecisionRefreshTooltip\(ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS\)/);
   const shortcutBody = readFunctionBody('renderOrderbookPrecisionShortcut');
   assert.match(shortcutBody, /const recommended = value === recommendation/);
   assert.match(shortcutBody, /position:absolute;top:3px;right:3px;width:6px;height:6px/);
@@ -965,26 +972,19 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.doesNotMatch(refreshBody, /当前 \$\{currentText\}/);
   assert.doesNotMatch(refreshBody, /fallbackMovement/);
   assert.doesNotMatch(refreshBody, /applyRecommendedOrderbookPrecision\(\)/);
-  assert.match(refreshBody, /buttonBaseStyle = `width:68px;height:24px;[^`]*padding:0;[^`]*font-size:12px;line-height:22px;/);
-  assert.match(refreshBody, /margin-top:12px;[^`]*font-size:12px;/);
-  assert.match(refreshBody, /当前缩放 \$\{current \|\| '--'\}[^`]*订单簿缩放/);
+  assert.doesNotMatch(refreshBody, /buttonBaseStyle|precisionMessage|更新推荐/);
+  assert.match(refreshBody, /margin-top:10px;/);
+  assert.match(refreshBody, /PANEL_COPY\.field\.pricePrecision/);
+  assert.match(refreshBody, /PANEL_COPY\.tooltip\.pricePrecision/);
   assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy\)/);
-  assert.match(refreshBody, /grid-template-columns:78px repeat\(4,minmax\(0,1fr\)\);[^']*height:24px;margin-top:6px/);
-  assert.match(refreshBody, /grid-column:1;[^`]*>\$\{precisionMessage\}<\/span>/);
-  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[^`]*grid-column:2;justify-self:start;/);
-  const messageIndex = refreshBody.indexOf('>\${precisionMessage}</span>');
-  const refreshButtonIndex = refreshBody.indexOf('data-orderbook-precision-refresh="true"');
-  assert.ok(messageIndex >= 0, 'recommendation or transient status should be rendered');
-  assert.ok(messageIndex < refreshButtonIndex, 'precision message should stay before the update button');
-  assert.match(refreshBody, />更新推荐<\/button>/);
+  assert.match(refreshBody, /grid-template-columns:62px repeat\(4,minmax\(0,1fr\)\) 32px/);
+  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[^`]*<svg/);
   assert.doesNotMatch(refreshBody, /data-orderbook-precision-status/);
 
-  assert.equal((source.match(/ladderOptionRow\('幅', LADDER_STEP_OPTIONS/g) || []).length, 2);
+  assert.equal((source.match(/PANEL_COPY\.field\.interval, PANEL_COPY\.tooltip\.interval, LADDER_STEP_OPTIONS/g) || []).length, 2);
   assert.doesNotMatch(source, /data-ladder-step-action|function ladderStepRow/);
-
-  const busyStatusBody = readFunctionBody('formatOrderbookPrecisionBusyStatus');
-  assert.match(busyStatusBody, /Math\.ceil\(remainingMs \/ 1000\)/);
-  assert.match(busyStatusBody, /刷新中 \$\{remainingSeconds\}s/);
+  assert.doesNotMatch(source, /function formatOrderbookPrecisionBusyStatus/);
+  assert.doesNotMatch(source, /function startInitialOrderbookPrecisionSample/);
 
   assert.doesNotMatch(source, /function runApplyRecommendedOrderbookPrecision/);
   assert.doesNotMatch(source, /function applyRecommendedOrderbookPrecision/);
@@ -1076,12 +1076,10 @@ test('orderbook precision recommendation marks one shortcut without applying it 
 
   const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
   assert.match(scheduleBody, /force = false/);
-  assert.match(scheduleBody, /if \(force && !sameInitialIsActive && !sameInitialIsPending\)/);
+  assert.match(scheduleBody, /if \(force\) orderbookPrecisionPendingRequest = request/);
   assert.match(scheduleBody, /orderbookPrecisionPendingRequest = request/);
   assert.match(scheduleBody, /durationMs/);
-
-  const initialBody = readFunctionBody('startInitialOrderbookPrecisionSample');
-  assert.match(initialBody, /orderbookPrecisionInitialSampledSymbols\.has\(symbol\)/);
+  assert.doesNotMatch(source, /startInitialOrderbookPrecisionSample|orderbookPrecisionInitialSampledSymbols/);
 
   const triggerBody = readFunctionBody('findOrderbookPrecisionTrigger');
   assert.match(triggerBody, /#futuresOrderbook \.orderbook-tickSize/);
@@ -1146,7 +1144,7 @@ test('close execution and close-ladder sizing reject display cache', () => {
   assert.doesNotMatch(refreshBody, /closeContext\.isPending \|\|/);
   assert.equal((refreshBody.match(/shouldDisableCloseControl\(/g) || []).length, 2);
 
-  const ladderRowsBody = readFunctionBody('getLadderActionRows');
+  const ladderRowsBody = readFunctionBody('getLadderControlSections');
   assert.doesNotMatch(ladderRowsBody, /closePending/);
   assert.equal((ladderRowsBody.match(/shouldDisableCloseControl\(/g) || []).length, 2);
   assert.doesNotMatch(source, /applyCachedNativeCloseButtonState/);
@@ -1313,12 +1311,10 @@ test('precision shortcut selection and sampling do not commit after a symbol swi
 
   const roundBody = readFunctionBody('runOrderbookPrecisionSampleRound');
   assert.match(roundBody, /request\.symbol/);
-  assert.match(roundBody, /orderbookPrecisionInitialSampledSymbols\.add\(symbol\)/);
-  const initialBody = readFunctionBody('startInitialOrderbookPrecisionSample');
-  assert.doesNotMatch(initialBody, /orderbookPrecisionInitialSampledSymbols\.add\(symbol\)/);
+  assert.doesNotMatch(roundBody, /initial/);
+  assert.doesNotMatch(source, /orderbookPrecisionInitialSampledSymbols|startInitialOrderbookPrecisionSample/);
   const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
-  assert.match(scheduleBody, /orderbookPrecisionActiveRequest\?\.symbol === symbol/);
-  assert.match(scheduleBody, /orderbookPrecisionPendingRequest\?\.symbol === symbol/);
+  assert.match(scheduleBody, /if \(force\) orderbookPrecisionPendingRequest = request/);
 
   const clearBody = readFunctionBody('clearSymbolOwnedRuntimeState');
   assert.match(clearBody, /orderbookPrecisionOptionsLoadRequestedSymbol = null/);

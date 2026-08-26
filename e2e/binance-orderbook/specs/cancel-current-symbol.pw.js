@@ -45,7 +45,7 @@ test('no position and no orders returns immediate stable no-order feedback', asy
   const { errors } = await openUserscriptScenario(page, scenario);
   await installInteractionProbe(page, CANCEL_BUTTON_SELECTOR);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('button', { name: '无挂单' })).toBeVisible();
 
   const state = await readFixtureState(page);
@@ -66,7 +66,7 @@ test('other-symbol position and orders never open a current-symbol cancel dialog
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('button', { name: '无挂单' })).toBeVisible();
 
   const state = await readFixtureState(page);
@@ -90,7 +90,7 @@ test('cancelling the native dialog preserves current and other orders and restor
   const { errors } = await openUserscriptScenario(page, scenario);
   await installInteractionProbe(page, CANCEL_BUTTON_SELECTOR);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(false);
   await page.getByRole('button', { name: '取消' }).click();
@@ -113,7 +113,7 @@ test('confirming with mixed-symbol orders clears only the current symbol', async
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '确认' }).click();
   await expect(page.getByText('HYPEUSDT 撤单流程结束，已恢复筛选状态')).toBeVisible();
@@ -133,7 +133,7 @@ test('an originally enabled symbol filter remains enabled after confirmation', a
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '确认' }).click();
   await expect(page.getByText('HYPEUSDT 撤单流程结束，已恢复筛选状态')).toBeVisible();
@@ -179,7 +179,7 @@ for (const closeMethod of ['Escape', 'backdrop']) {
     });
     const { errors } = await openUserscriptScenario(page, scenario);
 
-    await page.getByRole('button', { name: '撤本币挂单' }).click();
+    await page.getByRole('button', { name: '撤单' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     if (closeMethod === 'Escape') {
       await page.keyboard.press('Escape');
@@ -204,7 +204,7 @@ test('a BFCache pagehide does not abort the active native dialog', async ({ page
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', {
     persisted: true,
@@ -224,7 +224,7 @@ test('a real pagehide aborts dialog tracking without mutating orders', async ({ 
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', {
     persisted: false,
@@ -248,7 +248,7 @@ test('a missing native dialog stops cleanly and restores temporary UI state', as
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByText('HYPEUSDT 未识别到撤单确认弹窗，未继续撤单流程')).toBeVisible({
     timeout: 3_000,
   });
@@ -269,7 +269,7 @@ for (const dialogMode of ['extraAction', 'missingPrimary']) {
     });
     const { errors } = await openUserscriptScenario(page, scenario);
 
-    await page.getByRole('button', { name: '撤本币挂单' }).click();
+    await page.getByRole('button', { name: '撤单' }).click();
     await expect(page.getByText(
       'HYPEUSDT 撤单确认弹窗结构异常，图表当前委托保持隐藏',
     )).toBeVisible();
@@ -291,7 +291,7 @@ test('a delayed confirmation keeps visible progress and clears only the current 
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await page.getByRole('button', { name: '确认' }).click();
   await expect(page.getByText('HYPEUSDT 已确认撤单，等待当前币挂单清空')).toBeVisible();
   await expect(page.getByText('HYPEUSDT 撤单流程结束，已恢复筛选状态')).toBeVisible();
@@ -311,7 +311,7 @@ test('dialog tracking survives React replacing the native dialog subtree', async
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect.poll(async () => (
     await readFixtureState(page)
   ).events.filter((event) => event.type === 'dialog-replaced').length).toBe(1);
@@ -334,7 +334,7 @@ test('a confirmed dialog that does not clear current orders reports incomplete c
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await page.getByRole('button', { name: '确认' }).click();
   await expect(page.getByText('HYPEUSDT 当前币挂单仍存在，撤单流程未完成')).toBeVisible({
     timeout: 10_000,
@@ -354,7 +354,7 @@ test('a symbol change before the dialog decision stops the captured-symbol workf
   });
   const { errors } = await openUserscriptScenario(page, scenario);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.evaluate((symbol) => {
     history.pushState({}, '', `/zh-CN/futures/${symbol}`);
