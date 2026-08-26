@@ -1,0 +1,642 @@
+{
+  "panel": {
+    "width": 314,
+    "height": 467,
+    "padding": "8px 10px",
+    "borderRadius": "10px"
+  },
+  "groups": {
+    "direction": {
+      "rect": {
+        "top": 9,
+        "width": 292,
+        "height": 32
+      },
+      "display": "flex",
+      "visibility": "visible"
+    },
+    "multiplier": {
+      "rect": {
+        "top": 53,
+        "width": 292,
+        "height": 54
+      },
+      "display": "block",
+      "visibility": "visible"
+    },
+    "precision": {
+      "rect": {
+        "top": 119,
+        "width": 292,
+        "height": 62
+      },
+      "display": "block",
+      "visibility": "visible"
+    },
+    "ladder": {
+      "rect": {
+        "top": 193,
+        "width": 292,
+        "height": 265
+      },
+      "display": "block",
+      "visibility": "visible"
+    }
+  },
+  "controls": [
+    {
+      "key": "jh-binance-close-side-long",
+      "text": "平多",
+      "disabled": false,
+      "checked": "true",
+      "pressed": null,
+      "rect": {
+        "top": 9,
+        "width": 54,
+        "height": 30
+      },
+      "style": {
+        "color": "rgb(30, 35, 41)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(30, 35, 41)",
+        "borderRadius": "5px 0px 0px 5px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "jh-binance-close-side-short",
+      "text": "平空",
+      "disabled": true,
+      "checked": "false",
+      "pressed": null,
+      "rect": {
+        "top": 9,
+        "width": 54,
+        "height": 30
+      },
+      "style": {
+        "color": "rgb(183, 189, 198)",
+        "backgroundColor": "rgb(245, 245, 245)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "0px 5px 5px 0px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "opacity": "0.65"
+      }
+    },
+    {
+      "key": "jh-binance-close-qty-multiplier-input",
+      "text": "",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 53,
+        "width": 60,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(0, 0, 0)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(0, 0, 0)",
+        "borderRadius": "8px",
+        "fontSize": "15px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "jh-binance-close-qty-multiplier-dec",
+      "text": "-",
+      "disabled": true,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 53,
+        "width": 32,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(183, 189, 198)",
+        "backgroundColor": "rgb(245, 245, 245)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "18px",
+        "fontWeight": "500",
+        "opacity": "0.65"
+      }
+    },
+    {
+      "key": "jh-binance-close-qty-multiplier-inc",
+      "text": "+",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 53,
+        "width": 32,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "18px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "0.001",
+      "text": "0.001",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 119,
+        "width": 49.5,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "0.01",
+      "text": "0.01",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 119,
+        "width": 49.5,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "0.1",
+      "text": "0.1",
+      "disabled": false,
+      "checked": null,
+      "pressed": "true",
+      "rect": {
+        "top": 119,
+        "width": 49.5,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(0, 0, 0)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(0, 0, 0)",
+        "borderRadius": "6px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "1",
+      "text": "1",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 119,
+        "width": 49.5,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "jh-binance-ladder-toggle",
+      "text": "Maker 阶梯 ▾",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 206,
+        "width": 292,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(0, 0, 0)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "percent:0.3",
+      "text": "0.3%",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 243,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(0, 0, 0)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(0, 0, 0)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "percent:1",
+      "text": "1%",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 243,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "percent:5",
+      "text": "5%",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 243,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "percent:10",
+      "text": "10%",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 243,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "percent:30",
+      "text": "30%",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 243,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "levels:3",
+      "text": "3",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 283,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "levels:5",
+      "text": "5",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 283,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(0, 0, 0)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(0, 0, 0)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "levels:7",
+      "text": "7",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 283,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "levels:9",
+      "text": "9",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 283,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "step:1",
+      "text": "1",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 323,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "step:2",
+      "text": "2",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 323,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "step:3",
+      "text": "3",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 323,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "step:4",
+      "text": "4",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 323,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "step:5",
+      "text": "5",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 323,
+        "width": 48.8,
+        "height": 28
+      },
+      "style": {
+        "color": "rgb(0, 0, 0)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(0, 0, 0)",
+        "borderRadius": "6px",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "CLOSE_LONG",
+      "text": "阶梯平多",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 366,
+        "width": 144,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(30, 35, 41)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(30, 35, 41)",
+        "borderRadius": "6px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "CLOSE_SHORT",
+      "text": "阶梯平空",
+      "disabled": true,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 366,
+        "width": 144,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(183, 189, 198)",
+        "backgroundColor": "rgb(245, 245, 245)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "opacity": "0.65"
+      }
+    },
+    {
+      "key": "true",
+      "text": "停止阶梯挂单",
+      "disabled": true,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 402,
+        "width": 144,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(183, 189, 198)",
+        "backgroundColor": "rgb(245, 245, 245)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "opacity": "0.65"
+      }
+    },
+    {
+      "key": "true",
+      "text": "撤本币挂单",
+      "disabled": false,
+      "checked": null,
+      "pressed": null,
+      "rect": {
+        "top": 402,
+        "width": 144,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    }
+  ],
+  "text": {
+    "mode": "单击订单簿时",
+    "formula": "0.01 × 1 =0.01",
+    "precision": "订单簿缩放0.0010.010.11推荐 0.01更新推荐",
+    "status": "空闲"
+  }
+}

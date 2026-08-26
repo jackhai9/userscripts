@@ -1,16 +1,33 @@
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 import { renderBinanceFuturesFixture } from '../fixtures/binance-futures.js';
 
 const USERSCRIPT_PATH = fileURLToPath(
   new URL('../../../scripts/binance-orderbook-trade.user.js', import.meta.url),
 );
+const evidenceByPage = new WeakMap();
+
+function readUserscriptVersion(source) {
+  const match = source.match(/^\/\/\s*@version\s+(\S+)/m);
+  if (!match) throw new Error('Generated userscript is missing @version metadata');
+  return match[1];
+}
+
+export function readScenarioEvidence(page) {
+  return evidenceByPage.get(page) || null;
+}
 
 export async function openUserscriptScenario(page, scenario) {
   const errors = [];
   page.on('pageerror', (error) => errors.push(String(error?.stack || error)));
   const userscriptSource = await readFile(USERSCRIPT_PATH, 'utf8');
+  const userscript = {
+    version: readUserscriptVersion(userscriptSource),
+    sha256: createHash('sha256').update(userscriptSource).digest('hex'),
+  };
+  evidenceByPage.set(page, { scenario, userscript, errors });
   await page.route('https://www.binance.com/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/__binance_orderbook_userscript__.js') {
@@ -79,11 +96,11 @@ export async function openUserscriptScenario(page, scenario) {
 
   await page.goto(`https://www.binance.com/zh-CN/futures/${scenario.currentSymbol}`);
   await page.locator('#jh-binance-close-qty-multiplier-panel').waitFor({ state: 'visible' });
-  await page.getByRole('button', { name: '撤本币挂单' }).waitFor({ state: 'visible' });
+  await page.locator('#jh-binance-ladder-toggle').waitFor({ state: 'visible' });
   await page.evaluate(() => new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));
-  return { errors };
+  return { errors, userscript };
 }
 
 export async function readFixtureState(page) {
