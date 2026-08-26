@@ -248,6 +248,20 @@ wall-clock segment from the recorded semantic events and verifies that the dialo
 action matches the declared scenario kind. Do not manually transcribe timing values
 from console output, screenshots, or chat into a capture.
 
+Persist the environment, scenario parameters, raw probe snapshots, capacity evidence,
+test-order ledgers, and restoration assertions as one strict raw bundle. Assemble the
+validated capture with:
+
+```bash
+npm run assemble:binance-orderbook-live -- \
+  /path/to/raw-bundle.json \
+  /path/to/capture.json
+```
+
+The assembler rejects unknown bundle fields and refuses to overwrite its input file
+or an existing capture. This command is the standard boundary between CDP collection
+and capture summary; do not replace it with an ad hoc Node snippet.
+
 The current checked-in L4 reference is the isolated zero-order HYPEUSDT run:
 
 - `e2e/binance-orderbook/live-baselines/no-orders-2026-08-27.capture.json`
