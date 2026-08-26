@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-08-26T18:34:58.000Z",
+  "capturedAt": "2026-08-26T20:14:42.922Z",
   "environment": {
     "browser": "Chrome 151.0.0.0",
     "os": "macOS (MacIntel)",
@@ -18,16 +18,16 @@
       "sampleCount": 3,
       "segmentsMs": {
         "clickToFirstFeedback": {
-          "min": 3.4,
-          "median": 3.6,
-          "p95": 11.7,
-          "max": 11.7
+          "min": 5.599999904632568,
+          "median": 6.6000001430511475,
+          "p95": 7.5,
+          "max": 7.5
         },
         "clickToFinalReady": {
-          "min": 91.8,
-          "median": 95.3,
-          "p95": 106.9,
-          "max": 106.9
+          "min": 6,
+          "median": 7,
+          "p95": 7.8999998569488525,
+          "max": 7.8999998569488525
         }
       },
       "maxLongTaskMs": {
@@ -39,8 +39,8 @@
       "maxLongAnimationFrameMs": {
         "min": 0,
         "median": 0,
-        "p95": 59.8,
-        "max": 59.8
+        "p95": 0,
+        "max": 0
       }
     }
   ],
