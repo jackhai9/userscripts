@@ -264,7 +264,7 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(generatedSource, /isPostOnlyMakerRejectionFeedback/);
 });
 
-test('stable panel renders avoid repeated orderbook scans and layout reads', () => {
+test('stable panel renders avoid repeated orderbook scans and layout writes', () => {
   const triggerBody = readFunctionBody('findOrderbookPrecisionTrigger');
   assert.match(triggerBody, /#futuresOrderbook \.orderbook-tickSize/);
   assert.match(triggerBody, /\.tick-content/);
@@ -281,7 +281,7 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
   assert.notEqual(invalidationIndex, -1);
   assert.notEqual(positionIndex, -1);
   assert.ok(invalidationIndex < positionIndex);
-  assert.match(renderBody, /panelPositionInvalidated \|\| !isPanelPositionCurrent\(\)/);
+  assert.match(renderBody, /panelPositionInvalidated \|\| !isPanelPositionCurrent\(panel\)/);
   assert.doesNotMatch(renderBody, /panel\.innerHTML|panelHtml/);
 
   const observeSizeBody = readFunctionBody('observePanelSize');
@@ -292,8 +292,11 @@ test('stable panel renders avoid repeated orderbook scans and layout reads', () 
 
   const currentPositionBody = readFunctionBody('isPanelPositionCurrent');
   assert.match(currentPositionBody, /findTradePanelInsertionPoint\(document\)/);
-  assert.match(currentPositionBody, /spacer\.parentElement === insertionPoint\.parent/);
-  assert.match(currentPositionBody, /spacer\.nextElementSibling === insertionPoint\.before/);
+  assert.match(currentPositionBody, /spacer\.parentElement !== insertionPoint\.parent/);
+  assert.match(currentPositionBody, /spacer\.nextElementSibling !== insertionPoint\.before/);
+  assert.match(currentPositionBody, /spacer\.getBoundingClientRect\(\)/);
+  assert.match(currentPositionBody, /calculateFloatingPanelLayout/);
+  assert.match(currentPositionBody, /Number\.parseFloat\(panel\.style\.top\) === layout\.top/);
 
   const positionBody = readFunctionBody('positionPanel');
   assert.match(positionBody, /findTradePanelInsertionPoint\(document\)/);

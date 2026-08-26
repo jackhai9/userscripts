@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.110
+// @version      2.7.111
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -106,6 +106,7 @@ import {
   waitForAccountOrdersMutationState,
 } from './dom/account-orders.js';
 import {
+  calculateFloatingPanelLayout,
   collectTradeButtonsFromScopes,
   findTradeFormRoot,
   findTradePanelInsertionPoint,
@@ -5085,27 +5086,21 @@ import {
     panel.style.margin = '0';
     panel.style.zIndex = '999999';
 
-    if (!anchorRect || !anchorRect.width || !anchorRect.height) {
+    const layout = calculateFloatingPanelLayout({
+      anchorRect,
+      panelHeight: panel.offsetHeight || 0,
+      viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+      viewportHeight: window.innerHeight || document.documentElement.clientHeight || 0,
+    });
+    if (!layout) {
       panel.style.visibility = 'hidden';
       panel.style.pointerEvents = 'none';
       return;
     }
 
-    const margin = 8;
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const panelWidth = Math.min(Math.max(anchorRect.width, 280), viewportWidth - margin * 2);
-    const estimatedHeight = Math.max(panel.offsetHeight || 0, 76);
-
-    let left = anchorRect.left;
-    left = Math.max(margin, Math.min(left, viewportWidth - panelWidth - margin));
-
-    let top = anchorRect.top;
-    top = Math.max(margin, Math.min(top, viewportHeight - estimatedHeight - margin));
-
-    panel.style.width = `${Math.round(panelWidth)}px`;
-    panel.style.left = `${Math.round(left)}px`;
-    panel.style.top = `${Math.round(top)}px`;
+    panel.style.width = `${layout.width}px`;
+    panel.style.left = `${layout.left}px`;
+    panel.style.top = `${layout.top}px`;
     panel.style.right = '';
     panel.style.bottom = '';
     panel.style.visibility = 'visible';
@@ -5138,14 +5133,29 @@ import {
     panelResizeObserver.observe(panel);
   }
 
-  function isPanelPositionCurrent() {
+  function isPanelPositionCurrent(panel) {
     const spacer = document.getElementById(SPACER_ID);
     const insertionPoint = findTradePanelInsertionPoint(document);
+    if (
+      !spacer
+      || !insertionPoint
+      || spacer.parentElement !== insertionPoint.parent
+      || spacer.nextElementSibling !== insertionPoint.before
+    ) {
+      return false;
+    }
+
+    const layout = calculateFloatingPanelLayout({
+      anchorRect: spacer.getBoundingClientRect(),
+      panelHeight: panel.offsetHeight || 0,
+      viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+      viewportHeight: window.innerHeight || document.documentElement.clientHeight || 0,
+    });
     return Boolean(
-      spacer
-      && insertionPoint
-      && spacer.parentElement === insertionPoint.parent
-      && spacer.nextElementSibling === insertionPoint.before
+      layout
+      && Number.parseFloat(panel.style.width) === layout.width
+      && Number.parseFloat(panel.style.left) === layout.left
+      && Number.parseFloat(panel.style.top) === layout.top
     );
   }
 
@@ -5419,7 +5429,7 @@ import {
     if (input) {
       applyInputVisualState(input, multiplier);
     }
-    if (panelPositionInvalidated || !isPanelPositionCurrent()) {
+    if (panelPositionInvalidated || !isPanelPositionCurrent(panel)) {
       if (positionPanel(panel)) panelPositionInvalidated = false;
     }
   }
