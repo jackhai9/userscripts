@@ -599,6 +599,11 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   const waitForRowRemovalBody = readFunctionBody('waitForOpenOrderRowKeyCountBelow');
   assert.match(waitForRowRemovalBody, /const activeRoot = getActiveOpenOrdersScope\(\)/);
   assert.match(waitForRowRemovalBody, /activeRoot && countOpenOrderRowsByKey\(activeRoot,\s*symbol,\s*key\) < previousCount/);
+  assert.match(waitForRowRemovalBody, /createAccountOrdersMutationSignal/);
+  assert.match(waitForRowRemovalBody, /mutationSignal\.waitForChange/);
+  assert.match(waitForRowRemovalBody, /mutationSignal\.dispose\(\)/);
+  assert.doesNotMatch(waitForRowRemovalBody, /delay\(/);
+  assert.doesNotMatch(cancelOpenOrderRowsBody, /delay\(260\)/);
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   assert.match(cancelRowsBody, /if \(!isCurrentObservedSymbol\(symbol\) \|\| symbol !== plan\?\.symbol\)/);
