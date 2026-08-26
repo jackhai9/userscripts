@@ -856,6 +856,9 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(panelBody, /cancelCurrentSymbolOpenOrdersTask/);
   assert.match(panelBody, /resolveCancelSymbolButtonPresentation\(\{/);
   assert.match(panelBody, /noOrdersFeedback: cancelNoOrdersFeedbackActive/);
+  assert.match(panelBody, /data-ladder-stop="true"[^`]*grid-column:span 2/);
+  assert.match(panelBody, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(panelBody, /actionColumnCount/);
   assert.match(panelBody, /data-ladder-cancel-symbol="true"[^`]*>\$\{PANEL_COPY\.action\.cancel\}<\/button>/);
   assert.match(panelBody, /cancelButton\.textContent = cancelPresentation\.label/);
 
