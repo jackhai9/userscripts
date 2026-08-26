@@ -133,8 +133,7 @@ function deriveScaleCount(capacity, ratio, minimum) {
   return Math.max(minimum, Math.round(capacity * ratio));
 }
 
-export function createLiveOrderScalePlan(profile, liveContext) {
-  validateLiveOrderScaleProfile(profile);
+export function createLiveOrderCapacityEvidence(liveContext) {
   validateLiveContext(liveContext);
   const perOrderNotional = multiplyDecimalStrings(
     liveContext.perOrderPrice,
@@ -151,10 +150,21 @@ export function createLiveOrderScalePlan(profile, liveContext) {
     ...liveContext,
     perOrderNotional,
   });
-  const effectiveCapacity = Math.min(
-    profile.maxOrderCount,
+  return Object.freeze({
+    ...liveContext,
+    perOrderNotional,
     maxNewOrdersBySlots,
     maxNewOrdersByMargin,
+  });
+}
+
+export function createLiveOrderScalePlan(profile, liveContext) {
+  validateLiveOrderScaleProfile(profile);
+  const capacityEvidence = createLiveOrderCapacityEvidence(liveContext);
+  const effectiveCapacity = Math.min(
+    profile.maxOrderCount,
+    capacityEvidence.maxNewOrdersBySlots,
+    capacityEvidence.maxNewOrdersByMargin,
   );
   if (effectiveCapacity < 3) {
     throw new Error(`Live order capacity ${effectiveCapacity} cannot form three distinct scales`);
@@ -170,12 +180,6 @@ export function createLiveOrderScalePlan(profile, liveContext) {
     throw new Error(`Scale ratios collapse at effective capacity ${effectiveCapacity}`);
   }
 
-  const capacityEvidence = Object.freeze({
-    ...liveContext,
-    perOrderNotional,
-    maxNewOrdersBySlots,
-    maxNewOrdersByMargin,
-  });
   return Object.freeze({
     profileName: profile.profileName,
     sampleCount: profile.sampleCount,
@@ -197,18 +201,12 @@ export function validateLiveOrderCapacityEvidence(evidence, path = 'capacityEvid
   assertRecord(evidence, path);
   assertExactKeys(evidence, CAPACITY_EVIDENCE_FIELDS, path);
   const context = Object.fromEntries(LIVE_CONTEXT_FIELDS.map((field) => [field, evidence[field]]));
-  const plan = createLiveOrderScalePlan({
-    schemaVersion: 1,
-    profileName: 'evidence-validation',
-    sampleCount: 3,
-    maxOrderCount: 3,
-    scaleRatios: { small: 0.25, medium: 0.5, large: 1 },
-  }, context);
-  if (evidence.perOrderNotional !== plan.capacityEvidence.perOrderNotional) {
+  const expected = createLiveOrderCapacityEvidence(context);
+  if (evidence.perOrderNotional !== expected.perOrderNotional) {
     throw new Error(`${path}.perOrderNotional does not match price x quantity`);
   }
   for (const field of ['maxNewOrdersBySlots', 'maxNewOrdersByMargin']) {
-    if (evidence[field] !== plan.capacityEvidence[field]) {
+    if (evidence[field] !== expected[field]) {
       throw new Error(`${path}.${field} does not match its inputs`);
     }
   }

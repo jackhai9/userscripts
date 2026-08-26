@@ -11,19 +11,46 @@ import {
   validateLivePerformanceBaseline,
   validateLivePerformanceCapture,
 } from '../../scripts/binance-live-performance.mjs';
-import { createLiveOrderScalePlan } from '../../e2e/binance-orderbook/helpers/live-order-scale-config.js';
+import {
+  createLiveOrderCapacityEvidence,
+  createLiveOrderScalePlan,
+} from '../../e2e/binance-orderbook/helpers/live-order-scale-config.js';
 
 const EMPTY_ORDER_LEDGER = Object.freeze({ created: [], fills: [], residual: [] });
 
+function testOrder(index = 0) {
+  return {
+    symbol: 'XRPUSDT',
+    side: 'SELL',
+    positionSide: 'SHORT',
+    price: '2',
+    quantity: '2.5',
+    createdAt: `2026-08-26T08:00:0${index + 1}.000Z`,
+  };
+}
+
+function singleOrderCapacityEvidence() {
+  return createLiveOrderCapacityEvidence({
+    availableBalance: '13.28',
+    currentLeverage: 5,
+    perOrderPrice: '2',
+    perOrderQuantity: '2.5',
+    safetyFactor: '0.8',
+    liveMaxNumOrdersLimit: 200,
+    existingCurrentSymbolOpenOrders: 0,
+    outstandingTestOwnedOrders: 0,
+  });
+}
+
 function sample(clickToFeedback, dialog, finalReady, maxLongTaskMs = 0) {
   return {
-    capacityEvidence: null,
+    capacityEvidence: singleOrderCapacityEvidence(),
     segmentsMs: {
       clickToFirstFeedback: clickToFeedback,
       clickToDialog: dialog,
       decisionToFinalReady: finalReady,
     },
-    testOrderLedger: structuredClone(EMPTY_ORDER_LEDGER),
+    testOrderLedger: { created: [testOrder()], fills: [], residual: [] },
     stateRestored: true,
     noFills: true,
     residualTestOrders: 0,
@@ -47,7 +74,7 @@ function capture(samples = [sample(90, 150, 140), sample(100, 160, 150), sample(
     },
     scenarios: [{
       name: 'cancel-dialog-cancel',
-      parameters: { kind: 'no-orders' },
+      parameters: { kind: 'dialog-cancel', testOrderCount: 1 },
       applicableSegments: ['clickToFirstFeedback', 'clickToDialog', 'decisionToFinalReady'],
       samples,
     }],
@@ -72,14 +99,7 @@ function scaleSample(index) {
     existingCurrentSymbolOpenOrders: 0,
     outstandingTestOwnedOrders: 0,
   }).capacityEvidence;
-  result.testOrderLedger.created.push({
-    symbol: 'XRPUSDT',
-    side: 'SELL',
-    positionSide: 'SHORT',
-    price: '2',
-    quantity: '2.5',
-    createdAt: `2026-08-26T08:00:0${index + 1}.000Z`,
-  });
+  result.testOrderLedger.created = [testOrder(index)];
   return result;
 }
 
@@ -101,6 +121,44 @@ test('live performance capture requires three complete isolated samples', () => 
   assert.throws(
     () => validateLivePerformanceCapture(capture([sample(90, 150, 140), sample(100, 160, 150)])),
     /at least three isolated samples/,
+  );
+});
+
+test('live performance capture models no-orders, dialog-cancel, and dialog-confirm explicitly', () => {
+  const dialogCancel = capture();
+  assert.equal(validateLivePerformanceCapture(dialogCancel).scenarios[0].parameters.kind, 'dialog-cancel');
+
+  const dialogConfirm = structuredClone(dialogCancel);
+  dialogConfirm.scenarios[0].name = 'cancel-dialog-confirm';
+  dialogConfirm.scenarios[0].parameters.kind = 'dialog-confirm';
+  assert.equal(validateLivePerformanceCapture(dialogConfirm).scenarios[0].parameters.kind, 'dialog-confirm');
+
+  const noOrders = structuredClone(dialogCancel);
+  noOrders.scenarios[0].name = 'cancel-current-symbol-no-orders';
+  noOrders.scenarios[0].parameters = { kind: 'no-orders' };
+  for (const entry of noOrders.scenarios[0].samples) {
+    entry.capacityEvidence = null;
+    entry.testOrderLedger = structuredClone(EMPTY_ORDER_LEDGER);
+  }
+  assert.equal(validateLivePerformanceCapture(noOrders).scenarios[0].parameters.kind, 'no-orders');
+});
+
+test('dialog captures bind the declared test-order count to capacity and ledger evidence', () => {
+  const missingOrder = capture();
+  missingOrder.scenarios[0].samples[0].testOrderLedger.created = [];
+  assert.throws(
+    () => validateLivePerformanceCapture(missingOrder),
+    /created ledger count must match the declared test order count/,
+  );
+
+  const insufficientCapacity = capture();
+  insufficientCapacity.scenarios[0].samples[0].capacityEvidence = {
+    ...insufficientCapacity.scenarios[0].samples[0].capacityEvidence,
+    maxNewOrdersByMargin: 0,
+  };
+  assert.throws(
+    () => validateLivePerformanceCapture(insufficientCapacity),
+    /does not match its inputs|insufficient margin capacity/,
   );
 });
 
@@ -224,7 +282,7 @@ test('baseline comparison rejects the same scale name with different effective c
       scenario: 'cancel-dialog-cancel',
       metric: null,
       reason: 'configuration-mismatch',
-      baseline: { kind: 'no-orders' },
+      baseline: { kind: 'dialog-cancel', testOrderCount: 1 },
       current: current.scenarios[0].parameters,
     }],
   );

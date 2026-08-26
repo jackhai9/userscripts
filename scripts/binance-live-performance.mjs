@@ -113,8 +113,15 @@ function validateScenarioParameters(parameters, path) {
     assertExactKeys(parameters, ['kind'], path);
     return parameters;
   }
+  if (['dialog-cancel', 'dialog-confirm'].includes(parameters.kind)) {
+    assertExactKeys(parameters, ['kind', 'testOrderCount'], path);
+    if (!Number.isInteger(parameters.testOrderCount) || parameters.testOrderCount <= 0) {
+      throw new Error(`${path}.testOrderCount must be a positive integer`);
+    }
+    return parameters;
+  }
   if (parameters.kind !== 'order-scale') {
-    throw new Error(`${path}.kind must equal no-orders or order-scale`);
+    throw new Error(`${path}.kind must equal no-orders, dialog-cancel, dialog-confirm, or order-scale`);
   }
   assertExactKeys(parameters, [
     'kind',
@@ -153,14 +160,20 @@ function validateCapacityEvidenceForScenario(evidence, parameters, ledger, path)
     return;
   }
   validateLiveOrderCapacityEvidence(evidence, path);
-  if (parameters.effectiveTargetOrderCount > evidence.maxNewOrdersBySlots) {
+  const expectedOrderCount = parameters.kind === 'order-scale'
+    ? parameters.effectiveTargetOrderCount
+    : parameters.testOrderCount;
+  if (expectedOrderCount > evidence.maxNewOrdersBySlots) {
     throw new Error(`${path} has insufficient order slots for the effective target`);
   }
-  if (parameters.effectiveTargetOrderCount > evidence.maxNewOrdersByMargin) {
+  if (expectedOrderCount > evidence.maxNewOrdersByMargin) {
     throw new Error(`${path} has insufficient margin capacity for the effective target`);
   }
-  if (ledger.created.length !== parameters.effectiveTargetOrderCount) {
-    throw new Error(`${path} created ledger count must match the effective target`);
+  if (ledger.created.length !== expectedOrderCount) {
+    const label = parameters.kind === 'order-scale'
+      ? 'the effective target'
+      : 'the declared test order count';
+    throw new Error(`${path} created ledger count must match ${label}`);
   }
 }
 

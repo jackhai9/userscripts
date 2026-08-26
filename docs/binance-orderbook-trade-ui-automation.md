@@ -251,6 +251,19 @@ isolated samples. Every sample must prove restored UI state, no fills, zero resi
 test-owned orders, zero uncaught errors, and bounded long-task observations. Missing
 segments are invalid data, not zero-duration work.
 
+Live capture parameters use explicit scenario kinds:
+
+- `no-orders`: requires no capacity evidence and an empty test-order ledger;
+- `dialog-cancel`: declares a positive `testOrderCount`, proves capacity for those
+  test-owned orders, cancels the native dialog, and cleans up those orders afterward;
+- `dialog-confirm`: declares a positive `testOrderCount`, proves capacity, confirms
+  native cancellation, and observes zero residual test-owned orders; and
+- `order-scale`: retains the named small/medium/large scale contract.
+
+Do not label a dialog run as `no-orders`. One-order dialog smoke uses standalone
+capacity evidence and does not require enough balance or order slots to construct
+three distinct scale levels. The three-level minimum applies only to `order-scale`.
+
 Order-scale scenarios also persist the internal profile name, semantic scale label,
 preferred and effective target counts, and sample count. Every sample persists its
 live capacity evidence. Capacity shortfalls must skip or abort the scale explicitly;

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  createLiveOrderCapacityEvidence,
   createLiveOrderScalePlan,
   validateLiveOrderCapacityEvidence,
   validateLiveOrderScaleProfile,
@@ -62,6 +63,27 @@ test('capacity evidence validates actual notional and slot arithmetic', () => {
   assert.throws(
     () => validateLiveOrderCapacityEvidence({ ...evidence, perOrderNotional: '4.9' }),
     /does not match price x quantity/,
+  );
+});
+
+test('one-order smoke capacity is valid without requiring three scale levels', () => {
+  const evidence = createLiveOrderCapacityEvidence(liveContext({
+    availableBalance: '1.25',
+    currentLeverage: 1,
+    perOrderPrice: '1',
+    perOrderQuantity: '1',
+  }));
+
+  assert.equal(evidence.maxNewOrdersByMargin, 1);
+  assert.equal(validateLiveOrderCapacityEvidence(evidence), evidence);
+  assert.throws(
+    () => createLiveOrderScalePlan(profile, liveContext({
+      availableBalance: '1.25',
+      currentLeverage: 1,
+      perOrderPrice: '1',
+      perOrderQuantity: '1',
+    })),
+    /cannot form three distinct scales/,
   );
 });
 
