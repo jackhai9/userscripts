@@ -45,7 +45,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm test
+      - run: npm run test:binance-orderbook-ui-toolchain
       - run: npm run build:binance-orderbook-trade
       - run: git diff --exit-code -- scripts/binance-orderbook-trade.user.js
       - run: npm run test:ui

@@ -127,8 +127,10 @@ test orders from count changes alone.
   lifecycle.
 - Add a deterministic Binance Futures fixture with React-style subtree replacement.
 - Add scenario data, interaction probes, and the core cancel-current-symbol matrix.
-- Run the complete repository unit suite and L2 in the PR gate. Changes limited to
-  Stage 3/4 scripts or their unit tests must still trigger this workflow.
+- Run the complete Binance orderbook unit/DOM toolchain and L2 in the PR gate.
+  This includes the Stage 3/4 capture utilities without coupling the gate to
+  unrelated userscript suites. Changes limited to Stage 3/4 scripts or their unit
+  tests must still trigger this workflow.
 
 ### Stage 2: Expanded Host and Fault Matrix
 

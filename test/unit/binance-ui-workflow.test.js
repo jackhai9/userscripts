@@ -15,7 +15,7 @@ test('Binance UI workflow gates the complete deterministic and live test toolcha
   ]) {
     assert.ok(workflow.includes(`- "${pathPattern}"`), `Missing workflow path: ${pathPattern}`);
   }
-  assert.match(workflow, /- run: npm test\n/);
-  assert.doesNotMatch(workflow, /- run: npm run test:binance-orderbook-trade\n/);
+  assert.match(workflow, /- run: npm run test:binance-orderbook-ui-toolchain\n/);
+  assert.doesNotMatch(workflow, /- run: npm test\n/);
   assert.match(workflow, /- run: npm run test:ui\n/);
 });
