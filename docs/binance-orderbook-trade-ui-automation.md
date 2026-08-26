@@ -205,6 +205,15 @@ Store every live run as a strict capture rather than copying timing numbers from
 npm run summarize:binance-orderbook-live -- /path/to/capture.json
 ```
 
+Install `e2e/binance-orderbook/helpers/live-performance-probe.js` through raw CDP
+before driving a live path. The probe only observes; it never clicks, submits, or
+cancels an order. Arm it before the userscript action, finish it only after the final
+stable state, validate the returned snapshot, then destroy it. It has no user-decision
+deadline, dynamically reacquires the panel and portal dialog after React replacement,
+and exposes overflow counts for every bounded stream. A capture is invalid when the
+browser does not support Long Task or Long Animation Frame evidence, any stream
+overflows, or any uncaught error is observed.
+
 The first checked-in L4 reference is the zero-order HYPEUSDT run:
 
 - `e2e/binance-orderbook/live-baselines/no-orders-2026-08-26.capture.json`
