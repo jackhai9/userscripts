@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-08-26T08:30:11.000Z",
+  "capturedAt": "2026-08-26T18:34:58.000Z",
   "environment": {
     "browser": "Chrome 151.0.0.0",
     "os": "macOS (MacIntel)",
     "route": "https://www.binance.com/zh-CN/futures/HYPEUSDT",
     "symbol": "HYPEUSDT",
-    "userscriptSha256": "cc4135902ad4ad62eb6188828479780a8e194713be8067dc10c8c73428c5dcdb",
-    "userscriptVersion": "2.7.119"
+    "userscriptSha256": "f4bb60af07044e21f684d1978535795363ade1c240dde0de6b904767cfa87a18",
+    "userscriptVersion": "2.7.126"
   },
   "scenarios": [
     {
@@ -18,29 +18,29 @@
       "sampleCount": 3,
       "segmentsMs": {
         "clickToFirstFeedback": {
-          "min": 30.6,
-          "median": 33,
-          "p95": 38.3,
-          "max": 38.3
+          "min": 3.4,
+          "median": 3.6,
+          "p95": 11.7,
+          "max": 11.7
         },
         "clickToFinalReady": {
-          "min": 630.8,
-          "median": 637.1,
-          "p95": 646.7,
-          "max": 646.7
+          "min": 91.8,
+          "median": 95.3,
+          "p95": 106.9,
+          "max": 106.9
         }
       },
       "maxLongTaskMs": {
         "min": 0,
         "median": 0,
-        "p95": 54,
-        "max": 54
+        "p95": 0,
+        "max": 0
       },
       "maxLongAnimationFrameMs": {
         "min": 0,
         "median": 0,
-        "p95": 56.1,
-        "max": 56.1
+        "p95": 59.8,
+        "max": 59.8
       }
     }
   ],

@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-26T18:34:58.000Z",
+  "environment": {
+    "browser": "Chrome 151.0.0.0",
+    "os": "macOS (MacIntel)",
+    "route": "https://www.binance.com/zh-CN/futures/HYPEUSDT",
+    "symbol": "HYPEUSDT",
+    "userscriptSha256": "f4bb60af07044e21f684d1978535795363ade1c240dde0de6b904767cfa87a18",
+    "userscriptVersion": "2.7.126"
+  },
+  "scenarios": [
+    {
+      "name": "cancel-current-symbol-no-orders",
+      "parameters": {
+        "kind": "no-orders"
+      },
+      "applicableSegments": [
+        "clickToFirstFeedback",
+        "clickToFinalReady"
+      ],
+      "samples": [
+        {
+          "capacityEvidence": null,
+          "segmentsMs": {
+            "clickToFirstFeedback": 11.7,
+            "clickToFinalReady": 106.9
+          },
+          "testOrderLedger": {
+            "created": [],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 59.8
+        },
+        {
+          "capacityEvidence": null,
+          "segmentsMs": {
+            "clickToFirstFeedback": 3.4,
+            "clickToFinalReady": 91.8
+          },
+          "testOrderLedger": {
+            "created": [],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 0
+        },
+        {
+          "capacityEvidence": null,
+          "segmentsMs": {
+            "clickToFirstFeedback": 3.6,
+            "clickToFinalReady": 95.3
+          },
+          "testOrderLedger": {
+            "created": [],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 0
+        }
+      ]
+    }
+  ]
+}
