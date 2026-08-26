@@ -1,0 +1,51 @@
+name: Binance Orderbook UI
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/binance-orderbook-ui.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "playwright.config.js"
+      - "src/binance-orderbook-trade/**"
+      - "scripts/binance-orderbook-trade.user.js"
+      - "e2e/binance-orderbook/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/binance-orderbook-ui.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "playwright.config.js"
+      - "src/binance-orderbook-trade/**"
+      - "scripts/binance-orderbook-trade.user.js"
+      - "e2e/binance-orderbook/**"
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:binance-orderbook-trade
+      - run: npm run build:binance-orderbook-trade
+      - run: git diff --exit-code -- scripts/binance-orderbook-trade.user.js
+      - run: npm run test:ui
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
