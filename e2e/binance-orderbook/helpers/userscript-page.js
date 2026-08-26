@@ -32,14 +32,14 @@ export async function openUserscriptScenario(page, scenario) {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        symbols: [{
-          symbol: scenario.currentSymbol,
+        symbols: [scenario.currentSymbol, 'BTCUSDT'].map((symbol) => ({
+          symbol,
           filters: [
             { filterType: 'LOT_SIZE', minQty: '0.01', stepSize: '0.01' },
             { filterType: 'MARKET_LOT_SIZE', minQty: '0.01', stepSize: '0.01' },
             { filterType: 'MIN_NOTIONAL', notional: '5' },
           ],
-        }],
+        })),
       }),
     });
   });
