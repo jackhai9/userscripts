@@ -948,12 +948,14 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(source, /orderbookPrecisionOptionsLoadAttemptedSymbol/);
 
   const sampleBody = readFunctionBody('refreshOrderbookPrecisionSamplesNow');
-  assert.match(sampleBody, /collectPriceMovesWithExpandingWindow\(getLatestTradePrices\(\),/);
+  assert.match(sampleBody, /recommendOrderbookPrecisionWithExpandingWindow\(\{/);
+  assert.match(sampleBody, /prices: getLatestTradePrices\(\)/);
+  assert.match(sampleBody, /options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS/);
   assert.match(sampleBody, /initialLimit: ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT/);
   assert.match(sampleBody, /expansionStep: ORDERBOOK_PRECISION_TRADE_EXPANSION_STEP/);
   assert.match(sampleBody, /minSamples: ORDERBOOK_PRECISION_MIN_EFFECTIVE_MOVES/);
   assert.match(sampleBody, /saveStoredOrderbookPrecisionSamples/);
-  assert.match(sampleBody, /recommendOrderbookPrecision/);
+  assert.match(sampleBody, /samples: latestSamples,[\s\S]*recommendation,/);
   assert.match(sampleBody, /status: recommendation \? 'ready' : PANEL_COPY\.status\.precisionInsufficient/);
   assert.match(sampleBody, /PANEL_COPY\.status\.precisionUpdated/);
   assert.doesNotMatch(sampleBody, /setTimeout|setInterval|await delay/);

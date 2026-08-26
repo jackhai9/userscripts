@@ -65,30 +65,6 @@ export function collectNonZeroPriceMoves(prices) {
   return moves;
 }
 
-export function collectPriceMovesWithExpandingWindow(prices, {
-  initialLimit = 10,
-  expansionStep = 10,
-  minSamples = 5,
-} = {}) {
-  if (!Number.isInteger(initialLimit) || initialLimit < 2) {
-    throw new Error(`Invalid initial precision trade limit: ${initialLimit}`);
-  }
-  if (!Number.isInteger(expansionStep) || expansionStep < 1) {
-    throw new Error(`Invalid precision trade expansion step: ${expansionStep}`);
-  }
-  if (!Number.isInteger(minSamples) || minSamples < 1) {
-    throw new Error(`Invalid minimum precision sample count: ${minSamples}`);
-  }
-  const observedPrices = Array.isArray(prices) ? prices : [];
-  let usedCount = Math.min(initialLimit, observedPrices.length);
-  let samples = collectNonZeroPriceMoves(observedPrices.slice(0, usedCount));
-  while (samples.length < minSamples && usedCount < observedPrices.length) {
-    usedCount = Math.min(usedCount + expansionStep, observedPrices.length);
-    samples = collectNonZeroPriceMoves(observedPrices.slice(0, usedCount));
-  }
-  return { samples, usedCount };
-}
-
 function sortedPositiveDecimals(values) {
   return (values || [])
     .map((value) => normalizeDecimalString(value))
@@ -148,4 +124,42 @@ export function recommendOrderbookPrecision({
     }
   }
   return selectedOption;
+}
+
+export function recommendOrderbookPrecisionWithExpandingWindow({
+  prices,
+  options,
+  initialLimit = 10,
+  expansionStep = 10,
+  minSamples = 5,
+  minBucketShare = 0.25,
+}) {
+  if (!Array.isArray(prices)) {
+    throw new Error('Precision trade prices must be an array');
+  }
+  if (!Number.isInteger(initialLimit) || initialLimit < 2) {
+    throw new Error(`Invalid initial precision trade limit: ${initialLimit}`);
+  }
+  if (!Number.isInteger(expansionStep) || expansionStep < 1) {
+    throw new Error(`Invalid precision trade expansion step: ${expansionStep}`);
+  }
+  if (!Number.isInteger(minSamples) || minSamples < 1) {
+    throw new Error(`Invalid minimum precision sample count: ${minSamples}`);
+  }
+
+  let usedCount = Math.min(initialLimit, prices.length);
+  let samples = [];
+  let recommendation = null;
+  while (true) {
+    samples = collectNonZeroPriceMoves(prices.slice(0, usedCount));
+    recommendation = recommendOrderbookPrecision({
+      samples,
+      options,
+      minSamples,
+      minBucketShare,
+    });
+    if (recommendation || usedCount >= prices.length) break;
+    usedCount = Math.min(usedCount + expansionStep, prices.length);
+  }
+  return { samples, usedCount, recommendation };
 }
