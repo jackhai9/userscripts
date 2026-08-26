@@ -99,16 +99,24 @@ test('starting a ladder disables every start action and exposes one stop control
   const panel = page.locator(PANEL_SELECTOR);
   const startLong = panel.getByRole('button', { name: '阶梯开多' });
   const startShort = panel.getByRole('button', { name: '阶梯开空' });
+  const cancel = panel.getByRole('button', { name: '撤单' });
   const stop = panel.getByRole('button', { name: '停止阶梯挂单' });
 
   await expect(startLong).toBeEnabled();
   await expect(startShort).toBeEnabled();
   await expect(stop).toHaveCount(0);
+  const startLongRect = await readRect(startLong);
+  const startShortRect = await readRect(startShort);
+  const cancelRect = await readRect(cancel);
   await installInteractionProbe(page, '[data-ladder-action="OPEN_LONG"]');
   await startLong.click();
   await expect(startLong).toHaveCount(0);
   await expect(startShort).toHaveCount(0);
   await expect(stop).toBeEnabled();
+  const stopRect = await readRect(stop);
+  expect(stopRect.x).toBe(startLongRect.x);
+  expect(stopRect.x + stopRect.width).toBe(startShortRect.x + startShortRect.width);
+  expect(await readRect(cancel)).toEqual(cancelRect);
   const submissionsBeforeStop = (await readFixtureState(page)).events
     .filter((event) => event.type === 'order-submitted').length;
   await stop.click();
