@@ -241,9 +241,9 @@ and exposes overflow counts for every bounded stream. A capture is invalid when 
 browser does not support Long Task or Long Animation Frame evidence, any stream
 overflows, or any uncaught error is observed.
 
-The first checked-in L4 reference is the zero-order HYPEUSDT run:
+The current checked-in L4 reference is the isolated zero-order HYPEUSDT run:
 
-- `e2e/binance-orderbook/live-baselines/no-orders-2026-08-26.capture.json`
+- `e2e/binance-orderbook/live-baselines/no-orders-2026-08-27.capture.json`
 - `e2e/binance-orderbook/live-baselines/no-orders.baseline.json`
 
 Each scenario declares its applicable wall-clock segments and contains at least three
