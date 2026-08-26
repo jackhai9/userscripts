@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.116
+// @version      2.7.117
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1745,7 +1745,6 @@
     const BINANCE_PLACE_ORDER_BAPI_PATH = "/bapi/futures/v1/private/future/order/place-order";
     const BINANCE_USER_POSITION_BAPI_PATH = "/bapi/futures/v6/private/future/user-data/user-position";
     const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
-    const LADDER_OPEN_QTY_POLL_MS = 80;
     const SINGLE_ORDER_PRICE_SYNC_DELAY_MS = 90;
     const SINGLE_ORDER_QTY_SYNC_DELAY_MS = 120;
     const ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6e3;
@@ -3141,25 +3140,27 @@
       const priceInput = findPriceInput();
       if (!priceInput || !referencePrice) return null;
       setInputValueReact(priceInput, referencePrice);
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < LADDER_OPEN_QTY_READY_TIMEOUT_MS) {
-        const openLongBtn2 = findOpenLongButton();
-        const openShortBtn2 = findOpenShortButton();
-        const { longQty: longQty2, shortQty: shortQty2, qtySource: qtySource2 } = readOpenableQty(openLongBtn2, openShortBtn2);
-        const qty = spec.side === "LONG" ? longQty2 : shortQty2;
-        if (qty != null && isPositiveDecimalString(String(qty))) {
-          return { qty, qtySource: qtySource2 };
-        }
-        if (isConfirmedZeroOpenBalance(qty)) return { qty, qtySource: qtySource2 };
-        await delay(LADDER_OPEN_QTY_POLL_MS);
-      }
-      const openLongBtn = findOpenLongButton();
-      const openShortBtn = findOpenShortButton();
-      const { longQty, shortQty, qtySource } = readOpenableQty(openLongBtn, openShortBtn);
-      return {
-        qty: spec.side === "LONG" ? longQty : shortQty,
-        qtySource
+      const readQuantity = () => {
+        const openLongBtn = findOpenLongButton();
+        const openShortBtn = findOpenShortButton();
+        const { longQty, shortQty, qtySource } = readOpenableQty(openLongBtn, openShortBtn);
+        const qty = spec.side === "LONG" ? longQty : shortQty;
+        return { qty, qtySource };
       };
+      const mutationRoot = getTradeMutationRoot();
+      const ready = await waitForTradeFormMutationState(
+        mutationRoot,
+        () => {
+          const quantity = readQuantity();
+          const { qty } = quantity;
+          if (qty != null && isPositiveDecimalString(String(qty))) {
+            return quantity;
+          }
+          return isConfirmedZeroOpenBalance(qty) ? quantity : null;
+        },
+        LADDER_OPEN_QTY_READY_TIMEOUT_MS
+      );
+      return ready || readQuantity();
     }
     function readCloseBaseQtyForLadder(spec) {
       const symbol = getCurrentSymbol();

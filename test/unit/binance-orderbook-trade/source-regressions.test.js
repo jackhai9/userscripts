@@ -508,6 +508,8 @@ test('open ladder stops immediately only for a confirmed zero available balance'
   const readOpenQtyBody = readFunctionBody('readOpenBaseQtyForLadder');
   assert.match(readOpenQtyBody, /isConfirmedZeroOpenBalance\(qty\)/);
   assert.match(readOpenQtyBody, /return \{ qty, qtySource \}/);
+  assert.match(readOpenQtyBody, /waitForTradeFormMutationState/);
+  assert.doesNotMatch(readOpenQtyBody, /delay\(/);
 
   const confirmedZeroBody = readFunctionBody('isConfirmedZeroOpenBalance');
   assert.match(confirmedZeroBody, /readTradeAvailableBalance/);
