@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.112
+// @version      2.7.113
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -150,7 +150,9 @@ import { resolveCancelDialogDecision } from './core/cancel-dialog-decision.js';
 import {
   classifyBinanceCancelAllDialogAction,
   classifyBinanceCancelAllDialogKeyboardAction,
+  createDialogMutationSignal,
   findBinanceCancelAllDialog,
+  waitForDialogMutationState,
 } from './dom/cancel-all-dialog.js';
 import {
   findBinanceChartOrdersTarget as findBinanceChartOrdersTargetDom,
@@ -251,7 +253,6 @@ import {
   const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
   const ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 60000;
   const CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS = 1800;
-  const CANCEL_DIALOG_DECISION_POLL_MS = 50;
   const CANCEL_NO_ORDERS_FEEDBACK_MS = 600;
   const LADDER_MAKER_BUFFER_LEVELS = 1;
   const LADDER_REPRICE_MAX_ATTEMPTS = 5;
@@ -3213,30 +3214,30 @@ import {
   }
 
   async function waitForNewVisibleDialog(dialogsBefore) {
-    const deadline = Date.now() + 1800;
-    while (Date.now() < deadline) {
-      const dialog = findNewVisibleDialog(dialogsBefore);
-      if (dialog) return dialog;
-      await delay(100);
-    }
-    return findNewVisibleDialog(dialogsBefore);
+    return waitForDialogMutationState(
+      document,
+      () => findNewVisibleDialog(dialogsBefore),
+      1800,
+    );
   }
 
   async function waitForDialogToClose(dialog, timeoutMs = ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline && dialog.isConnected && isVisibleElement(dialog)) {
-      await delay(500);
-    }
-    if (dialog.isConnected && isVisibleElement(dialog)) return false;
-    return true;
+    return Boolean(await waitForDialogMutationState(
+      document,
+      () => (!dialog.isConnected || !isVisibleElement(dialog) ? true : null),
+      timeoutMs,
+    ));
   }
 
   function createBinanceCancelAllDialogDecisionWatcher() {
     const lifecycleController = new AbortController();
+    const dialogSignal = createDialogMutationSignal(document);
+    if (!dialogSignal) throw new Error('Cancel-all dialog observer root is unavailable');
     const watcher = {
       action: null,
       error: null,
       seenDialog: false,
+      dialogSignal,
     };
 
     const recordAction = (eventTarget) => {
@@ -3248,6 +3249,8 @@ import {
         if (action && !watcher.action) watcher.action = action;
       } catch (error) {
         watcher.error = error;
+      } finally {
+        dialogSignal.notify();
       }
     };
     const handleClick = (event) => recordAction(event.target);
@@ -3265,11 +3268,16 @@ import {
         if (action && !watcher.action) watcher.action = action;
       } catch (error) {
         watcher.error = error;
+      } finally {
+        dialogSignal.notify();
       }
     };
     // A BFCache page is only frozen and can resume the same native dialog later.
     const handlePageHide = (event) => {
-      if (!event.persisted) lifecycleController.abort();
+      if (!event.persisted) {
+        lifecycleController.abort();
+        dialogSignal.notify();
+      }
     };
 
     document.addEventListener('click', handleClick, true);
@@ -3282,6 +3290,7 @@ import {
         document.removeEventListener('click', handleClick, true);
         document.removeEventListener('keydown', handleKeydown, true);
         window.removeEventListener('pagehide', handlePageHide);
+        dialogSignal.dispose();
       },
     };
   }
@@ -3290,6 +3299,7 @@ import {
     const discoveryDeadline = Date.now() + CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS;
     let reportedDialog = false;
     while (true) {
+      const observedVersion = watcher.dialogSignal.version;
       if (lifecycleSignal.aborted) return { status: 'aborted' };
       if (watcher.error) throw watcher.error;
       const contract = findBinanceCancelAllDialog(document, isVisibleElement);
@@ -3310,7 +3320,10 @@ import {
         discoveryDeadlineMs: discoveryDeadline,
       });
       if (status !== 'waiting') return { status };
-      await delay(CANCEL_DIALOG_DECISION_POLL_MS);
+      const remainingDiscoveryMs = watcher.seenDialog
+        ? null
+        : Math.max(0, discoveryDeadline - Date.now());
+      await watcher.dialogSignal.waitForChange(observedVersion, remainingDiscoveryMs);
     }
   }
 

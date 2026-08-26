@@ -3,8 +3,15 @@ import {
   includesBinancePageText,
 } from '../contracts/binance-page-text.js';
 
-const DIALOG_CANDIDATE_SELECTOR =
+const CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR =
   '[role="dialog"], [class*="modal"], [class*="Modal"]';
+const DIALOG_MUTATION_CANDIDATE_SELECTOR = [
+  CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR,
+  '[class*="popover"]',
+  '[class*="Popover"]',
+  '[class*="drawer"]',
+  '[class*="Drawer"]',
+].join(', ');
 const PRIMARY_BUTTON_SELECTOR = 'button.bn-button.bn-button__primary';
 
 function normalizeText(value) {
@@ -33,7 +40,7 @@ function getDialogContract(dialog, isVisibleElement) {
 }
 
 export function findBinanceCancelAllDialog(document, isVisibleElement) {
-  const contracts = Array.from(document.querySelectorAll(DIALOG_CANDIDATE_SELECTOR))
+  const contracts = Array.from(document.querySelectorAll(CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR))
     .map((dialog) => getDialogContract(dialog, isVisibleElement))
     .filter(Boolean);
   if (!contracts.length) return null;
@@ -53,6 +60,90 @@ export function findBinanceCancelAllDialog(document, isVisibleElement) {
   return contracts.reduce((innermost, contract) => (
     innermost.dialog.contains(contract.dialog) ? contract : innermost
   ));
+}
+
+function elementTouchesDialogCandidate(node) {
+  const element = node?.nodeType === 1 ? node : node?.parentElement;
+  if (!element) return false;
+  return element.matches?.(DIALOG_MUTATION_CANDIDATE_SELECTOR)
+    || !!element.closest?.(DIALOG_MUTATION_CANDIDATE_SELECTOR)
+    || !!element.querySelector?.(DIALOG_MUTATION_CANDIDATE_SELECTOR);
+}
+
+export function mutationTouchesDialogCandidate(mutation) {
+  if (!mutation) return false;
+  if (mutation.type === 'attributes') return elementTouchesDialogCandidate(mutation.target);
+  if (mutation.type !== 'childList') return false;
+  if (elementTouchesDialogCandidate(mutation.target)) return true;
+  return [...mutation.addedNodes, ...mutation.removedNodes]
+    .some(elementTouchesDialogCandidate);
+}
+
+export function createDialogMutationSignal(document) {
+  const MutationObserverClass = document?.defaultView?.MutationObserver;
+  if (!document?.body || !MutationObserverClass) return null;
+
+  let version = 0;
+  let pendingFinish = null;
+  const notify = () => {
+    version += 1;
+    pendingFinish?.('changed');
+  };
+  const observer = new MutationObserverClass((mutations) => {
+    if (mutations.some(mutationTouchesDialogCandidate)) notify();
+  });
+  observer.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'role', 'aria-hidden', 'hidden'],
+  });
+
+  return {
+    get version() {
+      return version;
+    },
+    notify,
+    waitForChange(afterVersion, timeoutMs = null) {
+      if (version !== afterVersion) return Promise.resolve('changed');
+      return new Promise((resolve) => {
+        let timer = null;
+        const finish = (result) => {
+          if (pendingFinish !== finish) return;
+          pendingFinish = null;
+          if (timer) clearTimeout(timer);
+          resolve(result);
+        };
+        pendingFinish = finish;
+        if (timeoutMs !== null) timer = setTimeout(() => finish('timeout'), timeoutMs);
+      });
+    },
+    dispose() {
+      observer.disconnect();
+      pendingFinish?.('disposed');
+    },
+  };
+}
+
+export async function waitForDialogMutationState(document, readState, timeoutMs) {
+  const currentState = readState();
+  if (currentState) return currentState;
+  const signal = createDialogMutationSignal(document);
+  if (!signal) return null;
+  const deadline = Date.now() + timeoutMs;
+
+  try {
+    while (true) {
+      const version = signal.version;
+      const state = readState();
+      if (state) return state;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return readState();
+      await signal.waitForChange(version, remainingMs);
+    }
+  } finally {
+    signal.dispose();
+  }
 }
 
 export function classifyBinanceCancelAllDialogAction(contract, eventTarget) {
