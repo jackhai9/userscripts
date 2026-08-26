@@ -16,9 +16,19 @@ const CONTRACT_FIELDS = [
   'characters',
 ];
 const SOURCE_IDENTITY_FIELDS = ['sha256', 'bytes', 'characters'];
+const LOADED_SCRIPT_FIELDS = [
+  'scriptId',
+  'url',
+  'executionContextId',
+  'frameId',
+  'isDefault',
+  'loadedSourceIdentity',
+  'embeddedArtifactIdentity',
+  'wrapper',
+];
 const EVENT_ORDER_FIELDS = [
   'domainsEnabled',
-  'eventBuffersCleared',
+  'eventCursorCaptured',
   'reloadRequested',
   'mainFrameNavigated',
   'scriptParsed',
@@ -31,7 +41,11 @@ const EVENT_ORDER_FIELDS = [
 const REQUIRED_DOMAINS = ['Debugger', 'Network', 'Page', 'Runtime'];
 
 export const STAGE3_PANEL_SELECTOR = '#jh-binance-close-qty-multiplier-panel';
-export const STAGE3_REVERSIBLE_CONTROL_SELECTOR = '#jh-binance-ladder-toggle';
+export const STAGE3_REVERSIBLE_CONTROL_SELECTORS = Object.freeze({
+  value: '#jh-binance-close-qty-multiplier-input',
+  increment: '#jh-binance-close-qty-multiplier-inc',
+  decrement: '#jh-binance-close-qty-multiplier-dec',
+});
 export const STAGE3_FINANCIAL_REQUEST_PATTERNS = Object.freeze([
   '/bapi/futures/v1/private/future/order/',
   '/bapi/futures/v1/private/future/user-data/adjustLeverage',
@@ -76,6 +90,51 @@ function sourceIdentity(source) {
     sha256: createHash('sha256').update(source, 'utf8').digest('hex'),
     bytes: Buffer.byteLength(source, 'utf8'),
     characters: source.length,
+  });
+}
+
+function extractTampermonkeyArtifact(loadedSource, artifactSource, scriptUrl, tampermonkeyScriptId) {
+  for (const [value, path] of [
+    [loadedSource, 'loadedSource'],
+    [artifactSource, 'artifactSource'],
+    [scriptUrl, 'scriptUrl'],
+    [tampermonkeyScriptId, 'tampermonkeyScriptId'],
+  ]) assertNonEmptyString(value, path);
+  const parsedScriptUrl = new URL(scriptUrl);
+  if (
+    parsedScriptUrl.protocol !== 'chrome-extension:'
+    || parsedScriptUrl.hostname !== 'dhdgffkkebhmkfjojejmpbldmpobfkfo'
+    || parsedScriptUrl.pathname !== '/userscript.html'
+  ) {
+    throw new Error('CDP loaded script URL must belong to the Tampermonkey userscript runtime');
+  }
+  if (parsedScriptUrl.searchParams.get('id') !== tampermonkeyScriptId) {
+    throw new Error('CDP loaded script URL must identify the exact Tampermonkey script id');
+  }
+  const artifactIndex = loadedSource.indexOf(artifactSource);
+  if (artifactIndex < 0) {
+    throw new Error('CDP loaded source does not contain the exact generated artifact');
+  }
+  if (loadedSource.indexOf(artifactSource, artifactIndex + artifactSource.length) >= 0) {
+    throw new Error('CDP loaded source must contain the generated artifact exactly once');
+  }
+  const prefix = loadedSource.slice(0, artifactIndex);
+  const suffix = loadedSource.slice(artifactIndex + artifactSource.length);
+  if (
+    !prefix.startsWith('window["__f__')
+    || !prefix.endsWith('(async function(define,module,exports,GM_info,GM) {\n')
+  ) {
+    throw new Error('CDP loaded source has an unrecognized Tampermonkey wrapper prefix');
+  }
+  if (suffix !== `\n}, this)}\n//# sourceURL=${scriptUrl}\n}`) {
+    throw new Error('CDP loaded source has an unrecognized Tampermonkey wrapper suffix');
+  }
+  return Object.freeze({
+    artifactSource,
+    wrapper: Object.freeze({
+      prefixCharacters: prefix.length,
+      suffixCharacters: suffix.length,
+    }),
   });
 }
 
@@ -150,29 +209,37 @@ function validateInteraction(interaction) {
   assertRecord(interaction, 'evidence.interaction');
   assertExactKeys(interaction, [
     'name',
-    'controlSelector',
+    'controls',
     'before',
     'after',
     'restored',
     'financialNetworkObservation',
   ], 'evidence.interaction');
-  if (interaction.name !== 'panel-collapse-toggle') {
-    throw new Error('evidence.interaction.name must equal panel-collapse-toggle');
+  if (interaction.name !== 'multiplier-increment-restore') {
+    throw new Error('evidence.interaction.name must equal multiplier-increment-restore');
   }
-  if (interaction.controlSelector !== STAGE3_REVERSIBLE_CONTROL_SELECTOR) {
-    throw new Error(`evidence.interaction.controlSelector must equal ${STAGE3_REVERSIBLE_CONTROL_SELECTOR}`);
+  assertRecord(interaction.controls, 'evidence.interaction.controls');
+  assertExactKeys(
+    interaction.controls,
+    Object.keys(STAGE3_REVERSIBLE_CONTROL_SELECTORS),
+    'evidence.interaction.controls',
+  );
+  if (!Object.entries(STAGE3_REVERSIBLE_CONTROL_SELECTORS).every(
+    ([name, selector]) => interaction.controls[name] === selector,
+  )) {
+    throw new Error('evidence.interaction.controls must match the Stage 3 reversible controls');
   }
   for (const state of ['before', 'after', 'restored']) {
     assertRecord(interaction[state], `evidence.interaction.${state}`);
-    assertExactKeys(interaction[state], ['expanded'], `evidence.interaction.${state}`);
-    if (typeof interaction[state].expanded !== 'boolean') {
-      throw new Error(`evidence.interaction.${state}.expanded must be boolean`);
+    assertExactKeys(interaction[state], ['value'], `evidence.interaction.${state}`);
+    if (!/^[1-9]\d*$/.test(interaction[state].value)) {
+      throw new Error(`evidence.interaction.${state}.value must be a positive integer string`);
     }
   }
-  if (interaction.after.expanded === interaction.before.expanded) {
-    throw new Error('evidence.interaction.after must differ from before');
+  if (Number(interaction.after.value) !== Number(interaction.before.value) + 1) {
+    throw new Error('evidence.interaction.after must increase before by exactly one');
   }
-  if (interaction.restored.expanded !== interaction.before.expanded) {
+  if (interaction.restored.value !== interaction.before.value) {
     throw new Error('evidence.interaction.restored must equal before');
   }
   const network = interaction.financialNetworkObservation;
@@ -190,15 +257,15 @@ function validateCleanup(cleanup) {
   assertRecord(cleanup, 'evidence.cleanup');
   assertExactKeys(cleanup, [
     'pageProbeStatus',
-    'eventBuffersCleared',
+    'eventCaptureStatus',
     'sessionReleased',
     'domains',
   ], 'evidence.cleanup');
   if (!['not-installed', 'destroyed'].includes(cleanup.pageProbeStatus)) {
     throw new Error('evidence.cleanup.pageProbeStatus must equal not-installed or destroyed');
   }
-  if (cleanup.eventBuffersCleared !== true) {
-    throw new Error('evidence.cleanup.eventBuffersCleared must equal true');
+  if (cleanup.eventCaptureStatus !== 'cursor-discarded') {
+    throw new Error('evidence.cleanup.eventCaptureStatus must equal cursor-discarded');
   }
   if (typeof cleanup.sessionReleased !== 'boolean') {
     throw new Error('evidence.cleanup.sessionReleased must be boolean');
@@ -211,8 +278,8 @@ function validateCleanup(cleanup) {
     assertRecord(domain, path);
     assertExactKeys(domain, ['name', 'status'], path);
     if (!REQUIRED_DOMAINS.includes(domain.name)) throw new Error(`${path}.name is not a required domain`);
-    if (!['disabled', 'session-released'].includes(domain.status)) {
-      throw new Error(`${path}.status must equal disabled or session-released`);
+    if (!['disabled', 'session-released', 'unsupported-by-bridge'].includes(domain.status)) {
+      throw new Error(`${path}.status must equal disabled, session-released, or unsupported-by-bridge`);
     }
     if (domain.status === 'session-released' && cleanup.sessionReleased !== true) {
       throw new Error(`${path} cannot claim session release while the session remains active`);
@@ -270,9 +337,7 @@ export function validateStage3Evidence(evidence) {
   const browser = evidence.browser;
   assertRecord(browser, 'evidence.browser');
   assertExactKeys(browser, [
-    'targetId',
-    'sessionId',
-    'navigationId',
+    'tabId',
     'pageUrl',
     'mainFrameId',
     'loaderId',
@@ -280,7 +345,7 @@ export function validateStage3Evidence(evidence) {
     'matchingScripts',
     'panel',
   ], 'evidence.browser');
-  for (const field of ['targetId', 'sessionId', 'navigationId', 'pageUrl', 'mainFrameId', 'loaderId']) {
+  for (const field of ['tabId', 'pageUrl', 'mainFrameId', 'loaderId']) {
     assertNonEmptyString(browser[field], `evidence.browser.${field}`);
   }
   validateEventOrder(browser.eventOrder);
@@ -289,21 +354,30 @@ export function validateStage3Evidence(evidence) {
   }
   const script = browser.matchingScripts[0];
   assertRecord(script, 'evidence.browser.matchingScripts[0]');
-  assertExactKeys(script, [
-    'scriptId',
-    'url',
-    'executionContextId',
-    'frameId',
-    'isDefault',
-    'sourceIdentity',
-  ], 'evidence.browser.matchingScripts[0]');
+  assertExactKeys(script, LOADED_SCRIPT_FIELDS, 'evidence.browser.matchingScripts[0]');
   assertNonEmptyString(script.scriptId, 'evidence.browser.matchingScripts[0].scriptId');
   assertNonEmptyString(script.url, 'evidence.browser.matchingScripts[0].url');
   assertPositiveInteger(script.executionContextId, 'evidence.browser.matchingScripts[0].executionContextId');
   if (script.frameId !== browser.mainFrameId || script.isDefault !== true) {
     throw new Error('matching script must belong to the default main-frame context');
   }
-  validateSourceIdentity(script.sourceIdentity, 'evidence.browser.matchingScripts[0].sourceIdentity');
+  validateSourceIdentity(
+    script.loadedSourceIdentity,
+    'evidence.browser.matchingScripts[0].loadedSourceIdentity',
+  );
+  validateSourceIdentity(
+    script.embeddedArtifactIdentity,
+    'evidence.browser.matchingScripts[0].embeddedArtifactIdentity',
+  );
+  assertRecord(script.wrapper, 'evidence.browser.matchingScripts[0].wrapper');
+  assertExactKeys(
+    script.wrapper,
+    ['prefixCharacters', 'suffixCharacters'],
+    'evidence.browser.matchingScripts[0].wrapper',
+  );
+  for (const field of ['prefixCharacters', 'suffixCharacters']) {
+    assertPositiveInteger(script.wrapper[field], `evidence.browser.matchingScripts[0].wrapper.${field}`);
+  }
   validatePanel(browser.panel);
   validateInteraction(evidence.interaction);
   validateCleanup(evidence.cleanup);
@@ -325,9 +399,12 @@ export function createStage3Evidence(input) {
   if (input.tampermonkey.source !== input.artifactSource) {
     throw new Error('Tampermonkey read-back source does not exactly match the artifact');
   }
-  if (input.browser.matchingScript.source !== input.artifactSource) {
-    throw new Error('CDP loaded source does not exactly match the artifact');
-  }
+  const loadedArtifact = extractTampermonkeyArtifact(
+    input.browser.matchingScript.source,
+    input.artifactSource,
+    input.browser.matchingScript.url,
+    input.tampermonkey.scriptId,
+  );
   const evidence = {
     schemaVersion: 1,
     capturedAt: input.capturedAt,
@@ -341,9 +418,7 @@ export function createStage3Evidence(input) {
       sourceIdentity: sourceIdentity(input.tampermonkey.source),
     },
     browser: {
-      targetId: input.browser.targetId,
-      sessionId: input.browser.sessionId,
-      navigationId: input.browser.navigationId,
+      tabId: input.browser.tabId,
       pageUrl: input.browser.pageUrl,
       mainFrameId: input.browser.mainFrameId,
       loaderId: input.browser.loaderId,
@@ -354,7 +429,9 @@ export function createStage3Evidence(input) {
         executionContextId: input.browser.matchingScript.executionContextId,
         frameId: input.browser.matchingScript.frameId,
         isDefault: input.browser.matchingScript.isDefault,
-        sourceIdentity: sourceIdentity(input.browser.matchingScript.source),
+        loadedSourceIdentity: sourceIdentity(input.browser.matchingScript.source),
+        embeddedArtifactIdentity: sourceIdentity(loadedArtifact.artifactSource),
+        wrapper: loadedArtifact.wrapper,
       }],
       panel: structuredClone(input.browser.panel),
     },
@@ -371,9 +448,12 @@ export function verifyStage3EvidenceAgainstSources(evidence, sources) {
   if (sources.installedSource !== sources.artifactSource) {
     throw new Error('Tampermonkey read-back source does not exactly match the artifact');
   }
-  if (sources.loadedSource !== sources.artifactSource) {
-    throw new Error('CDP loaded source does not exactly match the artifact');
-  }
+  const loadedArtifact = extractTampermonkeyArtifact(
+    sources.loadedSource,
+    sources.artifactSource,
+    evidence.browser.matchingScripts[0].url,
+    evidence.tampermonkey.scriptId,
+  );
   const artifact = createUserscriptReleaseContract(sources.artifactSource, evidence.artifact.artifact);
   if (JSON.stringify(artifact) !== JSON.stringify(evidence.artifact)) {
     throw new Error('Stage 3 artifact contract does not match the provided artifact source');
@@ -383,8 +463,18 @@ export function verifyStage3EvidenceAgainstSources(evidence, sources) {
     throw new Error('Stage 3 Tampermonkey source identity does not match the read-back source');
   }
   const loadedIdentity = sourceIdentity(sources.loadedSource);
-  if (JSON.stringify(loadedIdentity) !== JSON.stringify(evidence.browser.matchingScripts[0].sourceIdentity)) {
+  if (JSON.stringify(loadedIdentity) !== JSON.stringify(evidence.browser.matchingScripts[0].loadedSourceIdentity)) {
     throw new Error('Stage 3 loaded source identity does not match the CDP source');
+  }
+  const embeddedIdentity = sourceIdentity(loadedArtifact.artifactSource);
+  if (
+    JSON.stringify(embeddedIdentity)
+    !== JSON.stringify(evidence.browser.matchingScripts[0].embeddedArtifactIdentity)
+  ) {
+    throw new Error('Stage 3 embedded artifact identity does not match the generated artifact');
+  }
+  if (JSON.stringify(loadedArtifact.wrapper) !== JSON.stringify(evidence.browser.matchingScripts[0].wrapper)) {
+    throw new Error('Stage 3 Tampermonkey wrapper dimensions do not match the CDP source');
   }
   return evidence;
 }

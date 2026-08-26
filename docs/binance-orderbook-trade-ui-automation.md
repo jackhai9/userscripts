@@ -182,14 +182,35 @@ The minimum L3 browser evidence is:
 
 1. the exact Tampermonkey script id is present in a `Debugger.scriptParsed` URL;
 2. that parse event precedes `Page.domContentEventFired` after a hard reload;
-3. `Debugger.getScriptSource` contains the exact generated artifact;
+3. `Debugger.getScriptSource` contains the exact generated artifact once inside
+   the recognized Tampermonkey runtime wrapper;
 4. the injected panel is visible; and
 5. one reversible panel interaction changes state and restores the original state.
 
+The reversible interaction is the quantity multiplier increment-and-restore path:
+read the current multiplier, click the panel increment control once, require an
+exact `+1` value change, click decrement once, and require the original value.
+The evidence gate also requires zero observed order-placement or leverage-change
+requests throughout this interaction. This replaces the removed Maker-section
+collapse toggle and keeps L3 independent of positions, orders, and account balance.
+
+Persist the artifact, complete MCP read-back, CDP loaded source, and the strict
+evidence JSON from one navigation, then verify their shared identity with:
+
+```bash
+npm run verify:binance-orderbook-stage3 -- \
+  scripts/binance-orderbook-trade.user.js \
+  /path/to/tampermonkey-readback.txt \
+  /path/to/cdp-loaded-source.user.js \
+  /path/to/stage3-evidence.json
+```
+
 Enable only the CDP domains needed for this evidence. Disable them immediately after
-collection when the browser bridge supports the corresponding command. A domain that
-the bridge cannot disable remains scoped to the claimed tab session and must not be
-used as a reason to retain event buffers or persistent probes.
+collection when the browser bridge supports the corresponding command. Record
+`unsupported-by-bridge` when the bridge rejects a domain's disable command instead
+of claiming it was disabled. Discard the event cursor and destroy any page probe in
+all cases; an unsupported disable command is not permission to retain event buffers
+or persistent probes.
 
 ### Stage 4: Live Binance Acceptance and Baselines
 
