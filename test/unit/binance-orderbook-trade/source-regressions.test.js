@@ -525,7 +525,9 @@ test('open ladder stops immediately only for a confirmed zero available balance'
 
 test('ladder replacement cancels visible current-symbol same-direction rows up to planned quantity', () => {
   const readRowsBody = readFunctionBody('readCurrentSymbolOpenOrderRows');
-  assert.match(readRowsBody, /querySelectorAll\('\.list-item-container'\)/);
+  assert.match(readRowsBody, /findOpenOrderRowElements\(root/);
+  assert.match(readRowsBody, /BINANCE_PAGE_TEXT\.accountOrders\.rowCancel/);
+  assert.doesNotMatch(readRowsBody, /list-item-container/);
   assert.match(readRowsBody, /cells\[5\]/);
   assert.match(readRowsBody, /sideText/);
   assert.match(readRowsBody, /isOpenOrderRowCurrentSymbol\(row\.symbolText,\s*symbol\)/);
