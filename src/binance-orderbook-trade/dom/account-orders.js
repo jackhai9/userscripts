@@ -18,36 +18,69 @@ function getTabIdentity(el) {
   return getNormalizedText(el).replace(/\s*\(\d+\)$/, '').toLocaleLowerCase();
 }
 
-export function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs) {
-  const currentState = readState();
-  if (currentState) return Promise.resolve(currentState);
+export function createAccountOrdersMutationSignal(observationRoot) {
   const MutationObserverClass = observationRoot?.ownerDocument?.defaultView?.MutationObserver;
-  if (!observationRoot || !MutationObserverClass) return Promise.resolve(null);
+  if (!observationRoot || !MutationObserverClass) return null;
 
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      observer.disconnect();
-      clearTimeout(timer);
-      resolve(value);
-    };
-    const check = () => {
-      const value = readState();
-      if (value) finish(value);
-    };
-    const observer = new MutationObserverClass(check);
-    const timer = setTimeout(() => finish(readState()), timeoutMs);
-    observer.observe(observationRoot, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ['aria-selected', 'aria-checked', 'class', 'style'],
-    });
-    check();
+  let version = 0;
+  let pendingFinish = null;
+  const notify = () => {
+    version += 1;
+    pendingFinish?.('changed');
+  };
+  const observer = new MutationObserverClass(notify);
+  observer.observe(observationRoot, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ['aria-selected', 'aria-checked', 'class', 'style'],
   });
+
+  return {
+    get version() {
+      return version;
+    },
+    waitForChange(afterVersion, timeoutMs) {
+      if (version !== afterVersion) return Promise.resolve('changed');
+      return new Promise((resolve) => {
+        let timer = null;
+        const finish = (result) => {
+          if (pendingFinish !== finish) return;
+          pendingFinish = null;
+          if (timer) clearTimeout(timer);
+          resolve(result);
+        };
+        pendingFinish = finish;
+        timer = setTimeout(() => finish('timeout'), timeoutMs);
+      });
+    },
+    dispose() {
+      observer.disconnect();
+      pendingFinish?.('disposed');
+    },
+  };
+}
+
+export async function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs) {
+  const currentState = readState();
+  if (currentState) return currentState;
+  const signal = createAccountOrdersMutationSignal(observationRoot);
+  if (!signal) return null;
+  const deadline = Date.now() + timeoutMs;
+
+  try {
+    while (true) {
+      const version = signal.version;
+      const state = readState();
+      if (state) return state;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return readState();
+      await signal.waitForChange(version, remainingMs);
+    }
+  } finally {
+    signal.dispose();
+  }
 }
 
 function hasAccountOrdersTabs(node, isVisibleElement) {

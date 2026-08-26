@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  createAccountOrdersMutationSignal,
   findAccountOrdersTabByIdentity,
   findAccountPositionTab,
   findOpenOrdersBasicSubTab,
@@ -258,4 +259,18 @@ test('mutation wait reacts when Binance updates row text in place', async () => 
 
   assert.equal(await wait, marker);
   assert.ok(Date.now() - startedAt < 100, 'characterData should resolve through the observer, not timeout');
+});
+
+test('account-orders mutation signal wakes once for a relevant subtree change', async () => {
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const observationRoot = window.document.querySelector('#account-orders');
+  const signal = createAccountOrdersMutationSignal(observationRoot);
+  const version = signal.version;
+  const wait = signal.waitForChange(version, 200);
+
+  window.document.querySelector('#OPEN_ORDERS').classList.add('ready');
+
+  assert.equal(await wait, 'changed');
+  assert.ok(signal.version > version);
+  signal.dispose();
 });
