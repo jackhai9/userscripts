@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.125
+// @version      2.7.126
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -557,29 +557,6 @@
     }
     return moves;
   }
-  function collectPriceMovesWithExpandingWindow(prices, {
-    initialLimit = 10,
-    expansionStep = 10,
-    minSamples = 5
-  } = {}) {
-    if (!Number.isInteger(initialLimit) || initialLimit < 2) {
-      throw new Error(`Invalid initial precision trade limit: ${initialLimit}`);
-    }
-    if (!Number.isInteger(expansionStep) || expansionStep < 1) {
-      throw new Error(`Invalid precision trade expansion step: ${expansionStep}`);
-    }
-    if (!Number.isInteger(minSamples) || minSamples < 1) {
-      throw new Error(`Invalid minimum precision sample count: ${minSamples}`);
-    }
-    const observedPrices = Array.isArray(prices) ? prices : [];
-    let usedCount = Math.min(initialLimit, observedPrices.length);
-    let samples = collectNonZeroPriceMoves(observedPrices.slice(0, usedCount));
-    while (samples.length < minSamples && usedCount < observedPrices.length) {
-      usedCount = Math.min(usedCount + expansionStep, observedPrices.length);
-      samples = collectNonZeroPriceMoves(observedPrices.slice(0, usedCount));
-    }
-    return { samples, usedCount };
-  }
   function sortedPositiveDecimals(values) {
     return (values || []).map((value) => normalizeDecimalString(value)).filter((value) => value && isPositiveDecimalString(value)).sort((a, b) => compareDecimalStrings(a, b));
   }
@@ -628,6 +605,42 @@
       }
     }
     return selectedOption;
+  }
+  function recommendOrderbookPrecisionWithExpandingWindow({
+    prices,
+    options,
+    initialLimit = 10,
+    expansionStep = 10,
+    minSamples = 5,
+    minBucketShare = 0.25
+  }) {
+    if (!Array.isArray(prices)) {
+      throw new Error("Precision trade prices must be an array");
+    }
+    if (!Number.isInteger(initialLimit) || initialLimit < 2) {
+      throw new Error(`Invalid initial precision trade limit: ${initialLimit}`);
+    }
+    if (!Number.isInteger(expansionStep) || expansionStep < 1) {
+      throw new Error(`Invalid precision trade expansion step: ${expansionStep}`);
+    }
+    if (!Number.isInteger(minSamples) || minSamples < 1) {
+      throw new Error(`Invalid minimum precision sample count: ${minSamples}`);
+    }
+    let usedCount = Math.min(initialLimit, prices.length);
+    let samples = [];
+    let recommendation = null;
+    while (true) {
+      samples = collectNonZeroPriceMoves(prices.slice(0, usedCount));
+      recommendation = recommendOrderbookPrecision({
+        samples,
+        options,
+        minSamples,
+        minBucketShare
+      });
+      if (recommendation || usedCount >= prices.length) break;
+      usedCount = Math.min(usedCount + expansionStep, prices.length);
+    }
+    return { samples, usedCount, recommendation };
   }
 
   // src/binance-orderbook-trade/core/quantity.js
@@ -3002,16 +3015,17 @@
         scheduleRenderPanel();
         return;
       }
-      const { samples: latestSamples } = collectPriceMovesWithExpandingWindow(getLatestTradePrices(), {
+      const {
+        samples: latestSamples,
+        recommendation
+      } = recommendOrderbookPrecisionWithExpandingWindow({
+        prices: getLatestTradePrices(),
+        options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS,
         initialLimit: ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT,
         expansionStep: ORDERBOOK_PRECISION_TRADE_EXPANSION_STEP,
         minSamples: ORDERBOOK_PRECISION_MIN_EFFECTIVE_MOVES
       });
       const samples = saveStoredOrderbookPrecisionSamples(symbol, latestSamples);
-      const recommendation = recommendOrderbookPrecision({
-        samples,
-        options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS
-      });
       orderbookPrecisionState = {
         ...orderbookPrecisionState,
         symbol,

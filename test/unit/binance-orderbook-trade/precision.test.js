@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   collectNonZeroPriceMoves,
-  collectPriceMovesWithExpandingWindow,
   formatOrderbookPrecisionShortcutLabel,
   getOrderbookPrecisionDecadeTarget,
   getOrderbookPrecisionShortcutOptions,
   recommendOrderbookPrecision,
+  recommendOrderbookPrecisionWithExpandingWindow,
 } from '../../../src/binance-orderbook-trade/core/precision.js';
 
 test('keeps only the four smallest exact native precision shortcuts', () => {
@@ -117,7 +117,7 @@ test('ten latest trade rows provide enough movement evidence when eight do not',
   }), '0.001');
 });
 
-test('expands the latest-trade window only until enough effective price moves exist', () => {
+test('expands the latest-trade window until it produces a recommendation', () => {
   const prices = [
     '80.757', '80.757', '80.756', '80.756', '80.756',
     '80.757', '80.756', '80.755', '80.755', '80.755',
@@ -126,17 +126,41 @@ test('expands the latest-trade window only until enough effective price moves ex
     '80.700',
   ];
 
-  const result = collectPriceMovesWithExpandingWindow(prices);
+  const result = recommendOrderbookPrecisionWithExpandingWindow({
+    prices,
+    options: ['0.0001', '0.001', '0.01', '0.1', '1'],
+  });
   assert.equal(result.usedCount, 20);
   assert.equal(result.samples.length, 13);
   assert.deepEqual([...new Set(result.samples)], ['0.001']);
+  assert.equal(result.recommendation, '0.001');
 });
 
 test('returns the complete visible snapshot when price changes remain insufficient', () => {
-  assert.deepEqual(collectPriceMovesWithExpandingWindow([
-    '80.7', '80.7', '80.7', '80.7', '80.7', '80.7',
-  ]), {
+  assert.deepEqual(recommendOrderbookPrecisionWithExpandingWindow({
+    prices: ['80.7', '80.7', '80.7', '80.7', '80.7', '80.7'],
+    options: ['0.001', '0.01', '0.1', '1'],
+  }), {
     samples: [],
     usedCount: 6,
+    recommendation: null,
   });
+});
+
+test('keeps expanding when sample count is sufficient but no precision bucket is decisive', () => {
+  const prices = [
+    '79.748', '79.747', '79.742', '79.742', '79.737',
+    '79.731', '79.730', '79.730', '79.715', '79.748',
+    '79.748', '79.746', '79.740', '79.727', '79.727',
+    '79.746', '79.745', '79.745', '79.767', '79.767',
+    '79.745', '79.738', '79.737',
+  ];
+  const options = ['0.0001', '0.001', '0.01', '0.1', '1'];
+  const firstWindowSamples = collectNonZeroPriceMoves(prices.slice(0, 10));
+
+  assert.equal(firstWindowSamples.length, 7);
+  assert.equal(recommendOrderbookPrecision({ samples: firstWindowSamples, options }), null);
+  const result = recommendOrderbookPrecisionWithExpandingWindow({ prices, options });
+  assert.equal(result.usedCount, 20);
+  assert.equal(result.recommendation, '0.01');
 });
