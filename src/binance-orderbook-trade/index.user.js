@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.117
+// @version      2.7.118
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -155,6 +155,10 @@ import {
   findBinanceCancelAllDialog,
   waitForDialogMutationState,
 } from './dom/cancel-all-dialog.js';
+import {
+  findOpenOrderRowElements,
+  getOpenOrderRowCells,
+} from './dom/open-order-rows.js';
 import {
   findBinanceChartOrdersTarget as findBinanceChartOrdersTargetDom,
   getBinanceChartOrdersTarget as getBinanceChartOrdersTargetDom,
@@ -2915,16 +2919,8 @@ import {
     return { ok: false, status: lastStatus, root: currentRoot };
   }
 
-  function getVisibleDirectChildren(el) {
-    return Array.from(el?.children || []).filter(isVisibleElement);
-  }
-
   function findOpenOrderRowCells(row) {
-    const candidates = Array.from(row.querySelectorAll(
-      '.flex.items-center.typography-caption2.text-PrimaryText.w-full, .flex.items-center.typography-caption2.text-PrimaryText'
-    ));
-    const rowBody = candidates.find((el) => getVisibleDirectChildren(el).length >= 10) || row.firstElementChild;
-    return getVisibleDirectChildren(rowBody);
+    return getOpenOrderRowCells(row, { isVisibleElement });
   }
 
   function findOpenOrderRowCancelButton(row) {
@@ -2963,8 +2959,13 @@ import {
 
   function readCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
     if (!root || !symbol) return [];
-    return Array.from(root.querySelectorAll('.list-item-container'))
-      .filter(isVisibleElement)
+    return findOpenOrderRowElements(root, {
+      isVisibleElement,
+      isRowCancelIcon: (icon) => matchesBinancePageText(
+        icon.getAttribute('aria-label'),
+        BINANCE_PAGE_TEXT.accountOrders.rowCancel,
+      ),
+    })
       .map((row) => {
         const cells = findOpenOrderRowCells(row);
         const symbolText = (cells[1]?.textContent || '').replace(/\s+/g, ' ').trim();
