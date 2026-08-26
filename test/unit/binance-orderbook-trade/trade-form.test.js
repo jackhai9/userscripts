@@ -11,6 +11,7 @@ import {
   parseTradeModeLabel,
   placeTradePanelSpacer,
   readTradeAvailableBalance,
+  waitForTradeFormMutationState,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
 import { loadFixtureDom } from '../../helpers/dom.js';
 
@@ -138,6 +139,37 @@ test('floating panel layout rejects a hidden anchor', () => {
       viewportWidth: 1684,
       viewportHeight: 900,
     }),
+    null,
+  );
+});
+
+test('trade form mutation wait resolves as soon as the requested state is selected', async () => {
+  const dom = loadFixtureDom(`
+    <section id="trade-form">
+      <div role="tab" aria-selected="false">Open</div>
+      <div role="tab" aria-selected="true">Close</div>
+    </section>
+  `);
+  const { document } = dom.window;
+  const root = document.querySelector('#trade-form');
+  const openTab = root.firstElementChild;
+  const pending = waitForTradeFormMutationState(
+    root,
+    () => (openTab.getAttribute('aria-selected') === 'true' ? 'OPEN' : null),
+    100,
+  );
+
+  openTab.setAttribute('aria-selected', 'true');
+
+  assert.equal(await pending, 'OPEN');
+});
+
+test('trade form mutation wait returns the final state at its deadline', async () => {
+  const dom = loadFixtureDom('<section id="trade-form"></section>');
+  const root = dom.window.document.querySelector('#trade-form');
+
+  assert.equal(
+    await waitForTradeFormMutationState(root, () => null, 5),
     null,
   );
 });

@@ -153,6 +153,38 @@ export function calculateFloatingPanelLayout({
   };
 }
 
+export function waitForTradeFormMutationState(observationRoot, readState, timeoutMs) {
+  const currentState = readState();
+  if (currentState) return Promise.resolve(currentState);
+  const MutationObserverClass = observationRoot?.ownerDocument?.defaultView?.MutationObserver;
+  if (!observationRoot || !MutationObserverClass) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      observer.disconnect();
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const check = () => {
+      const value = readState();
+      if (value) finish(value);
+    };
+    const observer = new MutationObserverClass(check);
+    const timer = setTimeout(() => finish(readState()), timeoutMs);
+    observer.observe(observationRoot, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['aria-selected', 'class'],
+    });
+    check();
+  });
+}
+
 export function isTradeModeTab(node, { panelId }) {
   if (!node?.matches?.('[role="tab"]')) return false;
   if (node.closest(`#${panelId}`)) return false;
