@@ -39,7 +39,6 @@ export async function readPanelVisualContract(page) {
       '#jh-binance-close-qty-multiplier-dec',
       '#jh-binance-close-qty-multiplier-inc',
       '[data-orderbook-precision-value]',
-      '#jh-binance-ladder-toggle',
       '[data-ladder-group]',
       '[data-ladder-action]',
       '[data-ladder-stop]',

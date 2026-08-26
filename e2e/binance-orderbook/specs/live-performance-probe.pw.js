@@ -22,8 +22,8 @@ test('live probe captures a no-order run and destroys every listener', async ({ 
   const secondArm = await armLivePerformanceProbe(page, 'cancel-current-symbol-no-orders');
   expect(secondArm.sessionId).toBe(firstArm.sessionId);
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
-  await expect(page.getByRole('button', { name: '撤本币挂单' })).toBeEnabled();
+  await page.getByRole('button', { name: '撤单' }).click();
+  await expect(page.getByRole('button', { name: '撤单' })).toBeEnabled();
   const snapshot = await finishLivePerformanceProbe(page);
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
   expect(snapshot.events.map((event) => event.kind)).toContain('first-feedback');
@@ -39,7 +39,7 @@ test('live probe captures a no-order run and destroys every listener', async ({ 
 
   const beforeDestroy = snapshot.events.length;
   await destroyLivePerformanceProbe(page);
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   expect(await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__)).toBeUndefined();
   expect(snapshot.events).toHaveLength(beforeDestroy);
 });
@@ -54,7 +54,7 @@ test('live probe has no user-decision deadline and follows a replaced portal dia
   await installLivePerformanceProbe(page);
   await armLivePerformanceProbe(page, 'cancel-dialog-cancel');
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.waitForTimeout(1_000);
   const waiting = await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__.snapshot());
@@ -78,7 +78,7 @@ test('live probe serializes uncaught errors and unhandled rejections', async ({ 
   await installLivePerformanceProbe(page);
   await armLivePerformanceProbe(page, 'serializable-errors');
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '撤单' }).click();
   await page.evaluate(() => {
     window.dispatchEvent(new ErrorEvent('error', { message: 'probe test error' }));
     const rejection = new Event('unhandledrejection');
@@ -131,8 +131,8 @@ test('live probe reports overflow and supports raw Runtime.evaluate injection', 
   await page.evaluate(createLivePerformanceProbeExpression({ eventLimit: 1 }));
   await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__.arm('overflow'));
 
-  await page.getByRole('button', { name: '撤本币挂单' }).click();
-  await expect(page.getByRole('button', { name: '撤本币挂单' })).toBeEnabled();
+  await page.getByRole('button', { name: '撤单' }).click();
+  await expect(page.getByRole('button', { name: '撤单' })).toBeEnabled();
   const snapshot = await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__.finish());
   expect(snapshot.dropped.events).toBeGreaterThan(0);
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).toThrow(/events overflowed/);

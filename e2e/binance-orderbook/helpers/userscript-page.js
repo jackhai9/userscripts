@@ -96,7 +96,7 @@ export async function openUserscriptScenario(page, scenario) {
 
   await page.goto(`https://www.binance.com/zh-CN/futures/${scenario.currentSymbol}`);
   await page.locator('#jh-binance-close-qty-multiplier-panel').waitFor({ state: 'visible' });
-  await page.locator('#jh-binance-ladder-toggle').waitFor({ state: 'visible' });
+  await page.locator('#jh-binance-ladder-body').waitFor({ state: 'visible' });
   await page.evaluate(() => new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));

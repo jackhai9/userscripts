@@ -5,6 +5,7 @@ import {
   parseBinanceTabCount,
   startsWithBinancePageText,
 } from '../contracts/binance-page-text.js';
+import { PANEL_COPY } from '../contracts/panel-copy.js';
 
 const PERPETUAL_LABEL_PATTERN = buildBinanceTextAlternation(
   BINANCE_PAGE_TEXT.accountOrders.perpetual,
@@ -186,10 +187,10 @@ export function resolveCancelSymbolButtonPresentation({
   return {
     disabled: Boolean(ladderRunning || cancelRunning),
     label: cancelRunning
-      ? '撤单处理中'
+      ? PANEL_COPY.action.cancelRunning
       : noOrdersFeedback && !ladderRunning
-        ? '无挂单'
-        : '撤本币挂单',
+        ? PANEL_COPY.action.noOrders
+        : PANEL_COPY.action.cancel,
   };
 }
 

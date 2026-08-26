@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.120
+// @version      2.7.121
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -121,6 +121,50 @@
   }
   function isBinanceCancelAllText(value) {
     return matchesBinancePageText(value, BINANCE_PAGE_TEXT.accountOrders.cancelAll);
+  }
+
+  // src/binance-orderbook-trade/contracts/panel-copy.js
+  var freezeCopy = (copy) => Object.freeze(copy);
+  var PANEL_COPY = Object.freeze({
+    section: freezeCopy({
+      singleOrder: "单击下单",
+      ladderMaker: "阶梯下单 · Maker"
+    }),
+    field: freezeCopy({
+      clickOrderbook: "单击订单簿时",
+      minimumOrderQuantity: "最小下单量的",
+      minimumOpenQuantity: "最小开仓量的",
+      minimumCloseQuantity: "最小平仓量的",
+      ratio: "比例",
+      orderCount: "笔数",
+      interval: "间距",
+      pricePrecision: "价格精度"
+    }),
+    action: freezeCopy({
+      openLong: "阶梯开多",
+      openShort: "阶梯开空",
+      closeLong: "阶梯平多",
+      closeShort: "阶梯平空",
+      cancel: "撤单",
+      cancelRunning: "撤单处理中",
+      noOrders: "无挂单",
+      stopLadder: "停止阶梯挂单"
+    }),
+    tooltip: freezeCopy({
+      singleOrder: "单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。",
+      ladderMaker: "根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。",
+      ratio: "本次阶梯下单使用可开/可平数量的百分比。",
+      orderCount: "计划拆分成多少笔阶梯订单。",
+      interval: "相邻订单跨越多少个订单簿价格级别。",
+      pricePrecision: "与订单簿中的价格精度联动。黄点表示推荐值。比例、笔数、间距会随所选精度恢复对应设置。"
+    })
+  });
+  function formatPrecisionRefreshTooltip(durationMs) {
+    const seconds = Number(durationMs) / 1e3;
+    if (!Number.isInteger(seconds) || seconds <= 0) {
+      throw new Error(`Invalid precision sample duration: ${durationMs}`);
+    }
+    return `根据最近 ${seconds} 秒的成交价变动，重新计算推荐的价格精度。`;
   }
 
   // src/binance-orderbook-trade/core/cancel-orders.js
@@ -260,7 +304,7 @@
   }) {
     return {
       disabled: Boolean(ladderRunning || cancelRunning),
-      label: cancelRunning ? "撤单处理中" : noOrdersFeedback && !ladderRunning ? "无挂单" : "撤本币挂单"
+      label: cancelRunning ? PANEL_COPY.action.cancelRunning : noOrdersFeedback && !ladderRunning ? PANEL_COPY.action.noOrders : PANEL_COPY.action.cancel
     };
   }
   function hasCurrentSymbolOpenOrdersEvidence({
@@ -1706,7 +1750,6 @@
     const LOCAL_QTY_MULTIPLIER_PREFIX = "jh_binance_qty_multiplier_v2";
     const LOCAL_CLOSE_SIDE_KEY = "jh_binance_close_side";
     const LOCAL_OPEN_SIDE_KEY = "jh_binance_open_side";
-    const LOCAL_LADDER_EXPANDED_KEY = "jh_binance_ladder_expanded";
     const LOCAL_LADDER_OPEN_PERCENT_KEY = "jh_binance_ladder_open_percent";
     const LOCAL_LADDER_CLOSE_PERCENT_KEY = "jh_binance_ladder_close_percent";
     const LOCAL_LADDER_OPEN_LEVELS_KEY = "jh_binance_ladder_open_levels";
@@ -1730,7 +1773,6 @@
     const INC_ID = "jh-binance-close-qty-multiplier-inc";
     const SIDE_LONG_ID = "jh-binance-close-side-long";
     const SIDE_SHORT_ID = "jh-binance-close-side-short";
-    const LADDER_TOGGLE_ID = "jh-binance-ladder-toggle";
     const LADDER_BODY_ID = "jh-binance-ladder-body";
     const LADDER_STATUS_ID = "jh-binance-ladder-status";
     const ORDERBOOK_PRECISION_RECOMMENDATION_ID = "jh-binance-orderbook-precision-recommendation";
@@ -1790,7 +1832,6 @@
     const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
     const TRADE_INPUT_SYNC_STABLE_FRAMES = 2;
     const ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6e3;
-    const ORDERBOOK_PRECISION_SAMPLE_DURATION_MS = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS;
     const ORDERBOOK_PRECISION_SAMPLE_POLL_MS = 300;
     const ORDERBOOK_PRECISION_READY_POLL_MS = 100;
     const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5e3;
@@ -1887,7 +1928,6 @@
     let orderbookPrecisionObserver = null;
     let orderbookPrecisionObserverRoot = null;
     let lastObservedOrderbookPrecision = null;
-    const orderbookPrecisionInitialSampledSymbols = /* @__PURE__ */ new Set();
     let orderbookPrecisionState = {
       symbol: null,
       samples: [],
@@ -1895,7 +1935,7 @@
       current: null,
       nativeOptions: [],
       nativeOptionsStatus: null,
-      status: "采样中",
+      status: "数据不足",
       sampleEndsAt: 0
     };
     const controlledNativeButtons = /* @__PURE__ */ new Set();
@@ -2008,13 +2048,6 @@
       return new Promise((resolve) => {
         window.setTimeout(resolve, ms);
       });
-    }
-    function isLadderExpanded() {
-      return localStorage.getItem(LOCAL_LADDER_EXPANDED_KEY) === "true";
-    }
-    function setLadderExpanded(expanded) {
-      localStorage.setItem(LOCAL_LADDER_EXPANDED_KEY, expanded ? "true" : "false");
-      scheduleRenderPanel();
     }
     function getLadderOpenPercent(symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
       return loadModeSymbolPrecisionNumberOption(
@@ -2739,22 +2772,14 @@
       }
       return false;
     }
-    function formatOrderbookPrecisionBusyStatus(status, sampleEndsAt = orderbookPrecisionState.sampleEndsAt) {
-      if (status !== "刷新中" && status !== "采样中") return status;
-      const remainingMs = Number(sampleEndsAt) - Date.now();
-      if (!(remainingMs > 0)) return status;
-      const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1e3));
-      if (status === "刷新中") return `刷新中 ${remainingSeconds}s`;
-      return `采样中 ${remainingSeconds}s`;
-    }
     function renderOrderbookPrecisionShortcut(value, current, recommendation, disabled) {
       const selected = value === current;
       const recommended = value === recommendation;
       const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : "";
-      const title = disabled ? "缩放调整暂不可用" : selected && recommended ? `当前且推荐的原生缩放 ${value}` : selected ? `当前原生缩放 ${value}` : recommended ? `推荐原生缩放 ${value}` : `切换到原生缩放 ${value}`;
+      const title = disabled ? "缩放调整暂不可用" : selected && recommended ? `当前且推荐的价格精度 ${value}` : selected ? `当前价格精度 ${value}` : recommended ? `推荐价格精度 ${value}` : `切换到价格精度 ${value}`;
       const activeStyle = selected ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};` : NEUTRAL_CONTROL_STYLE;
       const recommendationMarker = recommended ? '<span aria-hidden="true" style="position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--color-PrimaryYellow);box-shadow:0 0 0 1px #fff;"></span>' : "";
-      return `<button type="button" data-orderbook-precision-value="${value}"${disabledAttrs} aria-pressed="${selected}" aria-label="切换订单簿缩放到 ${value}${recommended ? "，推荐档位" : ""}" title="${title}" style="position:relative;box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:30px;white-space:nowrap;overflow:hidden;cursor:pointer;${activeStyle}">${recommendationMarker}${formatOrderbookPrecisionShortcutLabel(value)}</button>`;
+      return `<button type="button" data-orderbook-precision-value="${value}"${disabledAttrs} aria-pressed="${selected}" aria-label="切换价格精度到 ${value}${recommended ? "，推荐档位" : ""}" title="${title}" style="position:relative;box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:30px;white-space:nowrap;overflow:hidden;cursor:pointer;${activeStyle}">${recommendationMarker}${formatOrderbookPrecisionShortcutLabel(value)}</button>`;
     }
     function renderOrderbookPrecisionShortcutSlots(options, current, recommendation, disabled) {
       const slots = options.map((value) => renderOrderbookPrecisionShortcut(value, current, recommendation, disabled));
@@ -2795,33 +2820,24 @@
       const selectionBusy = Boolean(orderbookPrecisionSelectionTask);
       const controlsBusy = busy || selectionBusy;
       const nativeOptions = orderbookPrecisionState.symbol === symbol ? orderbookPrecisionState.nativeOptions : [];
-      const nativeOptionsStatus = !nativeOptions.length && orderbookPrecisionState.symbol === symbol ? orderbookPrecisionState.nativeOptionsStatus : null;
       const shortcutOptions = getOrderbookPrecisionShortcutOptions(
         nativeOptions,
         ORDERBOOK_PRECISION_SHORTCUT_LIMIT
       );
       if (!nativeOptions.length) queueOrderbookPrecisionOptionsLoad(symbol);
       const canRefresh = !controlsBusy;
-      const buttonBaseStyle = `width:68px;height:24px;padding:0;border-radius:5px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:22px;`;
-      const recommendationText = recommendation || "--";
-      const precisionMessage = selectionBusy ? nativeOptions.length ? "调整中" : "读取档位" : busy ? formatOrderbookPrecisionBusyStatus(status) : nativeOptionsStatus ? nativeOptionsStatus : status === "ready" ? `推荐 ${recommendationText}${recommendation && !shortcutOptions.includes(recommendation) ? "（原生）" : ""}` : status;
+      const refreshTooltip = formatPrecisionRefreshTooltip(ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS);
       const recommendationHtml = [
-        `<div style="margin-top:12px;color:${MUTED_TEXT_COLOR};font-size:12px;">`,
-        '<div style="display:grid;grid-template-columns:78px repeat(4,minmax(0,1fr));align-items:center;gap:4px;height:32px;overflow:hidden;">',
-        `<span title="当前缩放 ${current || "--"}" style="font-size:14px;white-space:nowrap;">订单簿缩放</span>`,
+        '<div style="margin-top:10px;">',
+        '<div style="display:grid;grid-template-columns:62px repeat(4,minmax(0,1fr)) 32px;align-items:center;gap:4px;height:32px;overflow:hidden;">',
+        `<span title="${PANEL_COPY.tooltip.pricePrecision}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${PANEL_COPY.field.pricePrecision}</span>`,
         ...renderOrderbookPrecisionShortcutSlots(shortcutOptions, current, recommendation, controlsBusy),
-        "</div>",
-        '<div style="display:grid;grid-template-columns:78px repeat(4,minmax(0,1fr));align-items:center;gap:4px;height:24px;margin-top:6px;overflow:hidden;">',
-        `<span title="${precisionMessage}" style="grid-column:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${precisionMessage}</span>`,
-        `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} style="${buttonBaseStyle}grid-column:2;justify-self:start;${NEUTRAL_CONTROL_STYLE}">更新推荐</button>`,
+        `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? "" : ' disabled aria-disabled="true"'} title="${refreshTooltip}" aria-label="${refreshTooltip}" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};display:flex;align-items:center;justify-content:center;${NEUTRAL_CONTROL_STYLE}"><svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;fill:currentColor;"><path d="M19.5 7.2A8 8 0 1 0 20 15h-2.25a6 6 0 1 1-.1-5.8L15 12h7V5l-2.5 2.2Z"></path></svg></button>`,
         "</div>",
         "</div>"
       ].join("");
       if (el.innerHTML !== recommendationHtml) {
         el.innerHTML = recommendationHtml;
-      }
-      if (busy && Number(orderbookPrecisionState.sampleEndsAt) > Date.now()) {
-        scheduleRenderPanel({ followUpMs: 1e3 });
       }
     }
     async function clickAndConfirmOrderbookPrecisionOption(options) {
@@ -2998,7 +3014,7 @@
       orderbookPrecisionSampling = true;
       orderbookPrecisionActiveRequest = request;
       const tradeMoveSamples = [];
-      const sampleDurationMs = Math.max(0, Number(request.durationMs) || ORDERBOOK_PRECISION_SAMPLE_DURATION_MS);
+      const sampleDurationMs = Math.max(0, Number(request.durationMs) || ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS);
       try {
         const readyPrices = await waitForLatestTradePricesReady(symbol);
         if (!isCurrentObservedSymbol(symbol)) return false;
@@ -3032,7 +3048,6 @@
           status: recommendation ? "ready" : "数据不足",
           sampleEndsAt: 0
         };
-        if (request.initial) orderbookPrecisionInitialSampledSymbols.add(symbol);
         refreshOrderbookPrecisionRecommendation();
         scheduleRenderPanel();
         return true;
@@ -3049,19 +3064,14 @@
     function scheduleOrderbookPrecisionSampleRound(delayMs = 0, options) {
       const {
         force = false,
-        durationMs = ORDERBOOK_PRECISION_SAMPLE_DURATION_MS,
-        initial = false
+        durationMs = ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS
       } = options || {};
       if (document.hidden || !isFuturesTradingPage()) return;
       const symbol = getCurrentSymbol();
       if (!isCurrentObservedSymbol(symbol)) return;
-      const request = { symbol, durationMs, initial };
+      const request = { symbol, durationMs };
       if (orderbookPrecisionSampling) {
-        const sameInitialIsActive = initial && orderbookPrecisionActiveRequest?.initial && orderbookPrecisionActiveRequest?.symbol === symbol;
-        const sameInitialIsPending = initial && orderbookPrecisionPendingRequest?.initial && orderbookPrecisionPendingRequest?.symbol === symbol;
-        if (force && !sameInitialIsActive && !sameInitialIsPending) {
-          orderbookPrecisionPendingRequest = request;
-        }
+        if (force) orderbookPrecisionPendingRequest = request;
         return;
       }
       if (orderbookPrecisionSampling || orderbookPrecisionSampleTimer) return;
@@ -3074,21 +3084,6 @@
       window.clearTimeout(orderbookPrecisionSampleTimer);
       orderbookPrecisionSampleTimer = 0;
       orderbookPrecisionPendingRequest = null;
-    }
-    function startInitialOrderbookPrecisionSample() {
-      const symbol = getCurrentSymbol();
-      if (!isCurrentObservedSymbol(symbol) || orderbookPrecisionInitialSampledSymbols.has(symbol)) return;
-      orderbookPrecisionState = {
-        ...orderbookPrecisionState,
-        symbol,
-        status: "采样中",
-        sampleEndsAt: Date.now() + ORDERBOOK_PRECISION_SAMPLE_DURATION_MS
-      };
-      scheduleOrderbookPrecisionSampleRound(0, {
-        force: true,
-        durationMs: ORDERBOOK_PRECISION_SAMPLE_DURATION_MS,
-        initial: true
-      });
     }
     function refreshOrderbookPrecisionSamplesNow() {
       const symbol = getCurrentSymbol();
@@ -5574,10 +5569,10 @@
       const activeStyle = selected ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};` : NEUTRAL_CONTROL_STYLE;
       return `<button type="button" data-ladder-group="${group}" data-ladder-value="${value}" style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:13px;line-height:26px;cursor:pointer;${activeStyle}">${label}</button>`;
     }
-    function ladderOptionRow(title, options, selected, group, suffix = "") {
+    function ladderOptionRow(title, tooltip, options, selected, group, suffix = "") {
       return [
-        '<div style="display:grid;grid-template-columns:28px repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">',
-        `<span style="color:${MUTED_TEXT_COLOR};font-size:13px;">${title}</span>`,
+        '<div style="display:grid;grid-template-columns:48px repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">',
+        `<span title="${tooltip}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${title}</span>`,
         ...options.map((value) => ladderOptionButton(`${value}${suffix}`, value, Number(value) === Number(selected), group)),
         "</div>"
       ].join("");
@@ -5589,25 +5584,33 @@
       const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : "";
       return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;opacity:1;">${label}</button>`;
     }
-    function getLadderActionRows(tradeMode, closeContext, symbol, precision) {
+    function getLadderControlSections(tradeMode, closeContext, symbol, precision) {
       const ladderRunning = !!ladderTask;
       const actionDisabled = ladderRunning || cancelCurrentSymbolOpenOrdersBlocksLadderActions;
       if (!["OPEN", "CLOSE"].includes(tradeMode)) {
-        return [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待开仓/平仓状态</div>`];
+        return {
+          optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待开仓/平仓状态</div>`],
+          actionButtons: []
+        };
       }
       if (!precision) {
-        return [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待订单簿缩放值</div>`];
+        return {
+          optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待价格精度</div>`],
+          actionButtons: []
+        };
       }
       if (tradeMode === "OPEN") {
-        return [
-          ladderOptionRow("量", LADDER_OPEN_PERCENTS, getLadderOpenPercent(symbol, precision), "percent", "%"),
-          ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
-          ladderOptionRow("幅", LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), "step", ""),
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:12px;">',
-          ladderActionButton("OPEN_LONG", "阶梯开多", "BUY", actionDisabled),
-          ladderActionButton("OPEN_SHORT", "阶梯开空", "SELL", actionDisabled),
-          "</div>"
-        ];
+        return {
+          optionRows: [
+            ladderOptionRow(PANEL_COPY.field.ratio, PANEL_COPY.tooltip.ratio, LADDER_OPEN_PERCENTS, getLadderOpenPercent(symbol, precision), "percent", "%"),
+            ladderOptionRow(PANEL_COPY.field.orderCount, PANEL_COPY.tooltip.orderCount, LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
+            ladderOptionRow(PANEL_COPY.field.interval, PANEL_COPY.tooltip.interval, LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), "step", "")
+          ],
+          actionButtons: [
+            ladderActionButton("OPEN_LONG", PANEL_COPY.action.openLong, "BUY", actionDisabled),
+            ladderActionButton("OPEN_SHORT", PANEL_COPY.action.openShort, "SELL", actionDisabled)
+          ]
+        };
       }
       const closeLongDisabled = shouldDisableCloseControl({
         actionDisabled,
@@ -5619,75 +5622,68 @@
         knowsPosition: closeContext?.knowsShort,
         hasPosition: closeContext?.hasShort
       });
-      return [
-        ladderOptionRow("量", LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol, precision), "percent", "%"),
-        ladderOptionRow("档", LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
-        ladderOptionRow("幅", LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), "step", ""),
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:12px;">',
-        ladderActionButton("CLOSE_LONG", "阶梯平多", "SELL", closeLongDisabled),
-        ladderActionButton("CLOSE_SHORT", "阶梯平空", "BUY", closeShortDisabled),
-        "</div>"
-      ];
+      return {
+        optionRows: [
+          ladderOptionRow(PANEL_COPY.field.ratio, PANEL_COPY.tooltip.ratio, LADDER_CLOSE_PERCENTS, getLadderClosePercent(symbol, precision), "percent", "%"),
+          ladderOptionRow(PANEL_COPY.field.orderCount, PANEL_COPY.tooltip.orderCount, LADDER_LEVEL_OPTIONS, getLadderLevels(tradeMode, symbol, precision), "levels", ""),
+          ladderOptionRow(PANEL_COPY.field.interval, PANEL_COPY.tooltip.interval, LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), "step", "")
+        ],
+        actionButtons: [
+          ladderActionButton("CLOSE_LONG", PANEL_COPY.action.closeLong, "SELL", closeLongDisabled),
+          ladderActionButton("CLOSE_SHORT", PANEL_COPY.action.closeShort, "BUY", closeShortDisabled)
+        ]
+      };
     }
     function refreshLadderPanel(panel, tradeMode, closeContext) {
-      const toggle = panel.querySelector(`#${LADDER_TOGGLE_ID}`);
       const body = panel.querySelector(`#${LADDER_BODY_ID}`);
       const status = panel.querySelector(`#${LADDER_STATUS_ID}`);
-      const expanded = isLadderExpanded();
       const mode = ["OPEN", "CLOSE"].includes(tradeMode) ? tradeMode : null;
       const symbol = getCurrentSymbol();
       const precision = readCurrentOrderbookPrecisionValue();
-      if (toggle) {
-        const toggleText = `Maker 阶梯 ${expanded ? "▾" : "▸"}`;
-        if (toggle.textContent !== toggleText) toggle.textContent = toggleText;
-      }
       if (body) {
-        body.style.display = expanded ? "block" : "none";
-        if (expanded) {
-          const stopDisabled = !ladderTask;
-          const stopDisabledAttrs = stopDisabled ? ' disabled aria-disabled="true"' : "";
-          const cancelRunning = !!cancelCurrentSymbolOpenOrdersTask;
-          const cancelPresentation = resolveCancelSymbolButtonPresentation({
-            ladderRunning: !!ladderTask,
-            cancelRunning,
-            noOrdersFeedback: cancelNoOrdersFeedbackActive
-          });
-          const bodyHtml = [
-            ...getLadderActionRows(mode, closeContext, symbol, precision),
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">',
-            `<button type="button" data-ladder-stop="true"${stopDisabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">停止阶梯挂单</button>`,
-            `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">撤本币挂单</button>`,
-            "</div>"
-          ].join("");
-          if (ladderPanelBodySignature !== bodyHtml) {
-            body.innerHTML = bodyHtml;
-            ladderPanelBodySignature = bodyHtml;
+        const ladderRunning = !!ladderTask;
+        const cancelRunning = !!cancelCurrentSymbolOpenOrdersTask;
+        const cancelPresentation = resolveCancelSymbolButtonPresentation({
+          ladderRunning,
+          cancelRunning,
+          noOrdersFeedback: cancelNoOrdersFeedbackActive
+        });
+        const controlSections = getLadderControlSections(mode, closeContext, symbol, precision);
+        const primaryActions = ladderRunning ? [`<button type="button" data-ladder-stop="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">${PANEL_COPY.action.stopLadder}</button>`] : controlSections.actionButtons;
+        const actionColumnCount = Math.max(1, primaryActions.length + 1);
+        const bodyHtml = [
+          ...controlSections.optionRows,
+          `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}" data-panel-group="precision"></div>`,
+          `<div style="display:grid;grid-template-columns:repeat(${actionColumnCount},minmax(0,1fr));gap:4px;margin-top:12px;">`,
+          ...primaryActions,
+          `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${PANEL_COPY.action.cancel}</button>`,
+          "</div>"
+        ].join("");
+        if (ladderPanelBodySignature !== bodyHtml) {
+          body.innerHTML = bodyHtml;
+          ladderPanelBodySignature = bodyHtml;
+        }
+        const cancelButton = body.querySelector('[data-ladder-cancel-symbol="true"]');
+        if (cancelButton) {
+          if (cancelButton.textContent !== cancelPresentation.label) {
+            cancelButton.textContent = cancelPresentation.label;
           }
-          const cancelButton = body.querySelector('[data-ladder-cancel-symbol="true"]');
-          if (cancelButton) {
-            if (cancelButton.textContent !== cancelPresentation.label) {
-              cancelButton.textContent = cancelPresentation.label;
+          if (cancelButton.disabled !== cancelPresentation.disabled) {
+            cancelButton.disabled = cancelPresentation.disabled;
+          }
+          if (cancelPresentation.disabled) {
+            if (cancelButton.getAttribute("aria-disabled") !== "true") {
+              cancelButton.setAttribute("aria-disabled", "true");
             }
-            if (cancelButton.disabled !== cancelPresentation.disabled) {
-              cancelButton.disabled = cancelPresentation.disabled;
-            }
-            if (cancelPresentation.disabled) {
-              if (cancelButton.getAttribute("aria-disabled") !== "true") {
-                cancelButton.setAttribute("aria-disabled", "true");
-              }
-            } else {
-              if (cancelButton.hasAttribute("aria-disabled")) {
-                cancelButton.removeAttribute("aria-disabled");
-              }
-            }
+          } else if (cancelButton.hasAttribute("aria-disabled")) {
+            cancelButton.removeAttribute("aria-disabled");
           }
         }
       }
       if (status) {
         if (status.textContent !== ladderStatusText) status.textContent = ladderStatusText;
         if (status.title !== ladderStatusTitle) status.title = ladderStatusTitle;
-        const statusVisibility = expanded || ladderTask || ladderStatusText !== "空闲" ? "visible" : "hidden";
-        if (status.style.visibility !== statusVisibility) status.style.visibility = statusVisibility;
+        if (status.style.visibility !== "visible") status.style.visibility = "visible";
       }
     }
     function refreshComputedInfo(panel, multiplier, qtyRuleContext) {
@@ -5756,18 +5752,18 @@
         const calculationTitle = [formulaPrefixText, finalText, constraintText].filter(Boolean).join(" ");
         if (calculationEl.title !== calculationTitle) calculationEl.title = calculationTitle;
       }
-      let multiplierHintText = "最小下单量的";
+      let multiplierHintText = PANEL_COPY.field.minimumOrderQuantity;
       if (multiplierHintEl) {
         if (tradeMode === "OPEN") {
-          multiplierHintText = "最小开仓量的";
+          multiplierHintText = PANEL_COPY.field.minimumOpenQuantity;
         } else if (tradeMode === "CLOSE") {
-          multiplierHintText = "最小平仓量的";
+          multiplierHintText = PANEL_COPY.field.minimumCloseQuantity;
         }
         if (multiplierHintEl.textContent !== multiplierHintText) {
           multiplierHintEl.textContent = multiplierHintText;
         }
       }
-      let hintText = "单击订单簿时";
+      let hintText = PANEL_COPY.field.clickOrderbook;
       let hintTitle = "";
       if (hintEl) {
         if (tradeMode === "OPEN") {
@@ -5844,8 +5840,8 @@
         sideShortBtn.style.color = isActive ? isOpenMode ? "var(--color-Sell)" : "var(--color-Buy)" : CONTROL_TEXT_COLOR;
       }
       syncNativeCloseButtons(tradeMode, rawCloseContext);
-      refreshOrderbookPrecisionRecommendation(panel);
       refreshLadderPanel(panel, tradeMode, closeContext);
+      refreshOrderbookPrecisionRecommendation(panel);
     }
     function findQtyFormItem(input) {
       if (!input) return null;
@@ -5953,16 +5949,18 @@
       panel.style.boxShadow = "none";
       panel.style.visibility = "hidden";
       panel.innerHTML = [
+        '<div data-panel-zone="single-order">',
+        `<div title="${PANEL_COPY.tooltip.singleOrder}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${PANEL_COPY.section.singleOrder}</div>`,
         '<div data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden;">',
-        `<span id="${MODE_HINT_ID}" style="width:78px;flex:0 0 78px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>`,
+        `<span id="${MODE_HINT_ID}" style="width:78px;flex:0 0 78px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${PANEL_COPY.field.clickOrderbook}</span>`,
         `<div data-side-selector role="radiogroup" aria-labelledby="${MODE_HINT_ID}" style="box-sizing:border-box;display:grid;grid-template-columns:54px 54px;height:32px;border:1px solid var(--color-InputLine);border-radius:6px;overflow:hidden;background:${CONTROL_BACKGROUND_COLOR};">`,
         `<button id="${SIDE_LONG_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-radius:5px 0 0 5px;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平多</button>`,
         `<button id="${SIDE_SHORT_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-left:1px solid var(--color-InputLine);border-radius:0 5px 5px 0;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平空</button>`,
         "</div>",
         "</div>",
-        '<div data-panel-group="multiplier" style="margin-top:12px;">',
+        '<div data-panel-group="multiplier" style="margin-top:8px;">',
         '<div data-multiplier-controls style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden;">',
-        `<label id="${MULTIPLIER_HINT_ID}" for="${INPUT_ID}" style="color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;">最小下单量的</label>`,
+        `<label id="${MULTIPLIER_HINT_ID}" for="${INPUT_ID}" style="color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;">${PANEL_COPY.field.minimumOrderQuantity}</label>`,
         `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:${PRIMARY_EMPHASIS_COLOR};caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:32px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">`,
         `<span style="font-size:13px;font-weight:${CONTROL_FONT_WEIGHT};color:${CONTROL_TEXT_COLOR};">倍</span>`,
         `<button id="${DEC_ID}" type="button" aria-label="减少倍数" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">-</button>`,
@@ -5975,11 +5973,11 @@
         `<span id="jh-binance-close-qty-min" style="display:none;flex:1 1 auto;min-width:0;color:${MUTED_TEXT_COLOR};overflow:hidden;text-overflow:ellipsis;"></span>`,
         "</div>",
         "</div>",
-        `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}" data-panel-group="precision"></div>`,
+        "</div>",
         '<div data-panel-group="ladder" style="margin-top:12px;padding-top:12px;border-top:1px solid #eef0f2;">',
-        `<button id="${LADDER_TOGGLE_ID}" type="button" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};background:${CONTROL_BACKGROUND_COLOR};color:${PRIMARY_EMPHASIS_COLOR};text-align:left;font-size:13px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};cursor:pointer;">Maker 阶梯 ▸</button>`,
-        `<div id="${LADDER_BODY_ID}" style="display:none;"></div>`,
-        `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:hidden;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
+        `<div title="${PANEL_COPY.tooltip.ladderMaker}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${PANEL_COPY.section.ladderMaker}</div>`,
+        `<div id="${LADDER_BODY_ID}"></div>`,
+        `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
         "</div>"
       ].join("");
       panelPositionInvalidated = true;
@@ -5990,7 +5988,6 @@
       const incBtn = panel.querySelector(`#${INC_ID}`);
       const sideLongBtn = panel.querySelector(`#${SIDE_LONG_ID}`);
       const sideShortBtn = panel.querySelector(`#${SIDE_SHORT_ID}`);
-      const ladderToggle = panel.querySelector(`#${LADDER_TOGGLE_ID}`);
       if (input) {
         const initialContext = getPanelOptionContext();
         input.value = initialContext ? loadMultiplier(initialContext.mode, initialContext.symbol, initialContext.precision) || "" : "";
@@ -6085,11 +6082,6 @@
       };
       sideLongBtn?.addEventListener("keydown", handleSideSelectorKeydown);
       sideShortBtn?.addEventListener("keydown", handleSideSelectorKeydown);
-      if (ladderToggle) {
-        ladderToggle.addEventListener("click", () => {
-          setLadderExpanded(!isLadderExpanded());
-        });
-      }
       panel.addEventListener("click", (event) => {
         const target = event.target instanceof Element ? event.target : null;
         if (!target) return;
@@ -6493,7 +6485,7 @@
       }
     }, true);
     window.addEventListener("storage", (event) => {
-      if (event.key?.startsWith(`${LOCAL_QTY_MULTIPLIER_PREFIX}:`) || isSymbolScopedSideStorageKey(event.key, [LOCAL_CLOSE_SIDE_KEY, LOCAL_OPEN_SIDE_KEY]) || event.key === LOCAL_LADDER_EXPANDED_KEY || event.key?.startsWith(`${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:`) || isModeSymbolOptionStorageKey(event.key, LADDER_OPTION_STORAGE_KEYS)) scheduleRenderPanel();
+      if (event.key?.startsWith(`${LOCAL_QTY_MULTIPLIER_PREFIX}:`) || isSymbolScopedSideStorageKey(event.key, [LOCAL_CLOSE_SIDE_KEY, LOCAL_OPEN_SIDE_KEY]) || event.key?.startsWith(`${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:`) || isModeSymbolOptionStorageKey(event.key, LADDER_OPTION_STORAGE_KEYS)) scheduleRenderPanel();
     });
     installUiSyncObservers();
     function clearSymbolOwnedRuntimeState(symbol) {
@@ -6525,7 +6517,6 @@
       if (!symbol || symbol === lastObservedSymbol) return;
       lastObservedSymbol = symbol;
       clearSymbolOwnedRuntimeState(symbol);
-      startInitialOrderbookPrecisionSample();
       scheduleRenderPanel();
       if (getActiveTradeMode() === "OPEN") {
         queueAutoOpenLeveragePositionCheck("symbol_change");
@@ -6561,7 +6552,6 @@
       ensureAccountPositionObserver();
       ensureOrderbookPrecisionObserver();
       startRenderPanelTimer();
-      startInitialOrderbookPrecisionSample();
     }
     function stopTradingTimers() {
       stopSymbolChangeTimer();

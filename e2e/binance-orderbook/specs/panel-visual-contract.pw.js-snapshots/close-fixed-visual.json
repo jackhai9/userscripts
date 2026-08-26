@@ -1,14 +1,14 @@
 {
   "panel": {
     "width": 314,
-    "height": 467,
+    "height": 407,
     "padding": "8px 10px",
     "borderRadius": "10px"
   },
   "groups": {
     "direction": {
       "rect": {
-        "top": 9,
+        "top": 29,
         "width": 292,
         "height": 32
       },
@@ -17,27 +17,27 @@
     },
     "multiplier": {
       "rect": {
-        "top": 53,
+        "top": 69,
         "width": 292,
         "height": 54
       },
       "display": "block",
       "visibility": "visible"
     },
-    "precision": {
+    "ladder": {
       "rect": {
-        "top": 119,
+        "top": 135,
         "width": 292,
-        "height": 62
+        "height": 263
       },
       "display": "block",
       "visibility": "visible"
     },
-    "ladder": {
+    "precision": {
       "rect": {
-        "top": 193,
+        "top": 298,
         "width": 292,
-        "height": 265
+        "height": 32
       },
       "display": "block",
       "visibility": "visible"
@@ -51,7 +51,7 @@
       "checked": "true",
       "pressed": null,
       "rect": {
-        "top": 9,
+        "top": 29,
         "width": 54,
         "height": 30
       },
@@ -72,7 +72,7 @@
       "checked": "false",
       "pressed": null,
       "rect": {
-        "top": 9,
+        "top": 29,
         "width": 54,
         "height": 30
       },
@@ -93,7 +93,7 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 53,
+        "top": 69,
         "width": 60,
         "height": 32
       },
@@ -114,7 +114,7 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 53,
+        "top": 69,
         "width": 32,
         "height": 32
       },
@@ -135,7 +135,7 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 53,
+        "top": 69,
         "width": 32,
         "height": 32
       },
@@ -150,119 +150,14 @@
       }
     },
     {
-      "key": "0.001",
-      "text": "0.001",
-      "disabled": false,
-      "checked": null,
-      "pressed": "false",
-      "rect": {
-        "top": 119,
-        "width": 49.5,
-        "height": 32
-      },
-      "style": {
-        "color": "rgb(94, 102, 115)",
-        "backgroundColor": "rgb(255, 255, 255)",
-        "borderColor": "rgb(213, 217, 226)",
-        "borderRadius": "6px",
-        "fontSize": "12px",
-        "fontWeight": "500",
-        "opacity": "1"
-      }
-    },
-    {
-      "key": "0.01",
-      "text": "0.01",
-      "disabled": false,
-      "checked": null,
-      "pressed": "false",
-      "rect": {
-        "top": 119,
-        "width": 49.5,
-        "height": 32
-      },
-      "style": {
-        "color": "rgb(94, 102, 115)",
-        "backgroundColor": "rgb(255, 255, 255)",
-        "borderColor": "rgb(213, 217, 226)",
-        "borderRadius": "6px",
-        "fontSize": "12px",
-        "fontWeight": "500",
-        "opacity": "1"
-      }
-    },
-    {
-      "key": "0.1",
-      "text": "0.1",
-      "disabled": false,
-      "checked": null,
-      "pressed": "true",
-      "rect": {
-        "top": 119,
-        "width": 49.5,
-        "height": 32
-      },
-      "style": {
-        "color": "rgb(0, 0, 0)",
-        "backgroundColor": "rgba(0, 0, 0, 0)",
-        "borderColor": "rgb(0, 0, 0)",
-        "borderRadius": "6px",
-        "fontSize": "12px",
-        "fontWeight": "500",
-        "opacity": "1"
-      }
-    },
-    {
-      "key": "1",
-      "text": "1",
-      "disabled": false,
-      "checked": null,
-      "pressed": "false",
-      "rect": {
-        "top": 119,
-        "width": 49.5,
-        "height": 32
-      },
-      "style": {
-        "color": "rgb(94, 102, 115)",
-        "backgroundColor": "rgb(255, 255, 255)",
-        "borderColor": "rgb(213, 217, 226)",
-        "borderRadius": "6px",
-        "fontSize": "12px",
-        "fontWeight": "500",
-        "opacity": "1"
-      }
-    },
-    {
-      "key": "jh-binance-ladder-toggle",
-      "text": "Maker 阶梯 ▾",
-      "disabled": false,
-      "checked": null,
-      "pressed": null,
-      "rect": {
-        "top": 206,
-        "width": 292,
-        "height": 28
-      },
-      "style": {
-        "color": "rgb(0, 0, 0)",
-        "backgroundColor": "rgb(255, 255, 255)",
-        "borderColor": "rgb(213, 217, 226)",
-        "borderRadius": "6px",
-        "fontSize": "13px",
-        "fontWeight": "500",
-        "opacity": "1"
-      }
-    },
-    {
       "key": "percent:0.3",
       "text": "0.3%",
       "disabled": false,
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 243,
-        "width": 48.8,
+        "top": 177,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -282,8 +177,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 243,
-        "width": 48.8,
+        "top": 177,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -303,8 +198,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 243,
-        "width": 48.8,
+        "top": 177,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -324,8 +219,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 243,
-        "width": 48.8,
+        "top": 177,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -345,8 +240,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 243,
-        "width": 48.8,
+        "top": 177,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -366,8 +261,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 283,
-        "width": 48.8,
+        "top": 217,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -387,8 +282,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 283,
-        "width": 48.8,
+        "top": 217,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -408,8 +303,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 283,
-        "width": 48.8,
+        "top": 217,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -429,8 +324,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 283,
-        "width": 48.8,
+        "top": 217,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -450,8 +345,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 323,
-        "width": 48.8,
+        "top": 257,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -471,8 +366,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 323,
-        "width": 48.8,
+        "top": 257,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -492,8 +387,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 323,
-        "width": 48.8,
+        "top": 257,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -513,8 +408,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 323,
-        "width": 48.8,
+        "top": 257,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -534,8 +429,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 323,
-        "width": 48.8,
+        "top": 257,
+        "width": 44.8,
         "height": 28
       },
       "style": {
@@ -549,14 +444,98 @@
       }
     },
     {
+      "key": "0.001",
+      "text": "0.001",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 298,
+        "width": 44.5,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "0.01",
+      "text": "0.01",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 298,
+        "width": 44.5,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "0.1",
+      "text": "0.1",
+      "disabled": false,
+      "checked": null,
+      "pressed": "true",
+      "rect": {
+        "top": 298,
+        "width": 44.5,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(0, 0, 0)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(0, 0, 0)",
+        "borderRadius": "6px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "1",
+      "text": "1",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 298,
+        "width": 44.5,
+        "height": 32
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "6px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
       "key": "CLOSE_LONG",
       "text": "阶梯平多",
       "disabled": false,
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 366,
-        "width": 144,
+        "top": 342,
+        "width": 94.7,
         "height": 32
       },
       "style": {
@@ -576,8 +555,8 @@
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 366,
-        "width": 144,
+        "top": 342,
+        "width": 94.7,
         "height": 32
       },
       "style": {
@@ -592,34 +571,13 @@
     },
     {
       "key": "true",
-      "text": "停止阶梯挂单",
-      "disabled": true,
-      "checked": null,
-      "pressed": null,
-      "rect": {
-        "top": 402,
-        "width": 144,
-        "height": 32
-      },
-      "style": {
-        "color": "rgb(183, 189, 198)",
-        "backgroundColor": "rgb(245, 245, 245)",
-        "borderColor": "rgb(213, 217, 226)",
-        "borderRadius": "6px",
-        "fontSize": "14px",
-        "fontWeight": "500",
-        "opacity": "0.65"
-      }
-    },
-    {
-      "key": "true",
-      "text": "撤本币挂单",
+      "text": "撤单",
       "disabled": false,
       "checked": null,
       "pressed": null,
       "rect": {
-        "top": 402,
-        "width": 144,
+        "top": 342,
+        "width": 94.7,
         "height": 32
       },
       "style": {
@@ -636,7 +594,7 @@
   "text": {
     "mode": "单击订单簿时",
     "formula": "0.01 × 1 =0.01",
-    "precision": "订单簿缩放0.0010.010.11推荐 0.01更新推荐",
+    "precision": "价格精度0.0010.010.11",
     "status": "空闲"
   }
 }

@@ -44,7 +44,6 @@ export function createCancelScenario(overrides = {}) {
       openOrdersSubTab: 'basic',
       hideOtherSymbols: false,
       showOrders: true,
-      ladderExpanded: true,
       tradeMode: 'OPEN',
       orderbookPrecision: '0.1',
       leverage: 2,
