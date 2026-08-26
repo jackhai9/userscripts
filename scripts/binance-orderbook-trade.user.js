@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.114
+// @version      2.7.115
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -842,35 +842,65 @@
   function getTabIdentity(el) {
     return getNormalizedText(el).replace(/\s*\(\d+\)$/, "").toLocaleLowerCase();
   }
-  function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs) {
-    const currentState = readState();
-    if (currentState) return Promise.resolve(currentState);
+  function createAccountOrdersMutationSignal(observationRoot) {
     const MutationObserverClass = observationRoot?.ownerDocument?.defaultView?.MutationObserver;
-    if (!observationRoot || !MutationObserverClass) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (value) => {
-        if (settled) return;
-        settled = true;
-        observer.disconnect();
-        clearTimeout(timer);
-        resolve(value);
-      };
-      const check = () => {
-        const value = readState();
-        if (value) finish(value);
-      };
-      const observer = new MutationObserverClass(check);
-      const timer = setTimeout(() => finish(readState()), timeoutMs);
-      observer.observe(observationRoot, {
-        subtree: true,
-        childList: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: ["aria-selected", "aria-checked", "class", "style"]
-      });
-      check();
+    if (!observationRoot || !MutationObserverClass) return null;
+    let version = 0;
+    let pendingFinish = null;
+    const notify = () => {
+      version += 1;
+      pendingFinish?.("changed");
+    };
+    const observer = new MutationObserverClass(notify);
+    observer.observe(observationRoot, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["aria-selected", "aria-checked", "class", "style"]
     });
+    return {
+      get version() {
+        return version;
+      },
+      waitForChange(afterVersion, timeoutMs) {
+        if (version !== afterVersion) return Promise.resolve("changed");
+        return new Promise((resolve) => {
+          let timer = null;
+          const finish = (result) => {
+            if (pendingFinish !== finish) return;
+            pendingFinish = null;
+            if (timer) clearTimeout(timer);
+            resolve(result);
+          };
+          pendingFinish = finish;
+          timer = setTimeout(() => finish("timeout"), timeoutMs);
+        });
+      },
+      dispose() {
+        observer.disconnect();
+        pendingFinish?.("disposed");
+      }
+    };
+  }
+  async function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs) {
+    const currentState = readState();
+    if (currentState) return currentState;
+    const signal = createAccountOrdersMutationSignal(observationRoot);
+    if (!signal) return null;
+    const deadline = Date.now() + timeoutMs;
+    try {
+      while (true) {
+        const version = signal.version;
+        const state = readState();
+        if (state) return state;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) return readState();
+        await signal.waitForChange(version, remainingMs);
+      }
+    } finally {
+      signal.dispose();
+    }
   }
   function hasAccountOrdersTabs(node, isVisibleElement) {
     const tabTexts = Array.from(node.querySelectorAll('[role="tab"]')).filter(isVisibleElement).map(getNormalizedText).join(" ");
@@ -3813,75 +3843,75 @@
       let currentRoot = root;
       let clearCandidateSince = null;
       let lastStatus = currentRoot ? "symbol_filter_not_confirmed" : "scope_not_found";
-      while (true) {
-        if (!isCurrentObservedSymbol(symbol)) {
-          return { ok: false, status: "symbol_changed", root: currentRoot };
-        }
-        const refreshedRoot = getActiveOpenOrdersScope2();
-        currentRoot = refreshedRoot;
-        if (!currentRoot) {
-          clearCandidateSince = null;
-          lastStatus = "scope_not_found";
+      const observationRoot = getAccountOrdersObservationRoot() || document.body;
+      const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
+      if (!mutationSignal) throw new Error("Account-orders observer root is unavailable");
+      try {
+        while (true) {
+          const observedVersion = mutationSignal.version;
+          if (!isCurrentObservedSymbol(symbol)) {
+            return { ok: false, status: "symbol_changed", root: currentRoot };
+          }
+          const refreshedRoot = getActiveOpenOrdersScope2();
+          currentRoot = refreshedRoot;
+          let clearCandidate = false;
+          if (!currentRoot) {
+            clearCandidateSince = null;
+            lastStatus = "scope_not_found";
+          } else if (!isOpenOrdersScopeConfirmedForSymbol(currentRoot, symbol)) {
+            clearCandidateSince = null;
+            lastStatus = "symbol_filter_not_confirmed";
+          } else {
+            lastStatus = "not_cleared";
+            const openOrdersCount = getOpenOrdersTabCount();
+            const scopeText = currentRoot.textContent || "";
+            clearCandidate = isCurrentSymbolOpenOrdersClearCandidate({
+              scopeText,
+              symbol,
+              openOrdersCount
+            });
+            if (isCurrentSymbolOpenOrdersDefinitivelyClear({
+              scopeText,
+              symbol,
+              openOrdersCount
+            })) {
+              return {
+                ok: true,
+                status: "cleared",
+                root: currentRoot,
+                definitivelyCleared: true
+              };
+            }
+            const stability = updateOpenOrdersClearStability({
+              clearCandidate,
+              clearCandidateSince,
+              nowMs: Date.now(),
+              settleMs: CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS
+            });
+            clearCandidateSince = stability.clearCandidateSince;
+            if (stability.cleared) {
+              return {
+                ok: true,
+                status: "cleared",
+                root: currentRoot,
+                definitivelyCleared: false
+              };
+            }
+          }
+          const nowMs = Date.now();
           if (!shouldContinueOpenOrdersClearObservation({
-            nowMs: Date.now(),
+            nowMs,
             deadlineMs: deadline,
-            clearCandidate: false
+            clearCandidate
           })) break;
-          await delay(120);
-          continue;
+          const nextCheckAt = clearCandidate && clearCandidateSince !== null ? clearCandidateSince + CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS : deadline;
+          await mutationSignal.waitForChange(
+            observedVersion,
+            Math.max(0, nextCheckAt - nowMs)
+          );
         }
-        if (!isOpenOrdersScopeConfirmedForSymbol(currentRoot, symbol)) {
-          clearCandidateSince = null;
-          lastStatus = "symbol_filter_not_confirmed";
-          if (!shouldContinueOpenOrdersClearObservation({
-            nowMs: Date.now(),
-            deadlineMs: deadline,
-            clearCandidate: false
-          })) break;
-          await delay(120);
-          continue;
-        }
-        lastStatus = "not_cleared";
-        const openOrdersCount = getOpenOrdersTabCount();
-        const scopeText = currentRoot.textContent || "";
-        const clearCandidate = isCurrentSymbolOpenOrdersClearCandidate({
-          scopeText,
-          symbol,
-          openOrdersCount
-        });
-        if (isCurrentSymbolOpenOrdersDefinitivelyClear({
-          scopeText,
-          symbol,
-          openOrdersCount
-        })) {
-          return {
-            ok: true,
-            status: "cleared",
-            root: currentRoot,
-            definitivelyCleared: true
-          };
-        }
-        const stability = updateOpenOrdersClearStability({
-          clearCandidate,
-          clearCandidateSince,
-          nowMs: Date.now(),
-          settleMs: CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS
-        });
-        clearCandidateSince = stability.clearCandidateSince;
-        if (stability.cleared) {
-          return {
-            ok: true,
-            status: "cleared",
-            root: currentRoot,
-            definitivelyCleared: false
-          };
-        }
-        if (!shouldContinueOpenOrdersClearObservation({
-          nowMs: Date.now(),
-          deadlineMs: deadline,
-          clearCandidate
-        })) break;
-        await delay(120);
+      } finally {
+        mutationSignal.dispose();
       }
       if (!isCurrentObservedSymbol(symbol)) {
         return { ok: false, status: "symbol_changed", root: currentRoot };

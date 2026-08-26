@@ -763,6 +763,12 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   assert.match(waitBody, /if \(stability\.cleared\)[\s\S]*definitivelyCleared: false/);
   assert.match(waitBody, /while \(true\)/);
   assert.match(waitBody, /shouldContinueOpenOrdersClearObservation\(\{/);
+  assert.match(waitBody, /createAccountOrdersMutationSignal/);
+  assert.match(waitBody, /mutationSignal\.waitForChange/);
+  assert.match(waitBody, /mutationSignal\.dispose\(\)/);
+  assert.match(waitBody, /clearCandidateSince \+ CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS/);
+  assert.doesNotMatch(waitBody, /Math\.min\(deadline/);
+  assert.doesNotMatch(waitBody, /delay\(/);
   assert.doesNotMatch(waitBody, /while \(Date\.now\(\) < deadline\)/);
   assert.doesNotMatch(waitBody, /hasCurrentSymbolOpenOrders\(/);
 
