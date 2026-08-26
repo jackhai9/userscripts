@@ -12,12 +12,16 @@
   "scenarios": [
     {
       "name": "cancel-current-symbol-no-orders",
+      "parameters": {
+        "kind": "no-orders"
+      },
       "applicableSegments": [
         "clickToFirstFeedback",
         "clickToFinalReady"
       ],
       "samples": [
         {
+          "capacityEvidence": null,
           "segmentsMs": {
             "clickToFirstFeedback": 30.6,
             "clickToFinalReady": 637.1
@@ -35,6 +39,7 @@
           "maxLongAnimationFrameMs": 0
         },
         {
+          "capacityEvidence": null,
           "segmentsMs": {
             "clickToFirstFeedback": 33,
             "clickToFinalReady": 630.8
@@ -52,6 +57,7 @@
           "maxLongAnimationFrameMs": 0
         },
         {
+          "capacityEvidence": null,
           "segmentsMs": {
             "clickToFirstFeedback": 38.3,
             "clickToFinalReady": 646.7

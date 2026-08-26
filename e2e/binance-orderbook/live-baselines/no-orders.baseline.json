@@ -12,6 +12,9 @@
   "scenarios": [
     {
       "name": "cancel-current-symbol-no-orders",
+      "parameters": {
+        "kind": "no-orders"
+      },
       "sampleCount": 3,
       "segmentsMs": {
         "clickToFirstFeedback": {

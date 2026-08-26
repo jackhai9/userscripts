@@ -11,11 +11,13 @@ import {
   validateLivePerformanceBaseline,
   validateLivePerformanceCapture,
 } from '../../scripts/binance-live-performance.mjs';
+import { createLiveOrderScalePlan } from '../../e2e/binance-orderbook/helpers/live-order-scale-config.js';
 
 const EMPTY_ORDER_LEDGER = Object.freeze({ created: [], fills: [], residual: [] });
 
 function sample(clickToFeedback, dialog, finalReady, maxLongTaskMs = 0) {
   return {
+    capacityEvidence: null,
     segmentsMs: {
       clickToFirstFeedback: clickToFeedback,
       clickToDialog: dialog,
@@ -45,10 +47,53 @@ function capture(samples = [sample(90, 150, 140), sample(100, 160, 150), sample(
     },
     scenarios: [{
       name: 'cancel-dialog-cancel',
+      parameters: { kind: 'no-orders' },
       applicableSegments: ['clickToFirstFeedback', 'clickToDialog', 'decisionToFinalReady'],
       samples,
     }],
   };
+}
+
+function scaleSample(index) {
+  const result = sample(90 + index, 150 + index, 140 + index);
+  result.capacityEvidence = createLiveOrderScalePlan({
+    schemaVersion: 1,
+    profileName: 'smoke',
+    sampleCount: 3,
+    maxOrderCount: 3,
+    scaleRatios: { small: 0.25, medium: 0.5, large: 1 },
+  }, {
+    availableBalance: '13.28',
+    currentLeverage: 5,
+    perOrderPrice: '2',
+    perOrderQuantity: '2.5',
+    safetyFactor: '0.8',
+    liveMaxNumOrdersLimit: 200,
+    existingCurrentSymbolOpenOrders: 0,
+    outstandingTestOwnedOrders: 0,
+  }).capacityEvidence;
+  result.testOrderLedger.created.push({
+    symbol: 'XRPUSDT',
+    side: 'SELL',
+    positionSide: 'SHORT',
+    price: '2',
+    quantity: '2.5',
+    createdAt: `2026-08-26T08:00:0${index + 1}.000Z`,
+  });
+  return result;
+}
+
+function scaleCapture() {
+  const result = capture([scaleSample(0), scaleSample(1), scaleSample(2)]);
+  result.scenarios[0].parameters = {
+    kind: 'order-scale',
+    profileName: 'smoke',
+    label: 'small',
+    preferredTargetOrderCount: 1,
+    effectiveTargetOrderCount: 1,
+    sampleCount: 3,
+  };
+  return result;
 }
 
 test('live performance capture requires three complete isolated samples', () => {
@@ -78,19 +123,31 @@ test('live performance capture requires fill and residual claims to be backed by
     quantity: '0.1',
     createdAt: '2026-08-26T08:00:01.000Z',
   };
-  const unsupportedFill = capture();
+  const unsupportedFill = scaleCapture();
   unsupportedFill.scenarios[0].samples[0].testOrderLedger.fills.push(order);
   assert.throws(
     () => validateLivePerformanceCapture(unsupportedFill),
     /fills must reference a created test order/,
   );
 
-  const mismatchedClaim = capture();
-  mismatchedClaim.scenarios[0].samples[0].testOrderLedger.created.push(order);
-  mismatchedClaim.scenarios[0].samples[0].testOrderLedger.fills.push(order);
+  const mismatchedClaim = scaleCapture();
+  mismatchedClaim.scenarios[0].samples[0].testOrderLedger.fills.push(
+    mismatchedClaim.scenarios[0].samples[0].testOrderLedger.created[0],
+  );
   assert.throws(
     () => validateLivePerformanceCapture(mismatchedClaim),
     /noFills must match testOrderLedger.fills/,
+  );
+});
+
+test('order-scale capture binds effective target to capacity evidence and created ledger', () => {
+  assert.equal(validateLivePerformanceCapture(scaleCapture()).schemaVersion, 1);
+  const mismatchedCount = scaleCapture();
+  mismatchedCount.scenarios[0].parameters.preferredTargetOrderCount = 2;
+  mismatchedCount.scenarios[0].parameters.effectiveTargetOrderCount = 2;
+  assert.throws(
+    () => validateLivePerformanceCapture(mismatchedCount),
+    /created ledger count must match the effective target/,
   );
 });
 
@@ -143,6 +200,34 @@ test('baseline comparison reports only regressions beyond both tolerances', () =
       limit: 315,
     },
   ]);
+});
+
+test('baseline comparison rejects the same scale name with different effective counts', () => {
+  const baseline = summarizeLivePerformanceCapture(capture());
+  const current = structuredClone(baseline);
+  current.scenarios[0].parameters = {
+    kind: 'order-scale',
+    profileName: 'smoke',
+    label: 'small',
+    preferredTargetOrderCount: 1,
+    effectiveTargetOrderCount: 1,
+    sampleCount: 3,
+  };
+
+  assert.deepEqual(
+    compareLivePerformanceSummaries(current, baseline, {
+      absoluteToleranceMs: 50,
+      medianRatio: 1.5,
+      p95Ratio: 1.5,
+    }),
+    [{
+      scenario: 'cancel-dialog-cancel',
+      metric: null,
+      reason: 'configuration-mismatch',
+      baseline: { kind: 'no-orders' },
+      current: current.scenarios[0].parameters,
+    }],
+  );
 });
 
 test('baseline validation rejects missing summary statistics instead of silently passing comparison', () => {
