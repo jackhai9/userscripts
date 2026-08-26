@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.124
+// @version      2.7.125
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -150,6 +150,10 @@
       noOrders: "无挂单",
       stopLadder: "停止阶梯挂单"
     }),
+    status: freezeCopy({
+      precisionUpdated: "精度推荐已更新",
+      precisionInsufficient: "近期价格变化不足，请稍后重试"
+    }),
     tooltip: freezeCopy({
       singleOrder: "单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。",
       ladderMaker: "根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。",
@@ -164,7 +168,7 @@
     if (!Number.isInteger(count) || count <= 1) {
       throw new Error(`Invalid precision trade count: ${tradeCount}`);
     }
-    return `根据最新 ${count} 条成交价中的有效价格变动，重新计算推荐精度。`;
+    return `优先根据最新 ${count} 条成交价；价格变化不足时自动扩大范围，重新计算推荐精度。`;
   }
 
   // src/binance-orderbook-trade/core/cancel-orders.js
@@ -552,6 +556,29 @@
       previous = current;
     }
     return moves;
+  }
+  function collectPriceMovesWithExpandingWindow(prices, {
+    initialLimit = 10,
+    expansionStep = 10,
+    minSamples = 5
+  } = {}) {
+    if (!Number.isInteger(initialLimit) || initialLimit < 2) {
+      throw new Error(`Invalid initial precision trade limit: ${initialLimit}`);
+    }
+    if (!Number.isInteger(expansionStep) || expansionStep < 1) {
+      throw new Error(`Invalid precision trade expansion step: ${expansionStep}`);
+    }
+    if (!Number.isInteger(minSamples) || minSamples < 1) {
+      throw new Error(`Invalid minimum precision sample count: ${minSamples}`);
+    }
+    const observedPrices = Array.isArray(prices) ? prices : [];
+    let usedCount = Math.min(initialLimit, observedPrices.length);
+    let samples = collectNonZeroPriceMoves(observedPrices.slice(0, usedCount));
+    while (samples.length < minSamples && usedCount < observedPrices.length) {
+      usedCount = Math.min(usedCount + expansionStep, observedPrices.length);
+      samples = collectNonZeroPriceMoves(observedPrices.slice(0, usedCount));
+    }
+    return { samples, usedCount };
   }
   function sortedPositiveDecimals(values) {
     return (values || []).map((value) => normalizeDecimalString(value)).filter((value) => value && isPositiveDecimalString(value)).sort((a, b) => compareDecimalStrings(a, b));
@@ -1809,7 +1836,9 @@
     const ORDERBOOK_PRECISION_READY_POLL_MS = 100;
     const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5e3;
     const ORDERBOOK_PRECISION_OPTION_WAIT_MS = 1200;
-    const ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT = 10;
+    const ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT = 10;
+    const ORDERBOOK_PRECISION_TRADE_EXPANSION_STEP = 10;
+    const ORDERBOOK_PRECISION_MIN_EFFECTIVE_MOVES = 5;
     const ORDERBOOK_PRECISION_SHORTCUT_LIMIT = 4;
     const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
       "0.00000001",
@@ -1904,7 +1933,7 @@
       current: null,
       nativeOptions: [],
       nativeOptionsStatus: null,
-      status: "数据不足"
+      status: PANEL_COPY.status.precisionInsufficient
     };
     const controlledNativeButtons = /* @__PURE__ */ new Set();
     let lastObservedSymbol = getCurrentSymbol();
@@ -2506,11 +2535,8 @@
     function getBestOrderbookPrice(side) {
       return getOrderbookPrices(side, 1)[0] || null;
     }
-    function getLatestTradePrices(limit = ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT) {
-      if (!Number.isInteger(limit) || limit < 2) {
-        throw new Error(`Invalid latest trade price limit: ${limit}`);
-      }
-      return Array.from(document.querySelectorAll(".tradew-tradelist .price.emit-price")).filter((node) => isVisibleElement(node)).map((node) => parsePrice(node)).filter(Boolean).slice(0, limit);
+    function getLatestTradePrices() {
+      return Array.from(document.querySelectorAll(".tradew-tradelist .price.emit-price")).filter((node) => isVisibleElement(node)).map((node) => parsePrice(node)).filter(Boolean);
     }
     async function waitForOrderbookPrecisionBootstrapReady(symbol, timeoutMs = ORDERBOOK_PRECISION_READY_TIMEOUT_MS) {
       const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
@@ -2537,7 +2563,7 @@
     function saveStoredOrderbookPrecisionSamples(symbol, samples) {
       const key = orderbookPrecisionSamplesKey(symbol);
       if (!key) return [];
-      if (!Array.isArray(samples) || samples.length > ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT - 1) {
+      if (!Array.isArray(samples)) {
         throw new Error("Invalid latest trade movement snapshot");
       }
       const normalizedSamples = samples.map((sample) => normalizeDecimalString(sample)).filter((sample) => sample && isPositiveDecimalString(sample));
@@ -2767,7 +2793,7 @@
       });
       const current = readCurrentOrderbookPrecisionValue();
       const existingStatus = orderbookPrecisionState.symbol === symbol ? orderbookPrecisionState.status : null;
-      const status = recommendation ? "ready" : existingStatus && /^(未定位|未找到|数据不足)/.test(existingStatus) ? existingStatus : "数据不足";
+      const status = recommendation ? "ready" : existingStatus && existingStatus !== "ready" ? existingStatus : PANEL_COPY.status.precisionInsufficient;
       orderbookPrecisionState = {
         ...orderbookPrecisionState,
         symbol,
@@ -2785,7 +2811,7 @@
       );
       if (!nativeOptions.length) queueOrderbookPrecisionOptionsLoad(symbol);
       const canRefresh = !controlsBusy;
-      const refreshTooltip = formatPrecisionRefreshTooltip(ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT);
+      const refreshTooltip = formatPrecisionRefreshTooltip(ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT);
       const recommendationHtml = [
         '<div style="margin-top:10px;">',
         '<div style="display:grid;grid-template-columns:36px repeat(4,minmax(0,1fr)) 32px;align-items:center;gap:4px;height:32px;overflow:hidden;">',
@@ -2976,10 +3002,12 @@
         scheduleRenderPanel();
         return;
       }
-      const samples = saveStoredOrderbookPrecisionSamples(
-        symbol,
-        collectNonZeroPriceMoves(getLatestTradePrices(ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT))
-      );
+      const { samples: latestSamples } = collectPriceMovesWithExpandingWindow(getLatestTradePrices(), {
+        initialLimit: ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT,
+        expansionStep: ORDERBOOK_PRECISION_TRADE_EXPANSION_STEP,
+        minSamples: ORDERBOOK_PRECISION_MIN_EFFECTIVE_MOVES
+      });
+      const samples = saveStoredOrderbookPrecisionSamples(symbol, latestSamples);
       const recommendation = recommendOrderbookPrecision({
         samples,
         options: ORDERBOOK_PRECISION_CANDIDATE_OPTIONS
@@ -2990,12 +3018,15 @@
         samples,
         recommendation,
         current: readCurrentOrderbookPrecisionValue(),
-        status: recommendation ? "ready" : "数据不足"
+        status: recommendation ? "ready" : PANEL_COPY.status.precisionInsufficient
       };
       if (!orderbookPrecisionState.nativeOptions.length) {
         queueOrderbookPrecisionOptionsLoad(symbol, true);
       }
       refreshOrderbookPrecisionRecommendation();
+      setLadderStatus(
+        recommendation ? PANEL_COPY.status.precisionUpdated : PANEL_COPY.status.precisionInsufficient
+      );
       scheduleRenderPanel();
     }
     function getBufferedMakerPrices(side, levels, ladderStep = DEFAULT_LADDER_STEP) {
@@ -6400,7 +6431,7 @@
         current: readCurrentOrderbookPrecisionValue(),
         nativeOptions: [],
         nativeOptionsStatus: null,
-        status: recommendation ? "ready" : "数据不足"
+        status: recommendation ? "ready" : PANEL_COPY.status.precisionInsufficient
       };
     }
     function checkSymbolChangeForLeverage() {

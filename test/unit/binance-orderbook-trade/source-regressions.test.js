@@ -929,7 +929,9 @@ test('stable panel refreshes avoid writing unchanged text and state attributes',
 });
 
 test('orderbook precision recommendation marks one shortcut without applying it automatically', () => {
-  assert.match(source, /ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT = 10/);
+  assert.match(source, /ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT = 10/);
+  assert.match(source, /ORDERBOOK_PRECISION_TRADE_EXPANSION_STEP = 10/);
+  assert.match(source, /ORDERBOOK_PRECISION_MIN_EFFECTIVE_MOVES = 5/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_POLL_MS/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
@@ -946,10 +948,14 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(source, /orderbookPrecisionOptionsLoadAttemptedSymbol/);
 
   const sampleBody = readFunctionBody('refreshOrderbookPrecisionSamplesNow');
-  assert.match(sampleBody, /collectNonZeroPriceMoves\(getLatestTradePrices\(ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT\)\)/);
+  assert.match(sampleBody, /collectPriceMovesWithExpandingWindow\(getLatestTradePrices\(\),/);
+  assert.match(sampleBody, /initialLimit: ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT/);
+  assert.match(sampleBody, /expansionStep: ORDERBOOK_PRECISION_TRADE_EXPANSION_STEP/);
+  assert.match(sampleBody, /minSamples: ORDERBOOK_PRECISION_MIN_EFFECTIVE_MOVES/);
   assert.match(sampleBody, /saveStoredOrderbookPrecisionSamples/);
   assert.match(sampleBody, /recommendOrderbookPrecision/);
-  assert.match(sampleBody, /status: recommendation \? 'ready' : '数据不足'/);
+  assert.match(sampleBody, /status: recommendation \? 'ready' : PANEL_COPY\.status\.precisionInsufficient/);
+  assert.match(sampleBody, /PANEL_COPY\.status\.precisionUpdated/);
   assert.doesNotMatch(sampleBody, /setTimeout|setInterval|await delay/);
   assert.doesNotMatch(sampleBody, /getCurrentOrderbookDisplayStep|fallbackMovement/);
 
@@ -960,7 +966,7 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(refreshBody, /const controlsBusy = selectionBusy/);
   assert.match(refreshBody, /getOrderbookPrecisionShortcutOptions\([\s\S]*ORDERBOOK_PRECISION_SHORTCUT_LIMIT/);
   assert.match(refreshBody, /queueOrderbookPrecisionOptionsLoad\(symbol\)/);
-  assert.match(refreshBody, /formatPrecisionRefreshTooltip\(ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT\)/);
+  assert.match(refreshBody, /formatPrecisionRefreshTooltip\(ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT\)/);
   const shortcutBody = readFunctionBody('renderOrderbookPrecisionShortcut');
   assert.match(shortcutBody, /const recommended = value === recommendation/);
   assert.match(shortcutBody, /position:absolute;top:3px;right:3px;width:6px;height:6px/);
@@ -1309,7 +1315,7 @@ test('precision shortcut selection and refresh do not commit after a symbol swit
 
   const clearBody = readFunctionBody('clearSymbolOwnedRuntimeState');
   assert.match(clearBody, /orderbookPrecisionOptionsLoadRequestedSymbol = null/);
-  assert.match(clearBody, /status: recommendation \? 'ready' : '数据不足'/);
+  assert.match(clearBody, /status: recommendation \? 'ready' : PANEL_COPY\.status\.precisionInsufficient/);
   assert.doesNotMatch(clearBody, /status: '采样中'/);
 });
 

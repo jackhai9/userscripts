@@ -65,6 +65,30 @@ export function collectNonZeroPriceMoves(prices) {
   return moves;
 }
 
+export function collectPriceMovesWithExpandingWindow(prices, {
+  initialLimit = 10,
+  expansionStep = 10,
+  minSamples = 5,
+} = {}) {
+  if (!Number.isInteger(initialLimit) || initialLimit < 2) {
+    throw new Error(`Invalid initial precision trade limit: ${initialLimit}`);
+  }
+  if (!Number.isInteger(expansionStep) || expansionStep < 1) {
+    throw new Error(`Invalid precision trade expansion step: ${expansionStep}`);
+  }
+  if (!Number.isInteger(minSamples) || minSamples < 1) {
+    throw new Error(`Invalid minimum precision sample count: ${minSamples}`);
+  }
+  const observedPrices = Array.isArray(prices) ? prices : [];
+  let usedCount = Math.min(initialLimit, observedPrices.length);
+  let samples = collectNonZeroPriceMoves(observedPrices.slice(0, usedCount));
+  while (samples.length < minSamples && usedCount < observedPrices.length) {
+    usedCount = Math.min(usedCount + expansionStep, observedPrices.length);
+    samples = collectNonZeroPriceMoves(observedPrices.slice(0, usedCount));
+  }
+  return { samples, usedCount };
+}
+
 function sortedPositiveDecimals(values) {
   return (values || [])
     .map((value) => normalizeDecimalString(value))

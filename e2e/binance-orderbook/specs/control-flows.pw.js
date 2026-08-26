@@ -113,6 +113,26 @@ test('precision refresh uses the visible latest trades immediately without a sam
   expect(errors).toEqual([]);
 });
 
+test('precision refresh explains when the complete visible trade list still lacks movement', async ({ page }) => {
+  const scenario = createCancelScenario({
+    ui: { orderbookPrecision: '0.1' },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  const panel = page.locator(PANEL_SELECTOR);
+  await page.locator('.tradew-tradelist .price.emit-price').evaluateAll((nodes) => {
+    nodes.forEach((node) => { node.textContent = '81.00'; });
+  });
+
+  await panel.locator('[data-orderbook-precision-refresh]').click();
+  await expect(panel.locator('#jh-binance-ladder-status'))
+    .toHaveText('近期价格变化不足，请稍后重试');
+  await expect(panel.locator('[aria-label*="推荐档位"]')).toHaveCount(0);
+  expect(await page.evaluate((symbol) => JSON.parse(
+    localStorage.getItem(`jh_binance_orderbook_precision_samples_v3:${symbol}`)
+  ), scenario.currentSymbol)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('starting a ladder disables every start action and exposes one stop control', async ({ page }) => {
   const scenario = createCancelScenario({
     ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },

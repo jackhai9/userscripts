@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   collectNonZeroPriceMoves,
+  collectPriceMovesWithExpandingWindow,
   formatOrderbookPrecisionShortcutLabel,
   getOrderbookPrecisionDecadeTarget,
   getOrderbookPrecisionShortcutOptions,
@@ -114,4 +115,28 @@ test('ten latest trade rows provide enough movement evidence when eight do not',
     samples: collectNonZeroPriceMoves(prices),
     options,
   }), '0.001');
+});
+
+test('expands the latest-trade window only until enough effective price moves exist', () => {
+  const prices = [
+    '80.757', '80.757', '80.756', '80.756', '80.756',
+    '80.757', '80.756', '80.755', '80.755', '80.755',
+    '80.755', '80.754', '80.753', '80.752', '80.751',
+    '80.750', '80.749', '80.748', '80.747', '80.746',
+    '80.700',
+  ];
+
+  const result = collectPriceMovesWithExpandingWindow(prices);
+  assert.equal(result.usedCount, 20);
+  assert.equal(result.samples.length, 13);
+  assert.deepEqual([...new Set(result.samples)], ['0.001']);
+});
+
+test('returns the complete visible snapshot when price changes remain insufficient', () => {
+  assert.deepEqual(collectPriceMovesWithExpandingWindow([
+    '80.7', '80.7', '80.7', '80.7', '80.7', '80.7',
+  ]), {
+    samples: [],
+    usedCount: 6,
+  });
 });
