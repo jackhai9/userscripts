@@ -144,3 +144,15 @@ test('builds and validates a complete three-sample capture without manual timing
     'clickToFinalReady',
   ]);
 });
+
+test('rejects unknown raw-bundle fields instead of silently dropping them', () => {
+  assert.throws(
+    () => buildLivePerformanceCapture({
+      capturedAt: '2026-08-27T01:00:00.000Z',
+      environment: {},
+      scenarios: [],
+      ignored: true,
+    }),
+    /input keys must be exactly/,
+  );
+});

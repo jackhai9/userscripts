@@ -10,6 +10,14 @@ function assertRecord(value, path) {
   }
 }
 
+function assertExactKeys(record, expectedKeys, path) {
+  const actual = Object.keys(record).sort();
+  const expected = [...expectedKeys].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${path} keys must be exactly: ${expected.join(', ')}`);
+  }
+}
+
 function readUniqueEvent(probe, kind) {
   const matches = probe.events.filter((event) => event.kind === kind);
   if (matches.length !== 1) {
@@ -81,13 +89,22 @@ function buildSegments(parameters, probe) {
   };
 }
 
-export function buildLivePerformanceSample({
-  parameters,
-  probe,
-  capacityEvidence,
-  testOrderLedger,
-  stateRestored,
-}) {
+export function buildLivePerformanceSample(input) {
+  assertRecord(input, 'sample input');
+  assertExactKeys(input, [
+    'parameters',
+    'probe',
+    'capacityEvidence',
+    'testOrderLedger',
+    'stateRestored',
+  ], 'sample input');
+  const {
+    parameters,
+    probe,
+    capacityEvidence,
+    testOrderLedger,
+    stateRestored,
+  } = input;
   assertRecord(parameters, 'parameters');
   validateLivePerformanceProbeSnapshot(probe);
   assertRecord(testOrderLedger, 'testOrderLedger');
@@ -112,7 +129,10 @@ export function buildLivePerformanceSample({
   });
 }
 
-export function buildLivePerformanceCapture({ capturedAt, environment, scenarios }) {
+export function buildLivePerformanceCapture(input) {
+  assertRecord(input, 'input');
+  assertExactKeys(input, ['capturedAt', 'environment', 'scenarios'], 'input');
+  const { capturedAt, environment, scenarios } = input;
   if (!Array.isArray(scenarios) || scenarios.length === 0) {
     throw new Error('scenarios must contain at least one scenario');
   }
@@ -122,6 +142,11 @@ export function buildLivePerformanceCapture({ capturedAt, environment, scenarios
     environment: structuredClone(environment),
     scenarios: scenarios.map((scenario, scenarioIndex) => {
       assertRecord(scenario, `scenarios[${scenarioIndex}]`);
+      assertExactKeys(
+        scenario,
+        ['name', 'parameters', 'samples'],
+        `scenarios[${scenarioIndex}]`,
+      );
       if (!Array.isArray(scenario.samples)) {
         throw new Error(`scenarios[${scenarioIndex}].samples must be an array`);
       }
@@ -129,10 +154,18 @@ export function buildLivePerformanceCapture({ capturedAt, environment, scenarios
         name: scenario.name,
         parameters: structuredClone(scenario.parameters),
         applicableSegments: getLiveScenarioSegments(scenario.parameters?.kind),
-        samples: scenario.samples.map((sample) => buildLivePerformanceSample({
-          parameters: scenario.parameters,
-          ...sample,
-        })),
+        samples: scenario.samples.map((sample, sampleIndex) => {
+          assertRecord(sample, `scenarios[${scenarioIndex}].samples[${sampleIndex}]`);
+          assertExactKeys(
+            sample,
+            ['probe', 'capacityEvidence', 'testOrderLedger', 'stateRestored'],
+            `scenarios[${scenarioIndex}].samples[${sampleIndex}]`,
+          );
+          return buildLivePerformanceSample({
+            parameters: scenario.parameters,
+            ...sample,
+          });
+        }),
       };
     }),
   };
