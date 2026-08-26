@@ -140,7 +140,56 @@ test orders from count changes alone.
 
 - Sync the generated artifact through the existing Tampermonkey MCP path.
 - Read back installed source and version.
-- Verify injection timing and the minimum critical paths in an isolated Chrome profile.
+- Verify injection timing and the minimum critical paths in the connected Chrome
+  profile that owns the Tampermonkey installation.
+
+The local artifact identity is produced with:
+
+```bash
+npm run inspect:binance-orderbook-trade
+```
+
+The JSON contract records the exact version, namespace, `@run-at`, install URLs,
+matches, SHA-256, byte count, and character count. The MCP workflow must locate the
+existing script by the exact `binance.orderbook.trade` namespace, patch that path,
+read the same path back, and require an exact source match. A matching version alone
+is insufficient because two different bundles can carry the same metadata version.
+
+When a read-back source is available as a file, the same contract can compare it
+without extension UI inspection:
+
+```bash
+node scripts/userscript-release-contract.mjs \
+  scripts/binance-orderbook-trade.user.js \
+  --compare /path/to/tampermonkey-readback.user.js
+```
+
+The current MCP text response appends a transport-only footer in this form:
+`---` followed by `Last modified: <ISO timestamp>`. It is not part of the installed
+userscript. Save the complete MCP response and use `--compare-mcp-readback` when the
+response includes that footer. The parser removes only this exact, validated footer;
+an unrecognized response shape fails instead of silently trimming source text.
+
+The MCP write uses the last-read modification token when the server provides one.
+A concurrent-edit error must stop the release check; it must not overwrite a newer
+manual edit or create a second script with `put`.
+
+L2 owns isolated and deterministic host-state coverage. L3 intentionally uses the
+connected Chrome profile because that is where the MCP-managed Tampermonkey script
+is installed. Its browser checks must therefore be non-financial, restore any UI
+state they change, and avoid assertions that depend on account positions or orders.
+The minimum L3 browser evidence is:
+
+1. the exact Tampermonkey script id is present in a `Debugger.scriptParsed` URL;
+2. that parse event precedes `Page.domContentEventFired` after a hard reload;
+3. `Debugger.getScriptSource` contains the exact generated artifact;
+4. the injected panel is visible; and
+5. one reversible panel interaction changes state and restores the original state.
+
+Enable only the CDP domains needed for this evidence. Disable them immediately after
+collection when the browser bridge supports the corresponding command. A domain that
+the bridge cannot disable remains scoped to the claimed tab session and must not be
+used as a reason to retain event buffers or persistent probes.
 
 ### Stage 4: Live Binance Acceptance and Baselines
 

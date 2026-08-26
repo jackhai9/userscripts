@@ -11,6 +11,7 @@
     "audit:brooks-media": "node scripts/brooks-media-audit.mjs",
     "import:brooks-media-index": "node scripts/brooks-media-import-index.mjs",
     "download:brooks-media": "node scripts/brooks-media-download.mjs",
+    "inspect:binance-orderbook-trade": "node scripts/userscript-release-contract.mjs scripts/binance-orderbook-trade.user.js",
     "check:binance-userscripts": "node --check scripts/binance-orderbook-trade.user.js && node --check scripts/binance-trading-data.user.js && node --check scripts/binance-coinmarketcap-data.user.js",
     "check:binance-orderbook-trade": "node --check scripts/binance-orderbook-trade.user.js",
     "check:m3u8-downloader": "node --check scripts/m3u8-downloader.user.js",
