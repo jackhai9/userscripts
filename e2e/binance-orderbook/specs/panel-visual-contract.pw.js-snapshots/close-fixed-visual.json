@@ -27,7 +27,7 @@
     "ladder": {
       "rect": {
         "top": 135,
-        "width": 292,
+        "width": 312,
         "height": 263
       },
       "display": "block",

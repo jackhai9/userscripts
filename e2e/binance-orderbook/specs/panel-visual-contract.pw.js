@@ -19,11 +19,33 @@ async function expectVisualContract(page, name) {
   expect(`${JSON.stringify(contract, null, 2)}\n`).toMatchSnapshot(name);
 }
 
+async function expectNativeDivider(page) {
+  const divider = await page.locator(PANEL_SELECTOR).evaluate((panel) => {
+    const panelRect = panel.getBoundingClientRect();
+    const ladder = panel.querySelector('[data-panel-group="ladder"]');
+    const ladderRect = ladder.getBoundingClientRect();
+    const style = getComputedStyle(ladder);
+    return {
+      leftInset: ladderRect.left - panelRect.left,
+      rightInset: panelRect.right - ladderRect.right,
+      borderTopWidth: style.borderTopWidth,
+      borderTopColor: style.borderTopColor,
+    };
+  });
+  expect(divider).toEqual({
+    leftInset: 1,
+    rightInset: 1,
+    borderTopWidth: '1px',
+    borderTopColor: 'rgb(237, 237, 237)',
+  });
+}
+
 test('open panel matches the fixed visual contract', async ({ page }) => {
   await openUserscriptScenario(page, createCancelScenario({
     ui: { tradeMode: 'OPEN' },
   }));
   await expectPrecisionReady(page);
+  await expectNativeDivider(page);
   await expectVisualContract(page, 'open-fixed.visual.json');
 });
 
@@ -36,5 +58,6 @@ test('close panel matches the disabled-state visual contract', async ({ page }) 
   await expect(panel.getByRole('radio', { name: '平多' })).toBeEnabled();
   await expect(panel.getByRole('radio', { name: '平空' })).toBeDisabled();
   await expectPrecisionReady(page);
+  await expectNativeDivider(page);
   await expectVisualContract(page, 'close-fixed.visual.json');
 });
