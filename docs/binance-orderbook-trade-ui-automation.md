@@ -136,7 +136,7 @@ test orders from count changes alone.
 
 1. Convert a defect into a failing scenario or invariant assertion.
 2. Fix the source and rebuild the generated userscript.
-3. Run L0, L1, and the affected L2 matrix.
+3. Run `npm run test:binance-orderbook-trade` and the affected L2 matrix.
 4. Review retained trace and performance artifacts for failures.
 5. Merge through a PR.
 6. Complete L3 and the affected L4 release path.

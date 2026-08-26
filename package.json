@@ -15,6 +15,7 @@
     "check:binance-orderbook-trade": "node --check scripts/binance-orderbook-trade.user.js",
     "check:m3u8-downloader": "node --check scripts/m3u8-downloader.user.js",
     "test": "node --test",
+    "test:binance-orderbook-trade": "node --test test/unit/binance-orderbook-trade/*.test.js test/dom/binance-orderbook-trade/*.test.js",
     "test:ui": "playwright test",
     "test:ui:headed": "playwright test --headed",
     "test:ui:debug": "playwright test --debug"
