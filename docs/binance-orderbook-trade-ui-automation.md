@@ -199,6 +199,63 @@ used as a reason to retain event buffers or persistent probes.
   exchange limit minus one.
 - Verify no fills, no residual test-owned orders, and restored page state after each run.
 
+Store every live run as a strict capture rather than copying timing numbers from chat:
+
+```bash
+npm run summarize:binance-orderbook-live -- /path/to/capture.json
+```
+
+The first checked-in L4 reference is the zero-order HYPEUSDT run:
+
+- `e2e/binance-orderbook/live-baselines/no-orders-2026-08-26.capture.json`
+- `e2e/binance-orderbook/live-baselines/no-orders.baseline.json`
+
+Each scenario declares its applicable wall-clock segments and contains at least three
+isolated samples. Every sample must prove restored UI state, no fills, zero residual
+test-owned orders, zero uncaught errors, and bounded long-task observations. Missing
+segments are invalid data, not zero-duration work.
+
+`testOrderLedger` is the evidence behind the fill and cleanup claims. Its `created`,
+`fills`, and `residual` collections use the same exact order identity: symbol, side,
+position side, price, quantity, and creation timestamp. A fill or residual record that
+does not match a created test order invalidates the capture. An empty ledger is valid
+for no-order and dialog-cancel scenarios; account-wide count changes never create test
+ownership.
+
+Compare a new capture with a checked-in summary without making network timing a PR
+gate by default:
+
+```bash
+npm run summarize:binance-orderbook-live -- \
+  /path/to/capture.json \
+  --compare /path/to/baseline.json
+```
+
+`--enforce` is reserved for a controlled machine and stable scenario. It fails only
+when a metric exceeds both the baseline ratio and absolute tolerance recorded in the
+baseline comparison policy. Account orders remain user-owned unless a test ledger
+proves symbol, side, price, quantity, and creation-time ownership.
+
+The baseline JSON root is the generated summary shape plus one required field:
+
+```json
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-26T08:00:00.000Z",
+  "environment": {},
+  "scenarios": [],
+  "comparisonPolicy": {
+    "absoluteToleranceMs": 50,
+    "medianRatio": 1.5,
+    "p95Ratio": 1.5
+  }
+}
+```
+
+The environment and scenarios shown as empty placeholders above must be copied from
+the validated summary output. A malformed or incomplete baseline fails validation;
+it cannot silently turn a regression into a passing comparison.
+
 ## Change Workflow
 
 1. Convert a defect into a failing scenario or invariant assertion.
