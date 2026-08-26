@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 import {
+  OTHER_SYMBOL,
   ORDER_SETS,
   POSITION_SETS,
   createCancelScenario,
@@ -164,5 +165,210 @@ test('the cancel workflow remains single-flight during rapid repeated clicks', a
   expect(state.events.filter((event) => event.type === 'dialog-opened')).toHaveLength(1);
   await page.getByRole('button', { name: '取消' }).click();
   await expectRestoredState(page, scenario);
+  expect(errors).toEqual([]);
+});
+
+for (const closeMethod of ['Escape', 'backdrop']) {
+  test(`closing the native dialog with ${closeMethod} is a cancellation and restores UI`, async ({ page }) => {
+    const scenario = createCancelScenario({
+      positions: POSITION_SETS.both,
+      orders: ORDER_SETS.both,
+      ui: {
+        hideOtherSymbols: false,
+        accountTab: 'positions',
+        openOrdersSubTab: 'conditional',
+        showOrders: true,
+      },
+    });
+    const { errors } = await openUserscriptScenario(page, scenario);
+
+    await page.getByRole('button', { name: '撤本币挂单' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    if (closeMethod === 'Escape') {
+      await page.keyboard.press('Escape');
+    } else {
+      await page.locator('.bn-modal-root').click({ position: { x: 4, y: 4 } });
+    }
+    await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();
+
+    const state = await readFixtureState(page);
+    expect(state.orders).toEqual(ORDER_SETS.both);
+    expect(state.events.filter((event) => event.type === 'cancel-requested')).toEqual([]);
+    await expectRestoredState(page, scenario);
+    expect(errors).toEqual([]);
+  });
+}
+
+test('a BFCache pagehide does not abort the active native dialog', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.current,
+    orders: ORDER_SETS.current,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+
+  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', {
+    persisted: true,
+  })));
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();
+  await expectRestoredState(page, scenario);
+  expect(errors).toEqual([]);
+});
+
+test('a real pagehide aborts dialog tracking without mutating orders', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.current,
+    orders: ORDER_SETS.current,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+
+  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', {
+    persisted: false,
+  })));
+  await expect(page.getByText('HYPEUSDT 页面已离开，撤单确认跟踪已停止')).toBeVisible();
+
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(ORDER_SETS.current);
+  expect(state.events.filter((event) => event.type === 'cancel-requested')).toEqual([]);
+  expect(state.showOrders).toBe(false);
+  expect(state.hideOtherSymbols).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('a missing native dialog stops cleanly and restores temporary UI state', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.current,
+    orders: ORDER_SETS.current,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+    host: { dialogMode: 'missing' },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+
+  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await expect(page.getByText('HYPEUSDT 未识别到撤单确认弹窗，未继续撤单流程')).toBeVisible({
+    timeout: 3_000,
+  });
+
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(ORDER_SETS.current);
+  await expectRestoredState(page, scenario);
+  expect(errors).toEqual([]);
+});
+
+for (const dialogMode of ['extraAction', 'missingPrimary']) {
+  test(`an invalid ${dialogMode} dialog contract fails explicitly and preserves recovery state`, async ({ page }) => {
+    const scenario = createCancelScenario({
+      positions: POSITION_SETS.current,
+      orders: ORDER_SETS.current,
+      ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+      host: { dialogMode },
+    });
+    const { errors } = await openUserscriptScenario(page, scenario);
+
+    await page.getByRole('button', { name: '撤本币挂单' }).click();
+    await expect(page.getByText(
+      'HYPEUSDT 撤单确认弹窗结构异常，图表当前委托保持隐藏',
+    )).toBeVisible();
+
+    const state = await readFixtureState(page);
+    expect(state.orders).toEqual(ORDER_SETS.current);
+    expect(state.showOrders).toBe(false);
+    expect(state.hideOtherSymbols).toBe(true);
+    expect(errors).toEqual([]);
+  });
+}
+
+test('a delayed confirmation keeps visible progress and clears only the current symbol', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.both,
+    orders: ORDER_SETS.both,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+    host: { clearDelayMs: 250 },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+
+  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '确认' }).click();
+  await expect(page.getByText('HYPEUSDT 已确认撤单，等待当前币挂单清空')).toBeVisible();
+  await expect(page.getByText('HYPEUSDT 撤单流程结束，已恢复筛选状态')).toBeVisible();
+
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(otherSymbolOrders(scenario));
+  await expectRestoredState(page, scenario);
+  expect(errors).toEqual([]);
+});
+
+test('dialog tracking survives React replacing the native dialog subtree', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.current,
+    orders: ORDER_SETS.current,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+    host: { dialogReplacementDelayMs: 20 },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+
+  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await expect.poll(async () => (
+    await readFixtureState(page)
+  ).events.filter((event) => event.type === 'dialog-replaced').length).toBe(1);
+  await page.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();
+
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(ORDER_SETS.current);
+  await expectRestoredState(page, scenario);
+  expect(errors).toEqual([]);
+});
+
+test('a confirmed dialog that does not clear current orders reports incomplete cancellation', async ({ page }) => {
+  test.setTimeout(15_000);
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.current,
+    orders: ORDER_SETS.current,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+    host: { clearMode: 'none' },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+
+  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await page.getByRole('button', { name: '确认' }).click();
+  await expect(page.getByText('HYPEUSDT 当前币挂单仍存在，撤单流程未完成')).toBeVisible({
+    timeout: 10_000,
+  });
+
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(ORDER_SETS.current);
+  await expectRestoredState(page, scenario);
+  expect(errors).toEqual([]);
+});
+
+test('a symbol change before the dialog decision stops the captured-symbol workflow', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.both,
+    orders: ORDER_SETS.both,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+
+  await page.getByRole('button', { name: '撤本币挂单' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.evaluate((symbol) => {
+    history.pushState({}, '', `/zh-CN/futures/${symbol}`);
+  }, OTHER_SYMBOL);
+  await expect.poll(() => page.evaluate(() => location.pathname)).toContain(OTHER_SYMBOL);
+  await page.waitForTimeout(600);
+  await page.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByText('确认撤单前交易对已变化')).toBeVisible();
+
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(ORDER_SETS.both);
+  expect(state.events.filter((event) => event.type === 'cancel-requested')).toEqual([]);
   expect(errors).toEqual([]);
 });

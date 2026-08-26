@@ -50,6 +50,9 @@ export function createCancelScenario(overrides = {}) {
     host: {
       mutationDelayMs: 0,
       clearDelayMs: 0,
+      dialogMode: 'normal',
+      dialogReplacementDelayMs: null,
+      clearMode: 'currentSymbol',
       ...overrides.host,
     },
   };
@@ -62,6 +65,19 @@ export function createCancelScenario(overrides = {}) {
   }
   if (!Array.isArray(scenario.positions) || !Array.isArray(scenario.orders)) {
     throw new Error('Scenario positions and orders must be arrays');
+  }
+  if (!['normal', 'missing', 'extraAction', 'missingPrimary'].includes(scenario.host.dialogMode)) {
+    throw new Error(`Unsupported dialog mode: ${scenario.host.dialogMode}`);
+  }
+  if (!['currentSymbol', 'none'].includes(scenario.host.clearMode)) {
+    throw new Error(`Unsupported clear mode: ${scenario.host.clearMode}`);
+  }
+  if (
+    scenario.host.dialogReplacementDelayMs !== null
+    && (!Number.isInteger(scenario.host.dialogReplacementDelayMs)
+      || scenario.host.dialogReplacementDelayMs < 0)
+  ) {
+    throw new Error('Dialog replacement delay must be a non-negative integer or null');
   }
   return scenario;
 }

@@ -161,30 +161,65 @@ export function renderBinanceFuturesFixture(scenario) {
       }
 
       function closeDialog(action) {
+        document.removeEventListener('keydown', handleDialogKeydown);
         document.querySelector('.bn-modal-root')?.remove();
         state.dialogOpen = false;
         record('dialog-closed', { action });
       }
 
-      function openCancelDialog() {
-        if (state.dialogOpen) throw new Error('Fixture opened a duplicate cancel dialog');
-        state.dialogOpen = true;
-        record('dialog-opened');
-        const root = document.createElement('div');
-        root.className = 'bn-modal-root';
-        root.innerHTML = '<div role="dialog"><div class="bn-modal-title">确定取消全部订单？</div>' +
-          '<button type="button" data-dialog-action="cancel">取消</button>' +
-          '<button type="button" class="bn-button bn-button__primary" data-dialog-action="confirm"><span>确认</span></button></div>';
-        document.body.append(root);
+      function handleDialogKeydown(event) {
+        if (event.key === 'Escape' && state.dialogOpen) closeDialog('escape');
+      }
+
+      function attachDialogHandlers(root) {
+        root.addEventListener('click', (event) => {
+          if (event.target === root) closeDialog('backdrop');
+        });
         root.querySelector('[data-dialog-action="cancel"]').addEventListener('click', () => closeDialog('cancel'));
         root.querySelector('[data-dialog-action="confirm"]').addEventListener('click', () => {
           record('cancel-requested', { symbol: scenario.currentSymbol });
           setTimeout(() => {
-            state.orders = state.orders.filter((item) => item.symbol !== scenario.currentSymbol);
+            if (scenario.host.clearMode === 'currentSymbol') {
+              state.orders = state.orders.filter((item) => item.symbol !== scenario.currentSymbol);
+            }
             closeDialog('confirm');
             renderAccountWidget();
           }, scenario.host.clearDelayMs);
         });
+      }
+
+      function openCancelDialog() {
+        if (state.dialogOpen) throw new Error('Fixture opened a duplicate cancel dialog');
+        if (scenario.host.dialogMode === 'missing') {
+          record('dialog-missing');
+          return;
+        }
+        state.dialogOpen = true;
+        record('dialog-opened');
+        const root = document.createElement('div');
+        root.className = 'bn-modal-root';
+        const primaryClass = scenario.host.dialogMode === 'missingPrimary'
+          ? ''
+          : ' class="bn-button bn-button__primary"';
+        const extraAction = scenario.host.dialogMode === 'extraAction'
+          ? '<button type="button" data-dialog-action="extra">稍后</button>'
+          : '';
+        root.innerHTML = '<div role="dialog"><div class="bn-modal-title">确定取消全部订单？</div>' +
+          '<button type="button" data-dialog-action="cancel">取消</button>' +
+          '<button type="button"' + primaryClass + ' data-dialog-action="confirm"><span>确认</span></button>' +
+          extraAction + '</div>';
+        document.body.append(root);
+        document.addEventListener('keydown', handleDialogKeydown);
+        attachDialogHandlers(root);
+        if (scenario.host.dialogReplacementDelayMs !== null) {
+          setTimeout(() => {
+            if (!state.dialogOpen || !root.isConnected) return;
+            const replacement = root.cloneNode(true);
+            root.replaceWith(replacement);
+            attachDialogHandlers(replacement);
+            record('dialog-replaced');
+          }, scenario.host.dialogReplacementDelayMs);
+        }
       }
 
       const chart = {
