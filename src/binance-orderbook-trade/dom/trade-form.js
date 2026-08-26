@@ -185,6 +185,63 @@ export function waitForTradeFormMutationState(observationRoot, readState, timeou
   });
 }
 
+/**
+ * Confirm property-based controlled-input state across consecutive paint frames.
+ * MutationObserver cannot observe React restoring an input's value property, so
+ * trade submission must read the current live inputs after React has settled.
+ */
+export function waitForTradeFormFrameState(
+  observationRoot,
+  readState,
+  timeoutMs,
+  requiredStableFrames = 2,
+) {
+  const view = observationRoot?.ownerDocument?.defaultView;
+  if (
+    !view
+    || typeof view.requestAnimationFrame !== 'function'
+    || typeof view.cancelAnimationFrame !== 'function'
+  ) {
+    throw new Error('Trade form frame scheduler is unavailable');
+  }
+  if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
+    throw new Error('requiredStableFrames must be a positive integer');
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let frameHandle = 0;
+    let timer = 0;
+    let stableFrames = 0;
+    let stableState = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (frameHandle) view.cancelAnimationFrame(frameHandle);
+      view.clearTimeout(timer);
+      resolve(value);
+    };
+    const check = () => {
+      frameHandle = 0;
+      const state = readState();
+      if (state) {
+        stableFrames += 1;
+        stableState = state;
+        if (stableFrames >= requiredStableFrames) {
+          finish(stableState);
+          return;
+        }
+      } else {
+        stableFrames = 0;
+        stableState = null;
+      }
+      frameHandle = view.requestAnimationFrame(check);
+    };
+    timer = view.setTimeout(() => finish(null), timeoutMs);
+    frameHandle = view.requestAnimationFrame(check);
+  });
+}
+
 export function isTradeModeTab(node, { panelId }) {
   if (!node?.matches?.('[role="tab"]')) return false;
   if (node.closest(`#${panelId}`)) return false;
