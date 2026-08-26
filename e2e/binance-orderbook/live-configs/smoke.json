@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "profileName": "smoke",
+  "sampleCount": 3,
+  "maxOrderCount": 3,
+  "scaleRatios": {
+    "small": 0.25,
+    "medium": 0.5,
+    "large": 1
+  }
+}

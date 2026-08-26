@@ -195,8 +195,14 @@ used as a reason to retain event buffers or persistent probes.
 
 - Hard reload the logged-in page and verify the loaded source through raw CDP.
 - Run no-order, dialog-cancel, and explicitly authorized dialog-confirm paths.
-- Run 1/20/40/120 order-scale performance samples without exceeding the current live
-  exchange limit minus one.
+- Start live financial smoke coverage with one far-from-market order and one cleanup
+  cycle. Expand to multiple order scales only when the diagnostic goal explicitly
+  requires scale evidence and the live account has sufficient capacity.
+- Run configurable small/medium/large order-scale performance samples. Derive the
+  effective counts from the internal test profile, exact rounded order notional,
+  available balance, current leverage, current-symbol order count, outstanding
+  test-owned count, and the live exchange limit minus one. These scale counts are
+  test-run inputs, not userscript UI settings or permanent product defaults.
 - Verify no fills, no residual test-owned orders, and restored page state after each run.
 
 Store every live run as a strict capture rather than copying timing numbers from chat:
@@ -223,6 +229,12 @@ Each scenario declares its applicable wall-clock segments and contains at least 
 isolated samples. Every sample must prove restored UI state, no fills, zero residual
 test-owned orders, zero uncaught errors, and bounded long-task observations. Missing
 segments are invalid data, not zero-duration work.
+
+Order-scale scenarios also persist the internal profile name, semantic scale label,
+preferred and effective target counts, and sample count. Every sample persists its
+live capacity evidence. Capacity shortfalls must skip or abort the scale explicitly;
+they must never silently relabel a smaller run as medium or large. Current leverage is
+read-only evidence for this calculation and the live runner must not change it.
 
 `testOrderLedger` is the evidence behind the fill and cleanup claims. Its `created`,
 `fills`, and `residual` collections use the same exact order identity: symbol, side,

@@ -2,7 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { validateLiveOrderCapacityEvidence } from '../e2e/binance-orderbook/helpers/live-order-scale-config.js';
+
 const REQUIRED_SAMPLE_FIELDS = [
+  'capacityEvidence',
   'testOrderLedger',
   'stateRestored',
   'noFills',
@@ -104,6 +107,63 @@ function validateOrderLedger(ledger, path) {
   }
 }
 
+function validateScenarioParameters(parameters, path) {
+  assertRecord(parameters, path);
+  if (parameters.kind === 'no-orders') {
+    assertExactKeys(parameters, ['kind'], path);
+    return parameters;
+  }
+  if (parameters.kind !== 'order-scale') {
+    throw new Error(`${path}.kind must equal no-orders or order-scale`);
+  }
+  assertExactKeys(parameters, [
+    'kind',
+    'profileName',
+    'label',
+    'preferredTargetOrderCount',
+    'effectiveTargetOrderCount',
+    'sampleCount',
+  ], path);
+  if (typeof parameters.profileName !== 'string' || parameters.profileName.length === 0) {
+    throw new Error(`${path}.profileName must be a non-empty string`);
+  }
+  if (!['small', 'medium', 'large'].includes(parameters.label)) {
+    throw new Error(`${path}.label must equal small, medium, or large`);
+  }
+  for (const field of [
+    'preferredTargetOrderCount',
+    'effectiveTargetOrderCount',
+    'sampleCount',
+  ]) {
+    if (!Number.isInteger(parameters[field]) || parameters[field] <= 0) {
+      throw new Error(`${path}.${field} must be a positive integer`);
+    }
+  }
+  if (parameters.effectiveTargetOrderCount > parameters.preferredTargetOrderCount) {
+    throw new Error(`${path}.effectiveTargetOrderCount must not exceed the preferred target`);
+  }
+  if (parameters.sampleCount < 3) throw new Error(`${path}.sampleCount must be at least 3`);
+  return parameters;
+}
+
+function validateCapacityEvidenceForScenario(evidence, parameters, ledger, path) {
+  if (parameters.kind === 'no-orders') {
+    if (evidence !== null) throw new Error(`${path} must be null for a no-orders scenario`);
+    if (ledger.created.length !== 0) throw new Error(`${path} no-orders ledger must be empty`);
+    return;
+  }
+  validateLiveOrderCapacityEvidence(evidence, path);
+  if (parameters.effectiveTargetOrderCount > evidence.maxNewOrdersBySlots) {
+    throw new Error(`${path} has insufficient order slots for the effective target`);
+  }
+  if (parameters.effectiveTargetOrderCount > evidence.maxNewOrdersByMargin) {
+    throw new Error(`${path} has insufficient margin capacity for the effective target`);
+  }
+  if (ledger.created.length !== parameters.effectiveTargetOrderCount) {
+    throw new Error(`${path} created ledger count must match the effective target`);
+  }
+}
+
 export function validateLivePerformanceCapture(capture) {
   assertRecord(capture, 'capture');
   assertExactKeys(capture, ['schemaVersion', 'capturedAt', 'environment', 'scenarios'], 'capture');
@@ -118,12 +178,13 @@ export function validateLivePerformanceCapture(capture) {
   for (const [scenarioIndex, scenario] of capture.scenarios.entries()) {
     const path = `capture.scenarios[${scenarioIndex}]`;
     assertRecord(scenario, path);
-    assertExactKeys(scenario, ['name', 'applicableSegments', 'samples'], path);
+    assertExactKeys(scenario, ['name', 'parameters', 'applicableSegments', 'samples'], path);
     if (typeof scenario.name !== 'string' || scenario.name.length === 0) {
       throw new Error(`${path}.name must be a non-empty string`);
     }
     if (names.has(scenario.name)) throw new Error(`Duplicate scenario name: ${scenario.name}`);
     names.add(scenario.name);
+    validateScenarioParameters(scenario.parameters, `${path}.parameters`);
     if (!Array.isArray(scenario.applicableSegments) || scenario.applicableSegments.length === 0) {
       throw new Error(`${path}.applicableSegments must not be empty`);
     }
@@ -138,12 +199,24 @@ export function validateLivePerformanceCapture(capture) {
     if (!Array.isArray(scenario.samples) || scenario.samples.length < 3) {
       throw new Error(`${path}.samples must contain at least three isolated samples`);
     }
+    if (
+      scenario.parameters.kind === 'order-scale'
+      && scenario.parameters.sampleCount !== scenario.samples.length
+    ) {
+      throw new Error(`${path}.parameters.sampleCount must match samples.length`);
+    }
 
     for (const [sampleIndex, sample] of scenario.samples.entries()) {
       const samplePath = `${path}.samples[${sampleIndex}]`;
       assertRecord(sample, samplePath);
       assertExactKeys(sample, ['segmentsMs', ...REQUIRED_SAMPLE_FIELDS], samplePath);
       validateOrderLedger(sample.testOrderLedger, `${samplePath}.testOrderLedger`);
+      validateCapacityEvidenceForScenario(
+        sample.capacityEvidence,
+        scenario.parameters,
+        sample.testOrderLedger,
+        `${samplePath}.capacityEvidence`,
+      );
       assertRecord(sample.segmentsMs, `${samplePath}.segmentsMs`);
       assertExactKeys(sample.segmentsMs, scenario.applicableSegments, `${samplePath}.segmentsMs`);
       for (const segment of scenario.applicableSegments) {
@@ -195,7 +268,14 @@ export function validateLivePerformanceSummary(summary, path = 'summary') {
     assertRecord(scenario, scenarioPath);
     assertExactKeys(
       scenario,
-      ['name', 'sampleCount', 'segmentsMs', 'maxLongTaskMs', 'maxLongAnimationFrameMs'],
+      [
+        'name',
+        'parameters',
+        'sampleCount',
+        'segmentsMs',
+        'maxLongTaskMs',
+        'maxLongAnimationFrameMs',
+      ],
       scenarioPath,
     );
     if (typeof scenario.name !== 'string' || scenario.name.length === 0) {
@@ -203,8 +283,15 @@ export function validateLivePerformanceSummary(summary, path = 'summary') {
     }
     if (names.has(scenario.name)) throw new Error(`Duplicate scenario name: ${scenario.name}`);
     names.add(scenario.name);
+    validateScenarioParameters(scenario.parameters, `${scenarioPath}.parameters`);
     if (!Number.isInteger(scenario.sampleCount) || scenario.sampleCount < 3) {
       throw new Error(`${scenarioPath}.sampleCount must be an integer of at least 3`);
+    }
+    if (
+      scenario.parameters.kind === 'order-scale'
+      && scenario.parameters.sampleCount !== scenario.sampleCount
+    ) {
+      throw new Error(`${scenarioPath}.parameters.sampleCount must match sampleCount`);
     }
     assertRecord(scenario.segmentsMs, `${scenarioPath}.segmentsMs`);
     if (Object.keys(scenario.segmentsMs).length === 0) {
@@ -280,6 +367,7 @@ export function summarizeLivePerformanceCapture(capture) {
     environment: capture.environment,
     scenarios: capture.scenarios.map((scenario) => Object.freeze({
       name: scenario.name,
+      parameters: structuredClone(scenario.parameters),
       sampleCount: scenario.samples.length,
       segmentsMs: Object.fromEntries(scenario.applicableSegments.map((segment) => [
         segment,
@@ -307,6 +395,16 @@ export function compareLivePerformanceSummaries(current, baseline, policy) {
     const previous = baselineScenarios.get(scenario.name);
     if (!previous) {
       findings.push({ scenario: scenario.name, metric: null, reason: 'missing-baseline' });
+      continue;
+    }
+    if (JSON.stringify(scenario.parameters) !== JSON.stringify(previous.parameters)) {
+      findings.push({
+        scenario: scenario.name,
+        metric: null,
+        reason: 'configuration-mismatch',
+        baseline: previous.parameters,
+        current: scenario.parameters,
+      });
       continue;
     }
     for (const [segment, stats] of Object.entries(scenario.segmentsMs)) {
