@@ -237,7 +237,7 @@ test('open and close ladder percentage rows share the centralized ratio label', 
 test('ladder quantity levels and step options share one stable five-slot grid', () => {
   const optionRow = source.match(/function ladderOptionRow[\s\S]*?\n  }/)?.[0] || '';
 
-  assert.match(optionRow, /grid-template-columns:48px repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(optionRow, /grid-template-columns:36px repeat\(5,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(optionRow, /flex-wrap/);
   assert.match(source, /data-ladder-value="\$\{value\}" style="box-sizing:border-box;width:100%;min-width:0;height:28px/);
   assert.equal((source.match(/ladderOptionRow\(PANEL_COPY\.field\.orderCount, PANEL_COPY\.tooltip\.orderCount, LADDER_LEVEL_OPTIONS/g) || []).length, 2);

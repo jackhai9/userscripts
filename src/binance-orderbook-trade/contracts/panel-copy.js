@@ -13,7 +13,7 @@ export const PANEL_COPY = Object.freeze({
     ratio: '比例',
     orderCount: '笔数',
     interval: '间距',
-    pricePrecision: '价格精度',
+    pricePrecision: '精度',
   }),
   action: freezeCopy({
     openLong: '阶梯开多',
@@ -35,10 +35,10 @@ export const PANEL_COPY = Object.freeze({
   }),
 });
 
-export function formatPrecisionRefreshTooltip(durationMs) {
-  const seconds = Number(durationMs) / 1000;
-  if (!Number.isInteger(seconds) || seconds <= 0) {
-    throw new Error(`Invalid precision sample duration: ${durationMs}`);
+export function formatPrecisionRefreshTooltip(tradeCount) {
+  const count = Number(tradeCount);
+  if (!Number.isInteger(count) || count <= 1) {
+    throw new Error(`Invalid precision trade count: ${tradeCount}`);
   }
-  return `根据最近 ${seconds} 秒的成交价变动，重新计算推荐的价格精度。`;
+  return `根据最新 ${count} 条成交价中的有效价格变动，重新计算推荐精度。`;
 }

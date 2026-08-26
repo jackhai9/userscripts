@@ -91,6 +91,28 @@ test('a precision shortcut selects the exact native orderbook option once', asyn
   expect(errors).toEqual([]);
 });
 
+test('precision refresh uses the visible latest trades immediately without a sampling wait', async ({ page }) => {
+  const scenario = createCancelScenario({
+    ui: { orderbookPrecision: '0.1' },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  const panel = page.locator(PANEL_SELECTOR);
+  const refresh = panel.locator('[data-orderbook-precision-refresh]');
+
+  await expect(refresh).toBeEnabled({ timeout: 8_000 });
+  await installInteractionProbe(page, '[data-orderbook-precision-refresh]');
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+  await expect(panel.locator('[data-orderbook-precision-value="0.01"]'))
+    .toHaveAttribute('aria-label', '切换价格精度到 0.01，推荐档位');
+  const probe = await finishInteractionProbe(page);
+  assertResponsiveInteraction(expect, probe);
+  expect(await page.evaluate((symbol) => JSON.parse(
+    localStorage.getItem(`jh_binance_orderbook_precision_samples_v3:${symbol}`)
+  ), scenario.currentSymbol)).toEqual(['0.01', '0.01', '0.01', '0.01', '0.01']);
+  expect(errors).toEqual([]);
+});
+
 test('starting a ladder disables every start action and exposes one stop control', async ({ page }) => {
   const scenario = createCancelScenario({
     ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },

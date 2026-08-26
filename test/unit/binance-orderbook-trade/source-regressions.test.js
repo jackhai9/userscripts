@@ -338,7 +338,7 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /data-side-selector role="radiogroup"[^>]*display:grid;grid-template-columns:54px 54px;[^>]*border-radius:6px;[^>]*overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="width:78px;flex:0 0 78px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
-  assert.match(source, /grid-template-columns:62px repeat\(4,minmax\(0,1fr\)\) 32px;align-items:center;gap:4px;height:32px;overflow:hidden/);
+  assert.match(source, /grid-template-columns:36px repeat\(4,minmax\(0,1fr\)\) 32px;align-items:center;gap:4px;height:32px;overflow:hidden/);
   assert.doesNotMatch(source, /buttonBaseStyle = `width:68px;height:24px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcut'), /height:32px[^`]*font-size:12px;line-height:30px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcutSlots'), /while \(slots\.length < ORDERBOOK_PRECISION_SHORTCUT_LIMIT\)/);
@@ -929,7 +929,9 @@ test('stable panel refreshes avoid writing unchanged text and state attributes',
 });
 
 test('orderbook precision recommendation marks one shortcut without applying it automatically', () => {
-  assert.match(source, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS = 6000/);
+  assert.match(source, /ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT = 10/);
+  assert.doesNotMatch(source, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS/);
+  assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_POLL_MS/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_DURATION_MS/);
   assert.doesNotMatch(source, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
   assert.match(source, /LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3'/);
@@ -938,32 +940,27 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(source, /data-orderbook-precision-value/);
   assert.doesNotMatch(source, /data-orderbook-precision-adjust/);
   assert.match(source, /data-orderbook-precision-refresh/);
-  assert.match(source, /orderbookPrecisionPendingRequest/);
+  assert.doesNotMatch(source, /orderbookPrecisionPendingRequest/);
+  assert.doesNotMatch(source, /orderbookPrecisionSampleTimer/);
+  assert.doesNotMatch(source, /mergePrecisionSamples/);
   assert.match(source, /orderbookPrecisionOptionsLoadAttemptedSymbol/);
 
-  const sampleBody = readFunctionBody('runOrderbookPrecisionSampleRound');
-  assert.match(sampleBody, /collectNonZeroPriceMoves/);
-  assert.match(sampleBody, /saveStoredOrderbookPrecisionSamples\(symbol,\s*newSamples\)/);
-  assert.doesNotMatch(sampleBody, /mergePrecisionSamples\(\s*readStoredOrderbookPrecisionSamples/);
-  assert.match(sampleBody, /waitForLatestTradePricesReady/);
-  assert.match(sampleBody, /ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS/);
-  assert.match(sampleBody, /getLatestTradePrices/);
-  assert.doesNotMatch(sampleBody, /getCurrentOrderbookDisplayStep/);
-  assert.doesNotMatch(sampleBody, /fallbackMovement/);
-  assert.match(sampleBody, /orderbookPrecisionPendingRequest/);
-  assert.doesNotMatch(sampleBody, /ORDERBOOK_PRECISION_SAMPLE_PAUSE_MS/);
-  assert.match(sampleBody, /orderbookPrecisionState[\s\S]*sampleEndsAt: deadline/);
-  assert.match(sampleBody, /scheduleRenderPanel\(\{ followUpMs: 1000 \}\)/);
+  const sampleBody = readFunctionBody('refreshOrderbookPrecisionSamplesNow');
+  assert.match(sampleBody, /collectNonZeroPriceMoves\(getLatestTradePrices\(ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT\)\)/);
+  assert.match(sampleBody, /saveStoredOrderbookPrecisionSamples/);
+  assert.match(sampleBody, /recommendOrderbookPrecision/);
+  assert.match(sampleBody, /status: recommendation \? 'ready' : '数据不足'/);
+  assert.doesNotMatch(sampleBody, /setTimeout|setInterval|await delay/);
+  assert.doesNotMatch(sampleBody, /getCurrentOrderbookDisplayStep|fallbackMovement/);
 
   const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
   assert.match(refreshBody, /recommendOrderbookPrecision/);
-  assert.match(refreshBody, /resolveOrderbookPrecisionSampleState/);
-  assert.match(refreshBody, /scheduled: Boolean\(orderbookPrecisionSampleTimer\)/);
+  assert.doesNotMatch(refreshBody, /resolveOrderbookPrecisionSampleState|orderbookPrecisionSampleTimer/);
   assert.match(refreshBody, /data-orderbook-precision-refresh="true"[\s\S]*disabled/);
-  assert.match(refreshBody, /const controlsBusy = busy \|\| selectionBusy/);
+  assert.match(refreshBody, /const controlsBusy = selectionBusy/);
   assert.match(refreshBody, /getOrderbookPrecisionShortcutOptions\([\s\S]*ORDERBOOK_PRECISION_SHORTCUT_LIMIT/);
   assert.match(refreshBody, /queueOrderbookPrecisionOptionsLoad\(symbol\)/);
-  assert.match(refreshBody, /formatPrecisionRefreshTooltip\(ORDERBOOK_PRECISION_MANUAL_SAMPLE_DURATION_MS\)/);
+  assert.match(refreshBody, /formatPrecisionRefreshTooltip\(ORDERBOOK_PRECISION_LATEST_TRADE_LIMIT\)/);
   const shortcutBody = readFunctionBody('renderOrderbookPrecisionShortcut');
   assert.match(shortcutBody, /const recommended = value === recommendation/);
   assert.match(shortcutBody, /position:absolute;top:3px;right:3px;width:6px;height:6px/);
@@ -981,7 +978,7 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(refreshBody, /PANEL_COPY\.field\.pricePrecision/);
   assert.match(refreshBody, /PANEL_COPY\.tooltip\.pricePrecision/);
   assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy\)/);
-  assert.match(refreshBody, /grid-template-columns:62px repeat\(4,minmax\(0,1fr\)\) 32px/);
+  assert.match(refreshBody, /grid-template-columns:36px repeat\(4,minmax\(0,1fr\)\) 32px/);
   assert.match(refreshBody, /data-orderbook-precision-refresh="true"[^`]*<svg/);
   assert.doesNotMatch(refreshBody, /data-orderbook-precision-status/);
 
@@ -1077,12 +1074,6 @@ test('orderbook precision recommendation marks one shortcut without applying it 
 
   const manualRefreshBody = readFunctionBody('refreshOrderbookPrecisionSamplesNow');
   assert.match(manualRefreshBody, /!orderbookPrecisionState\.nativeOptions\.length[\s\S]*queueOrderbookPrecisionOptionsLoad\(symbol, true\)/);
-
-  const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
-  assert.match(scheduleBody, /force = false/);
-  assert.match(scheduleBody, /if \(force\) orderbookPrecisionPendingRequest = request/);
-  assert.match(scheduleBody, /orderbookPrecisionPendingRequest = request/);
-  assert.match(scheduleBody, /durationMs/);
   assert.doesNotMatch(source, /startInitialOrderbookPrecisionSample|orderbookPrecisionInitialSampledSymbols/);
 
   const triggerBody = readFunctionBody('findOrderbookPrecisionTrigger');
@@ -1296,7 +1287,7 @@ test('single-order sizing and submission retain the captured orderbook precision
   assert.match(source, /readCurrentOrderbookPrecisionValue\(\) !== qtyPlan\.precision/);
 });
 
-test('precision shortcut selection and sampling do not commit after a symbol switch', () => {
+test('precision shortcut selection and refresh do not commit after a symbol switch', () => {
   const confirmBody = readFunctionBody('clickAndConfirmOrderbookPrecisionOption');
   assert.match(confirmBody, /!isCurrentObservedSymbol\(symbol\)/);
   assert.match(confirmBody, /readCurrentOrderbookPrecisionValue\(\) !== startPrecision/);
@@ -1313,12 +1304,8 @@ test('precision shortcut selection and sampling do not commit after a symbol swi
   assert.match(stableLoadBody, /isCurrentObservedSymbol\(symbol\)/);
   assert.match(stableLoadBody, /currentTrigger\.value === startPrecision/);
 
-  const roundBody = readFunctionBody('runOrderbookPrecisionSampleRound');
-  assert.match(roundBody, /request\.symbol/);
-  assert.doesNotMatch(roundBody, /initial/);
+  assert.doesNotMatch(source, /runOrderbookPrecisionSampleRound|scheduleOrderbookPrecisionSampleRound/);
   assert.doesNotMatch(source, /orderbookPrecisionInitialSampledSymbols|startInitialOrderbookPrecisionSample/);
-  const scheduleBody = readFunctionBody('scheduleOrderbookPrecisionSampleRound');
-  assert.match(scheduleBody, /if \(force\) orderbookPrecisionPendingRequest = request/);
 
   const clearBody = readFunctionBody('clearSymbolOwnedRuntimeState');
   assert.match(clearBody, /orderbookPrecisionOptionsLoadRequestedSymbol = null/);
