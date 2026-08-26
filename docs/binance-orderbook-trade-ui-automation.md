@@ -237,16 +237,24 @@ before driving a live path. The probe only observes; it never clicks, submits, o
 cancels an order. Arm it before the userscript action, finish it only after the final
 stable state, validate the returned snapshot, then destroy it. It has no user-decision
 deadline, dynamically reacquires the panel and portal dialog after React replacement,
-and exposes overflow counts for every bounded stream. A capture is invalid when the
+reads feedback from the dedicated `#jh-binance-ladder-status` semantic node, and
+exposes overflow counts for every bounded stream. A capture is invalid when the
 browser does not support Long Task or Long Animation Frame evidence, any stream
 overflows, or any uncaught error is observed.
+
+Pass the validated probe snapshots to
+`e2e/binance-orderbook/helpers/live-capture-builder.js`. The builder derives every
+wall-clock segment from the recorded semantic events and verifies that the dialog
+action matches the declared scenario kind. Do not manually transcribe timing values
+from console output, screenshots, or chat into a capture.
 
 The current checked-in L4 reference is the isolated zero-order HYPEUSDT run:
 
 - `e2e/binance-orderbook/live-baselines/no-orders-2026-08-27.capture.json`
 - `e2e/binance-orderbook/live-baselines/no-orders.baseline.json`
 
-Each scenario declares its applicable wall-clock segments and contains at least three
+Each scenario kind owns one exact wall-clock segment contract. A scenario cannot add,
+omit, or reorder segments independently of its kind and must contain at least three
 isolated samples. Every sample must prove restored UI state, no fills, zero residual
 test-owned orders, zero uncaught errors, and bounded long-task observations. Missing
 segments are invalid data, not zero-duration work.
@@ -274,8 +282,8 @@ read-only evidence for this calculation and the live runner must not change it.
 `fills`, and `residual` collections use the same exact order identity: symbol, side,
 position side, price, quantity, and creation timestamp. A fill or residual record that
 does not match a created test order invalidates the capture. An empty ledger is valid
-for no-order and dialog-cancel scenarios; account-wide count changes never create test
-ownership.
+only for a no-order scenario; dialog scenarios must identify every created test order.
+Account-wide count changes never create test ownership.
 
 Compare a new capture with a checked-in summary without making network timing a PR
 gate by default:

@@ -27,6 +27,24 @@ const ENVIRONMENT_FIELDS = [
 const ORDER_LEDGER_FIELDS = ['created', 'fills', 'residual'];
 const ORDER_RECORD_FIELDS = ['createdAt', 'positionSide', 'price', 'quantity', 'side', 'symbol'];
 const SUMMARY_STAT_FIELDS = ['min', 'median', 'p95', 'max'];
+const SCENARIO_SEGMENTS = Object.freeze({
+  'no-orders': Object.freeze(['clickToFirstFeedback', 'clickToFinalReady']),
+  'dialog-cancel': Object.freeze([
+    'clickToFirstFeedback',
+    'clickToDialog',
+    'decisionToFinalReady',
+  ]),
+  'dialog-confirm': Object.freeze([
+    'clickToFirstFeedback',
+    'clickToDialog',
+    'decisionToFinalReady',
+  ]),
+  'order-scale': Object.freeze([
+    'clickToFirstFeedback',
+    'clickToDialog',
+    'decisionToFinalReady',
+  ]),
+});
 
 function assertRecord(value, path) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -153,6 +171,14 @@ function validateScenarioParameters(parameters, path) {
   return parameters;
 }
 
+export function getLiveScenarioSegments(kind) {
+  const segments = SCENARIO_SEGMENTS[kind];
+  if (!segments) {
+    throw new Error(`Unsupported live scenario kind: ${kind}`);
+  }
+  return [...segments];
+}
+
 function validateCapacityEvidenceForScenario(evidence, parameters, ledger, path) {
   if (parameters.kind === 'no-orders') {
     if (evidence !== null) throw new Error(`${path} must be null for a no-orders scenario`);
@@ -208,6 +234,12 @@ export function validateLivePerformanceCapture(capture) {
       if (typeof segment !== 'string' || segment.length === 0) {
         throw new Error(`${path}.applicableSegments[${segmentIndex}] must be a non-empty string`);
       }
+    }
+    if (
+      JSON.stringify(scenario.applicableSegments)
+      !== JSON.stringify(getLiveScenarioSegments(scenario.parameters.kind))
+    ) {
+      throw new Error(`${path}.applicableSegments must match the ${scenario.parameters.kind} contract`);
     }
     if (!Array.isArray(scenario.samples) || scenario.samples.length < 3) {
       throw new Error(`${path}.samples must contain at least three isolated samples`);
