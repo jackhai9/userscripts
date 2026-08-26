@@ -62,12 +62,20 @@ Every cancel-current-symbol scenario must assert all applicable invariants:
 
 ## Performance Contract
 
-Deterministic L2 tests use hard local budgets:
+Deterministic L2 functional tests use hard user-facing budgets while retaining
+lower-level performance signals for diagnosis:
 
-- click-to-first-feedback: at most 100 ms;
-- no userscript-attributable long task above 50 ms;
+- click-to-first-feedback: at most 200 ms;
+- no observed long task or long animation frame above 200 ms;
+- every task above 50 ms remains recorded as a diagnostic signal, but it is not
+  attributed to the userscript without a supporting Long Animation Frame script
+  entry or CDP trace;
 - no unexpected movement of unrelated action controls;
 - no repeated DOM writes after the scenario reaches its final state.
+
+Dedicated performance runs use multiple isolated samples and compare median and
+p95 values with the checked-in baseline. A single un-attributed task from a shared
+headless browser is not a stable regression gate.
 
 L4 records wall-clock segments instead of using a single brittle total timeout:
 
