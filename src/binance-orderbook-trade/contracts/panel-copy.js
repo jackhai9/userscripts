@@ -13,7 +13,7 @@ export const PANEL_COPY = Object.freeze({
     ratio: '比例',
     orderCount: '笔数',
     interval: '间距',
-    pricePrecision: '价格精度',
+    pricePrecision: '精度',
   }),
   action: freezeCopy({
     openLong: '阶梯开多',
@@ -25,6 +25,10 @@ export const PANEL_COPY = Object.freeze({
     noOrders: '无挂单',
     stopLadder: '停止阶梯挂单',
   }),
+  status: freezeCopy({
+    precisionUpdated: '精度推荐已更新',
+    precisionInsufficient: '近期价格变化不足，请稍后重试',
+  }),
   tooltip: freezeCopy({
     singleOrder: '单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。',
     ladderMaker: '根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。',
@@ -35,10 +39,10 @@ export const PANEL_COPY = Object.freeze({
   }),
 });
 
-export function formatPrecisionRefreshTooltip(durationMs) {
-  const seconds = Number(durationMs) / 1000;
-  if (!Number.isInteger(seconds) || seconds <= 0) {
-    throw new Error(`Invalid precision sample duration: ${durationMs}`);
+export function formatPrecisionRefreshTooltip(tradeCount) {
+  const count = Number(tradeCount);
+  if (!Number.isInteger(count) || count <= 1) {
+    throw new Error(`Invalid precision trade count: ${tradeCount}`);
   }
-  return `根据最近 ${seconds} 秒的成交价变动，重新计算推荐的价格精度。`;
+  return `优先根据最新 ${count} 条成交价；价格变化不足时自动扩大范围，重新计算推荐精度。`;
 }

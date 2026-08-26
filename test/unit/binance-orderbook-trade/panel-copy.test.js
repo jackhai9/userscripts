@@ -20,7 +20,7 @@ test('panel copy keeps the approved labels and tooltips in one contract', () => 
       ratio: '比例',
       orderCount: '笔数',
       interval: '间距',
-      pricePrecision: '价格精度',
+      pricePrecision: '精度',
     },
     action: {
       openLong: '阶梯开多',
@@ -31,6 +31,10 @@ test('panel copy keeps the approved labels and tooltips in one contract', () => 
       cancelRunning: '撤单处理中',
       noOrders: '无挂单',
       stopLadder: '停止阶梯挂单',
+    },
+    status: {
+      precisionUpdated: '精度推荐已更新',
+      precisionInsufficient: '近期价格变化不足，请稍后重试',
     },
     tooltip: {
       singleOrder: '单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。',
@@ -43,10 +47,11 @@ test('panel copy keeps the approved labels and tooltips in one contract', () => 
   });
 });
 
-test('precision refresh tooltip describes the sampling window without calling it a minimum', () => {
+test('precision refresh tooltip describes the latest trade snapshot without calling it a minimum', () => {
   assert.equal(
-    formatPrecisionRefreshTooltip(6000),
-    '根据最近 6 秒的成交价变动，重新计算推荐的价格精度。',
+    formatPrecisionRefreshTooltip(10),
+    '优先根据最新 10 条成交价；价格变化不足时自动扩大范围，重新计算推荐精度。',
   );
-  assert.doesNotMatch(formatPrecisionRefreshTooltip(6000), /最小值/);
+  assert.doesNotMatch(formatPrecisionRefreshTooltip(10), /最小值/);
+  assert.throws(() => formatPrecisionRefreshTooltip(1), /Invalid precision trade count/);
 });

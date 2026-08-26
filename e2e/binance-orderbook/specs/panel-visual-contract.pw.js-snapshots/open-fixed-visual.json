@@ -27,7 +27,7 @@
     "ladder": {
       "rect": {
         "top": 135,
-        "width": 292,
+        "width": 312,
         "height": 263
       },
       "display": "block",
@@ -157,7 +157,7 @@
       "pressed": null,
       "rect": {
         "top": 177,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -178,7 +178,7 @@
       "pressed": null,
       "rect": {
         "top": 177,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -199,7 +199,7 @@
       "pressed": null,
       "rect": {
         "top": 177,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -220,7 +220,7 @@
       "pressed": null,
       "rect": {
         "top": 177,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -241,7 +241,7 @@
       "pressed": null,
       "rect": {
         "top": 177,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -262,7 +262,7 @@
       "pressed": null,
       "rect": {
         "top": 217,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -283,7 +283,7 @@
       "pressed": null,
       "rect": {
         "top": 217,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -304,7 +304,7 @@
       "pressed": null,
       "rect": {
         "top": 217,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -325,7 +325,7 @@
       "pressed": null,
       "rect": {
         "top": 217,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -346,7 +346,7 @@
       "pressed": null,
       "rect": {
         "top": 257,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -367,7 +367,7 @@
       "pressed": null,
       "rect": {
         "top": 257,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -388,7 +388,7 @@
       "pressed": null,
       "rect": {
         "top": 257,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -409,7 +409,7 @@
       "pressed": null,
       "rect": {
         "top": 257,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -430,7 +430,7 @@
       "pressed": null,
       "rect": {
         "top": 257,
-        "width": 44.8,
+        "width": 47.2,
         "height": 28
       },
       "style": {
@@ -451,7 +451,7 @@
       "pressed": "false",
       "rect": {
         "top": 298,
-        "width": 44.5,
+        "width": 51,
         "height": 32
       },
       "style": {
@@ -472,7 +472,7 @@
       "pressed": "false",
       "rect": {
         "top": 298,
-        "width": 44.5,
+        "width": 51,
         "height": 32
       },
       "style": {
@@ -493,7 +493,7 @@
       "pressed": "true",
       "rect": {
         "top": 298,
-        "width": 44.5,
+        "width": 51,
         "height": 32
       },
       "style": {
@@ -514,7 +514,7 @@
       "pressed": "false",
       "rect": {
         "top": 298,
-        "width": 44.5,
+        "width": 51,
         "height": 32
       },
       "style": {
@@ -594,7 +594,7 @@
   "text": {
     "mode": "单击订单簿时",
     "formula": "0.07 × 1 =0.07≥5U @ 81",
-    "precision": "价格精度0.0010.010.11",
+    "precision": "精度0.0010.010.11",
     "status": "空闲"
   }
 }
