@@ -2,6 +2,10 @@ import {
   BINANCE_PAGE_TEXT,
   includesBinancePageText,
 } from '../contracts/binance-page-text.js';
+import {
+  throwIfAborted,
+  waitForPromiseOrAbort,
+} from '../core/abort.js';
 
 const CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR =
   '[role="dialog"], [class*="modal"], [class*="Modal"]';
@@ -125,7 +129,13 @@ export function createDialogMutationSignal(document) {
   };
 }
 
-export async function waitForDialogMutationState(document, readState, timeoutMs) {
+export async function waitForDialogMutationState(
+  document,
+  readState,
+  timeoutMs,
+  abortSignal = null,
+) {
+  throwIfAborted(abortSignal);
   const currentState = readState();
   if (currentState) return currentState;
   const signal = createDialogMutationSignal(document);
@@ -134,12 +144,16 @@ export async function waitForDialogMutationState(document, readState, timeoutMs)
 
   try {
     while (true) {
+      throwIfAborted(abortSignal);
       const version = signal.version;
       const state = readState();
       if (state) return state;
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) return readState();
-      await signal.waitForChange(version, remainingMs);
+      await waitForPromiseOrAbort(
+        signal.waitForChange(version, remainingMs),
+        abortSignal,
+      );
     }
   } finally {
     signal.dispose();

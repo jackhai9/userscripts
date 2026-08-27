@@ -130,3 +130,22 @@ test('dialog mutation state resolves when React removes the dialog wrapper', asy
 
   assert.equal(await pending, 'closed');
 });
+
+test('dialog mutation state aborts immediately with the caller-provided reason', async () => {
+  const dom = loadFixtureDom(createDialogMarkup());
+  const { document } = dom.window;
+  const controller = new AbortController();
+  const reason = new Error('ladder stopped');
+  const startedAt = Date.now();
+  const pending = waitForDialogMutationState(
+    document,
+    () => null,
+    5000,
+    controller.signal,
+  );
+
+  controller.abort(reason);
+
+  await assert.rejects(pending, (error) => error === reason);
+  assert.ok(Date.now() - startedAt < 100, 'abort should not wait for the dialog deadline');
+});

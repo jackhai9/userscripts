@@ -261,6 +261,25 @@ test('mutation wait reacts when Binance updates row text in place', async () => 
   assert.ok(Date.now() - startedAt < 100, 'characterData should resolve through the observer, not timeout');
 });
 
+test('mutation wait aborts immediately with the caller-provided reason', async () => {
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const observationRoot = window.document.querySelector('#account-orders');
+  const controller = new AbortController();
+  const reason = new Error('ladder stopped');
+  const startedAt = Date.now();
+  const wait = waitForAccountOrdersMutationState(
+    observationRoot,
+    () => null,
+    5000,
+    controller.signal,
+  );
+
+  controller.abort(reason);
+
+  await assert.rejects(wait, (error) => error === reason);
+  assert.ok(Date.now() - startedAt < 100, 'abort should not wait for the mutation deadline');
+});
+
 test('account-orders mutation signal wakes once for a relevant subtree change', async () => {
   const { window } = loadFixtureDom(openOrdersHtml);
   const observationRoot = window.document.querySelector('#account-orders');

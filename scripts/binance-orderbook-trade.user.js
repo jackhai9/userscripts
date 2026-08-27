@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.133
+// @version      2.7.134
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -835,6 +835,36 @@
     );
   }
 
+  // src/binance-orderbook-trade/core/abort.js
+  function getAbortReason(signal) {
+    if (signal?.reason instanceof Error) return signal.reason;
+    const error = new Error("Operation aborted");
+    error.name = "AbortError";
+    return error;
+  }
+  function throwIfAborted(signal) {
+    if (signal?.aborted) throw getAbortReason(signal);
+  }
+  function waitForPromiseOrAbort(task, signal) {
+    if (!signal) return Promise.resolve(task);
+    throwIfAborted(signal);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        callback(value);
+      };
+      const onAbort = () => finish(reject, getAbortReason(signal));
+      signal.addEventListener("abort", onAbort, { once: true });
+      Promise.resolve(task).then(
+        (value) => finish(resolve, value),
+        (error) => finish(reject, error)
+      );
+    });
+  }
+
   // src/binance-orderbook-trade/core/order-feedback.js
   function isPotentialOrderFeedbackText(text) {
     if (!text) return false;
@@ -949,7 +979,8 @@
       }
     };
   }
-  async function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs) {
+  async function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs, abortSignal = null) {
+    throwIfAborted(abortSignal);
     const currentState = readState();
     if (currentState) return currentState;
     const signal = createAccountOrdersMutationSignal(observationRoot);
@@ -957,12 +988,16 @@
     const deadline = Date.now() + timeoutMs;
     try {
       while (true) {
+        throwIfAborted(abortSignal);
         const version = signal.version;
         const state = readState();
         if (state) return state;
         const remainingMs = deadline - Date.now();
         if (remainingMs <= 0) return readState();
-        await signal.waitForChange(version, remainingMs);
+        await waitForPromiseOrAbort(
+          signal.waitForChange(version, remainingMs),
+          abortSignal
+        );
       }
     } finally {
       signal.dispose();
@@ -1734,7 +1769,8 @@
       }
     };
   }
-  async function waitForDialogMutationState(document2, readState, timeoutMs) {
+  async function waitForDialogMutationState(document2, readState, timeoutMs, abortSignal = null) {
+    throwIfAborted(abortSignal);
     const currentState = readState();
     if (currentState) return currentState;
     const signal = createDialogMutationSignal(document2);
@@ -1742,12 +1778,16 @@
     const deadline = Date.now() + timeoutMs;
     try {
       while (true) {
+        throwIfAborted(abortSignal);
         const version = signal.version;
         const state = readState();
         if (state) return state;
         const remainingMs = deadline - Date.now();
         if (remainingMs <= 0) return readState();
-        await signal.waitForChange(version, remainingMs);
+        await waitForPromiseOrAbort(
+          signal.waitForChange(version, remainingMs),
+          abortSignal
+        );
       }
     } finally {
       signal.dispose();
@@ -1999,6 +2039,7 @@
     let tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
     let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
     let ladderTask = null;
+    let ladderAbortController = null;
     let activeLadderActionType = null;
     let activeLadderPanelContext = null;
     let cancelCurrentSymbolOpenOrdersTask = null;
@@ -2144,6 +2185,14 @@
       return new Promise((resolve) => {
         window.setTimeout(resolve, ms);
       });
+    }
+    function createLadderStoppedError() {
+      const error = new Error("已停止");
+      error.name = "LadderStoppedError";
+      return error;
+    }
+    function isLadderStoppedError(error) {
+      return error?.name === "LadderStoppedError";
     }
     function getLadderOpenPercent(symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
       return loadModeSymbolPrecisionNumberOption(
@@ -3643,7 +3692,7 @@
       const settleHint = sawBusy ? "按钮已恢复但未收到明确成功反馈" : "未观察到提交按钮状态变化";
       throw new Error(`未收到明确${label}成功反馈（${settleHint}），已停止；请核对当前委托/历史成交`);
     }
-    async function executeLadderPlan(plan) {
+    async function executeLadderPlan(plan, abortSignal = null) {
       const priceInput = findPriceInput();
       const qtyInput = findQtyInput();
       if (!priceInput || !qtyInput) throw new Error("未找到价格或数量输入框");
@@ -3651,11 +3700,13 @@
       let repriceAttempts = 0;
       let lastRepriceApiErrorCode = null;
       while (done < plan.orders.length) {
+        throwIfAborted(abortSignal);
         if (ladderStopRequested) break;
         const order = plan.orders[done];
         try {
           assertLadderExecutionContext(plan);
           if (!await ensurePostOnlyOrderType()) throw new Error("执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试");
+          throwIfAborted(abortSignal);
           assertLadderExecutionContext(plan);
           assertLadderMakerPrice(plan, order.price);
           const currentPriceInput = findPriceInput();
@@ -3665,6 +3716,7 @@
             priceLabel: "计划价",
             qtyLabel: "计划量"
           });
+          throwIfAborted(abortSignal);
           const submittedPrice = synchronizedInputs.submittedPrice;
           assertLadderExecutionContext(plan);
           assertLadderMakerPrice(plan, submittedPrice);
@@ -3676,6 +3728,7 @@
             const previousFeedback = takeOrderFeedbackSnapshot();
             const submitCaptureId = beginLadderSubmitResponseCapture();
             try {
+              throwIfAborted(abortSignal);
               button.click();
               setLadderStatus(`${plan.spec.label} ${done + 1}/${plan.orders.length} 确认中`);
               waitForTradeUiMutation({ timeoutMs: 500 });
@@ -3686,6 +3739,7 @@
                 submitCaptureId,
                 plan.spec.mode
               );
+              throwIfAborted(abortSignal);
             } finally {
               endLadderSubmitResponseCapture(submitCaptureId);
             }
@@ -3702,6 +3756,7 @@
           repriceAttempts += 1;
           setLadderStatus(`盘口已移动，刷新剩余 ${plan.orders.length - done} 档 (${repriceAttempts}/${LADDER_REPRICE_MAX_ATTEMPTS})`);
           await delay(LADDER_REPRICE_DELAY_MS);
+          throwIfAborted(abortSignal);
           if (ladderStopRequested) break;
           refreshRemainingLadderOrders(plan, done);
           continue;
@@ -3709,6 +3764,7 @@
         done++;
         setLadderStatus(`${plan.spec.label} ${done}/${plan.orders.length}`);
         await delay(LADDER_ORDER_DELAY_MS);
+        throwIfAborted(abortSignal);
       }
       return { done, repriceAttempts, lastRepriceApiErrorCode };
     }
@@ -3736,6 +3792,8 @@
         return;
       }
       ladderStopRequested = false;
+      const abortController = new AbortController();
+      ladderAbortController = abortController;
       activeLadderActionType = actionType;
       activeLadderPanelContext = {
         mode: spec.mode,
@@ -3750,7 +3808,7 @@
           done,
           repriceAttempts,
           lastRepriceApiErrorCode
-        } = await runLadderPlanWithOpenOrderReplacement(actionType);
+        } = await runLadderPlanWithOpenOrderReplacement(actionType, abortController.signal);
         return {
           plan,
           done,
@@ -3780,6 +3838,10 @@
           wasStopped ? `已停止 ${done}/${plan.orders.length}${diagnostics}` : `完成 ${done}/${plan.orders.length}${diagnostics}`
         );
       }).catch((e) => {
+        if (isLadderStoppedError(e)) {
+          if (isCurrentObservedSymbol(actionSymbol)) setLadderStatus("已停止");
+          return;
+        }
         err("Maker 阶梯执行失败:", e);
         if (!isCurrentObservedSymbol(actionSymbol)) {
           setLadderStatus("交易对已切换");
@@ -3787,6 +3849,7 @@
         }
         setLadderStatus(e?.message || "执行失败", e?.statusTitle);
       }).finally(() => {
+        if (ladderAbortController === abortController) ladderAbortController = null;
         ladderTask = null;
         activeLadderActionType = null;
         activeLadderPanelContext = null;
@@ -3802,6 +3865,9 @@
         return;
       }
       ladderStopRequested = true;
+      if (ladderAbortController && !ladderAbortController.signal.aborted) {
+        ladderAbortController.abort(createLadderStoppedError());
+      }
       setLadderStatus("停止中");
       scheduleRenderPanel();
     }
@@ -3833,19 +3899,26 @@
       const tabGroup = getAccountOrdersTabGroup2(tab);
       return tabGroup?.closest(".react-grid-item") || tabGroup?.parentElement || null;
     }
-    function waitForAccountOrdersState(readState, timeoutMs) {
+    function waitForAccountOrdersState(readState, timeoutMs, abortSignal = null) {
       const observationRoot = getAccountOrdersObservationRoot() || document.body;
-      return waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs);
+      return waitForAccountOrdersMutationState(
+        observationRoot,
+        readState,
+        timeoutMs,
+        abortSignal
+      );
     }
-    async function activateOpenOrdersTab() {
+    async function activateOpenOrdersTab(abortSignal = null) {
+      throwIfAborted(abortSignal);
       const tab = findOpenOrdersTab2();
       if (!tab) return false;
       if (tab.getAttribute("aria-selected") === "true") return true;
+      throwIfAborted(abortSignal);
       tab.click();
       const activeTab = await waitForAccountOrdersState(() => {
         const freshTab = findOpenOrdersTab2();
         return freshTab?.getAttribute("aria-selected") === "true" ? freshTab : null;
-      }, 2200);
+      }, 2200, abortSignal);
       return Boolean(activeTab);
     }
     async function restoreAccountOrdersTab(previousTabIdentity, symbol = null) {
@@ -3885,10 +3958,15 @@
     function findOpenOrdersSubTabByIdentity2(root, identity) {
       return findOpenOrdersSubTabByIdentity(root, identity, { isVisibleElement });
     }
-    async function waitForActiveOpenOrdersScope() {
-      return waitForAccountOrdersState(() => getActiveOpenOrdersScope2(), 2200);
+    async function waitForActiveOpenOrdersScope(abortSignal = null) {
+      return waitForAccountOrdersState(
+        () => getActiveOpenOrdersScope2(),
+        2200,
+        abortSignal
+      );
     }
-    async function activateOpenOrdersBasicSubTab(root) {
+    async function activateOpenOrdersBasicSubTab(root, abortSignal = null) {
+      throwIfAborted(abortSignal);
       const previousSubTabIdentity = getOpenOrdersSubTabIdentity2(findSelectedOpenOrdersSubTab2(root));
       const basicTab = findOpenOrdersBasicSubTab2(root);
       if (!basicTab) {
@@ -3900,12 +3978,13 @@
       if (basicTab.getAttribute("aria-selected") === "true") {
         return { ready: true, previousSubTabIdentity };
       }
+      throwIfAborted(abortSignal);
       basicTab.click();
       const selectedBasicTab = await waitForAccountOrdersState(() => {
         const scope = getActiveOpenOrdersScope2();
         const freshBasicTab = scope ? findOpenOrdersBasicSubTab2(scope) : null;
         return freshBasicTab?.getAttribute("aria-selected") === "true" ? freshBasicTab : null;
-      }, 2200);
+      }, 2200, abortSignal);
       return {
         ready: Boolean(selectedBasicTab),
         previousSubTabIdentity
@@ -4185,16 +4264,17 @@
       }
       return null;
     }
-    async function waitForCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
+    async function waitForCurrentSymbolOpenOrderRows(root, symbol, plan = null, abortSignal = null) {
       let state = await waitForAccountOrdersState(
         () => readCurrentSymbolOpenOrderRowsState(root, symbol, plan),
-        1600
+        1600,
+        abortSignal
       );
       if (state?.status !== "other_direction") return state?.rows || [];
       const transitioned = await waitForAccountOrdersState(() => {
         const nextState = readCurrentSymbolOpenOrderRowsState(root, symbol, plan);
         return nextState?.status !== "other_direction" ? nextState : null;
-      }, LADDER_REPLACE_ROW_SETTLE_MS);
+      }, LADDER_REPLACE_ROW_SETTLE_MS, abortSignal);
       state = transitioned || readCurrentSymbolOpenOrderRowsState(root, symbol, plan);
       return state?.rows || [];
     }
@@ -4230,9 +4310,10 @@
       }
       return null;
     }
-    async function waitForOpenOrderRowCancellationOutcome(symbol, key, previousCount, dialogsBefore) {
+    async function waitForOpenOrderRowCancellationOutcome(symbol, key, previousCount, dialogsBefore, abortSignal = null) {
       const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
       while (true) {
+        throwIfAborted(abortSignal);
         const currentOutcome = readOpenOrderRowCancellationOutcome(
           symbol,
           key,
@@ -4260,23 +4341,27 @@
             dialogsBefore
           );
           if (observedOutcome) return observedOutcome;
-          await Promise.race([
-            accountSignal.waitForChange(observedAccountVersion, remainingMs),
-            dialogSignal.waitForChange(observedDialogVersion, remainingMs)
-          ]);
+          await waitForPromiseOrAbort(
+            Promise.race([
+              accountSignal.waitForChange(observedAccountVersion, remainingMs),
+              dialogSignal.waitForChange(observedDialogVersion, remainingMs)
+            ]),
+            abortSignal
+          );
         } finally {
           accountSignal.dispose();
           dialogSignal.dispose();
         }
       }
     }
-    async function confirmOpenOrderRowKeyCountBelow(symbol, key, previousCount) {
+    async function confirmOpenOrderRowKeyCountBelow(symbol, key, previousCount, abortSignal = null) {
       const deadline = Date.now() + LADDER_REPLACE_ROW_SETTLE_MS;
       const observationRoot = getAccountOrdersObservationRoot() || document.body;
       const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
       if (!mutationSignal) throw new Error("Account-orders observer root is unavailable");
       try {
         while (true) {
+          throwIfAborted(abortSignal);
           const observedVersion = mutationSignal.version;
           if (!isCurrentObservedSymbol(symbol)) return false;
           const activeRoot = getActiveOpenOrdersScope2();
@@ -4285,19 +4370,23 @@
           }
           const remainingMs = deadline - Date.now();
           if (remainingMs <= 0) return true;
-          await mutationSignal.waitForChange(observedVersion, remainingMs);
+          await waitForPromiseOrAbort(
+            mutationSignal.waitForChange(observedVersion, remainingMs),
+            abortSignal
+          );
         }
       } finally {
         mutationSignal.dispose();
       }
     }
-    async function waitForOpenOrderRowKeyCountBelow(symbol, key, previousCount) {
+    async function waitForOpenOrderRowKeyCountBelow(symbol, key, previousCount, abortSignal = null) {
       const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
       const observationRoot = getAccountOrdersObservationRoot() || document.body;
       const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
       if (!mutationSignal) throw new Error("Account-orders observer root is unavailable");
       try {
         while (true) {
+          throwIfAborted(abortSignal);
           const observedVersion = mutationSignal.version;
           if (!isCurrentObservedSymbol(symbol)) return false;
           const activeRoot2 = getActiveOpenOrdersScope2();
@@ -4306,7 +4395,10 @@
           }
           const remainingMs = deadline - Date.now();
           if (remainingMs <= 0) break;
-          await mutationSignal.waitForChange(observedVersion, remainingMs);
+          await waitForPromiseOrAbort(
+            mutationSignal.waitForChange(observedVersion, remainingMs),
+            abortSignal
+          );
         }
       } finally {
         mutationSignal.dispose();
@@ -4314,10 +4406,11 @@
       const activeRoot = getActiveOpenOrdersScope2();
       return Boolean(activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount);
     }
-    async function cancelOpenOrderRowsForPlan(root, plan) {
+    async function cancelOpenOrderRowsForPlan(root, plan, abortSignal = null) {
       let cancelQty = "0";
       let currentRoot = root;
       while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
+        throwIfAborted(abortSignal);
         if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("逐行撤单前交易对已变化");
         const remainingQty = subtractDecimalStrings(plan.totalQty, cancelQty);
         const refreshedRoot = getActiveOpenOrdersScope2();
@@ -4338,6 +4431,7 @@
           throw new Error("当前币挂单撤单入口已失效，已停止重挂");
         }
         const dialogsBefore = new Set(getVisibleDialogs());
+        throwIfAborted(abortSignal);
         if (!clickDomTarget(row.cancelButton)) {
           throw new Error("当前币挂单撤单入口点击失败，已停止重挂");
         }
@@ -4346,7 +4440,8 @@
           plan.symbol,
           row.key,
           previousKeyCount,
-          dialogsBefore
+          dialogsBefore,
+          abortSignal
         );
         if (outcome.status === "symbol_changed") {
           throw new Error("逐行撤单时交易对已变化");
@@ -4357,24 +4452,41 @@
         if (outcome.status === "dialog_open") {
           const { dialog } = outcome;
           setLadderStatus(`${plan.symbol} 单行撤单确认弹窗已打开`);
-          const dialogClosed = await waitForDialogToClose(dialog);
+          const dialogClosed = await waitForDialogToClose(
+            dialog,
+            ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS,
+            abortSignal
+          );
           if (!dialogClosed) {
             const error = new Error(`${plan.symbol} 单行撤单确认弹窗仍未关闭，未恢复页面状态`);
             error.name = "DialogNotClosedError";
             throw error;
           }
-          if (!await waitForOpenOrderRowKeyCountBelow(plan.symbol, row.key, previousKeyCount)) {
+          if (!await waitForOpenOrderRowKeyCountBelow(
+            plan.symbol,
+            row.key,
+            previousKeyCount,
+            abortSignal
+          )) {
             throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
           }
         }
-        if (!await confirmOpenOrderRowKeyCountBelow(plan.symbol, row.key, previousKeyCount)) {
+        throwIfAborted(abortSignal);
+        if (!await confirmOpenOrderRowKeyCountBelow(
+          plan.symbol,
+          row.key,
+          previousKeyCount,
+          abortSignal
+        )) {
           throw new Error(`${plan.symbol} 当前币挂单状态不稳定，已停止重挂`);
         }
+        throwIfAborted(abortSignal);
         cancelQty = addDecimalStrings(cancelQty, row.qty);
       }
       return { ok: true, cancelQty };
     }
-    async function setHideOtherSymbolChecked(root, desiredChecked, symbol = getCurrentSymbol()) {
+    async function setHideOtherSymbolChecked(root, desiredChecked, symbol = getCurrentSymbol(), abortSignal = null) {
+      throwIfAborted(abortSignal);
       if (!isCurrentObservedSymbol(symbol)) return false;
       const checkbox = findHideOtherSymbolCheckbox(root);
       if (!checkbox) return false;
@@ -4382,16 +4494,18 @@
       if (currentChecked === desiredChecked) return true;
       if (currentChecked === null) return false;
       if (!isCurrentObservedSymbol(symbol)) return false;
+      throwIfAborted(abortSignal);
       checkbox.click();
       const updatedCheckbox = await waitForAccountOrdersState(() => {
         if (!isCurrentObservedSymbol(symbol)) return null;
         const currentRoot = getActiveOpenOrdersScope2();
         const currentCheckbox = findHideOtherSymbolCheckbox(currentRoot);
         return getCheckboxCheckedState(currentCheckbox) === desiredChecked ? currentCheckbox : null;
-      }, 1e3);
+      }, 1e3, abortSignal);
       return Boolean(updatedCheckbox) && isCurrentObservedSymbol(symbol);
     }
-    async function ensureOpenOrdersLimitedToCurrentSymbol(root, symbol) {
+    async function ensureOpenOrdersLimitedToCurrentSymbol(root, symbol, abortSignal = null) {
+      throwIfAborted(abortSignal);
       const checkbox = findHideOtherSymbolCheckbox(root);
       if (!checkbox) {
         return {
@@ -4406,7 +4520,12 @@
           originalChecked
         };
       }
-      if (!originalChecked && !await setHideOtherSymbolChecked(root, true, symbol)) {
+      if (!originalChecked && !await setHideOtherSymbolChecked(
+        root,
+        true,
+        symbol,
+        abortSignal
+      )) {
         return { ok: false, originalChecked };
       }
       const settledRoot = await waitForAccountOrdersState(() => {
@@ -4420,7 +4539,7 @@
           filterChecked: getCheckboxCheckedState(currentCheckbox),
           cancelAllAvailable: Boolean(cancelAllButton)
         }) ? currentRoot : null;
-      }, 1600);
+      }, 1600, abortSignal);
       return {
         ok: Boolean(settledRoot) && isCurrentObservedSymbol(symbol),
         originalChecked
@@ -4443,11 +4562,12 @@
       }
       return null;
     }
-    async function waitForDialogToClose(dialog, timeoutMs = ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS) {
+    async function waitForDialogToClose(dialog, timeoutMs = ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS, abortSignal = null) {
       return Boolean(await waitForDialogMutationState(
         document,
         () => !dialog.isConnected || !isVisibleElement(dialog) ? true : null,
-        timeoutMs
+        timeoutMs,
+        abortSignal
       ));
     }
     function createBinanceCancelAllDialogDecisionWatcher() {
@@ -4895,7 +5015,8 @@
       }, CANCEL_NO_ORDERS_FEEDBACK_MS);
       scheduleRenderPanel();
     }
-    async function cancelCurrentSymbolOpenOrdersForPlan(plan) {
+    async function cancelCurrentSymbolOpenOrdersForPlan(plan, abortSignal = null) {
+      throwIfAborted(abortSignal);
       const symbol = getCurrentSymbol();
       if (!isCurrentObservedSymbol(symbol) || symbol !== plan?.symbol) {
         const message = "逐行撤单前交易对已变化";
@@ -4909,45 +5030,68 @@
       let restoreTemporaryUiState = true;
       try {
         setLadderStatus(`查找 ${symbol} 当前委托`);
-        const tabReady = await activateOpenOrdersTab();
+        const tabReady = await activateOpenOrdersTab(abortSignal);
+        throwIfAborted(abortSignal);
         if (!tabReady || !isCurrentObservedSymbol(symbol)) {
           const message = "当前委托页未就绪或交易对已变化";
           setLadderStatus(message);
           return { ok: false, status: "tab_not_ready", message };
         }
-        openOrdersScope = await waitForActiveOpenOrdersScope();
+        openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
+        throwIfAborted(abortSignal);
         if (!openOrdersScope) {
           const message = "未定位到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
-        const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
-        previousOpenOrdersSubTabIdentity = basicSubTabState.previousSubTabIdentity;
+        previousOpenOrdersSubTabIdentity = getOpenOrdersSubTabIdentity2(
+          findSelectedOpenOrdersSubTab2(openOrdersScope)
+        );
+        const basicSubTabState = await activateOpenOrdersBasicSubTab(
+          openOrdersScope,
+          abortSignal
+        );
+        throwIfAborted(abortSignal);
         if (!basicSubTabState.ready) {
           const message = "未定位到当前委托基础单";
           setLadderStatus(message);
           return { ok: false, status: "basic_tab_not_ready", message };
         }
-        openOrdersScope = await waitForActiveOpenOrdersScope();
+        openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
+        throwIfAborted(abortSignal);
         if (!openOrdersScope) {
           const message = "未定位到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
-        const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
-        symbolFilterOriginalChecked = symbolFilter.originalChecked;
+        symbolFilterOriginalChecked = getCheckboxCheckedState(
+          findHideOtherSymbolCheckbox(openOrdersScope)
+        );
+        const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(
+          openOrdersScope,
+          symbol,
+          abortSignal
+        );
+        throwIfAborted(abortSignal);
         if (!symbolFilter.ok) {
           const message = "未确认只显示当前币挂单";
           setLadderStatus(message);
           return { ok: false, status: "symbol_filter_not_confirmed", message };
         }
-        openOrdersScope = await waitForActiveOpenOrdersScope();
+        openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
+        throwIfAborted(abortSignal);
         if (!openOrdersScope) {
           const message = "未定位到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
-        const rows = await waitForCurrentSymbolOpenOrderRows(openOrdersScope, symbol, plan);
+        const rows = await waitForCurrentSymbolOpenOrderRows(
+          openOrdersScope,
+          symbol,
+          plan,
+          abortSignal
+        );
+        throwIfAborted(abortSignal);
         if (!rows.length) {
           const directionLabel = getPlanDirectionLabel(plan);
           const message = `未定位到 ${symbol}${directionLabel ? ` ${directionLabel}` : ""} 当前币可逐行撤单的基础单`;
@@ -4961,10 +5105,12 @@
           return { ok: false, status: "rows_not_selected", message };
         }
         setLadderStatus(`${symbol} 撤销 ${rowsToCancel.length} 笔当前币挂单`);
-        await cancelOpenOrderRowsForPlan(openOrdersScope, plan);
+        await cancelOpenOrderRowsForPlan(openOrdersScope, plan, abortSignal);
+        throwIfAborted(abortSignal);
         setLadderStatus(`${symbol} 当前币挂单已替换，继续重挂`);
         return { ok: true, status: "rows_cleared" };
       } catch (e) {
+        if (isLadderStoppedError(e)) throw e;
         if (e?.name === "DialogNotClosedError") restoreTemporaryUiState = false;
         const message = e?.message || "当前币挂单逐行撤销失败，已停止重挂";
         setLadderStatus(message);
@@ -5022,14 +5168,16 @@
         precision: plan.precision
       };
     }
-    async function runLadderPlanWithOpenOrderReplacement(actionType) {
+    async function runLadderPlanWithOpenOrderReplacement(actionType, abortSignal = null) {
       let replacementContext = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
+        throwIfAborted(abortSignal);
         let plan = null;
         try {
           plan = await buildLadderPlan(actionType, replacementContext);
+          throwIfAborted(abortSignal);
           setLadderStatus(formatLadderPlanStatus(plan));
-          const execution = await executeLadderPlan(plan);
+          const execution = await executeLadderPlan(plan, abortSignal);
           return { plan, ...execution };
         } catch (e) {
           const replacementPlan = getReplaceableLadderOpenOrdersPlan(plan, e);
@@ -5037,7 +5185,11 @@
           assertLadderExecutionContext(replacementPlan);
           setLadderStatus(formatOpenOrdersReplacementStatus(replacementPlan));
           replacementContext = createLadderExpectedContext(replacementPlan);
-          const result = await cancelCurrentSymbolOpenOrdersForPlan(replacementPlan);
+          const result = await cancelCurrentSymbolOpenOrdersForPlan(
+            replacementPlan,
+            abortSignal
+          );
+          throwIfAborted(abortSignal);
           if (!result?.ok) throw new Error(result.message || "当前币挂单未替换，已停止重挂");
         }
       }
