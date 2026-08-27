@@ -145,9 +145,15 @@ test('trade mode and Post Only switches wait for observed state instead of fixed
 });
 
 test('trade input synchronization confirms live controlled values instead of sleeping', () => {
+  const setInputBody = readFunctionBody('setInputValueReact');
   const syncBody = readFunctionBody('syncTradeInputs');
   const executeBody = readFunctionBody('executeLadderPlan');
 
+  assert.match(setInputBody, /HTMLInputElement\.prototype/);
+  assert.match(setInputBody, /dispatchEvent\(new Event\('input'/);
+  assert.match(setInputBody, /dispatchEvent\(new Event\('change'/);
+  assert.match(setInputBody, /input\.blur\(\)/);
+  assert.doesNotMatch(setInputBody, /dispatchEvent\(new Event\('blur'/);
   assert.match(syncBody, /createTradeInputStateReader/);
   assert.match(syncBody, /createBoundedInputWriter/);
   assert.match(syncBody, /resolveInputs:\s*findTradeInputs/);
