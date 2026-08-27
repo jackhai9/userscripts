@@ -159,6 +159,10 @@ test('trade input synchronization confirms live controlled values instead of sle
   assert.equal((syncBody.match(/maxWriteAttempts,/g) || []).length, 3);
   assert.equal((syncBody.match(/isRecoveryWriteAllowed,/g) || []).length, 2);
   assert.equal((syncBody.match(/requiredStableMatchFrames:/g) || []).length, 2);
+  assert.equal(
+    (syncBody.match(/recoverProvisionalMatchRollback:\s*settleControlledForm/g) || []).length,
+    2,
+  );
   assert.match(syncBody, /settleControlledForm[\s\S]*LADDER_INPUT_SETTLE_MISMATCH_FRAMES/);
   assert.match(syncBody, /waitForTradeFormFrameState/);
   assert.match(syncBody, /includePrice:\s*false/);

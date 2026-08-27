@@ -146,9 +146,10 @@ export function createBoundedInputWriter({ writeValue, maxWriteAttempts }) {
 /**
  * Synchronize each live React input identity with a bounded post-transition budget.
  * Binance can synchronously restore a controlled input while a replacement form is
- * settling. Only an identical same-node rollback observed across consecutive frame
- * reads earns another bounded write. Callers must opt into more than one recovery
- * write and define when that recovery remains safe.
+ * settling. A caller may preserve the pre-write value as a provisional rollback
+ * contract because React can restore it after the write returns but before the
+ * first frame observation. Only an identical same-node rollback observed across
+ * consecutive frame reads earns another bounded write.
  */
 export function createTradeInputStateReader({
   resolveInputs,
@@ -161,6 +162,7 @@ export function createTradeInputStateReader({
   requiredStableMismatchFrames = 2,
   requiredStableMatchFrames = 1,
   maxWriteAttempts = 2,
+  recoverProvisionalMatchRollback = false,
   isRecoveryWriteAllowed = () => true,
 }) {
   if (
@@ -183,6 +185,9 @@ export function createTradeInputStateReader({
   }
   if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
     throw new Error('Trade input write attempts must be a positive integer');
+  }
+  if (typeof recoverProvisionalMatchRollback !== 'boolean') {
+    throw new Error('Provisional trade input recovery flag must be boolean');
   }
 
   const createSyncSlot = () => {
@@ -211,7 +216,10 @@ export function createTradeInputStateReader({
       writeCount += 1;
       const postWriteValue = normalizeValue(currentInput.value);
       const rejected = compareValues(expectedValue, postWriteValue) !== 0;
-      recoveryEligible = rejected && writeCount < maxWriteAttempts;
+      recoveryEligible = (
+        writeCount < maxWriteAttempts
+        && (rejected || recoverProvisionalMatchRollback)
+      );
       rollbackValue = rejected ? postWriteValue : submittedValue;
       stableRollbackFrames = 0;
       stableMatchFrames = 0;
