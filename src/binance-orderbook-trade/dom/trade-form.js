@@ -13,6 +13,21 @@ function isOwnPanelButton(button, panelId) {
 }
 
 const CLOSE_QUANTITY_SELECTOR = '[data-testid="max-sell-amount"], [data-testid="max-buy-amount"]';
+const TRADE_MODE_TAB_SELECTOR = [
+  '#position-direction [role="tab"][aria-selected="true"]',
+  '.bn-tabs__buySell [role="tab"][aria-selected="true"]',
+  '[role="tab"].bn-tab__buySell[aria-selected="true"]',
+].join(',');
+const TRADE_QTY_INPUT_SELECTOR = [
+  'input[id^="unitAmount-"]',
+  'input[aria-label="数量"]',
+  'input[placeholder="数量"]',
+].join(',');
+const TRADE_PRICE_INPUT_SELECTOR = [
+  'input[id^="limitPrice-"]',
+  'input[aria-label="委托价格"]',
+  'input[placeholder="委托价格"]',
+].join(',');
 
 export function parseTradeModeLabel(value) {
   if (matchesBinancePageText(value, BINANCE_PAGE_TEXT.tradeMode.OPEN)) return 'OPEN';
@@ -76,6 +91,93 @@ export function findTradeFormRoot(activeTab, qtyInput) {
     candidate = candidate.parentElement;
   }
   return null;
+}
+
+/**
+ * Resolve one coherent pair of live controlled inputs from the visible trade form.
+ * Binance can leave hidden or replaced form nodes in the document during React
+ * transitions, so global first-match selectors are not a safe submission contract.
+ */
+export function findActiveTradeInputs(ownerDocument, {
+  panelId,
+  isVisibleElement,
+  requirePrice = true,
+}) {
+  if (!ownerDocument?.querySelectorAll || typeof isVisibleElement !== 'function') return null;
+
+  const activeTabs = Array.from(ownerDocument.querySelectorAll(TRADE_MODE_TAB_SELECTOR))
+    .filter((tab) => !tab.closest(`#${panelId}`) && isVisibleElement(tab));
+  const qtyInputs = Array.from(ownerDocument.querySelectorAll(TRADE_QTY_INPUT_SELECTOR))
+    .filter((input) => !input.closest(`#${panelId}`) && isVisibleElement(input));
+  const matches = [];
+
+  for (const activeTab of activeTabs) {
+    for (const qtyInput of qtyInputs) {
+      const root = findTradeFormRoot(activeTab, qtyInput);
+      if (!root) continue;
+      const priceInputs = Array.from(root.querySelectorAll(TRADE_PRICE_INPUT_SELECTOR))
+        .filter((input) => !input.closest(`#${panelId}`) && isVisibleElement(input));
+      if (priceInputs.length > 1 || (requirePrice && priceInputs.length !== 1)) continue;
+      matches.push({ root, activeTab, priceInput: priceInputs[0] || null, qtyInput });
+    }
+  }
+
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * Synchronize each live React input identity at most once. A replacement node is
+ * a defined Binance render transition and must receive the intended value again;
+ * a value rejected by the same node remains a hard failure instead of a retry loop.
+ */
+export function createTradeInputStateReader({
+  resolveInputs,
+  expectedPrice,
+  expectedQty,
+  includePrice,
+  normalizeValue,
+  compareValues,
+  writeValue,
+}) {
+  if (
+    typeof resolveInputs !== 'function'
+    || typeof normalizeValue !== 'function'
+    || typeof compareValues !== 'function'
+    || typeof writeValue !== 'function'
+  ) {
+    throw new Error('Trade input synchronizer dependencies are invalid');
+  }
+
+  const writtenQtyInputs = new WeakSet();
+  const writtenPriceInputs = new WeakSet();
+  return () => {
+    const inputs = resolveInputs();
+    if (!inputs?.qtyInput || (includePrice && !inputs.priceInput)) return null;
+
+    const submittedQty = normalizeValue(inputs.qtyInput.value);
+    if (compareValues(expectedQty, submittedQty) !== 0) {
+      if (!writtenQtyInputs.has(inputs.qtyInput)) {
+        writtenQtyInputs.add(inputs.qtyInput);
+        writeValue(inputs.qtyInput, expectedQty);
+      }
+      return null;
+    }
+
+    if (!includePrice) {
+      return { ...inputs, submittedQty };
+    }
+
+    const submittedPrice = normalizeValue(inputs.priceInput.value);
+    if (compareValues(expectedPrice, submittedPrice) !== 0) {
+      if (!writtenPriceInputs.has(inputs.priceInput)) {
+        writtenPriceInputs.add(inputs.priceInput);
+        writeValue(inputs.priceInput, expectedPrice);
+      }
+      return null;
+    }
+
+    return { ...inputs, submittedPrice, submittedQty };
+  };
 }
 
 export function findTradePanelInsertionPoint(root) {
