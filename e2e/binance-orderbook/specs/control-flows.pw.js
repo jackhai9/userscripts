@@ -23,6 +23,14 @@ async function readRect(locator) {
   return rect;
 }
 
+async function expectStandardDisabledStyle(locator) {
+  await expect(locator).toHaveCSS('background-color', 'rgb(245, 245, 245)');
+  await expect(locator).toHaveCSS('border-color', 'rgb(213, 217, 226)');
+  await expect(locator).toHaveCSS('color', 'rgb(183, 189, 198)');
+  await expect(locator).toHaveCSS('opacity', '0.65');
+  await expect(locator).toHaveCSS('cursor', 'not-allowed');
+}
+
 test('native open and close tabs drive one stable panel direction selector', async ({ page }) => {
   const scenario = createCancelScenario({
     positions: POSITION_SETS.current,
@@ -156,31 +164,16 @@ test('starting a ladder preserves action slots and turns only the active action 
   await expect(stop).toHaveCount(0);
   const startLongRect = await readRect(startLong);
   const startShortRect = await readRect(startShort);
-  const startShortTone = await startShort.evaluate((button) => {
-    const style = getComputedStyle(button);
-    return {
-      backgroundColor: style.backgroundColor,
-      borderColor: style.borderColor,
-      color: style.color,
-    };
-  });
   const cancelRect = await readRect(cancel);
   await installInteractionProbe(page, '[data-ladder-action="OPEN_LONG"]');
   await startLong.click();
   await expect(startLong).toHaveCount(0);
   await expect(startShort).toBeDisabled();
   await expect(stop).toBeEnabled();
+  await expectStandardDisabledStyle(startShort);
   const stopRect = await readRect(stop);
   expect(stopRect).toEqual(startLongRect);
   expect(await readRect(startShort)).toEqual(startShortRect);
-  expect(await startShort.evaluate((button) => {
-    const style = getComputedStyle(button);
-    return {
-      backgroundColor: style.backgroundColor,
-      borderColor: style.borderColor,
-      color: style.color,
-    };
-  })).toEqual(startShortTone);
   expect(await readRect(cancel)).toEqual(cancelRect);
   const submissionsBeforeStop = (await readFixtureState(page)).events
     .filter((event) => event.type === 'order-submitted').length;
@@ -213,16 +206,16 @@ test('starting close short keeps unavailable close long in the standard disabled
   const closeShort = panel.getByRole('button', { name: '阶梯平空' });
 
   await expect(closeLong).toBeDisabled();
-  await expect(closeLong).not.toHaveAttribute('data-ladder-preserve-tone', 'true');
+  await expectStandardDisabledStyle(closeLong);
   await expect(closeShort).toBeEnabled();
   await closeShort.click();
   await expect(panel.getByRole('button', { name: '停止平空' })).toBeEnabled();
   await expect(closeLong).toBeDisabled();
-  await expect(closeLong).not.toHaveAttribute('data-ladder-preserve-tone', 'true');
+  await expectStandardDisabledStyle(closeLong);
   expect(errors).toEqual([]);
 });
 
-test('starting close short preserves close long tone only when a long position exists', async ({ page }) => {
+test('starting close short disables close long with the standard disabled style', async ({ page }) => {
   const scenario = createCancelScenario({
     positions: [
       { symbol: CURRENT_SYMBOL, side: 'LONG', quantity: '0.1' },
@@ -237,26 +230,10 @@ test('starting close short preserves close long tone only when a long position e
 
   await expect(closeLong).toBeEnabled();
   await expect(closeShort).toBeEnabled();
-  const closeLongTone = await closeLong.evaluate((button) => {
-    const style = getComputedStyle(button);
-    return {
-      backgroundColor: style.backgroundColor,
-      borderColor: style.borderColor,
-      color: style.color,
-    };
-  });
   await closeShort.click();
   await expect(panel.getByRole('button', { name: '停止平空' })).toBeEnabled();
   await expect(closeLong).toBeDisabled();
-  await expect(closeLong).toHaveAttribute('data-ladder-preserve-tone', 'true');
-  expect(await closeLong.evaluate((button) => {
-    const style = getComputedStyle(button);
-    return {
-      backgroundColor: style.backgroundColor,
-      borderColor: style.borderColor,
-      color: style.color,
-    };
-  })).toEqual(closeLongTone);
+  await expectStandardDisabledStyle(closeLong);
   expect(errors).toEqual([]);
 });
 
