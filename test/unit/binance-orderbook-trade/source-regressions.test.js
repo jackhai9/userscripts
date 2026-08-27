@@ -464,7 +464,8 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   const buildBody = readFunctionBody('buildLadderPlan');
   assert.match(buildBody, /const minRequiredQtyByLevel = spec\.mode === 'OPEN'/);
   assert.match(buildBody, /getQtyRuleContext\(startSymbol,\s*spec\.mode,\s*price\)\.effectiveMinQty \|\| ruleContext\.baseMinQty/);
-  assert.match(buildBody, /fitLadderPlanForMinimumQty\(\{\s*baseQty,\s*minRequiredQty,\s*minRequiredQtyByLevel,\s*percent,\s*levels,\s*stepSize: ruleContext\.stepSize,\s*maxPercent: getMaxAutoFitLadderPercent\(spec\.mode\),\s*\}\)/);
+  assert.match(buildBody, /fitLadderPlanForMinimumQty\(\{\s*baseQty,\s*minRequiredQty,\s*minRequiredQtyByLevel,\s*percent,\s*levels,\s*stepSize: ruleContext\.stepSize,\s*\}\)/);
+  assert.doesNotMatch(buildBody, /setLadderOpenPercent|setLadderLevels/);
   assert.match(buildBody, /allocation = autoFit\.allocation/);
   assert.match(buildBody, /percent = autoFit\.percent/);
   assert.match(buildBody, /minRequiredQty = autoFit\.minRequiredQty \|\| minRequiredQty/);
@@ -498,6 +499,8 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(percentBody, /formatDecimalParts\(scaledPercent,\s*2\)/);
 
   const fitBody = readFunctionBody('fitLadderPlanForMinimumQty', ladderPlanSource);
+  assert.match(ladderPlanSource, /export const MAX_AUTO_FIT_LADDER_PERCENT = '100'/);
+  assert.match(fitBody, /const maxPercent = MAX_AUTO_FIT_LADDER_PERCENT/);
   assert.match(fitBody, /getMinRequiredQtyForLevels\(minRequiredQty,\s*minRequiredQtyByLevel,\s*candidateLevels\)/);
   assert.match(fitBody, /for \(let candidateLevels = requestedLevels; candidateLevels >= 1; candidateLevels -= 1\)/);
   assert.match(fitBody, /computeMinimumLadderPercent\(baseQty,\s*candidateMinRequiredQty,\s*candidateLevels,\s*stepSize\)/);
@@ -506,9 +509,7 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(fitBody, /minRequiredQty: candidateMinRequiredQty/);
   assert.match(fitBody, /levels: candidateLevels/);
 
-  const maxBody = readFunctionBody('getMaxAutoFitLadderPercent');
-  assert.match(maxBody, /Math\.max\(\.\.\.LADDER_OPEN_PERCENTS\)/);
-  assert.match(maxBody, /100/);
+  assert.doesNotMatch(source, /getMaxAutoFitLadderPercent|Math\.max\(\.\.\.LADDER_OPEN_PERCENTS\)/);
 
   const statusBody = readFunctionBody('setLadderStatus');
   assert.match(statusBody, /statusEl\.title =/);

@@ -7,6 +7,9 @@ import {
 } from './decimal.js';
 import { allocateLadderQuantities, decimalToStepCount, formatStepCount } from './quantity.js';
 
+/** Auto-fit may use the full available quantity without changing the user's saved panel preset. */
+export const MAX_AUTO_FIT_LADDER_PERCENT = '100';
+
 const LADDER_ACTION_SPECS = {
   OPEN_LONG: {
     mode: 'OPEN',
@@ -79,10 +82,11 @@ function getMinRequiredQtyForLevels(minRequiredQty, minRequiredQtyByLevel, level
 }
 
 export function fitLadderPlanForMinimumQty(options) {
-  const { baseQty, minRequiredQty, minRequiredQtyByLevel, percent, levels, stepSize, maxPercent } = options;
+  const { baseQty, minRequiredQty, minRequiredQtyByLevel, percent, levels, stepSize } = options;
+  const maxPercent = MAX_AUTO_FIT_LADDER_PERCENT;
   const requestedLevels = Number(levels);
   let minimumPercent = null;
-  if (!maxPercent || !Number.isInteger(requestedLevels) || requestedLevels <= 0) {
+  if (!Number.isInteger(requestedLevels) || requestedLevels <= 0) {
     return { allocation: null, minimumPercent, maxPercent };
   }
 
