@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.138
+// @version      2.7.139
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3473,19 +3473,27 @@ import {
     };
 
     const recordAction = (eventTarget) => {
+      const contract = findBinanceCancelAllDialog(document, isVisibleElement);
+      if (!contract) return;
+      watcher.seenDialog = true;
+      const action = classifyBinanceCancelAllDialogAction(contract, eventTarget);
+      if (action && !watcher.action) watcher.action = action;
+    };
+    const rejectInvalidDialogAction = (event, error) => {
+      // Do not let Binance execute an action that the script can no longer classify or recover from.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      watcher.error = error;
+    };
+    const handleClick = (event) => {
       try {
-        const contract = findBinanceCancelAllDialog(document, isVisibleElement);
-        if (!contract) return;
-        watcher.seenDialog = true;
-        const action = classifyBinanceCancelAllDialogAction(contract, eventTarget);
-        if (action && !watcher.action) watcher.action = action;
+        recordAction(event.target);
       } catch (error) {
-        watcher.error = error;
+        rejectInvalidDialogAction(event, error);
       } finally {
         dialogSignal.notify();
       }
     };
-    const handleClick = (event) => recordAction(event.target);
     const handleKeydown = (event) => {
       if (event.key !== 'Escape' && event.key !== 'Enter' && event.key !== ' ') return;
       try {
@@ -3499,7 +3507,7 @@ import {
         );
         if (action && !watcher.action) watcher.action = action;
       } catch (error) {
-        watcher.error = error;
+        rejectInvalidDialogAction(event, error);
       } finally {
         dialogSignal.notify();
       }
@@ -3627,11 +3635,8 @@ import {
       tradingViewOrdersRecoveryPendingAtStartup = false;
       return { status: 'missing' };
     }
-    if (recovery.status === 'invalid' || recovery.status === 'expired') {
-      emit(
-        'ERR',
-        `图表当前委托恢复记录${recovery.status === 'invalid' ? '无效' : '已过期'}，未修改页面状态`,
-      );
+    if (recovery.status === 'invalid') {
+      emit('ERR', '图表当前委托恢复记录无效，未修改页面状态');
       clearTradingViewOrdersRecoveryRecord();
       tradingViewOrdersRecoveryPendingAtStartup = false;
       return { status: recovery.status };
@@ -3809,9 +3814,8 @@ import {
         );
       } catch (error) {
         restoreTemporaryUiState = false;
-        restoreTradingViewOrdersState = false;
         emit('ERR', '币安撤单确认弹窗结构异常', error);
-        const message = `${symbol} 撤单确认弹窗结构异常，图表当前委托保持隐藏`;
+        const message = `${symbol} 撤单确认弹窗结构异常，未执行弹窗操作`;
         setLadderStatus(message);
         return { ok: false, status: 'dialog_contract_invalid', message };
       } finally {

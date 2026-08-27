@@ -726,7 +726,7 @@ test('stopping a ladder aborts replacement waits before another cancel or submit
   assert.match(waitOutcomeBody, /waitForPromiseOrAbort\([\s\S]*abortSignal/);
 });
 
-test('bulk cancel hides TradingView orders before opening the native dialog and restores them independently', () => {
+test('bulk cancel settles hidden TradingView orders before opening the native dialog', () => {
   assert.match(tradingViewOrdersSource, /applyOverrides/);
   assert.match(tradingViewOrdersSource, /tradingProperties\.showOrders/);
   assert.doesNotMatch(source, /coalesceTradingViewDrawingSaves/);
@@ -791,6 +791,8 @@ test('bulk cancel hides TradingView orders before opening the native dialog and 
 
 test('bulk cancel distinguishes native confirm from cancellation before clear polling', () => {
   const watcherBody = readFunctionBody('createBinanceCancelAllDialogDecisionWatcher');
+  assert.match(watcherBody, /event\.preventDefault\(\)[\s\S]*event\.stopImmediatePropagation\(\)/);
+  assert.equal(watcherBody.match(/rejectInvalidDialogAction\(event, error\)/g)?.length, 2);
   assert.match(watcherBody, /document\.addEventListener\('click', handleClick, true\)/);
   assert.match(watcherBody, /document\.addEventListener\('keydown', handleKeydown, true\)/);
   assert.match(watcherBody, /findBinanceCancelAllDialog\(document, isVisibleElement\)/);
@@ -813,9 +815,15 @@ test('bulk cancel distinguishes native confirm from cancellation before clear po
   assert.ok(clickIndex < cancelledIndex && cancelledIndex < clearIndex);
   assert.match(cancelBody, /status: 'dialog_not_found'/);
   assert.match(cancelBody, /status: 'dialog_contract_invalid'/);
+  const invalidDialogBranch = cancelBody.match(
+    /catch \(error\) \{\s*restoreTemporaryUiState = false;([\s\S]*?)status: 'dialog_contract_invalid'/,
+  )?.[1] || '';
+  assert.notEqual(invalidDialogBranch, '');
+  assert.doesNotMatch(invalidDialogBranch, /restoreTradingViewOrdersState = false/);
+  assert.doesNotMatch(invalidDialogBranch, /图表当前委托保持隐藏/);
 });
 
-test('TradingView showOrders reload recovery is journaled, bounded, and retried only from startup state', () => {
+test('TradingView showOrders reload recovery remains pending until restoration succeeds', () => {
   assert.match(source, /tradingViewOrdersRecoveryPendingAtStartup =\s*sessionStorage\.getItem\(TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY\) !== null/);
 
   const hideBody = readFunctionBody('hideTradingViewOrdersForBulkCancel');
@@ -831,7 +839,8 @@ test('TradingView showOrders reload recovery is journaled, bounded, and retried 
   );
 
   const recoverBody = readFunctionBody('recoverChartOrdersStateAfterReload');
-  assert.match(recoverBody, /recovery\.status === 'invalid' \|\| recovery\.status === 'expired'/);
+  assert.match(recoverBody, /recovery\.status === 'invalid'/);
+  assert.doesNotMatch(recoverBody, /expired/);
   assert.match(recoverBody, /clearTradingViewOrdersRecoveryRecord\(\)/);
   assert.match(recoverBody, /findBinanceTradingViewTargetDom\(document\)/);
   assert.match(recoverBody, /state\.originalVisible = recovery\.record\.originalVisible/);
