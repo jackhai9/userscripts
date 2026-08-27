@@ -163,6 +163,11 @@ test('trade input synchronization confirms live controlled values instead of sle
     (syncBody.match(/recoverProvisionalMatchRollback:\s*settleControlledForm/g) || []).length,
     2,
   );
+  assert.match(
+    syncBody,
+    /\?\s*\(\{\s*rollbackValue\s*\}\)\s*=>\s*rollbackValue\s*===\s*null/,
+  );
+  assert.doesNotMatch(syncBody, /rollbackValue\s*===\s*''/);
   assert.match(syncBody, /settleControlledForm[\s\S]*LADDER_INPUT_SETTLE_MISMATCH_FRAMES/);
   assert.match(syncBody, /waitForTradeFormFrameState/);
   assert.match(syncBody, /includePrice:\s*false/);

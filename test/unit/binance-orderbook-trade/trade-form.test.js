@@ -17,6 +17,10 @@ import {
   waitForTradeFormFrameState,
   waitForTradeFormMutationState,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
+import {
+  compareDecimalStrings,
+  normalizeDecimalString,
+} from '../../../src/binance-orderbook-trade/core/decimal.js';
 import { loadFixtureDom } from '../../helpers/dom.js';
 
 const fixture = await readFile(
@@ -356,8 +360,8 @@ test('trade input synchronization performs one post-transition write after a sta
     expectedPrice: '81.9',
     expectedQty: '0.01',
     includePrice: true,
-    normalizeValue: String,
-    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
     writeValue: (input, value) => {
       writes.push({ input, value });
       if (input === currentInputs.qtyInput) {
@@ -395,8 +399,8 @@ test('trade input synchronization can settle a ladder input after repeated stabl
     resolveInputs: () => currentInputs,
     expectedQty: '0.02',
     includePrice: false,
-    normalizeValue: String,
-    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
     writeValue: (input, value) => {
       writes.push({ input, value });
       qtyWrites += 1;
@@ -405,7 +409,7 @@ test('trade input synchronization can settle a ladder input after repeated stabl
     requiredStableMismatchFrames: 2,
     maxWriteAttempts: 5,
     isRecoveryWriteAllowed: ({ currentInput, rollbackValue }) => (
-      currentInput === currentInputs.qtyInput && rollbackValue === ''
+      currentInput === currentInputs.qtyInput && rollbackValue === null
     ),
   });
 
@@ -432,8 +436,8 @@ test('trade input synchronization recovers a provisional match rolled back befor
     resolveInputs: () => currentInputs,
     expectedQty: '0.07',
     includePrice: false,
-    normalizeValue: String,
-    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
     writeValue: (input, value) => {
       writes.push({ input, value });
       input.value = value;
@@ -442,7 +446,7 @@ test('trade input synchronization recovers a provisional match rolled back befor
     requiredStableMatchFrames: 2,
     maxWriteAttempts: 5,
     recoverProvisionalMatchRollback: true,
-    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === '',
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === null,
   });
 
   assert.equal(readState(), null);
@@ -468,8 +472,8 @@ test('trade input synchronization cancels provisional recovery for a different n
     resolveInputs: () => currentInputs,
     expectedQty: '0.07',
     includePrice: false,
-    normalizeValue: String,
-    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
     writeValue: (input, value) => {
       writes.push({ input, value });
       input.value = value;
@@ -478,7 +482,7 @@ test('trade input synchronization cancels provisional recovery for a different n
     requiredStableMatchFrames: 2,
     maxWriteAttempts: 5,
     recoverProvisionalMatchRollback: true,
-    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === '',
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === null,
   });
 
   assert.equal(readState(), null);
@@ -501,8 +505,8 @@ test('trade input synchronization rejects a provisionally accepted value that ro
     resolveInputs: () => currentInputs,
     expectedQty: '0.19',
     includePrice: false,
-    normalizeValue: String,
-    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
     writeValue: (input, value) => {
       writes.push({ input, value });
       input.value = value;
@@ -510,7 +514,7 @@ test('trade input synchronization rejects a provisionally accepted value that ro
     requiredStableMismatchFrames: 2,
     requiredStableMatchFrames: 3,
     maxWriteAttempts: 5,
-    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === '',
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === null,
   });
 
   assert.equal(readState(), null);
@@ -557,8 +561,8 @@ test('trade input synchronization remains fail-closed after the post-transition 
     resolveInputs: () => currentInputs,
     expectedQty: '0.01',
     includePrice: false,
-    normalizeValue: String,
-    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
     writeValue: (input, value) => {
       writes.push({ input, value });
       input.value = '';
@@ -584,15 +588,15 @@ test('trade input synchronization never exceeds an expanded write-attempt budget
     resolveInputs: () => currentInputs,
     expectedQty: '0.02',
     includePrice: false,
-    normalizeValue: String,
-    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
     writeValue: (input, value) => {
       writes.push({ input, value });
       input.value = '';
     },
     requiredStableMismatchFrames: 1,
     maxWriteAttempts: 3,
-    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === '',
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === null,
   });
 
   for (let frame = 0; frame < 10; frame += 1) {
