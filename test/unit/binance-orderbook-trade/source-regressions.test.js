@@ -149,12 +149,17 @@ test('trade input synchronization confirms live controlled values instead of sle
   const executeBody = readFunctionBody('executeLadderPlan');
 
   assert.match(syncBody, /createTradeInputStateReader/);
+  assert.match(syncBody, /createBoundedInputWriter/);
   assert.match(syncBody, /resolveInputs:\s*findTradeInputs/);
-  assert.match(syncBody, /writeValue:\s*setInputValueReact/);
+  assert.equal((syncBody.match(/writeValue:\s*writeTradeInputValue/g) || []).length, 2);
   assert.equal(
-    (syncBody.match(/requiredStableMismatchFrames:\s*TRADE_INPUT_SYNC_STABLE_FRAMES/g) || []).length,
+    (syncBody.match(/requiredStableMismatchFrames:\s*stableMismatchFrames/g) || []).length,
     2,
   );
+  assert.equal((syncBody.match(/maxWriteAttempts,/g) || []).length, 3);
+  assert.equal((syncBody.match(/isRecoveryWriteAllowed,/g) || []).length, 2);
+  assert.equal((syncBody.match(/requiredStableMatchFrames:/g) || []).length, 2);
+  assert.match(syncBody, /settleControlledForm[\s\S]*LADDER_INPUT_SETTLE_MISMATCH_FRAMES/);
   assert.match(syncBody, /waitForTradeFormFrameState/);
   assert.match(syncBody, /includePrice:\s*false/);
   assert.match(syncBody, /includePrice:\s*true/);
@@ -164,9 +169,11 @@ test('trade input synchronization confirms live controlled values instead of sle
   assert.match(syncBody, /assertSubmittedPriceMatchesExpectedPrice/);
   assert.match(syncBody, /assertSubmittedQtyMatchesExpectedQty/);
   assert.doesNotMatch(syncBody, /delay\(/);
-  assert.match(executeBody, /syncTradeInputs\(order\.price,\s*order\.qty,\s*\{[\s\S]*priceLabel:\s*'计划价'/);
+  assert.match(executeBody, /syncTradeInputs\(order\.price,\s*order\.qty,\s*\{[\s\S]*priceLabel:\s*'计划价'[\s\S]*settleControlledForm:\s*true/);
   assert.doesNotMatch(executeBody, /await delay\(90\)|await delay\(120\)/);
-  assert.match(source, /syncTradeInputs\(clickedPrice,\s*qtyPlan\.qty,\s*\{[\s\S]*priceLabel:\s*'点击价'/);
+  const clickSyncCall = source.match(/syncTradeInputs\(clickedPrice,\s*qtyPlan\.qty,\s*\{[\s\S]*?\}\);/)?.[0] || '';
+  assert.match(clickSyncCall, /priceLabel:\s*'点击价'/);
+  assert.doesNotMatch(clickSyncCall, /settleControlledForm/);
 });
 
 test('labeled quantity matching resets its global regexp for every DOM node', () => {
