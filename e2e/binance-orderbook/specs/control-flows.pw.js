@@ -1,6 +1,7 @@
 import { test, expect } from '../test.js';
 
 import {
+  CURRENT_SYMBOL,
   POSITION_SETS,
   createCancelScenario,
 } from '../scenarios/cancel-current-symbol.js';
@@ -148,7 +149,7 @@ test('starting a ladder preserves action slots and turns only the active action 
   const startLong = panel.getByRole('button', { name: '阶梯开多' });
   const startShort = panel.getByRole('button', { name: '阶梯开空' });
   const cancel = panel.getByRole('button', { name: '撤单' });
-  const stop = panel.getByRole('button', { name: '停止阶梯挂单' });
+  const stop = panel.getByRole('button', { name: '停止开多' });
 
   await expect(startLong).toBeEnabled();
   await expect(startShort).toBeEnabled();
@@ -201,6 +202,64 @@ test('starting a ladder preserves action slots and turns only the active action 
   expect(errors).toEqual([]);
 });
 
+test('starting close short keeps unavailable close long in the standard disabled style', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: [{ symbol: CURRENT_SYMBOL, side: 'SHORT', quantity: '0.1' }],
+    ui: { tradeMode: 'CLOSE', orderbookPrecision: '0.1' },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  const panel = page.locator(PANEL_SELECTOR);
+  const closeLong = panel.getByRole('button', { name: '阶梯平多' });
+  const closeShort = panel.getByRole('button', { name: '阶梯平空' });
+
+  await expect(closeLong).toBeDisabled();
+  await expect(closeLong).not.toHaveAttribute('data-ladder-preserve-tone', 'true');
+  await expect(closeShort).toBeEnabled();
+  await closeShort.click();
+  await expect(panel.getByRole('button', { name: '停止平空' })).toBeEnabled();
+  await expect(closeLong).toBeDisabled();
+  await expect(closeLong).not.toHaveAttribute('data-ladder-preserve-tone', 'true');
+  expect(errors).toEqual([]);
+});
+
+test('starting close short preserves close long tone only when a long position exists', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: [
+      { symbol: CURRENT_SYMBOL, side: 'LONG', quantity: '0.1' },
+      { symbol: CURRENT_SYMBOL, side: 'SHORT', quantity: '0.1' },
+    ],
+    ui: { tradeMode: 'CLOSE', orderbookPrecision: '0.1' },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  const panel = page.locator(PANEL_SELECTOR);
+  const closeLong = panel.getByRole('button', { name: '阶梯平多' });
+  const closeShort = panel.getByRole('button', { name: '阶梯平空' });
+
+  await expect(closeLong).toBeEnabled();
+  await expect(closeShort).toBeEnabled();
+  const closeLongTone = await closeLong.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderColor: style.borderColor,
+      color: style.color,
+    };
+  });
+  await closeShort.click();
+  await expect(panel.getByRole('button', { name: '停止平空' })).toBeEnabled();
+  await expect(closeLong).toBeDisabled();
+  await expect(closeLong).toHaveAttribute('data-ladder-preserve-tone', 'true');
+  expect(await closeLong.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderColor: style.borderColor,
+      color: style.color,
+    };
+  })).toEqual(closeLongTone);
+  expect(errors).toEqual([]);
+});
+
 test('a complete ladder submits the planned five native orders and restores controls', async ({ page }) => {
   test.setTimeout(15_000);
   const scenario = createCancelScenario({
@@ -209,7 +268,7 @@ test('a complete ladder submits the planned five native orders and restores cont
   const { errors } = await openUserscriptScenario(page, scenario);
   const panel = page.locator(PANEL_SELECTOR);
   const startLong = panel.getByRole('button', { name: '阶梯开多' });
-  const stop = panel.getByRole('button', { name: '停止阶梯挂单' });
+  const stop = panel.getByRole('button', { name: '停止开多' });
 
   await startLong.click();
   await expect(panel.locator('#jh-binance-ladder-status')).toContainText('完成 5/5', {

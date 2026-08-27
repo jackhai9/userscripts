@@ -246,8 +246,8 @@ test('ladder quantity levels and step options share one stable five-slot grid', 
 });
 
 test('close ladder buttons match the Binance native long-short order', () => {
-  const closeLongButton = "ladderExecutionButton('CLOSE_LONG', PANEL_COPY.action.closeLong, 'SELL', closeLongDisabled)";
-  const closeShortButton = "ladderExecutionButton('CLOSE_SHORT', PANEL_COPY.action.closeShort, 'BUY', closeShortDisabled)";
+  const closeLongButton = "'CLOSE_LONG',\n          PANEL_COPY.action.closeLong,\n          'SELL',\n          closeLongDisabled,\n          Boolean(closeContext?.knowsLong && closeContext?.hasLong)";
+  const closeShortButton = "'CLOSE_SHORT',\n          PANEL_COPY.action.closeShort,\n          'BUY',\n          closeShortDisabled,\n          Boolean(closeContext?.knowsShort && closeContext?.hasShort)";
 
   assert.notEqual(source.indexOf(closeLongButton), -1);
   assert.notEqual(source.indexOf(closeShortButton), -1);
