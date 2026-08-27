@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  TRADINGVIEW_ORDERS_RECOVERY_MAX_AGE_MS,
   createTradingViewOrdersRecoveryRecord,
   parseTradingViewOrdersRecoveryRecord,
 } from '../../../src/binance-orderbook-trade/core/tradingview-orders-recovery.js';
@@ -20,7 +19,7 @@ test('creates and parses an exact TradingView orders reload recovery record', ()
   });
 });
 
-test('distinguishes missing, invalid, future, and expired recovery records', () => {
+test('distinguishes missing, invalid, and future recovery records', () => {
   assert.deepEqual(parseTradingViewOrdersRecoveryRecord(null, 2_000), {
     status: 'missing',
     record: null,
@@ -45,14 +44,16 @@ test('distinguishes missing, invalid, future, and expired recovery records', () 
     status: 'invalid',
     record: null,
   });
+});
 
-  const expiredRecord = { version: 1, originalVisible: true, createdAtMs: 1_000 };
+test('valid recovery records do not expire before the hidden chart state is restored', () => {
+  const oldRecord = { version: 1, originalVisible: true, createdAtMs: 1_000 };
   assert.deepEqual(parseTradingViewOrdersRecoveryRecord(
-    JSON.stringify(expiredRecord),
-    1_000 + TRADINGVIEW_ORDERS_RECOVERY_MAX_AGE_MS + 1,
+    JSON.stringify(oldRecord),
+    1_000 + (365 * 24 * 60 * 60 * 1000),
   ), {
-    status: 'expired',
-    record: expiredRecord,
+    status: 'valid',
+    record: oldRecord,
   });
 });
 

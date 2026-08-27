@@ -1,6 +1,5 @@
 export const TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY =
   'binance-orderbook-trade:tradingview-orders-recovery:v1';
-export const TRADINGVIEW_ORDERS_RECOVERY_MAX_AGE_MS = 10 * 60 * 1000;
 
 export function createTradingViewOrdersRecoveryRecord(nowMs) {
   if (!Number.isFinite(nowMs)) throw new Error('Chart orders recovery timestamp is invalid');
@@ -26,9 +25,6 @@ export function parseTradingViewOrdersRecoveryRecord(rawValue, nowMs) {
     || record.createdAtMs > nowMs
   ) {
     return { status: 'invalid', record: null };
-  }
-  if (nowMs - record.createdAtMs > TRADINGVIEW_ORDERS_RECOVERY_MAX_AGE_MS) {
-    return { status: 'expired', record };
   }
   return { status: 'valid', record };
 }

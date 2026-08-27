@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.138
+// @version      2.7.139
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1682,7 +1682,6 @@
 
   // src/binance-orderbook-trade/core/tradingview-orders-recovery.js
   var TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY = "binance-orderbook-trade:tradingview-orders-recovery:v1";
-  var TRADINGVIEW_ORDERS_RECOVERY_MAX_AGE_MS = 10 * 60 * 1e3;
   function createTradingViewOrdersRecoveryRecord(nowMs) {
     if (!Number.isFinite(nowMs)) throw new Error("Chart orders recovery timestamp is invalid");
     return JSON.stringify({ version: 1, originalVisible: true, createdAtMs: nowMs });
@@ -1699,9 +1698,6 @@
     const keys = record && typeof record === "object" ? Object.keys(record).sort() : [];
     if (keys.join(",") !== "createdAtMs,originalVisible,version" || record.version !== 1 || record.originalVisible !== true || !Number.isFinite(record.createdAtMs) || record.createdAtMs > nowMs) {
       return { status: "invalid", record: null };
-    }
-    if (nowMs - record.createdAtMs > TRADINGVIEW_ORDERS_RECOVERY_MAX_AGE_MS) {
-      return { status: "expired", record };
     }
     return { status: "valid", record };
   }
@@ -4721,19 +4717,26 @@
         dialogSignal
       };
       const recordAction = (eventTarget) => {
+        const contract = findBinanceCancelAllDialog(document, isVisibleElement);
+        if (!contract) return;
+        watcher.seenDialog = true;
+        const action = classifyBinanceCancelAllDialogAction(contract, eventTarget);
+        if (action && !watcher.action) watcher.action = action;
+      };
+      const rejectInvalidDialogAction = (event, error) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        watcher.error = error;
+      };
+      const handleClick = (event) => {
         try {
-          const contract = findBinanceCancelAllDialog(document, isVisibleElement);
-          if (!contract) return;
-          watcher.seenDialog = true;
-          const action = classifyBinanceCancelAllDialogAction(contract, eventTarget);
-          if (action && !watcher.action) watcher.action = action;
+          recordAction(event.target);
         } catch (error) {
-          watcher.error = error;
+          rejectInvalidDialogAction(event, error);
         } finally {
           dialogSignal.notify();
         }
       };
-      const handleClick = (event) => recordAction(event.target);
       const handleKeydown = (event) => {
         if (event.key !== "Escape" && event.key !== "Enter" && event.key !== " ") return;
         try {
@@ -4747,7 +4750,7 @@
           );
           if (action && !watcher.action) watcher.action = action;
         } catch (error) {
-          watcher.error = error;
+          rejectInvalidDialogAction(event, error);
         } finally {
           dialogSignal.notify();
         }
@@ -4858,11 +4861,8 @@
         tradingViewOrdersRecoveryPendingAtStartup = false;
         return { status: "missing" };
       }
-      if (recovery.status === "invalid" || recovery.status === "expired") {
-        emit(
-          "ERR",
-          `图表当前委托恢复记录${recovery.status === "invalid" ? "无效" : "已过期"}，未修改页面状态`
-        );
+      if (recovery.status === "invalid") {
+        emit("ERR", "图表当前委托恢复记录无效，未修改页面状态");
         clearTradingViewOrdersRecoveryRecord();
         tradingViewOrdersRecoveryPendingAtStartup = false;
         return { status: recovery.status };
@@ -5021,9 +5021,8 @@
           );
         } catch (error) {
           restoreTemporaryUiState = false;
-          restoreTradingViewOrdersState = false;
           emit("ERR", "币安撤单确认弹窗结构异常", error);
-          const message = `${symbol} 撤单确认弹窗结构异常，图表当前委托保持隐藏`;
+          const message = `${symbol} 撤单确认弹窗结构异常，未执行弹窗操作`;
           setLadderStatus(message);
           return { ok: false, status: "dialog_contract_invalid", message };
         } finally {
