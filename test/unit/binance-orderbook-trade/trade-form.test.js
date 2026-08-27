@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 import {
   calculateFloatingPanelLayout,
+  createBoundedInputWriter,
   createTradeInputStateReader,
   findActiveTradeInputs,
   findTradeFormRoot,
@@ -382,6 +383,100 @@ test('trade input synchronization performs one post-transition write after a sta
   assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.01', '81.9']);
 });
 
+test('trade input synchronization can settle a ladder input after repeated stable same-node rollbacks', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  let qtyWrites = 0;
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.02',
+    includePrice: false,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      qtyWrites += 1;
+      input.value = qtyWrites < 3 ? '' : value;
+    },
+    requiredStableMismatchFrames: 2,
+    maxWriteAttempts: 5,
+    isRecoveryWriteAllowed: ({ currentInput, rollbackValue }) => (
+      currentInput === currentInputs.qtyInput && rollbackValue === ''
+    ),
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedQty: '0.02',
+  });
+  assert.deepEqual(writes.map(({ value }) => value), ['0.02', '0.02', '0.02']);
+});
+
+test('trade input synchronization rejects a provisionally accepted value that rolls back before settling', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.19',
+    includePrice: false,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = value;
+    },
+    requiredStableMismatchFrames: 2,
+    requiredStableMatchFrames: 3,
+    maxWriteAttempts: 5,
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === '',
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  currentInputs.qtyInput.value = '';
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedQty: '0.19',
+  });
+  assert.deepEqual(writes.map(({ value }) => value), ['0.19', '0.19']);
+});
+
+test('bounded input writer shares one total budget for each input identity', () => {
+  const writes = [];
+  const writeValue = createBoundedInputWriter({
+    writeValue: (input, value) => writes.push({ input, value }),
+    maxWriteAttempts: 3,
+  });
+  const input = {};
+  const replacement = {};
+
+  assert.equal(writeValue(input, '0.01'), true);
+  assert.equal(writeValue(input, '0.02'), true);
+  assert.equal(writeValue(input, '0.03'), true);
+  assert.equal(writeValue(input, '0.04'), false);
+  assert.equal(writeValue(input, '0.05'), false);
+  assert.equal(writeValue(replacement, '0.06'), true);
+  assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.02', '0.03', '0.06']);
+});
+
 test('trade input synchronization remains fail-closed after the post-transition write is rejected', () => {
   const currentInputs = {
     root: {},
@@ -409,6 +504,34 @@ test('trade input synchronization remains fail-closed after the post-transition 
   assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.01']);
 });
 
+test('trade input synchronization never exceeds an expanded write-attempt budget', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.02',
+    includePrice: false,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = '';
+    },
+    requiredStableMismatchFrames: 1,
+    maxWriteAttempts: 3,
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === '',
+  });
+
+  for (let frame = 0; frame < 10; frame += 1) {
+    assert.equal(readState(), null);
+  }
+  assert.deepEqual(writes.map(({ value }) => value), ['0.02', '0.02', '0.02']);
+});
+
 test('trade input synchronization rejects an invalid rollback stability contract', () => {
   assert.throws(
     () => createTradeInputStateReader({
@@ -422,6 +545,58 @@ test('trade input synchronization rejects an invalid rollback stability contract
     }),
     /Trade input rollback stability must be a positive integer/,
   );
+  assert.throws(
+    () => createTradeInputStateReader({
+      resolveInputs: () => null,
+      expectedQty: '0.01',
+      includePrice: false,
+      normalizeValue: String,
+      compareValues: () => 1,
+      writeValue: () => {},
+      maxWriteAttempts: 0,
+    }),
+    /Trade input write attempts must be a positive integer/,
+  );
+  assert.throws(
+    () => createTradeInputStateReader({
+      resolveInputs: () => null,
+      expectedQty: '0.01',
+      includePrice: false,
+      normalizeValue: String,
+      compareValues: () => 1,
+      writeValue: () => {},
+      requiredStableMatchFrames: 0,
+    }),
+    /Trade input accepted stability must be a positive integer/,
+  );
+});
+
+test('trade input synchronization stops when the recovery policy rejects the rollback', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.02',
+    includePrice: false,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = '';
+    },
+    maxWriteAttempts: 5,
+    isRecoveryWriteAllowed: () => false,
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(writes.map(({ value }) => value), ['0.02']);
 });
 
 test('trade input synchronization cancels the post-transition write when the rollback value changes', () => {

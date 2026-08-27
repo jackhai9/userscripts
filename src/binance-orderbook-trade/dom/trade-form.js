@@ -125,11 +125,30 @@ export function findActiveTradeInputs(ownerDocument, {
   return matches.length === 1 ? matches[0] : null;
 }
 
+export function createBoundedInputWriter({ writeValue, maxWriteAttempts }) {
+  if (typeof writeValue !== 'function') {
+    throw new Error('Bounded input writer dependency is invalid');
+  }
+  if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
+    throw new Error('Trade input write attempts must be a positive integer');
+  }
+
+  const attemptsByInput = new WeakMap();
+  return (input, value) => {
+    const attempts = attemptsByInput.get(input) || 0;
+    if (attempts >= maxWriteAttempts) return false;
+    attemptsByInput.set(input, attempts + 1);
+    writeValue(input, value);
+    return true;
+  };
+}
+
 /**
- * Synchronize each live React input identity with one bounded post-transition write.
+ * Synchronize each live React input identity with a bounded post-transition budget.
  * Binance can synchronously restore a controlled input while a replacement form is
  * settling. Only an identical same-node rollback observed across consecutive frame
- * reads earns one final write; a second rejection remains a hard failure.
+ * reads earns another bounded write. Callers must opt into more than one recovery
+ * write and define when that recovery remains safe.
  */
 export function createTradeInputStateReader({
   resolveInputs,
@@ -140,12 +159,16 @@ export function createTradeInputStateReader({
   compareValues,
   writeValue,
   requiredStableMismatchFrames = 2,
+  requiredStableMatchFrames = 1,
+  maxWriteAttempts = 2,
+  isRecoveryWriteAllowed = () => true,
 }) {
   if (
     typeof resolveInputs !== 'function'
     || typeof normalizeValue !== 'function'
     || typeof compareValues !== 'function'
     || typeof writeValue !== 'function'
+    || typeof isRecoveryWriteAllowed !== 'function'
   ) {
     throw new Error('Trade input synchronizer dependencies are invalid');
   }
@@ -155,6 +178,12 @@ export function createTradeInputStateReader({
   ) {
     throw new Error('Trade input rollback stability must be a positive integer');
   }
+  if (!Number.isInteger(requiredStableMatchFrames) || requiredStableMatchFrames < 1) {
+    throw new Error('Trade input accepted stability must be a positive integer');
+  }
+  if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
+    throw new Error('Trade input write attempts must be a positive integer');
+  }
 
   const createSyncSlot = () => {
     let root = null;
@@ -163,6 +192,30 @@ export function createTradeInputStateReader({
     let rollbackValue = null;
     let recoveryEligible = false;
     let stableRollbackFrames = 0;
+    let stableMatchFrames = 0;
+
+    const clearRecovery = () => {
+      rollbackValue = null;
+      recoveryEligible = false;
+      stableRollbackFrames = 0;
+    };
+
+    const writeExpectedValue = (currentInput, expectedValue, submittedValue) => {
+      const wrote = writeValue(currentInput, expectedValue);
+      if (wrote === false) {
+        writeCount = maxWriteAttempts;
+        clearRecovery();
+        stableMatchFrames = 0;
+        return;
+      }
+      writeCount += 1;
+      const postWriteValue = normalizeValue(currentInput.value);
+      const rejected = compareValues(expectedValue, postWriteValue) !== 0;
+      recoveryEligible = rejected && writeCount < maxWriteAttempts;
+      rollbackValue = rejected ? postWriteValue : submittedValue;
+      stableRollbackFrames = 0;
+      stableMatchFrames = 0;
+    };
 
     return ({
       currentRoot,
@@ -175,44 +228,53 @@ export function createTradeInputStateReader({
         root = currentRoot;
         input = currentInput;
         writeCount = 0;
-        rollbackValue = null;
-        recoveryEligible = false;
-        stableRollbackFrames = 0;
+        clearRecovery();
+        stableMatchFrames = 0;
       }
 
       if (matchesExpected) {
-        rollbackValue = null;
         recoveryEligible = false;
         stableRollbackFrames = 0;
-        return;
+        stableMatchFrames += 1;
+        return stableMatchFrames >= requiredStableMatchFrames;
+      }
+
+      if (stableMatchFrames > 0) {
+        stableMatchFrames = 0;
+        recoveryEligible = (
+          rollbackValue === submittedValue
+          && writeCount < maxWriteAttempts
+        );
+        stableRollbackFrames = 0;
+        if (!recoveryEligible) clearRecovery();
       }
 
       if (writeCount === 0) {
-        writeCount = 1;
-        writeValue(currentInput, expectedValue);
-        const postWriteValue = normalizeValue(currentInput.value);
-        recoveryEligible = compareValues(expectedValue, postWriteValue) !== 0;
-        rollbackValue = recoveryEligible ? postWriteValue : null;
-        stableRollbackFrames = 0;
-        return;
+        writeExpectedValue(currentInput, expectedValue, submittedValue);
+        return false;
       }
-      if (writeCount >= 2 || !recoveryEligible) return;
+      if (writeCount >= maxWriteAttempts || !recoveryEligible) return false;
 
       if (rollbackValue !== submittedValue) {
-        rollbackValue = null;
-        recoveryEligible = false;
-        stableRollbackFrames = 0;
-        return;
+        clearRecovery();
+        return false;
+      }
+      if (!isRecoveryWriteAllowed({
+        currentRoot,
+        currentInput,
+        expectedValue,
+        rollbackValue,
+        writeCount,
+      })) {
+        clearRecovery();
+        return false;
       }
 
       stableRollbackFrames += 1;
-      if (stableRollbackFrames < requiredStableMismatchFrames) return;
+      if (stableRollbackFrames < requiredStableMismatchFrames) return false;
 
-      writeCount = 2;
-      rollbackValue = null;
-      recoveryEligible = false;
-      stableRollbackFrames = 0;
-      writeValue(currentInput, expectedValue);
+      writeExpectedValue(currentInput, expectedValue, submittedValue);
+      return false;
     };
   };
 
@@ -224,14 +286,14 @@ export function createTradeInputStateReader({
 
     const submittedQty = normalizeValue(inputs.qtyInput.value);
     const qtyMatches = compareValues(expectedQty, submittedQty) === 0;
-    syncQty({
+    const qtyStable = syncQty({
       currentRoot: inputs.root,
       currentInput: inputs.qtyInput,
       expectedValue: expectedQty,
       submittedValue: submittedQty,
       matchesExpected: qtyMatches,
     });
-    if (!qtyMatches) return null;
+    if (!qtyMatches || !qtyStable) return null;
 
     if (!includePrice) {
       return { ...inputs, submittedQty };
@@ -239,14 +301,14 @@ export function createTradeInputStateReader({
 
     const submittedPrice = normalizeValue(inputs.priceInput.value);
     const priceMatches = compareValues(expectedPrice, submittedPrice) === 0;
-    syncPrice({
+    const priceStable = syncPrice({
       currentRoot: inputs.root,
       currentInput: inputs.priceInput,
       expectedValue: expectedPrice,
       submittedValue: submittedPrice,
       matchesExpected: priceMatches,
     });
-    if (!priceMatches) return null;
+    if (!priceMatches || !priceStable) return null;
 
     return { ...inputs, submittedPrice, submittedQty };
   };

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.135
+// @version      2.7.136
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1211,6 +1211,22 @@
     }
     return matches.length === 1 ? matches[0] : null;
   }
+  function createBoundedInputWriter({ writeValue, maxWriteAttempts }) {
+    if (typeof writeValue !== "function") {
+      throw new Error("Bounded input writer dependency is invalid");
+    }
+    if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
+      throw new Error("Trade input write attempts must be a positive integer");
+    }
+    const attemptsByInput = /* @__PURE__ */ new WeakMap();
+    return (input, value) => {
+      const attempts = attemptsByInput.get(input) || 0;
+      if (attempts >= maxWriteAttempts) return false;
+      attemptsByInput.set(input, attempts + 1);
+      writeValue(input, value);
+      return true;
+    };
+  }
   function createTradeInputStateReader({
     resolveInputs,
     expectedPrice,
@@ -1219,13 +1235,22 @@
     normalizeValue,
     compareValues,
     writeValue,
-    requiredStableMismatchFrames = 2
+    requiredStableMismatchFrames = 2,
+    requiredStableMatchFrames = 1,
+    maxWriteAttempts = 2,
+    isRecoveryWriteAllowed = () => true
   }) {
-    if (typeof resolveInputs !== "function" || typeof normalizeValue !== "function" || typeof compareValues !== "function" || typeof writeValue !== "function") {
+    if (typeof resolveInputs !== "function" || typeof normalizeValue !== "function" || typeof compareValues !== "function" || typeof writeValue !== "function" || typeof isRecoveryWriteAllowed !== "function") {
       throw new Error("Trade input synchronizer dependencies are invalid");
     }
     if (!Number.isInteger(requiredStableMismatchFrames) || requiredStableMismatchFrames < 1) {
       throw new Error("Trade input rollback stability must be a positive integer");
+    }
+    if (!Number.isInteger(requiredStableMatchFrames) || requiredStableMatchFrames < 1) {
+      throw new Error("Trade input accepted stability must be a positive integer");
+    }
+    if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
+      throw new Error("Trade input write attempts must be a positive integer");
     }
     const createSyncSlot = () => {
       let root = null;
@@ -1234,6 +1259,28 @@
       let rollbackValue = null;
       let recoveryEligible = false;
       let stableRollbackFrames = 0;
+      let stableMatchFrames = 0;
+      const clearRecovery = () => {
+        rollbackValue = null;
+        recoveryEligible = false;
+        stableRollbackFrames = 0;
+      };
+      const writeExpectedValue = (currentInput, expectedValue, submittedValue) => {
+        const wrote = writeValue(currentInput, expectedValue);
+        if (wrote === false) {
+          writeCount = maxWriteAttempts;
+          clearRecovery();
+          stableMatchFrames = 0;
+          return;
+        }
+        writeCount += 1;
+        const postWriteValue = normalizeValue(currentInput.value);
+        const rejected = compareValues(expectedValue, postWriteValue) !== 0;
+        recoveryEligible = rejected && writeCount < maxWriteAttempts;
+        rollbackValue = rejected ? postWriteValue : submittedValue;
+        stableRollbackFrames = 0;
+        stableMatchFrames = 0;
+      };
       return ({
         currentRoot,
         currentInput,
@@ -1245,39 +1292,44 @@
           root = currentRoot;
           input = currentInput;
           writeCount = 0;
-          rollbackValue = null;
-          recoveryEligible = false;
-          stableRollbackFrames = 0;
+          clearRecovery();
+          stableMatchFrames = 0;
         }
         if (matchesExpected) {
-          rollbackValue = null;
           recoveryEligible = false;
           stableRollbackFrames = 0;
-          return;
+          stableMatchFrames += 1;
+          return stableMatchFrames >= requiredStableMatchFrames;
+        }
+        if (stableMatchFrames > 0) {
+          stableMatchFrames = 0;
+          recoveryEligible = rollbackValue === submittedValue && writeCount < maxWriteAttempts;
+          stableRollbackFrames = 0;
+          if (!recoveryEligible) clearRecovery();
         }
         if (writeCount === 0) {
-          writeCount = 1;
-          writeValue(currentInput, expectedValue);
-          const postWriteValue = normalizeValue(currentInput.value);
-          recoveryEligible = compareValues(expectedValue, postWriteValue) !== 0;
-          rollbackValue = recoveryEligible ? postWriteValue : null;
-          stableRollbackFrames = 0;
-          return;
+          writeExpectedValue(currentInput, expectedValue, submittedValue);
+          return false;
         }
-        if (writeCount >= 2 || !recoveryEligible) return;
+        if (writeCount >= maxWriteAttempts || !recoveryEligible) return false;
         if (rollbackValue !== submittedValue) {
-          rollbackValue = null;
-          recoveryEligible = false;
-          stableRollbackFrames = 0;
-          return;
+          clearRecovery();
+          return false;
+        }
+        if (!isRecoveryWriteAllowed({
+          currentRoot,
+          currentInput,
+          expectedValue,
+          rollbackValue,
+          writeCount
+        })) {
+          clearRecovery();
+          return false;
         }
         stableRollbackFrames += 1;
-        if (stableRollbackFrames < requiredStableMismatchFrames) return;
-        writeCount = 2;
-        rollbackValue = null;
-        recoveryEligible = false;
-        stableRollbackFrames = 0;
-        writeValue(currentInput, expectedValue);
+        if (stableRollbackFrames < requiredStableMismatchFrames) return false;
+        writeExpectedValue(currentInput, expectedValue, submittedValue);
+        return false;
       };
     };
     const syncQty = createSyncSlot();
@@ -1287,27 +1339,27 @@
       if (!inputs?.qtyInput || includePrice && !inputs.priceInput) return null;
       const submittedQty = normalizeValue(inputs.qtyInput.value);
       const qtyMatches = compareValues(expectedQty, submittedQty) === 0;
-      syncQty({
+      const qtyStable = syncQty({
         currentRoot: inputs.root,
         currentInput: inputs.qtyInput,
         expectedValue: expectedQty,
         submittedValue: submittedQty,
         matchesExpected: qtyMatches
       });
-      if (!qtyMatches) return null;
+      if (!qtyMatches || !qtyStable) return null;
       if (!includePrice) {
         return { ...inputs, submittedQty };
       }
       const submittedPrice = normalizeValue(inputs.priceInput.value);
       const priceMatches = compareValues(expectedPrice, submittedPrice) === 0;
-      syncPrice({
+      const priceStable = syncPrice({
         currentRoot: inputs.root,
         currentInput: inputs.priceInput,
         expectedValue: expectedPrice,
         submittedValue: submittedPrice,
         matchesExpected: priceMatches
       });
-      if (!priceMatches) return null;
+      if (!priceMatches || !priceStable) return null;
       return { ...inputs, submittedPrice, submittedQty };
     };
   }
@@ -2028,6 +2080,9 @@
     const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
     const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
     const TRADE_INPUT_SYNC_STABLE_FRAMES = 2;
+    const LADDER_INPUT_SETTLE_TIMEOUT_MS = 1200;
+    const LADDER_INPUT_SETTLE_MISMATCH_FRAMES = 12;
+    const LADDER_INPUT_SETTLE_MAX_WRITES = 5;
     const ORDERBOOK_PRECISION_READY_POLL_MS = 100;
     const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5e3;
     const ORDERBOOK_PRECISION_OPTION_WAIT_MS = 1200;
@@ -3615,6 +3670,15 @@
     async function syncTradeInputs(expectedPrice, expectedQty, options = null) {
       const priceLabel = options?.priceLabel || "点击价";
       const qtyLabel = options?.qtyLabel || "目标量";
+      const settleControlledForm = options?.settleControlledForm === true;
+      const syncTimeoutMs = settleControlledForm ? LADDER_INPUT_SETTLE_TIMEOUT_MS : TRADE_INPUT_SYNC_TIMEOUT_MS;
+      const stableMismatchFrames = settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : TRADE_INPUT_SYNC_STABLE_FRAMES;
+      const maxWriteAttempts = settleControlledForm ? LADDER_INPUT_SETTLE_MAX_WRITES : 2;
+      const isRecoveryWriteAllowed = settleControlledForm ? ({ rollbackValue }) => rollbackValue === "" : () => true;
+      const writeTradeInputValue = settleControlledForm ? createBoundedInputWriter({
+        writeValue: setInputValueReact,
+        maxWriteAttempts
+      }) : setInputValueReact;
       let inputs = findTradeInputs();
       if (!inputs) throw new Error("未找到唯一的当前交易表单输入框");
       let observationRoot = inputs.root;
@@ -3624,14 +3688,17 @@
         includePrice: false,
         normalizeValue: normalizeDecimalString,
         compareValues: compareDecimalStrings,
-        writeValue: setInputValueReact,
-        requiredStableMismatchFrames: TRADE_INPUT_SYNC_STABLE_FRAMES
+        writeValue: writeTradeInputValue,
+        requiredStableMismatchFrames: stableMismatchFrames,
+        requiredStableMatchFrames: settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : 1,
+        maxWriteAttempts,
+        isRecoveryWriteAllowed
       });
       readQtyState();
       const qtyReady = await waitForTradeFormFrameState(
         observationRoot,
         readQtyState,
-        TRADE_INPUT_SYNC_TIMEOUT_MS,
+        syncTimeoutMs,
         TRADE_INPUT_SYNC_STABLE_FRAMES
       );
       if (!qtyReady) {
@@ -3648,14 +3715,17 @@
         includePrice: true,
         normalizeValue: normalizeDecimalString,
         compareValues: compareDecimalStrings,
-        writeValue: setInputValueReact,
-        requiredStableMismatchFrames: TRADE_INPUT_SYNC_STABLE_FRAMES
+        writeValue: writeTradeInputValue,
+        requiredStableMismatchFrames: stableMismatchFrames,
+        requiredStableMatchFrames: settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : 1,
+        maxWriteAttempts,
+        isRecoveryWriteAllowed
       });
       readTradeState();
       const synchronized = await waitForTradeFormFrameState(
         observationRoot,
         readTradeState,
-        TRADE_INPUT_SYNC_TIMEOUT_MS,
+        syncTimeoutMs,
         TRADE_INPUT_SYNC_STABLE_FRAMES
       );
       if (synchronized) return synchronized;
@@ -3777,7 +3847,8 @@
           if (!currentPriceInput || !currentQtyInput) throw new Error("执行中价格或数量输入框丢失");
           const synchronizedInputs = await syncTradeInputs(order.price, order.qty, {
             priceLabel: "计划价",
-            qtyLabel: "计划量"
+            qtyLabel: "计划量",
+            settleControlledForm: true
           });
           throwIfAborted(abortSignal);
           const submittedPrice = synchronizedInputs.submittedPrice;
