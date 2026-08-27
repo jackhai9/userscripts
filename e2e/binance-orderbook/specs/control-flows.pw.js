@@ -139,7 +139,7 @@ test('precision refresh explains when the complete visible trade list still lack
   expect(errors).toEqual([]);
 });
 
-test('starting a ladder disables every start action and exposes one stop control', async ({ page }) => {
+test('starting a ladder preserves action slots and turns only the active action into stop', async ({ page }) => {
   const scenario = createCancelScenario({
     ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },
   });
@@ -155,15 +155,31 @@ test('starting a ladder disables every start action and exposes one stop control
   await expect(stop).toHaveCount(0);
   const startLongRect = await readRect(startLong);
   const startShortRect = await readRect(startShort);
+  const startShortTone = await startShort.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderColor: style.borderColor,
+      color: style.color,
+    };
+  });
   const cancelRect = await readRect(cancel);
   await installInteractionProbe(page, '[data-ladder-action="OPEN_LONG"]');
   await startLong.click();
   await expect(startLong).toHaveCount(0);
-  await expect(startShort).toHaveCount(0);
+  await expect(startShort).toBeDisabled();
   await expect(stop).toBeEnabled();
   const stopRect = await readRect(stop);
-  expect(stopRect.x).toBe(startLongRect.x);
-  expect(stopRect.x + stopRect.width).toBe(startShortRect.x + startShortRect.width);
+  expect(stopRect).toEqual(startLongRect);
+  expect(await readRect(startShort)).toEqual(startShortRect);
+  expect(await startShort.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderColor: style.borderColor,
+      color: style.color,
+    };
+  })).toEqual(startShortTone);
   expect(await readRect(cancel)).toEqual(cancelRect);
   const submissionsBeforeStop = (await readFixtureState(page)).events
     .filter((event) => event.type === 'order-submitted').length;

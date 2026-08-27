@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.128
+// @version      2.7.129
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -340,6 +340,8 @@ import {
   let tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
   let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
   let ladderTask = null;
+  let activeLadderActionType = null;
+  let activeLadderPanelContext = null;
   let cancelCurrentSymbolOpenOrdersTask = null;
   let cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
   let cancelNoOrdersFeedbackActive = false;
@@ -391,7 +393,7 @@ import {
     style.id = styleId;
     style.textContent = `
       button[${NATIVE_ACTION_DISABLED_ATTR}="true"],
-      #${PANEL_ID} button:disabled {
+      #${PANEL_ID} button:disabled:not([data-ladder-preserve-tone="true"]) {
         background: ${DISABLED_CONTROL_BG} !important;
         color: ${DISABLED_CONTROL_TEXT} !important;
         border-color: ${DISABLED_CONTROL_BORDER} !important;
@@ -2486,11 +2488,21 @@ import {
       return;
     }
     const spec = getLadderActionSpec(actionType);
+    if (!spec) {
+      setLadderStatus('未知阶梯动作');
+      return;
+    }
     if (spec?.mode === 'CLOSE' && !isCloseSnapshotReady(actionSymbol)) {
       setLadderStatus('仓位确认中');
       return;
     }
     ladderStopRequested = false;
+    activeLadderActionType = actionType;
+    activeLadderPanelContext = {
+      mode: spec.mode,
+      symbol: actionSymbol,
+      precision: readCurrentOrderbookPrecisionValue(),
+    };
     const feedbackStartedAt = performance.now();
     setLadderStatus(`${spec?.label || '阶梯'} 准备中`);
     const executionTask = (async () => {
@@ -2542,6 +2554,8 @@ import {
       })
       .finally(() => {
         ladderTask = null;
+        activeLadderActionType = null;
+        activeLadderPanelContext = null;
         ladderStopRequested = false;
         scheduleRenderPanel();
       });
@@ -3057,6 +3071,83 @@ import {
     return readCurrentSymbolOpenOrderRows(root, symbol).filter((row) => row.key === key).length;
   }
 
+  function readOpenOrderRowCancellationOutcome(symbol, key, previousCount, dialogsBefore) {
+    if (!isCurrentObservedSymbol(symbol)) return { status: 'symbol_changed' };
+    const dialog = findNewVisibleDialog(dialogsBefore);
+    if (dialog) return { status: 'dialog_open', dialog };
+    const activeRoot = getActiveOpenOrdersScope();
+    if (activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount) {
+      return { status: 'row_removed' };
+    }
+    return null;
+  }
+
+  async function waitForOpenOrderRowCancellationOutcome(symbol, key, previousCount, dialogsBefore) {
+    const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
+    while (true) {
+      const currentOutcome = readOpenOrderRowCancellationOutcome(
+        symbol,
+        key,
+        previousCount,
+        dialogsBefore,
+      );
+      if (currentOutcome) return currentOutcome;
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return { status: 'timeout' };
+      const observationRoot = getAccountOrdersObservationRoot() || document.body;
+      const accountSignal = createAccountOrdersMutationSignal(observationRoot);
+      const dialogSignal = createDialogMutationSignal(document);
+      if (!accountSignal || !dialogSignal) {
+        accountSignal?.dispose();
+        dialogSignal?.dispose();
+        throw new Error('Row-cancellation observer root is unavailable');
+      }
+
+      try {
+        const observedAccountVersion = accountSignal.version;
+        const observedDialogVersion = dialogSignal.version;
+        const observedOutcome = readOpenOrderRowCancellationOutcome(
+          symbol,
+          key,
+          previousCount,
+          dialogsBefore,
+        );
+        if (observedOutcome) return observedOutcome;
+        await Promise.race([
+          accountSignal.waitForChange(observedAccountVersion, remainingMs),
+          dialogSignal.waitForChange(observedDialogVersion, remainingMs),
+        ]);
+      } finally {
+        accountSignal.dispose();
+        dialogSignal.dispose();
+      }
+    }
+  }
+
+  async function confirmOpenOrderRowKeyCountBelow(symbol, key, previousCount) {
+    const deadline = Date.now() + LADDER_REPLACE_ROW_SETTLE_MS;
+    const observationRoot = getAccountOrdersObservationRoot() || document.body;
+    const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
+    if (!mutationSignal) throw new Error('Account-orders observer root is unavailable');
+
+    try {
+      while (true) {
+        const observedVersion = mutationSignal.version;
+        if (!isCurrentObservedSymbol(symbol)) return false;
+        const activeRoot = getActiveOpenOrdersScope();
+        if (!activeRoot || countOpenOrderRowsByKey(activeRoot, symbol, key) >= previousCount) {
+          return false;
+        }
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) return true;
+        await mutationSignal.waitForChange(observedVersion, remainingMs);
+      }
+    } finally {
+      mutationSignal.dispose();
+    }
+  }
+
   async function waitForOpenOrderRowKeyCountBelow(symbol, key, previousCount) {
     const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
     const observationRoot = getAccountOrdersObservationRoot() || document.body;
@@ -3110,8 +3201,20 @@ import {
         throw new Error('当前币挂单撤单入口点击失败，已停止重挂');
       }
       waitForTradeUiMutation({ timeoutMs: 800 });
-      const dialog = await waitForNewVisibleDialog(dialogsBefore);
-      if (dialog) {
+      const outcome = await waitForOpenOrderRowCancellationOutcome(
+        plan.symbol,
+        row.key,
+        previousKeyCount,
+        dialogsBefore,
+      );
+      if (outcome.status === 'symbol_changed') {
+        throw new Error('逐行撤单时交易对已变化');
+      }
+      if (outcome.status === 'timeout') {
+        throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
+      }
+      if (outcome.status === 'dialog_open') {
+        const { dialog } = outcome;
         setLadderStatus(`${plan.symbol} 单行撤单确认弹窗已打开`);
         const dialogClosed = await waitForDialogToClose(dialog);
         if (!dialogClosed) {
@@ -3119,9 +3222,12 @@ import {
           error.name = 'DialogNotClosedError';
           throw error;
         }
+        if (!(await waitForOpenOrderRowKeyCountBelow(plan.symbol, row.key, previousKeyCount))) {
+          throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
+        }
       }
-      if (!(await waitForOpenOrderRowKeyCountBelow(plan.symbol, row.key, previousKeyCount))) {
-        throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
+      if (!(await confirmOpenOrderRowKeyCountBelow(plan.symbol, row.key, previousKeyCount))) {
+        throw new Error(`${plan.symbol} 当前币挂单状态不稳定，已停止重挂`);
       }
       cancelQty = addDecimalStrings(cancelQty, row.qty);
     }
@@ -3201,14 +3307,6 @@ import {
       return dialog;
     }
     return null;
-  }
-
-  async function waitForNewVisibleDialog(dialogsBefore) {
-    return waitForDialogMutationState(
-      document,
-      () => findNewVisibleDialog(dialogsBefore),
-      1800,
-    );
   }
 
   async function waitForDialogToClose(dialog, timeoutMs = ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS) {
@@ -4720,12 +4818,22 @@ import {
     ].join('');
   }
 
-  function ladderActionButton(actionType, label, tone, disabled = false) {
+  function ladderActionButton(actionType, label, tone, disabled = false, preserveTone = false) {
     const isBuyTone = tone === 'BUY';
     const borderColor = isBuyTone ? 'var(--color-Buy)' : 'var(--color-Sell)';
     const background = isBuyTone ? 'var(--color-GreenAlpha01)' : 'var(--color-RedAlpha01)';
-    const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
-    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;opacity:1;">${label}</button>`;
+    const disabledAttrs = disabled
+      ? ` disabled aria-disabled="true"${preserveTone ? ' data-ladder-preserve-tone="true"' : ''}`
+      : '';
+    const cursor = disabled ? 'not-allowed' : 'pointer';
+    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${cursor};opacity:1;">${label}</button>`;
+  }
+
+  function ladderExecutionButton(actionType, label, tone, disabled = false) {
+    if (activeLadderActionType !== actionType) {
+      return ladderActionButton(actionType, label, tone, disabled, Boolean(activeLadderActionType));
+    }
+    return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">${PANEL_COPY.action.stopLadder}</button>`;
   }
 
   function getLadderControlSections(tradeMode, closeContext, symbol, precision) {
@@ -4751,8 +4859,8 @@ import {
           ladderOptionRow(PANEL_COPY.field.interval, PANEL_COPY.tooltip.interval, LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), 'step', ''),
         ],
         actionButtons: [
-          ladderActionButton('OPEN_LONG', PANEL_COPY.action.openLong, 'BUY', actionDisabled),
-          ladderActionButton('OPEN_SHORT', PANEL_COPY.action.openShort, 'SELL', actionDisabled),
+          ladderExecutionButton('OPEN_LONG', PANEL_COPY.action.openLong, 'BUY', actionDisabled),
+          ladderExecutionButton('OPEN_SHORT', PANEL_COPY.action.openShort, 'SELL', actionDisabled),
         ],
       };
     }
@@ -4774,8 +4882,8 @@ import {
         ladderOptionRow(PANEL_COPY.field.interval, PANEL_COPY.tooltip.interval, LADDER_STEP_OPTIONS, getLadderStep(tradeMode, symbol, precision), 'step', ''),
       ],
       actionButtons: [
-        ladderActionButton('CLOSE_LONG', PANEL_COPY.action.closeLong, 'SELL', closeLongDisabled),
-        ladderActionButton('CLOSE_SHORT', PANEL_COPY.action.closeShort, 'BUY', closeShortDisabled),
+        ladderExecutionButton('CLOSE_LONG', PANEL_COPY.action.closeLong, 'SELL', closeLongDisabled),
+        ladderExecutionButton('CLOSE_SHORT', PANEL_COPY.action.closeShort, 'BUY', closeShortDisabled),
       ],
     };
   }
@@ -4783,9 +4891,10 @@ import {
   function refreshLadderPanel(panel, tradeMode, closeContext) {
     const body = panel.querySelector(`#${LADDER_BODY_ID}`);
     const status = panel.querySelector(`#${LADDER_STATUS_ID}`);
-    const mode = ['OPEN', 'CLOSE'].includes(tradeMode) ? tradeMode : null;
-    const symbol = getCurrentSymbol();
-    const precision = readCurrentOrderbookPrecisionValue();
+    const mode = activeLadderPanelContext?.mode
+      || (['OPEN', 'CLOSE'].includes(tradeMode) ? tradeMode : null);
+    const symbol = activeLadderPanelContext?.symbol || getCurrentSymbol();
+    const precision = activeLadderPanelContext?.precision || readCurrentOrderbookPrecisionValue();
     if (body) {
       const ladderRunning = !!ladderTask;
       const cancelRunning = !!cancelCurrentSymbolOpenOrdersTask;
@@ -4795,14 +4904,11 @@ import {
         noOrdersFeedback: cancelNoOrdersFeedbackActive,
       });
       const controlSections = getLadderControlSections(mode, closeContext, symbol, precision);
-      const primaryActions = ladderRunning
-        ? [`<button type="button" data-ladder-stop="true" style="grid-column:span 2;height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">${PANEL_COPY.action.stopLadder}</button>`]
-        : controlSections.actionButtons;
       const bodyHtml = [
         ...controlSections.optionRows,
         `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}" data-panel-group="precision"></div>`,
         '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:12px;">',
-        ...primaryActions,
+        ...controlSections.actionButtons,
         `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${PANEL_COPY.action.cancel}</button>`,
         '</div>',
       ].join('');
