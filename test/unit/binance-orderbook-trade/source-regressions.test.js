@@ -883,11 +883,8 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(panelBody, /noOrdersFeedback: cancelNoOrdersFeedbackActive/);
   assert.match(source, /let activeLadderActionType = null/);
   assert.match(source, /let activeLadderPanelContext = null/);
-  assert.match(source, /data-ladder-preserve-tone="true"/);
-  assert.match(source, /button:disabled:not\(\[data-ladder-preserve-tone="true"\]\)/);
-  assert.match(source, /Boolean\(activeLadderActionType\) && preserveTone/);
-  assert.match(source, /Boolean\(closeContext\?\.knowsLong && closeContext\?\.hasLong\)/);
-  assert.match(source, /Boolean\(closeContext\?\.knowsShort && closeContext\?\.hasShort\)/);
+  assert.match(source, /#\$\{PANEL_ID\} button:disabled/);
+  assert.doesNotMatch(source, /data-ladder-preserve-tone|preserveTone/);
   assert.match(panelBody, /controlSections\.actionButtons/);
   assert.doesNotMatch(panelBody, /grid-column:span 2/);
   assert.match(panelBody, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
@@ -933,7 +930,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   const actionRowsBody = readFunctionBody('getLadderControlSections');
   assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
   assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
-  assert.match(actionRowsBody, /ladderExecutionButton\('OPEN_LONG',[\s\S]*actionDisabled, true\)/);
+  assert.match(actionRowsBody, /ladderExecutionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
   assert.match(startBody, /activeLadderActionType = actionType/);
   assert.match(startBody, /activeLadderPanelContext = \{[\s\S]*mode: spec\.mode,[\s\S]*symbol: actionSymbol,[\s\S]*precision: readCurrentOrderbookPrecisionValue\(\)/);
   assert.match(startBody, /finally\(\(\) => \{[\s\S]*activeLadderActionType = null/);
