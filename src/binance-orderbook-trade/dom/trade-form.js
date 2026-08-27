@@ -126,9 +126,10 @@ export function findActiveTradeInputs(ownerDocument, {
 }
 
 /**
- * Synchronize each live React input identity at most once. A replacement node is
- * a defined Binance render transition and must receive the intended value again;
- * a value rejected by the same node remains a hard failure instead of a retry loop.
+ * Synchronize each live React input identity with one bounded post-transition write.
+ * Binance can synchronously restore a controlled input while a replacement form is
+ * settling. Only an identical same-node rollback observed across consecutive frame
+ * reads earns one final write; a second rejection remains a hard failure.
  */
 export function createTradeInputStateReader({
   resolveInputs,
@@ -138,6 +139,7 @@ export function createTradeInputStateReader({
   normalizeValue,
   compareValues,
   writeValue,
+  requiredStableMismatchFrames = 2,
 }) {
   if (
     typeof resolveInputs !== 'function'
@@ -147,34 +149,104 @@ export function createTradeInputStateReader({
   ) {
     throw new Error('Trade input synchronizer dependencies are invalid');
   }
+  if (
+    !Number.isInteger(requiredStableMismatchFrames)
+    || requiredStableMismatchFrames < 1
+  ) {
+    throw new Error('Trade input rollback stability must be a positive integer');
+  }
 
-  const writtenQtyInputs = new WeakSet();
-  const writtenPriceInputs = new WeakSet();
+  const createSyncSlot = () => {
+    let root = null;
+    let input = null;
+    let writeCount = 0;
+    let rollbackValue = null;
+    let recoveryEligible = false;
+    let stableRollbackFrames = 0;
+
+    return ({
+      currentRoot,
+      currentInput,
+      expectedValue,
+      submittedValue,
+      matchesExpected,
+    }) => {
+      if (root !== currentRoot || input !== currentInput) {
+        root = currentRoot;
+        input = currentInput;
+        writeCount = 0;
+        rollbackValue = null;
+        recoveryEligible = false;
+        stableRollbackFrames = 0;
+      }
+
+      if (matchesExpected) {
+        rollbackValue = null;
+        recoveryEligible = false;
+        stableRollbackFrames = 0;
+        return;
+      }
+
+      if (writeCount === 0) {
+        writeCount = 1;
+        writeValue(currentInput, expectedValue);
+        const postWriteValue = normalizeValue(currentInput.value);
+        recoveryEligible = compareValues(expectedValue, postWriteValue) !== 0;
+        rollbackValue = recoveryEligible ? postWriteValue : null;
+        stableRollbackFrames = 0;
+        return;
+      }
+      if (writeCount >= 2 || !recoveryEligible) return;
+
+      if (rollbackValue !== submittedValue) {
+        rollbackValue = null;
+        recoveryEligible = false;
+        stableRollbackFrames = 0;
+        return;
+      }
+
+      stableRollbackFrames += 1;
+      if (stableRollbackFrames < requiredStableMismatchFrames) return;
+
+      writeCount = 2;
+      rollbackValue = null;
+      recoveryEligible = false;
+      stableRollbackFrames = 0;
+      writeValue(currentInput, expectedValue);
+    };
+  };
+
+  const syncQty = createSyncSlot();
+  const syncPrice = createSyncSlot();
   return () => {
     const inputs = resolveInputs();
     if (!inputs?.qtyInput || (includePrice && !inputs.priceInput)) return null;
 
     const submittedQty = normalizeValue(inputs.qtyInput.value);
-    if (compareValues(expectedQty, submittedQty) !== 0) {
-      if (!writtenQtyInputs.has(inputs.qtyInput)) {
-        writtenQtyInputs.add(inputs.qtyInput);
-        writeValue(inputs.qtyInput, expectedQty);
-      }
-      return null;
-    }
+    const qtyMatches = compareValues(expectedQty, submittedQty) === 0;
+    syncQty({
+      currentRoot: inputs.root,
+      currentInput: inputs.qtyInput,
+      expectedValue: expectedQty,
+      submittedValue: submittedQty,
+      matchesExpected: qtyMatches,
+    });
+    if (!qtyMatches) return null;
 
     if (!includePrice) {
       return { ...inputs, submittedQty };
     }
 
     const submittedPrice = normalizeValue(inputs.priceInput.value);
-    if (compareValues(expectedPrice, submittedPrice) !== 0) {
-      if (!writtenPriceInputs.has(inputs.priceInput)) {
-        writtenPriceInputs.add(inputs.priceInput);
-        writeValue(inputs.priceInput, expectedPrice);
-      }
-      return null;
-    }
+    const priceMatches = compareValues(expectedPrice, submittedPrice) === 0;
+    syncPrice({
+      currentRoot: inputs.root,
+      currentInput: inputs.priceInput,
+      expectedValue: expectedPrice,
+      submittedValue: submittedPrice,
+      matchesExpected: priceMatches,
+    });
+    if (!priceMatches) return null;
 
     return { ...inputs, submittedPrice, submittedQty };
   };

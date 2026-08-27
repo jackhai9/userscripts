@@ -342,8 +342,121 @@ test('active trade form can be resolved before a limit-price input is rendered',
   assert.equal(form?.priceInput, null);
 });
 
-test('trade input synchronization writes each replacement identity once', () => {
+test('trade input synchronization performs one post-transition write after a stable same-node rollback', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: { value: '' },
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  let qtyWrites = 0;
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedPrice: '81.9',
+    expectedQty: '0.01',
+    includePrice: true,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      if (input === currentInputs.qtyInput) {
+        qtyWrites += 1;
+        input.value = qtyWrites === 1 ? '' : value;
+        return;
+      }
+      input.value = value;
+    },
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(writes.length, 1);
+  assert.equal(readState(), null);
+  assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.01']);
+  assert.equal(readState(), null);
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedPrice: '81.9',
+    submittedQty: '0.01',
+  });
+  assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.01', '81.9']);
+});
+
+test('trade input synchronization remains fail-closed after the post-transition write is rejected', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.01',
+    includePrice: false,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = '';
+    },
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.01']);
+});
+
+test('trade input synchronization rejects an invalid rollback stability contract', () => {
+  assert.throws(
+    () => createTradeInputStateReader({
+      resolveInputs: () => null,
+      expectedQty: '0.01',
+      includePrice: false,
+      normalizeValue: String,
+      compareValues: (expected, actual) => expected === actual ? 0 : 1,
+      writeValue: () => {},
+      requiredStableMismatchFrames: 0,
+    }),
+    /Trade input rollback stability must be a positive integer/,
+  );
+});
+
+test('trade input synchronization cancels the post-transition write when the rollback value changes', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.01',
+    includePrice: false,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = writes.length === 1 ? '' : value;
+    },
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  currentInputs.qtyInput.value = '0.005';
+  assert.equal(readState(), null);
+  assert.equal(writes.length, 1);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(currentInputs.qtyInput.value, '0.005');
+  assert.deepEqual(writes.map(({ value }) => value), ['0.01']);
+});
+
+test('trade input synchronization gives each replacement identity an independent write budget', () => {
   let currentInputs = {
+    root: {},
     priceInput: { value: '' },
     qtyInput: { value: '' },
   };
@@ -370,6 +483,7 @@ test('trade input synchronization writes each replacement identity once', () => 
   });
 
   currentInputs = {
+    root: {},
     priceInput: { value: '' },
     qtyInput: { value: '' },
   };
@@ -381,10 +495,6 @@ test('trade input synchronization writes each replacement identity once', () => 
     submittedQty: '0.01',
   });
   assert.deepEqual(writes.map(({ value }) => value), ['0.01', '81.9', '0.01', '81.9']);
-
-  currentInputs.qtyInput.value = '';
-  assert.equal(readState(), null);
-  assert.equal(writes.length, 4);
 });
 
 test('recognizes only close-quantity mutations as a confirmed close snapshot', async () => {

@@ -151,6 +151,10 @@ test('trade input synchronization confirms live controlled values instead of sle
   assert.match(syncBody, /createTradeInputStateReader/);
   assert.match(syncBody, /resolveInputs:\s*findTradeInputs/);
   assert.match(syncBody, /writeValue:\s*setInputValueReact/);
+  assert.equal(
+    (syncBody.match(/requiredStableMismatchFrames:\s*TRADE_INPUT_SYNC_STABLE_FRAMES/g) || []).length,
+    2,
+  );
   assert.match(syncBody, /waitForTradeFormFrameState/);
   assert.match(syncBody, /includePrice:\s*false/);
   assert.match(syncBody, /includePrice:\s*true/);
