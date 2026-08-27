@@ -31,7 +31,8 @@ Scenarios are data, not copied test procedures. Each scenario declares these axe
 
 - positions: none, current symbol, other symbol, or both;
 - orders: none, current symbol, other symbol, or both;
-- order scale: 1, 20, 40, 120, and a separately verified live boundary;
+- order scale: a one-order smoke path, configurable small/medium/large scales
+  derived from current live capacity, and a separately verified live boundary;
 - initial account tab and open-order sub-tab;
 - initial `Hide Other Symbols` state;
 - initial TradingView `showOrders` state;
