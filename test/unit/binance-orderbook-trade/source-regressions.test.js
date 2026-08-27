@@ -371,7 +371,7 @@ test('panel keeps controls in cohesive ordered semantic groups', () => {
   assert.match(ensurePanelBody, /data-panel-group="multiplier" style="margin-top:8px;"/);
   assert.match(precisionBody, /margin-top:10px;/);
   assert.match(source, /const PANEL_DIVIDER_COLOR = '#ededed'/);
-  assert.match(ensurePanelBody, /data-panel-group="ladder" style="margin:12px -10px 0;padding:12px 10px 0;border-top:1px solid \$\{PANEL_DIVIDER_COLOR\}/);
+  assert.match(ensurePanelBody, /data-panel-group="ladder" style="margin:12px -10px 0;padding:11px 10px 0;border-top:2px solid \$\{PANEL_DIVIDER_COLOR\}/);
   assert.match(ensurePanelBody, /PANEL_COPY\.section\.singleOrder/);
   assert.match(ensurePanelBody, /PANEL_COPY\.section\.ladderMaker/);
   assert.match(ladderPanelBody, /ORDERBOOK_PRECISION_RECOMMENDATION_ID/);

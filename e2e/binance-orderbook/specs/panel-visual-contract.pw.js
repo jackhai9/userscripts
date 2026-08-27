@@ -35,7 +35,7 @@ async function expectNativeDivider(page) {
   expect(divider).toEqual({
     leftInset: 1,
     rightInset: 1,
-    borderTopWidth: '1px',
+    borderTopWidth: '2px',
     borderTopColor: 'rgb(237, 237, 237)',
   });
 }
