@@ -962,13 +962,20 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.doesNotMatch(sampleBody, /getCurrentOrderbookDisplayStep|fallbackMovement/);
 
   const refreshBody = readFunctionBody('refreshOrderbookPrecisionRecommendation');
+  const refreshButtonBody = readFunctionBody('renderOrderbookPrecisionRefreshButton');
+  const refreshFeedbackBody = readFunctionBody('showOrderbookPrecisionRefreshFeedback');
   assert.match(refreshBody, /recommendOrderbookPrecision/);
   assert.doesNotMatch(refreshBody, /resolveOrderbookPrecisionSampleState|orderbookPrecisionSampleTimer/);
-  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[\s\S]*disabled/);
+  assert.match(refreshButtonBody, /data-orderbook-precision-refresh="true"[\s\S]*disabled/);
+  assert.match(refreshButtonBody, /data-orderbook-precision-refresh-state="\$\{feedbackState\}"/);
+  assert.match(refreshButtonBody, /PANEL_COPY\.status\.precisionUpdated/);
+  assert.match(refreshButtonBody, /PANEL_COPY\.status\.precisionInsufficient/);
+  assert.match(refreshFeedbackBody, /ORDERBOOK_PRECISION_REFRESH_FEEDBACK_MS/);
+  assert.match(sampleBody, /showOrderbookPrecisionRefreshFeedback\(symbol, recommendation \? 'success' : 'retry'\)/);
   assert.match(refreshBody, /const controlsBusy = selectionBusy/);
   assert.match(refreshBody, /getOrderbookPrecisionShortcutOptions\([\s\S]*ORDERBOOK_PRECISION_SHORTCUT_LIMIT/);
   assert.match(refreshBody, /queueOrderbookPrecisionOptionsLoad\(symbol\)/);
-  assert.match(refreshBody, /formatPrecisionRefreshTooltip\(ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT\)/);
+  assert.match(refreshButtonBody, /formatPrecisionRefreshTooltip\(ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT\)/);
   const shortcutBody = readFunctionBody('renderOrderbookPrecisionShortcut');
   assert.match(shortcutBody, /const recommended = value === recommendation/);
   assert.match(shortcutBody, /position:absolute;top:3px;right:3px;width:6px;height:6px/);
@@ -987,7 +994,8 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(refreshBody, /PANEL_COPY\.tooltip\.pricePrecision/);
   assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy\)/);
   assert.match(refreshBody, /grid-template-columns:36px repeat\(4,minmax\(0,1fr\)\) 32px/);
-  assert.match(refreshBody, /data-orderbook-precision-refresh="true"[^`]*<svg/);
+  assert.match(refreshBody, /renderOrderbookPrecisionRefreshButton\(symbol, !canRefresh\)/);
+  assert.match(refreshButtonBody, /data-orderbook-precision-refresh="true"[^`]*\$\{feedback\.icon\}/);
   assert.doesNotMatch(refreshBody, /data-orderbook-precision-status/);
 
   assert.equal((source.match(/PANEL_COPY\.field\.interval, PANEL_COPY\.tooltip\.interval, LADDER_STEP_OPTIONS/g) || []).length, 2);

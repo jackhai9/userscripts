@@ -103,6 +103,8 @@ test('precision refresh uses the visible latest trades immediately without a sam
   await installInteractionProbe(page, '[data-orderbook-precision-refresh]');
   await refresh.click();
   await expect(refresh).toBeEnabled();
+  await expect(refresh).toHaveAttribute('data-orderbook-precision-refresh-state', 'success');
+  await expect(refresh).toHaveAttribute('aria-label', '精度推荐已更新');
   await expect(panel.locator('[data-orderbook-precision-value="0.01"]'))
     .toHaveAttribute('aria-label', '切换价格精度到 0.01，推荐档位');
   const probe = await finishInteractionProbe(page);
@@ -110,6 +112,7 @@ test('precision refresh uses the visible latest trades immediately without a sam
   expect(await page.evaluate((symbol) => JSON.parse(
     localStorage.getItem(`jh_binance_orderbook_precision_samples_v3:${symbol}`)
   ), scenario.currentSymbol)).toEqual(['0.01', '0.01', '0.01', '0.01', '0.01']);
+  await expect(refresh).toHaveAttribute('data-orderbook-precision-refresh-state', 'idle', { timeout: 2_000 });
   expect(errors).toEqual([]);
 });
 
@@ -123,7 +126,10 @@ test('precision refresh explains when the complete visible trade list still lack
     nodes.forEach((node) => { node.textContent = '81.00'; });
   });
 
-  await panel.locator('[data-orderbook-precision-refresh]').click();
+  const refresh = panel.locator('[data-orderbook-precision-refresh]');
+  await refresh.click();
+  await expect(refresh).toHaveAttribute('data-orderbook-precision-refresh-state', 'retry');
+  await expect(refresh).toHaveAttribute('aria-label', '近期价格变化不足，请稍后重试');
   await expect(panel.locator('#jh-binance-ladder-status'))
     .toHaveText('近期价格变化不足，请稍后重试');
   await expect(panel.locator('[aria-label*="推荐档位"]')).toHaveCount(0);
