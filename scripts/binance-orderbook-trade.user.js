@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.134
+// @version      2.7.135
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1218,35 +1218,96 @@
     includePrice,
     normalizeValue,
     compareValues,
-    writeValue
+    writeValue,
+    requiredStableMismatchFrames = 2
   }) {
     if (typeof resolveInputs !== "function" || typeof normalizeValue !== "function" || typeof compareValues !== "function" || typeof writeValue !== "function") {
       throw new Error("Trade input synchronizer dependencies are invalid");
     }
-    const writtenQtyInputs = /* @__PURE__ */ new WeakSet();
-    const writtenPriceInputs = /* @__PURE__ */ new WeakSet();
+    if (!Number.isInteger(requiredStableMismatchFrames) || requiredStableMismatchFrames < 1) {
+      throw new Error("Trade input rollback stability must be a positive integer");
+    }
+    const createSyncSlot = () => {
+      let root = null;
+      let input = null;
+      let writeCount = 0;
+      let rollbackValue = null;
+      let recoveryEligible = false;
+      let stableRollbackFrames = 0;
+      return ({
+        currentRoot,
+        currentInput,
+        expectedValue,
+        submittedValue,
+        matchesExpected
+      }) => {
+        if (root !== currentRoot || input !== currentInput) {
+          root = currentRoot;
+          input = currentInput;
+          writeCount = 0;
+          rollbackValue = null;
+          recoveryEligible = false;
+          stableRollbackFrames = 0;
+        }
+        if (matchesExpected) {
+          rollbackValue = null;
+          recoveryEligible = false;
+          stableRollbackFrames = 0;
+          return;
+        }
+        if (writeCount === 0) {
+          writeCount = 1;
+          writeValue(currentInput, expectedValue);
+          const postWriteValue = normalizeValue(currentInput.value);
+          recoveryEligible = compareValues(expectedValue, postWriteValue) !== 0;
+          rollbackValue = recoveryEligible ? postWriteValue : null;
+          stableRollbackFrames = 0;
+          return;
+        }
+        if (writeCount >= 2 || !recoveryEligible) return;
+        if (rollbackValue !== submittedValue) {
+          rollbackValue = null;
+          recoveryEligible = false;
+          stableRollbackFrames = 0;
+          return;
+        }
+        stableRollbackFrames += 1;
+        if (stableRollbackFrames < requiredStableMismatchFrames) return;
+        writeCount = 2;
+        rollbackValue = null;
+        recoveryEligible = false;
+        stableRollbackFrames = 0;
+        writeValue(currentInput, expectedValue);
+      };
+    };
+    const syncQty = createSyncSlot();
+    const syncPrice = createSyncSlot();
     return () => {
       const inputs = resolveInputs();
       if (!inputs?.qtyInput || includePrice && !inputs.priceInput) return null;
       const submittedQty = normalizeValue(inputs.qtyInput.value);
-      if (compareValues(expectedQty, submittedQty) !== 0) {
-        if (!writtenQtyInputs.has(inputs.qtyInput)) {
-          writtenQtyInputs.add(inputs.qtyInput);
-          writeValue(inputs.qtyInput, expectedQty);
-        }
-        return null;
-      }
+      const qtyMatches = compareValues(expectedQty, submittedQty) === 0;
+      syncQty({
+        currentRoot: inputs.root,
+        currentInput: inputs.qtyInput,
+        expectedValue: expectedQty,
+        submittedValue: submittedQty,
+        matchesExpected: qtyMatches
+      });
+      if (!qtyMatches) return null;
       if (!includePrice) {
         return { ...inputs, submittedQty };
       }
       const submittedPrice = normalizeValue(inputs.priceInput.value);
-      if (compareValues(expectedPrice, submittedPrice) !== 0) {
-        if (!writtenPriceInputs.has(inputs.priceInput)) {
-          writtenPriceInputs.add(inputs.priceInput);
-          writeValue(inputs.priceInput, expectedPrice);
-        }
-        return null;
-      }
+      const priceMatches = compareValues(expectedPrice, submittedPrice) === 0;
+      syncPrice({
+        currentRoot: inputs.root,
+        currentInput: inputs.priceInput,
+        expectedValue: expectedPrice,
+        submittedValue: submittedPrice,
+        matchesExpected: priceMatches
+      });
+      if (!priceMatches) return null;
       return { ...inputs, submittedPrice, submittedQty };
     };
   }
@@ -3563,7 +3624,8 @@
         includePrice: false,
         normalizeValue: normalizeDecimalString,
         compareValues: compareDecimalStrings,
-        writeValue: setInputValueReact
+        writeValue: setInputValueReact,
+        requiredStableMismatchFrames: TRADE_INPUT_SYNC_STABLE_FRAMES
       });
       readQtyState();
       const qtyReady = await waitForTradeFormFrameState(
@@ -3586,7 +3648,8 @@
         includePrice: true,
         normalizeValue: normalizeDecimalString,
         compareValues: compareDecimalStrings,
-        writeValue: setInputValueReact
+        writeValue: setInputValueReact,
+        requiredStableMismatchFrames: TRADE_INPUT_SYNC_STABLE_FRAMES
       });
       readTradeState();
       const synchronized = await waitForTradeFormFrameState(
