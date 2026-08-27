@@ -31,7 +31,7 @@ function testOrder(index = 0) {
 
 function singleOrderCapacityEvidence() {
   return createLiveOrderCapacityEvidence({
-    availableBalance: '13.28',
+    testBudget: '13.28',
     currentLeverage: 5,
     perOrderPrice: '2',
     perOrderQuantity: '2.5',
@@ -90,7 +90,7 @@ function scaleSample(index) {
     maxOrderCount: 3,
     scaleRatios: { small: 0.25, medium: 0.5, large: 1 },
   }, {
-    availableBalance: '13.28',
+    testBudget: '13.28',
     currentLeverage: 5,
     perOrderPrice: '2',
     perOrderQuantity: '2.5',

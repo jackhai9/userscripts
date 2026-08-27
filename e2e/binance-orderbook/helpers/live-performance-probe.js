@@ -228,6 +228,13 @@ export function installBinanceLivePerformanceProbe(options = {}) {
     .reduce((innermost, dialog) => (
       innermost?.contains(dialog) ? dialog : (innermost || dialog)
     ), null);
+  const readDialogContaining = (button) => Array.from(document.querySelectorAll(dialogSelector))
+    .filter(isVisible)
+    .filter((dialog) => dialog.contains(button))
+    .filter((dialog) => matchesDialogText(normalizeText(dialog.textContent)))
+    .reduce((innermost, dialog) => (
+      innermost?.contains(dialog) ? dialog : (innermost || dialog)
+    ), null);
   const readSemanticState = () => {
     const panel = readPanel();
     const cancelButton = readCancelButton(panel);
@@ -447,8 +454,8 @@ export function installBinanceLivePerformanceProbe(options = {}) {
       return;
     }
     if (run.startedAtMonotonicMs === null) return;
-    const dialog = button.closest(dialogSelector);
-    if (isVisible(dialog) && matchesDialogText(normalizeText(dialog.textContent))) {
+    const dialog = readDialogContaining(button);
+    if (dialog) {
       appendEvent('dialog-action', {
         text: normalizeText(button.textContent),
         primary: button.matches('button.bn-button.bn-button__primary'),
