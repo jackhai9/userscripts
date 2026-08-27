@@ -623,7 +623,10 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelOpenOrderRowsBody, /currentRoot = refreshedRoot/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = row\.root \|\| currentRoot/);
   assert.match(cancelOpenOrderRowsBody, /clickDomTarget\(row\.cancelButton\)/);
-  assert.match(cancelOpenOrderRowsBody, /waitForOpenOrderRowKeyCountBelow\(plan\.symbol,\s*row\.key,\s*previousKeyCount\)/);
+  assert.match(cancelOpenOrderRowsBody, /waitForOpenOrderRowCancellationOutcome\(/);
+  assert.match(cancelOpenOrderRowsBody, /outcome\.status === 'dialog_open'/);
+  assert.match(cancelOpenOrderRowsBody, /confirmOpenOrderRowKeyCountBelow\(plan\.symbol,\s*row\.key,\s*previousKeyCount\)/);
+  assert.doesNotMatch(cancelOpenOrderRowsBody, /waitForNewVisibleDialog/);
   assert.match(cancelOpenOrderRowsBody, /const dialogClosed = await waitForDialogToClose\(dialog\)/);
   assert.match(cancelOpenOrderRowsBody, /DialogNotClosedError/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /waitForOpenOrderRowKeyCountBelow\(row\.root/);
@@ -638,6 +641,26 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(waitForRowRemovalBody, /mutationSignal\.dispose\(\)/);
   assert.doesNotMatch(waitForRowRemovalBody, /delay\(/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /delay\(260\)/);
+
+  const cancellationOutcomeBody = readFunctionBody('readOpenOrderRowCancellationOutcome');
+  const dialogIndex = cancellationOutcomeBody.indexOf('findNewVisibleDialog(dialogsBefore)');
+  const rowCountIndex = cancellationOutcomeBody.indexOf('countOpenOrderRowsByKey');
+  assert.ok(dialogIndex >= 0 && rowCountIndex >= 0 && dialogIndex < rowCountIndex);
+  assert.match(cancellationOutcomeBody, /status: 'dialog_open'/);
+  assert.match(cancellationOutcomeBody, /status: 'row_removed'/);
+
+  const waitForOutcomeBody = readFunctionBody('waitForOpenOrderRowCancellationOutcome');
+  assert.match(waitForOutcomeBody, /createAccountOrdersMutationSignal/);
+  assert.match(waitForOutcomeBody, /createDialogMutationSignal/);
+  assert.match(waitForOutcomeBody, /Promise\.race/);
+  assert.match(waitForOutcomeBody, /accountSignal\.dispose\(\)/);
+  assert.match(waitForOutcomeBody, /dialogSignal\.dispose\(\)/);
+  assert.doesNotMatch(waitForOutcomeBody, /waitForNewVisibleDialog/);
+
+  const confirmRemovalBody = readFunctionBody('confirmOpenOrderRowKeyCountBelow');
+  assert.match(confirmRemovalBody, /LADDER_REPLACE_ROW_SETTLE_MS/);
+  assert.match(confirmRemovalBody, /countOpenOrderRowsByKey/);
+  assert.match(confirmRemovalBody, /createAccountOrdersMutationSignal/);
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   assert.match(cancelRowsBody, /if \(!isCurrentObservedSymbol\(symbol\) \|\| symbol !== plan\?\.symbol\)/);
@@ -857,7 +880,13 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(panelBody, /cancelCurrentSymbolOpenOrdersTask/);
   assert.match(panelBody, /resolveCancelSymbolButtonPresentation\(\{/);
   assert.match(panelBody, /noOrdersFeedback: cancelNoOrdersFeedbackActive/);
-  assert.match(panelBody, /data-ladder-stop="true"[^`]*grid-column:span 2/);
+  assert.match(source, /let activeLadderActionType = null/);
+  assert.match(source, /let activeLadderPanelContext = null/);
+  assert.match(source, /data-ladder-preserve-tone="true"/);
+  assert.match(source, /button:disabled:not\(\[data-ladder-preserve-tone="true"\]\)/);
+  assert.match(source, /Boolean\(activeLadderActionType\)/);
+  assert.match(panelBody, /controlSections\.actionButtons/);
+  assert.doesNotMatch(panelBody, /grid-column:span 2/);
   assert.match(panelBody, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(panelBody, /actionColumnCount/);
   assert.match(panelBody, /data-ladder-cancel-symbol="true"[^`]*>\$\{PANEL_COPY\.action\.cancel\}<\/button>/);
@@ -901,7 +930,14 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   const actionRowsBody = readFunctionBody('getLadderControlSections');
   assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
   assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
-  assert.match(actionRowsBody, /ladderActionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
+  assert.match(actionRowsBody, /ladderExecutionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
+  assert.match(startBody, /activeLadderActionType = actionType/);
+  assert.match(startBody, /activeLadderPanelContext = \{[\s\S]*mode: spec\.mode,[\s\S]*symbol: actionSymbol,[\s\S]*precision: readCurrentOrderbookPrecisionValue\(\)/);
+  assert.match(startBody, /finally\(\(\) => \{[\s\S]*activeLadderActionType = null/);
+  assert.match(startBody, /finally\(\(\) => \{[\s\S]*activeLadderPanelContext = null/);
+  assert.match(panelBody, /const mode = activeLadderPanelContext\?\.mode/);
+  assert.match(panelBody, /const symbol = activeLadderPanelContext\?\.symbol/);
+  assert.match(panelBody, /const precision = activeLadderPanelContext\?\.precision/);
 });
 
 test('stable panel refreshes avoid writing unchanged text and state attributes', () => {
