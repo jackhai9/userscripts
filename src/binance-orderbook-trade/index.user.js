@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.127
+// @version      2.7.128
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -274,6 +274,7 @@ import {
   const ORDERBOOK_PRECISION_TRADE_EXPANSION_STEP = 10;
   const ORDERBOOK_PRECISION_MIN_EFFECTIVE_MOVES = 5;
   const ORDERBOOK_PRECISION_SHORTCUT_LIMIT = 4;
+  const ORDERBOOK_PRECISION_REFRESH_FEEDBACK_MS = 900;
   const ORDERBOOK_PRECISION_CANDIDATE_OPTIONS = [
     '0.00000001',
     '0.0000001',
@@ -362,6 +363,8 @@ import {
   let orderbookPrecisionObserver = null;
   let orderbookPrecisionObserverRoot = null;
   let lastObservedOrderbookPrecision = null;
+  let orderbookPrecisionRefreshFeedback = { symbol: null, state: 'idle' };
+  let orderbookPrecisionRefreshFeedbackTimer = null;
   let orderbookPrecisionState = {
     symbol: null,
     samples: [],
@@ -1475,6 +1478,51 @@ import {
     return slots;
   }
 
+  function renderOrderbookPrecisionRefreshButton(symbol, disabled) {
+    const feedbackState = orderbookPrecisionRefreshFeedback.symbol === symbol
+      ? orderbookPrecisionRefreshFeedback.state
+      : 'idle';
+    const feedback = feedbackState === 'success'
+      ? {
+          label: PANEL_COPY.status.precisionUpdated,
+          color: 'var(--color-Buy)',
+          icon: '<svg viewBox="0 0 24 24" aria-hidden="true" style="width:17px;height:17px;fill:currentColor;"><path d="m9.55 16.6-4.25-4.25 1.4-1.4 2.85 2.85 7.75-7.75 1.4 1.4Z"></path></svg>',
+        }
+      : feedbackState === 'retry'
+        ? {
+            label: PANEL_COPY.status.precisionInsufficient,
+            color: 'var(--color-PrimaryYellow)',
+            icon: '<svg viewBox="0 0 24 24" aria-hidden="true" style="width:17px;height:17px;fill:currentColor;"><path d="M11 6h2v8h-2V6Zm0 10h2v2h-2v-2Z"></path></svg>',
+          }
+        : {
+            label: formatPrecisionRefreshTooltip(ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT),
+            color: CONTROL_TEXT_COLOR,
+            icon: '<svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;fill:currentColor;"><path d="M19.5 7.2A8 8 0 1 0 20 15h-2.25a6 6 0 1 1-.1-5.8L15 12h7V5l-2.5 2.2Z"></path></svg>',
+          };
+    const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
+    return `<button type="button" data-orderbook-precision-refresh="true" data-orderbook-precision-refresh-state="${feedbackState}"${disabledAttrs} title="${feedback.label}" aria-label="${feedback.label}" aria-live="polite" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};display:flex;align-items:center;justify-content:center;${NEUTRAL_CONTROL_STYLE}color:${feedback.color};">${feedback.icon}</button>`;
+  }
+
+  function showOrderbookPrecisionRefreshFeedback(symbol, state) {
+    if (!['success', 'retry'].includes(state)) {
+      throw new Error(`Invalid orderbook precision refresh feedback state: ${state}`);
+    }
+    if (orderbookPrecisionRefreshFeedbackTimer !== null) {
+      window.clearTimeout(orderbookPrecisionRefreshFeedbackTimer);
+    }
+    orderbookPrecisionRefreshFeedback = { symbol, state };
+    refreshOrderbookPrecisionRecommendation();
+    orderbookPrecisionRefreshFeedbackTimer = window.setTimeout(() => {
+      orderbookPrecisionRefreshFeedbackTimer = null;
+      if (
+        orderbookPrecisionRefreshFeedback.symbol !== symbol
+        || orderbookPrecisionRefreshFeedback.state !== state
+      ) return;
+      orderbookPrecisionRefreshFeedback = { symbol, state: 'idle' };
+      refreshOrderbookPrecisionRecommendation();
+    }, ORDERBOOK_PRECISION_REFRESH_FEEDBACK_MS);
+  }
+
   function refreshOrderbookPrecisionRecommendation(panel = document.getElementById(PANEL_ID)) {
     const el = panel?.querySelector?.(`#${ORDERBOOK_PRECISION_RECOMMENDATION_ID}`);
     if (!el) return;
@@ -1517,13 +1565,12 @@ import {
     );
     if (!nativeOptions.length) queueOrderbookPrecisionOptionsLoad(symbol);
     const canRefresh = !controlsBusy;
-    const refreshTooltip = formatPrecisionRefreshTooltip(ORDERBOOK_PRECISION_INITIAL_TRADE_LIMIT);
     const recommendationHtml = [
       '<div style="margin-top:10px;">',
       '<div style="display:grid;grid-template-columns:36px repeat(4,minmax(0,1fr)) 32px;align-items:center;gap:4px;height:32px;overflow:hidden;">',
       `<span title="${PANEL_COPY.tooltip.pricePrecision}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${PANEL_COPY.field.pricePrecision}</span>`,
       ...renderOrderbookPrecisionShortcutSlots(shortcutOptions, current, recommendation, controlsBusy),
-      `<button type="button" data-orderbook-precision-refresh="true"${canRefresh ? '' : ' disabled aria-disabled="true"'} title="${refreshTooltip}" aria-label="${refreshTooltip}" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};display:flex;align-items:center;justify-content:center;${NEUTRAL_CONTROL_STYLE}"><svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;fill:currentColor;"><path d="M19.5 7.2A8 8 0 1 0 20 15h-2.25a6 6 0 1 1-.1-5.8L15 12h7V5l-2.5 2.2Z"></path></svg></button>`,
+      renderOrderbookPrecisionRefreshButton(symbol, !canRefresh),
       '</div>',
       '</div>',
     ].join('');
@@ -1770,6 +1817,7 @@ import {
         ? PANEL_COPY.status.precisionUpdated
         : PANEL_COPY.status.precisionInsufficient
     );
+    showOrderbookPrecisionRefreshFeedback(symbol, recommendation ? 'success' : 'retry');
     scheduleRenderPanel();
   }
 
