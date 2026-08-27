@@ -9,6 +9,10 @@ import {
   parseBinanceTabCount,
   startsWithBinancePageText,
 } from '../contracts/binance-page-text.js';
+import {
+  throwIfAborted,
+  waitForPromiseOrAbort,
+} from '../core/abort.js';
 
 function getNormalizedText(el) {
   return normalizeText(el?.textContent || '');
@@ -62,7 +66,13 @@ export function createAccountOrdersMutationSignal(observationRoot) {
   };
 }
 
-export async function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs) {
+export async function waitForAccountOrdersMutationState(
+  observationRoot,
+  readState,
+  timeoutMs,
+  abortSignal = null,
+) {
+  throwIfAborted(abortSignal);
   const currentState = readState();
   if (currentState) return currentState;
   const signal = createAccountOrdersMutationSignal(observationRoot);
@@ -71,12 +81,16 @@ export async function waitForAccountOrdersMutationState(observationRoot, readSta
 
   try {
     while (true) {
+      throwIfAborted(abortSignal);
       const version = signal.version;
       const state = readState();
       if (state) return state;
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) return readState();
-      await signal.waitForChange(version, remainingMs);
+      await waitForPromiseOrAbort(
+        signal.waitForChange(version, remainingMs),
+        abortSignal,
+      );
     }
   } finally {
     signal.dispose();

@@ -194,9 +194,9 @@ test('ladder retries with restricted open-order replacement after supported feed
   assert.match(replacePlanBody, /getOpenLadderMinimumQtyReplacementPlan\(error\)/);
 
   const retryBody = readFunctionBody('runLadderPlanWithOpenOrderReplacement');
-  assert.match(retryBody, /await executeLadderPlan\(plan\)/);
+  assert.match(retryBody, /await executeLadderPlan\(plan,\s*abortSignal\)/);
   assert.match(retryBody, /getReplaceableLadderOpenOrdersPlan\(plan,\s*e\)/);
-  assert.match(retryBody, /cancelCurrentSymbolOpenOrdersForPlan\(replacementPlan\)/);
+  assert.match(retryBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*abortSignal/);
   assert.doesNotMatch(retryBody, /cancelCurrentSymbolOpenOrders\(\{\s*waitUntilCleared: true\s*\}\)/);
   assert.match(retryBody, /replacementContext = createLadderExpectedContext\(replacementPlan\)/);
   assert.match(retryBody, /buildLadderPlan\(actionType,\s*replacementContext\)/);
@@ -205,7 +205,7 @@ test('ladder retries with restricted open-order replacement after supported feed
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /const spec = getLadderActionSpec\(actionType\)/);
   assert.doesNotMatch(startBody, /cancelCurrentSymbolOpenOrders\(\{\s*waitUntilCleared: true\s*\}\)/);
-  assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(actionType\)/);
+  assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(actionType,\s*abortController\.signal\)/);
 });
 
 test('open and close ladders reprice only remaining orders after explicit maker conflicts', () => {
@@ -626,9 +626,9 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelOpenOrderRowsBody, /clickDomTarget\(row\.cancelButton\)/);
   assert.match(cancelOpenOrderRowsBody, /waitForOpenOrderRowCancellationOutcome\(/);
   assert.match(cancelOpenOrderRowsBody, /outcome\.status === 'dialog_open'/);
-  assert.match(cancelOpenOrderRowsBody, /confirmOpenOrderRowKeyCountBelow\(plan\.symbol,\s*row\.key,\s*previousKeyCount\)/);
+  assert.match(cancelOpenOrderRowsBody, /confirmOpenOrderRowKeyCountBelow\(\s*plan\.symbol,\s*row\.key,\s*previousKeyCount,\s*abortSignal/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /waitForNewVisibleDialog/);
-  assert.match(cancelOpenOrderRowsBody, /const dialogClosed = await waitForDialogToClose\(dialog\)/);
+  assert.match(cancelOpenOrderRowsBody, /const dialogClosed = await waitForDialogToClose\([\s\S]*abortSignal/);
   assert.match(cancelOpenOrderRowsBody, /DialogNotClosedError/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /waitForOpenOrderRowKeyCountBelow\(row\.root/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /row\.cancelButton\.click\(\)/);
@@ -665,9 +665,9 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
 
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   assert.match(cancelRowsBody, /if \(!isCurrentObservedSymbol\(symbol\) \|\| symbol !== plan\?\.symbol\)/);
-  assert.match(cancelRowsBody, /activateOpenOrdersBasicSubTab\(openOrdersScope\)[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(\)/);
+  assert.match(cancelRowsBody, /activateOpenOrdersBasicSubTab\(\s*openOrdersScope,\s*abortSignal[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(abortSignal\)/);
   assert.match(cancelRowsBody, /if \(!openOrdersScope\) \{\s*const message = '未定位到当前委托面板'/);
-  assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(openOrdersScope,\s*symbol,\s*plan\)/);
+  assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(\s*openOrdersScope,\s*symbol,\s*plan,\s*abortSignal/);
   assert.doesNotMatch(cancelRowsBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
   assert.match(cancelRowsBody, /getPlanDirectionLabel\(plan\)/);
   assert.match(cancelRowsBody, /selectOpenOrderRowsToCancelForPlan\(plan,\s*rows\)/);
@@ -678,6 +678,32 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.doesNotMatch(cancelRowsBody, /BinanceChartOrders|chartOrders|ChartOrders/);
   assert.doesNotMatch(cancelRowsBody, /allowPartialEnd/);
   assert.doesNotMatch(cancelRowsBody, /findCurrentSymbolCancelAllButton/);
+});
+
+test('stopping a ladder aborts replacement waits before another cancel or submit click', () => {
+  const startBody = readFunctionBody('startLadder');
+  const stopBody = readFunctionBody('stopLadder');
+  const runBody = readFunctionBody('runLadderPlanWithOpenOrderReplacement');
+  const executeBody = readFunctionBody('executeLadderPlan');
+  const cancelPlanBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
+  const cancelRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
+  const waitOutcomeBody = readFunctionBody('waitForOpenOrderRowCancellationOutcome');
+
+  assert.match(source, /let ladderAbortController = null/);
+  assert.match(startBody, /const abortController = new AbortController\(\)/);
+  assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(actionType,\s*abortController\.signal\)/);
+  assert.match(stopBody, /ladderAbortController\.abort\(createLadderStoppedError\(\)\)/);
+  assert.match(runBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*abortSignal/);
+  assert.match(runBody, /throwIfAborted\(abortSignal\)[\s\S]*buildLadderPlan/);
+  assert.match(executeBody, /throwIfAborted\(abortSignal\)[\s\S]*button\.click\(\)/);
+  assert.match(cancelPlanBody, /cancelOpenOrderRowsForPlan\(openOrdersScope,\s*plan,\s*abortSignal\)/);
+  assert.match(cancelPlanBody, /isLadderStoppedError\(e\)[\s\S]*throw e/);
+  assert.match(cancelPlanBody, /previousOpenOrdersSubTabIdentity = getOpenOrdersSubTabIdentity\([\s\S]*activateOpenOrdersBasicSubTab\(/);
+  assert.match(cancelPlanBody, /symbolFilterOriginalChecked = getCheckboxCheckedState\([\s\S]*ensureOpenOrdersLimitedToCurrentSymbol\(/);
+  assert.match(cancelRowsBody, /throwIfAborted\(abortSignal\)[\s\S]*clickDomTarget\(row\.cancelButton\)/);
+  assert.match(cancelRowsBody, /waitForOpenOrderRowCancellationOutcome\([\s\S]*abortSignal/);
+  assert.match(cancelRowsBody, /waitForDialogToClose\([\s\S]*abortSignal/);
+  assert.match(waitOutcomeBody, /waitForPromiseOrAbort\([\s\S]*abortSignal/);
 });
 
 test('bulk cancel hides TradingView orders before opening the native dialog and restores them independently', () => {
@@ -1249,7 +1275,7 @@ test('cancel flow rechecks the captured symbol before destructive click and clea
 
   const accountWaitBody = readFunctionBody('waitForAccountOrdersState');
   assert.match(accountWaitBody, /getAccountOrdersObservationRoot\(\) \|\| document\.body/);
-  assert.match(accountWaitBody, /waitForAccountOrdersMutationState\(observationRoot, readState, timeoutMs\)/);
+  assert.match(accountWaitBody, /waitForAccountOrdersMutationState\(\s*observationRoot,\s*readState,\s*timeoutMs,\s*abortSignal/);
 
   const activateTabBody = readFunctionBody('activateOpenOrdersTab');
   assert.doesNotMatch(activateTabBody, /delay\(/);
