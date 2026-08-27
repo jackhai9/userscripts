@@ -23,7 +23,12 @@ export const PANEL_COPY = Object.freeze({
     cancel: '撤单',
     cancelRunning: '撤单处理中',
     noOrders: '无挂单',
-    stopLadder: '停止阶梯挂单',
+    stopLadderByAction: freezeCopy({
+      OPEN_LONG: '停止开多',
+      OPEN_SHORT: '停止开空',
+      CLOSE_LONG: '停止平多',
+      CLOSE_SHORT: '停止平空',
+    }),
   }),
   status: freezeCopy({
     precisionUpdated: '精度推荐已更新',
