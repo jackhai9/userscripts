@@ -260,7 +260,7 @@ test('a missing native dialog stops cleanly and restores temporary UI state', as
 });
 
 for (const dialogMode of ['extraAction', 'missingPrimary']) {
-  test(`an invalid ${dialogMode} dialog contract fails explicitly and preserves recovery state`, async ({ page }) => {
+  test(`an invalid ${dialogMode} dialog contract blocks the action and restores chart orders`, async ({ page }) => {
     const scenario = createCancelScenario({
       positions: POSITION_SETS.current,
       orders: ORDER_SETS.current,
@@ -271,12 +271,18 @@ for (const dialogMode of ['extraAction', 'missingPrimary']) {
 
     await page.getByRole('button', { name: '撤单' }).click();
     await expect(page.getByText(
-      'HYPEUSDT 撤单确认弹窗结构异常，图表当前委托保持隐藏',
+      'HYPEUSDT 撤单确认弹窗结构异常，未执行弹窗操作',
     )).toBeVisible();
 
     const state = await readFixtureState(page);
     expect(state.orders).toEqual(ORDER_SETS.current);
-    expect(state.showOrders).toBe(false);
+    expect(state.events.filter((event) => event.type === 'cancel-requested')).toEqual([]);
+    expect(
+      state.events
+        .filter((event) => event.type === 'show-orders')
+        .map((event) => event.value),
+    ).toEqual([false, true]);
+    expect(state.showOrders).toBe(true);
     expect(state.hideOtherSymbols).toBe(true);
     expect(errors).toEqual([]);
   });
