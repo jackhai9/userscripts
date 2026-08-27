@@ -148,13 +148,13 @@ test('trade input synchronization confirms live controlled values instead of sle
   const syncBody = readFunctionBody('syncTradeInputs');
   const executeBody = readFunctionBody('executeLadderPlan');
 
-  assert.match(syncBody, /setInputValueReact\(qtyInput,\s*expectedQty\)/);
+  assert.match(syncBody, /createTradeInputStateReader/);
+  assert.match(syncBody, /resolveInputs:\s*findTradeInputs/);
+  assert.match(syncBody, /writeValue:\s*setInputValueReact/);
   assert.match(syncBody, /waitForTradeFormFrameState/);
-  assert.match(syncBody, /setInputValueReact\(priceInput,\s*expectedPrice\)/);
-  assert.ok(
-    syncBody.indexOf('setInputValueReact(qtyInput, expectedQty)')
-      < syncBody.indexOf('setInputValueReact(priceInput, expectedPrice)'),
-  );
+  assert.match(syncBody, /includePrice:\s*false/);
+  assert.match(syncBody, /includePrice:\s*true/);
+  assert.ok(syncBody.indexOf('includePrice: false') < syncBody.indexOf('includePrice: true'));
   assert.match(syncBody, /findPriceInput\(\)/);
   assert.match(syncBody, /findQtyInput\(\)/);
   assert.match(syncBody, /assertSubmittedPriceMatchesExpectedPrice/);

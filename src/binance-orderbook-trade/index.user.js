@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.132
+// @version      2.7.133
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -111,6 +111,8 @@ import {
 import {
   calculateFloatingPanelLayout,
   collectTradeButtonsFromScopes,
+  createTradeInputStateReader,
+  findActiveTradeInputs as findActiveTradeInputsDom,
   findTradeFormRoot,
   findTradePanelInsertionPoint,
   findCurrentLeverageButtonFromScopes,
@@ -706,20 +708,19 @@ import {
   }
 
   function findQtyInput() {
-    return (
-      document.querySelector('input[id^="unitAmount-"]') ||
-      document.querySelector('input[aria-label="数量"]') ||
-      document.querySelector('input[placeholder="数量"]')
-    );
+    return findTradeInputs({ requirePrice: false })?.qtyInput || null;
   }
 
   function findPriceInput() {
-    return (
-      document.querySelector('input[id^="limitPrice-"]') ||
-      document.querySelector('input[aria-label="委托价格"]') ||
-      document.querySelector('input[placeholder="委托价格"]') ||
-      null
-    );
+    return findTradeInputs()?.priceInput || null;
+  }
+
+  function findTradeInputs(options = null) {
+    return findActiveTradeInputsDom(document, {
+      panelId: PANEL_ID,
+      isVisibleElement,
+      requirePrice: options?.requirePrice !== false,
+    });
   }
 
   function isOwnPanelButton(button) {
@@ -885,7 +886,7 @@ import {
   }
 
   function getTradeMutationRoot() {
-    return findTradeFormRoot(getActiveTradeTab(), findQtyInput());
+    return findTradeInputs({ requirePrice: false })?.root || null;
   }
 
   function collectTradeButtons(mode) {
@@ -2214,38 +2215,25 @@ import {
     }
   }
 
-  function readSynchronizedTradeInputs(expectedPrice, expectedQty) {
-    const priceInput = findPriceInput();
-    const qtyInput = findQtyInput();
-    if (!priceInput || !qtyInput) return null;
-    const submittedPrice = normalizeDecimalString(priceInput.value);
-    const submittedQty = normalizeDecimalString(qtyInput.value);
-    if (
-      compareDecimalStrings(expectedPrice, submittedPrice) !== 0
-      || compareDecimalStrings(expectedQty, submittedQty) !== 0
-    ) {
-      return null;
-    }
-    return { priceInput, qtyInput, submittedPrice, submittedQty };
-  }
-
   async function syncTradeInputs(expectedPrice, expectedQty, options = null) {
     const priceLabel = options?.priceLabel || '点击价';
     const qtyLabel = options?.qtyLabel || '目标量';
-    let observationRoot = getTradeMutationRoot();
-    const qtyInput = findQtyInput();
-    if (!observationRoot || !qtyInput) throw new Error('未找到当前交易表单或数量输入框');
+    let inputs = findTradeInputs();
+    if (!inputs) throw new Error('未找到唯一的当前交易表单输入框');
 
-    setInputValueReact(qtyInput, expectedQty);
+    let observationRoot = inputs.root;
+    const readQtyState = createTradeInputStateReader({
+      resolveInputs: findTradeInputs,
+      expectedQty,
+      includePrice: false,
+      normalizeValue: normalizeDecimalString,
+      compareValues: compareDecimalStrings,
+      writeValue: setInputValueReact,
+    });
+    readQtyState();
     const qtyReady = await waitForTradeFormFrameState(
       observationRoot,
-      () => {
-        const liveQtyInput = findQtyInput();
-        const submittedQty = normalizeDecimalString(liveQtyInput?.value || '');
-        return compareDecimalStrings(expectedQty, submittedQty) === 0
-          ? { qtyInput: liveQtyInput, submittedQty }
-          : null;
-      },
+      readQtyState,
       TRADE_INPUT_SYNC_TIMEOUT_MS,
       TRADE_INPUT_SYNC_STABLE_FRAMES,
     );
@@ -2254,13 +2242,22 @@ import {
       throw new Error('数量框状态未稳定，已停止提交');
     }
 
-    observationRoot = getTradeMutationRoot();
-    const priceInput = findPriceInput();
-    if (!observationRoot || !priceInput) throw new Error('未找到当前交易表单或价格输入框');
-    setInputValueReact(priceInput, expectedPrice);
+    inputs = findTradeInputs();
+    if (!inputs) throw new Error('未找到唯一的当前交易表单输入框');
+    observationRoot = inputs.root;
+    const readTradeState = createTradeInputStateReader({
+      resolveInputs: findTradeInputs,
+      expectedPrice,
+      expectedQty,
+      includePrice: true,
+      normalizeValue: normalizeDecimalString,
+      compareValues: compareDecimalStrings,
+      writeValue: setInputValueReact,
+    });
+    readTradeState();
     const synchronized = await waitForTradeFormFrameState(
       observationRoot,
-      () => readSynchronizedTradeInputs(expectedPrice, expectedQty),
+      readTradeState,
       TRADE_INPUT_SYNC_TIMEOUT_MS,
       TRADE_INPUT_SYNC_STABLE_FRAMES,
     );

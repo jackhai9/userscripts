@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 
 import {
   calculateFloatingPanelLayout,
+  createTradeInputStateReader,
+  findActiveTradeInputs,
   findTradeFormRoot,
   findTradePanelInsertionPoint,
   isTradeModeTab,
@@ -290,6 +292,99 @@ test('trade form root observes live position state after React replaces descenda
   assert.equal(root.isConnected, true);
   assert.equal(root.querySelector('[data-testid="max-buy-amount"]')?.textContent, '0.00 HYPE');
   assert.ok(observedTexts.includes('0.00 HYPE'));
+});
+
+test('active trade inputs ignore hidden duplicate forms and remain one coherent pair', () => {
+  const dom = loadFixtureDom(`
+    <section data-form="hidden">
+      <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
+      <input id="limitPrice-hidden" />
+      <input id="unitAmount-hidden" />
+    </section>
+    <section data-form="visible">
+      <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
+      <input id="limitPrice-close" />
+      <input id="unitAmount-close" />
+    </section>
+  `);
+  const { document } = dom.window;
+  const inputs = findActiveTradeInputs(document, {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement: (element) => element.closest('section')?.dataset.form === 'visible',
+  });
+
+  assert.equal(inputs?.root.dataset.form, 'visible');
+  assert.equal(inputs?.priceInput.id, 'limitPrice-close');
+  assert.equal(inputs?.qtyInput.id, 'unitAmount-close');
+});
+
+test('active trade form can be resolved before a limit-price input is rendered', () => {
+  const dom = loadFixtureDom(`
+    <section data-form="visible">
+      <div id="position-direction"><div role="tab" aria-selected="true">开仓</div></div>
+      <input id="unitAmount-open" />
+    </section>
+  `);
+  const { document } = dom.window;
+  const visibility = (element) => element.closest('section')?.dataset.form === 'visible';
+
+  assert.equal(findActiveTradeInputs(document, {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement: visibility,
+  }), null);
+  const form = findActiveTradeInputs(document, {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement: visibility,
+    requirePrice: false,
+  });
+  assert.equal(form?.root.dataset.form, 'visible');
+  assert.equal(form?.qtyInput.id, 'unitAmount-open');
+  assert.equal(form?.priceInput, null);
+});
+
+test('trade input synchronization writes each replacement identity once', () => {
+  let currentInputs = {
+    priceInput: { value: '' },
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedPrice: '81.9',
+    expectedQty: '0.01',
+    includePrice: true,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = value;
+    },
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedPrice: '81.9',
+    submittedQty: '0.01',
+  });
+
+  currentInputs = {
+    priceInput: { value: '' },
+    qtyInput: { value: '' },
+  };
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedPrice: '81.9',
+    submittedQty: '0.01',
+  });
+  assert.deepEqual(writes.map(({ value }) => value), ['0.01', '81.9', '0.01', '81.9']);
+
+  currentInputs.qtyInput.value = '';
+  assert.equal(readState(), null);
+  assert.equal(writes.length, 4);
 });
 
 test('recognizes only close-quantity mutations as a confirmed close snapshot', async () => {
