@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  MAX_AUTO_FIT_LADDER_PERCENT,
   fitLadderPlanForMinimumQty,
   getLadderActionSpec,
   getLadderPercentForMode,
@@ -52,7 +53,6 @@ test('auto-fits ladder percent before reducing requested levels', () => {
     percent: 30,
     levels: 5,
     stepSize: '0.1',
-    maxPercent: '70',
   });
 
   assert.equal(fit.percent, '50');
@@ -60,19 +60,61 @@ test('auto-fits ladder percent before reducing requested levels', () => {
   assert.deepEqual(fit.allocation.quantities, ['1', '1', '1', '1', '1']);
 });
 
-test('auto-fits ladder levels when keeping requested levels needs too much percent', () => {
+test('auto-fits up to 100 percent without depending on panel percent presets', () => {
+  const fit = fitLadderPlanForMinimumQty({
+    baseQty: '9',
+    minRequiredQty: '0.8',
+    percent: 30,
+    levels: 9,
+    stepSize: '0.01',
+  });
+
+  assert.equal(MAX_AUTO_FIT_LADDER_PERCENT, '100');
+  assert.equal(fit.maxPercent, '100');
+  assert.equal(fit.percent, '80');
+  assert.equal(fit.levels, 9);
+  assert.deepEqual(fit.allocation.quantities, Array(9).fill('0.8'));
+});
+
+test('reduces requested levels only when they need more than 100 percent', () => {
   const fit = fitLadderPlanForMinimumQty({
     baseQty: '10',
-    minRequiredQty: '1',
+    minRequiredQty: '2.1',
     percent: 30,
     levels: 9,
     stepSize: '0.1',
-    maxPercent: '70',
   });
 
-  assert.equal(fit.percent, '70');
-  assert.equal(fit.levels, 7);
-  assert.deepEqual(fit.allocation.quantities, ['1', '1', '1', '1', '1', '1', '1']);
+  assert.equal(fit.percent, '84');
+  assert.equal(fit.levels, 4);
+  assert.deepEqual(fit.allocation.quantities, ['2.1', '2.1', '2.1', '2.1']);
+});
+
+test('never lowers the saved percent while auto-reducing levels', () => {
+  const fit = fitLadderPlanForMinimumQty({
+    baseQty: '10',
+    minRequiredQty: '2.1',
+    percent: 90,
+    levels: 9,
+    stepSize: '0.1',
+  });
+
+  assert.equal(fit.percent, '90');
+  assert.equal(fit.levels, 4);
+  assert.deepEqual(fit.allocation.quantities, ['2.2', '2.2', '2.2', '2.4']);
+});
+
+test('rejects the ladder only when even one order needs more than 100 percent', () => {
+  const fit = fitLadderPlanForMinimumQty({
+    baseQty: '10',
+    minRequiredQty: '10.1',
+    percent: 30,
+    levels: 3,
+    stepSize: '0.1',
+  });
+
+  assert.equal(fit.allocation, null);
+  assert.equal(fit.maxPercent, '100');
 });
 
 test('auto-fit recomputes the minimum quantity for retained open ladder levels', () => {
@@ -83,7 +125,6 @@ test('auto-fit recomputes the minimum quantity for retained open ladder levels',
     percent: 30,
     levels: 5,
     stepSize: '1',
-    maxPercent: '70',
   });
 
   assert.equal(fit.percent, '60');

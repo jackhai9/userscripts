@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.130
+// @version      2.7.131
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -708,6 +708,7 @@
   }
 
   // src/binance-orderbook-trade/core/ladder-plan.js
+  var MAX_AUTO_FIT_LADDER_PERCENT = "100";
   var LADDER_ACTION_SPECS = {
     OPEN_LONG: {
       mode: "OPEN",
@@ -771,10 +772,11 @@
     return candidateMinRequiredQty || minRequiredQty;
   }
   function fitLadderPlanForMinimumQty(options) {
-    const { baseQty, minRequiredQty, minRequiredQtyByLevel, percent, levels, stepSize, maxPercent } = options;
+    const { baseQty, minRequiredQty, minRequiredQtyByLevel, percent, levels, stepSize } = options;
+    const maxPercent = MAX_AUTO_FIT_LADDER_PERCENT;
     const requestedLevels = Number(levels);
     let minimumPercent = null;
-    if (!maxPercent || !Number.isInteger(requestedLevels) || requestedLevels <= 0) {
+    if (!Number.isInteger(requestedLevels) || requestedLevels <= 0) {
       return { allocation: null, minimumPercent, maxPercent };
     }
     for (let candidateLevels = requestedLevels; candidateLevels >= 1; candidateLevels -= 1) {
@@ -3255,8 +3257,7 @@
           minRequiredQtyByLevel,
           percent,
           levels,
-          stepSize: ruleContext.stepSize,
-          maxPercent: getMaxAutoFitLadderPercent(spec.mode)
+          stepSize: ruleContext.stepSize
         });
         if (autoFit.allocation) {
           allocation = autoFit.allocation;
@@ -3298,11 +3299,6 @@
         qtySource: base.qtySource,
         orders: orderPrices.map((price, index) => ({ price, qty: allocation.quantities[index] }))
       };
-    }
-    function getMaxAutoFitLadderPercent(mode) {
-      if (mode === "OPEN") return String(Math.max(...LADDER_OPEN_PERCENTS));
-      if (mode === "CLOSE") return "100";
-      return null;
     }
     function createLadderMinimumQtyFailure(options) {
       const {
