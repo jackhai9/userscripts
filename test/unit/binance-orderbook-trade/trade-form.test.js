@@ -421,6 +421,75 @@ test('trade input synchronization can settle a ladder input after repeated stabl
   assert.deepEqual(writes.map(({ value }) => value), ['0.02', '0.02', '0.02']);
 });
 
+test('trade input synchronization recovers a provisional match rolled back before the first observation frame', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.07',
+    includePrice: false,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = value;
+    },
+    requiredStableMismatchFrames: 2,
+    requiredStableMatchFrames: 2,
+    maxWriteAttempts: 5,
+    recoverProvisionalMatchRollback: true,
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === '',
+  });
+
+  assert.equal(readState(), null);
+  currentInputs.qtyInput.value = '';
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedQty: '0.07',
+  });
+  assert.deepEqual(writes.map(({ value }) => value), ['0.07', '0.07']);
+});
+
+test('trade input synchronization cancels provisional recovery for a different non-empty value', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.07',
+    includePrice: false,
+    normalizeValue: String,
+    compareValues: (expected, actual) => expected === actual ? 0 : 1,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = value;
+    },
+    requiredStableMismatchFrames: 2,
+    requiredStableMatchFrames: 2,
+    maxWriteAttempts: 5,
+    recoverProvisionalMatchRollback: true,
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === '',
+  });
+
+  assert.equal(readState(), null);
+  currentInputs.qtyInput.value = '0.005';
+  for (let frame = 0; frame < 5; frame += 1) {
+    assert.equal(readState(), null);
+  }
+  assert.equal(currentInputs.qtyInput.value, '0.005');
+  assert.deepEqual(writes.map(({ value }) => value), ['0.07']);
+});
+
 test('trade input synchronization rejects a provisionally accepted value that rolls back before settling', () => {
   const currentInputs = {
     root: {},
@@ -568,6 +637,18 @@ test('trade input synchronization rejects an invalid rollback stability contract
       requiredStableMatchFrames: 0,
     }),
     /Trade input accepted stability must be a positive integer/,
+  );
+  assert.throws(
+    () => createTradeInputStateReader({
+      resolveInputs: () => null,
+      expectedQty: '0.01',
+      includePrice: false,
+      normalizeValue: String,
+      compareValues: () => 1,
+      writeValue: () => {},
+      recoverProvisionalMatchRollback: 'yes',
+    }),
+    /Provisional trade input recovery flag must be boolean/,
   );
 });
 

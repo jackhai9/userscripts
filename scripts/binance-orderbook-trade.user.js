@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.136
+// @version      2.7.137
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1238,6 +1238,7 @@
     requiredStableMismatchFrames = 2,
     requiredStableMatchFrames = 1,
     maxWriteAttempts = 2,
+    recoverProvisionalMatchRollback = false,
     isRecoveryWriteAllowed = () => true
   }) {
     if (typeof resolveInputs !== "function" || typeof normalizeValue !== "function" || typeof compareValues !== "function" || typeof writeValue !== "function" || typeof isRecoveryWriteAllowed !== "function") {
@@ -1251,6 +1252,9 @@
     }
     if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
       throw new Error("Trade input write attempts must be a positive integer");
+    }
+    if (typeof recoverProvisionalMatchRollback !== "boolean") {
+      throw new Error("Provisional trade input recovery flag must be boolean");
     }
     const createSyncSlot = () => {
       let root = null;
@@ -1276,7 +1280,7 @@
         writeCount += 1;
         const postWriteValue = normalizeValue(currentInput.value);
         const rejected = compareValues(expectedValue, postWriteValue) !== 0;
-        recoveryEligible = rejected && writeCount < maxWriteAttempts;
+        recoveryEligible = writeCount < maxWriteAttempts && (rejected || recoverProvisionalMatchRollback);
         rollbackValue = rejected ? postWriteValue : submittedValue;
         stableRollbackFrames = 0;
         stableMatchFrames = 0;
@@ -3692,6 +3696,7 @@
         requiredStableMismatchFrames: stableMismatchFrames,
         requiredStableMatchFrames: settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : 1,
         maxWriteAttempts,
+        recoverProvisionalMatchRollback: settleControlledForm,
         isRecoveryWriteAllowed
       });
       readQtyState();
@@ -3719,6 +3724,7 @@
         requiredStableMismatchFrames: stableMismatchFrames,
         requiredStableMatchFrames: settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : 1,
         maxWriteAttempts,
+        recoverProvisionalMatchRollback: settleControlledForm,
         isRecoveryWriteAllowed
       });
       readTradeState();
