@@ -69,6 +69,10 @@ test('live probe has no user-decision deadline and follows a replaced portal dia
   expect(waiting.finishedAtMonotonicMs).toBeNull();
   expect(waiting.events.map((event) => event.kind)).toContain('dialog-visible');
 
+  await page.getByRole('button', { name: '取消' }).evaluate((button) => {
+    button.parentElement.classList.add('bn-modal-footer');
+  });
+
   await page.getByRole('button', { name: '取消' }).click();
   const snapshot = await finishLivePerformanceProbeWhenReady(page);
   await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();

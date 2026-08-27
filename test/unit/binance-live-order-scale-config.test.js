@@ -15,7 +15,7 @@ const profile = JSON.parse(await readFile(
 
 function liveContext(overrides = {}) {
   return {
-    availableBalance: '13.28',
+    testBudget: '13.28',
     currentLeverage: 5,
     perOrderPrice: '2',
     perOrderQuantity: '2.5',
@@ -44,7 +44,7 @@ test('smoke profile derives three internal scales from live capacity', () => {
 
 test('scale counts are configuration-driven rather than fixed to smoke values', () => {
   const plan = createLiveOrderScalePlan({ ...profile, maxOrderCount: 40 }, liveContext({
-    availableBalance: '100',
+    testBudget: '100',
   }));
 
   assert.deepEqual(plan.scales.map((scale) => scale.effectiveTargetOrderCount), [10, 20, 40]);
@@ -52,7 +52,7 @@ test('scale counts are configuration-driven rather than fixed to smoke values', 
 
 test('insufficient live capacity fails instead of silently collapsing scale labels', () => {
   assert.throws(
-    () => createLiveOrderScalePlan(profile, liveContext({ availableBalance: '0.4' })),
+    () => createLiveOrderScalePlan(profile, liveContext({ testBudget: '0.4' })),
     /cannot form three distinct scales/,
   );
 });
@@ -68,7 +68,7 @@ test('capacity evidence validates actual notional and slot arithmetic', () => {
 
 test('one-order smoke capacity is valid without requiring three scale levels', () => {
   const evidence = createLiveOrderCapacityEvidence(liveContext({
-    availableBalance: '1.25',
+    testBudget: '1.25',
     currentLeverage: 1,
     perOrderPrice: '1',
     perOrderQuantity: '1',
@@ -78,7 +78,7 @@ test('one-order smoke capacity is valid without requiring three scale levels', (
   assert.equal(validateLiveOrderCapacityEvidence(evidence), evidence);
   assert.throws(
     () => createLiveOrderScalePlan(profile, liveContext({
-      availableBalance: '1.25',
+      testBudget: '1.25',
       currentLeverage: 1,
       perOrderPrice: '1',
       perOrderQuantity: '1',

@@ -6,7 +6,7 @@ const PROFILE_FIELDS = [
   'scaleRatios',
 ];
 const LIVE_CONTEXT_FIELDS = [
-  'availableBalance',
+  'testBudget',
   'currentLeverage',
   'perOrderPrice',
   'perOrderQuantity',
@@ -65,16 +65,16 @@ function multiplyDecimalStrings(left, right, path) {
 }
 
 function floorAffordableOrders({
-  availableBalance,
+  testBudget,
   currentLeverage,
   safetyFactor,
   perOrderNotional,
 }) {
-  const balance = parsePositiveDecimal(availableBalance, 'liveContext.availableBalance');
+  const budget = parsePositiveDecimal(testBudget, 'liveContext.testBudget');
   const safety = parsePositiveDecimal(safetyFactor, 'liveContext.safetyFactor');
   const notional = parsePositiveDecimal(perOrderNotional, 'capacity.perOrderNotional');
-  const numerator = balance.numerator * BigInt(currentLeverage) * safety.numerator * notional.scale;
-  const denominator = balance.scale * safety.scale * notional.numerator;
+  const numerator = budget.numerator * BigInt(currentLeverage) * safety.numerator * notional.scale;
+  const denominator = budget.scale * safety.scale * notional.numerator;
   return Number(numerator / denominator);
 }
 
@@ -105,7 +105,7 @@ export function validateLiveOrderScaleProfile(profile) {
 function validateLiveContext(context) {
   assertRecord(context, 'liveContext');
   assertExactKeys(context, LIVE_CONTEXT_FIELDS, 'liveContext');
-  for (const field of ['availableBalance', 'perOrderPrice', 'perOrderQuantity', 'safetyFactor']) {
+  for (const field of ['testBudget', 'perOrderPrice', 'perOrderQuantity', 'safetyFactor']) {
     parsePositiveDecimal(context[field], `liveContext.${field}`);
   }
   const safety = parsePositiveDecimal(context.safetyFactor, 'liveContext.safetyFactor');
@@ -133,6 +133,11 @@ function deriveScaleCount(capacity, ratio, minimum) {
   return Math.max(minimum, Math.round(capacity * ratio));
 }
 
+/**
+ * Builds serializable capacity evidence from a caller-allocated test budget.
+ * The caller must keep the budget within the verified live balance so persisted
+ * evidence proves capacity without disclosing the account's exact balance.
+ */
 export function createLiveOrderCapacityEvidence(liveContext) {
   validateLiveContext(liveContext);
   const perOrderNotional = multiplyDecimalStrings(

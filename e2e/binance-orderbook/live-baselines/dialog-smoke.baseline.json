@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-27T00:15:44.472Z",
+  "environment": {
+    "browser": "Chrome 151.0.7922.174",
+    "os": "macOS (MacIntel)",
+    "route": "https://www.binance.com/zh-CN/futures/HYPEUSDT",
+    "symbol": "HYPEUSDT",
+    "userscriptSha256": "f4bb60af07044e21f684d1978535795363ade1c240dde0de6b904767cfa87a18",
+    "userscriptVersion": "2.7.126"
+  },
+  "scenarios": [
+    {
+      "name": "cancel-dialog-cancel",
+      "parameters": {
+        "kind": "dialog-cancel",
+        "testOrderCount": 1
+      },
+      "sampleCount": 3,
+      "segmentsMs": {
+        "clickToFirstFeedback": {
+          "min": 15.399999856948853,
+          "median": 19.200000047683716,
+          "p95": 24.800000190734863,
+          "max": 24.800000190734863
+        },
+        "clickToDialog": {
+          "min": 44.29999995231629,
+          "median": 66.29999995231628,
+          "p95": 81.40000009536743,
+          "max": 81.40000009536743
+        },
+        "decisionToFinalReady": {
+          "min": 39.5,
+          "median": 43.60000014305115,
+          "p95": 55.59999990463257,
+          "max": 55.59999990463257
+        }
+      },
+      "maxLongTaskMs": {
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "maxLongAnimationFrameMs": {
+        "min": 0,
+        "median": 0,
+        "p95": 220.79999995231628,
+        "max": 220.79999995231628
+      }
+    },
+    {
+      "name": "cancel-dialog-confirm",
+      "parameters": {
+        "kind": "dialog-confirm",
+        "testOrderCount": 1
+      },
+      "sampleCount": 3,
+      "segmentsMs": {
+        "clickToFirstFeedback": {
+          "min": 19.399999856948853,
+          "median": 19.700000047683716,
+          "p95": 22.40000009536743,
+          "max": 22.40000009536743
+        },
+        "clickToDialog": {
+          "min": 75.40000009536743,
+          "median": 85,
+          "p95": 290.7000000476837,
+          "max": 290.7000000476837
+        },
+        "decisionToFinalReady": {
+          "min": 1265.5000000000002,
+          "median": 1285.7000000476837,
+          "p95": 1368.5999999046326,
+          "max": 1368.5999999046326
+        }
+      },
+      "maxLongTaskMs": {
+        "min": 59,
+        "median": 173,
+        "p95": 201,
+        "max": 201
+      },
+      "maxLongAnimationFrameMs": {
+        "min": 94,
+        "median": 229.1999998092651,
+        "p95": 270.89999985694885,
+        "max": 270.89999985694885
+      }
+    }
+  ],
+  "comparisonPolicy": {
+    "absoluteToleranceMs": 100,
+    "medianRatio": 1.5,
+    "p95Ratio": 1.5
+  }
+}

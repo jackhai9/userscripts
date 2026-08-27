@@ -1,0 +1,282 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-27T00:15:44.472Z",
+  "environment": {
+    "browser": "Chrome 151.0.7922.174",
+    "os": "macOS (MacIntel)",
+    "route": "https://www.binance.com/zh-CN/futures/HYPEUSDT",
+    "symbol": "HYPEUSDT",
+    "userscriptSha256": "f4bb60af07044e21f684d1978535795363ade1c240dde0de6b904767cfa87a18",
+    "userscriptVersion": "2.7.126"
+  },
+  "scenarios": [
+    {
+      "name": "cancel-dialog-cancel",
+      "parameters": {
+        "kind": "dialog-cancel",
+        "testOrderCount": 1
+      },
+      "applicableSegments": [
+        "clickToFirstFeedback",
+        "clickToDialog",
+        "decisionToFinalReady"
+      ],
+      "samples": [
+        {
+          "capacityEvidence": {
+            "currentLeverage": 2,
+            "perOrderPrice": "94",
+            "perOrderQuantity": "0.06",
+            "safetyFactor": "0.8",
+            "liveMaxNumOrdersLimit": 200,
+            "existingCurrentSymbolOpenOrders": 0,
+            "outstandingTestOwnedOrders": 0,
+            "perOrderNotional": "5.64",
+            "maxNewOrdersBySlots": 199,
+            "maxNewOrdersByMargin": 1,
+            "testBudget": "5.64"
+          },
+          "segmentsMs": {
+            "clickToFirstFeedback": 24.800000190734863,
+            "clickToDialog": 81.40000009536743,
+            "decisionToFinalReady": 55.59999990463257
+          },
+          "testOrderLedger": {
+            "created": [
+              {
+                "symbol": "HYPEUSDT",
+                "side": "SELL",
+                "positionSide": "SHORT",
+                "price": "94",
+                "quantity": "0.06",
+                "createdAt": "2026-08-26T23:53:32.871Z"
+              }
+            ],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 220.79999995231628
+        },
+        {
+          "capacityEvidence": {
+            "currentLeverage": 2,
+            "perOrderPrice": "94",
+            "perOrderQuantity": "0.06",
+            "safetyFactor": "0.8",
+            "liveMaxNumOrdersLimit": 200,
+            "existingCurrentSymbolOpenOrders": 0,
+            "outstandingTestOwnedOrders": 0,
+            "perOrderNotional": "5.64",
+            "maxNewOrdersBySlots": 199,
+            "maxNewOrdersByMargin": 1,
+            "testBudget": "5.64"
+          },
+          "segmentsMs": {
+            "clickToFirstFeedback": 19.200000047683716,
+            "clickToDialog": 66.29999995231628,
+            "decisionToFinalReady": 43.60000014305115
+          },
+          "testOrderLedger": {
+            "created": [
+              {
+                "symbol": "HYPEUSDT",
+                "side": "SELL",
+                "positionSide": "SHORT",
+                "price": "94",
+                "quantity": "0.06",
+                "createdAt": "2026-08-26T23:53:32.871Z"
+              }
+            ],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 0
+        },
+        {
+          "capacityEvidence": {
+            "currentLeverage": 2,
+            "perOrderPrice": "94",
+            "perOrderQuantity": "0.06",
+            "safetyFactor": "0.8",
+            "liveMaxNumOrdersLimit": 200,
+            "existingCurrentSymbolOpenOrders": 0,
+            "outstandingTestOwnedOrders": 0,
+            "perOrderNotional": "5.64",
+            "maxNewOrdersBySlots": 199,
+            "maxNewOrdersByMargin": 1,
+            "testBudget": "5.64"
+          },
+          "segmentsMs": {
+            "clickToFirstFeedback": 15.399999856948853,
+            "clickToDialog": 44.29999995231629,
+            "decisionToFinalReady": 39.5
+          },
+          "testOrderLedger": {
+            "created": [
+              {
+                "symbol": "HYPEUSDT",
+                "side": "SELL",
+                "positionSide": "SHORT",
+                "price": "94",
+                "quantity": "0.06",
+                "createdAt": "2026-08-26T23:53:32.871Z"
+              }
+            ],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 0,
+          "maxLongAnimationFrameMs": 0
+        }
+      ]
+    },
+    {
+      "name": "cancel-dialog-confirm",
+      "parameters": {
+        "kind": "dialog-confirm",
+        "testOrderCount": 1
+      },
+      "applicableSegments": [
+        "clickToFirstFeedback",
+        "clickToDialog",
+        "decisionToFinalReady"
+      ],
+      "samples": [
+        {
+          "capacityEvidence": {
+            "currentLeverage": 2,
+            "perOrderPrice": "94",
+            "perOrderQuantity": "0.06",
+            "safetyFactor": "0.8",
+            "liveMaxNumOrdersLimit": 200,
+            "existingCurrentSymbolOpenOrders": 0,
+            "outstandingTestOwnedOrders": 0,
+            "perOrderNotional": "5.64",
+            "maxNewOrdersBySlots": 199,
+            "maxNewOrdersByMargin": 1,
+            "testBudget": "5.64"
+          },
+          "segmentsMs": {
+            "clickToFirstFeedback": 19.399999856948853,
+            "clickToDialog": 85,
+            "decisionToFinalReady": 1285.7000000476837
+          },
+          "testOrderLedger": {
+            "created": [
+              {
+                "symbol": "HYPEUSDT",
+                "side": "SELL",
+                "positionSide": "SHORT",
+                "price": "94",
+                "quantity": "0.06",
+                "createdAt": "2026-08-26T23:53:32.871Z"
+              }
+            ],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 59,
+          "maxLongAnimationFrameMs": 94
+        },
+        {
+          "capacityEvidence": {
+            "currentLeverage": 2,
+            "perOrderPrice": "94",
+            "perOrderQuantity": "0.06",
+            "safetyFactor": "0.8",
+            "liveMaxNumOrdersLimit": 200,
+            "existingCurrentSymbolOpenOrders": 0,
+            "outstandingTestOwnedOrders": 0,
+            "perOrderNotional": "5.64",
+            "maxNewOrdersBySlots": 199,
+            "maxNewOrdersByMargin": 1,
+            "testBudget": "5.64"
+          },
+          "segmentsMs": {
+            "clickToFirstFeedback": 22.40000009536743,
+            "clickToDialog": 75.40000009536743,
+            "decisionToFinalReady": 1265.5000000000002
+          },
+          "testOrderLedger": {
+            "created": [
+              {
+                "symbol": "HYPEUSDT",
+                "side": "SELL",
+                "positionSide": "SHORT",
+                "price": "94",
+                "quantity": "0.06",
+                "createdAt": "2026-08-27T00:22:11.178Z"
+              }
+            ],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 173,
+          "maxLongAnimationFrameMs": 229.1999998092651
+        },
+        {
+          "capacityEvidence": {
+            "currentLeverage": 2,
+            "perOrderPrice": "94",
+            "perOrderQuantity": "0.06",
+            "safetyFactor": "0.8",
+            "liveMaxNumOrdersLimit": 200,
+            "existingCurrentSymbolOpenOrders": 0,
+            "outstandingTestOwnedOrders": 0,
+            "perOrderNotional": "5.64",
+            "maxNewOrdersBySlots": 199,
+            "maxNewOrdersByMargin": 1,
+            "testBudget": "5.64"
+          },
+          "segmentsMs": {
+            "clickToFirstFeedback": 19.700000047683716,
+            "clickToDialog": 290.7000000476837,
+            "decisionToFinalReady": 1368.5999999046326
+          },
+          "testOrderLedger": {
+            "created": [
+              {
+                "symbol": "HYPEUSDT",
+                "side": "SELL",
+                "positionSide": "SHORT",
+                "price": "94",
+                "quantity": "0.06",
+                "createdAt": "2026-08-27T00:24:39.256Z"
+              }
+            ],
+            "fills": [],
+            "residual": []
+          },
+          "stateRestored": true,
+          "noFills": true,
+          "residualTestOrders": 0,
+          "uncaughtErrors": 0,
+          "maxLongTaskMs": 201,
+          "maxLongAnimationFrameMs": 270.89999985694885
+        }
+      ]
+    }
+  ]
+}

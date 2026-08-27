@@ -288,12 +288,24 @@ The assembler rejects unknown bundle fields and refuses to overwrite its input f
 or an existing capture. This command is the standard boundary between CDP collection
 and capture summary; do not replace it with an ad hoc Node snippet.
 
-The current checked-in L4 reference is the isolated zero-order HYPEUSDT run. The
-older captures remain immutable evidence; the active baseline comes from the latest
-page-owned completion sample:
+The checked-in L4 references cover the isolated zero-order path and the one-order
+native cancel-dialog paths. Older captures remain immutable evidence; active
+baselines come from the latest page-owned completion samples:
 
 - `e2e/binance-orderbook/live-baselines/no-orders-2026-08-27-page-ready.capture.json`
 - `e2e/binance-orderbook/live-baselines/no-orders.baseline.json`
+- `e2e/binance-orderbook/live-baselines/dialog-smoke-2026-08-27.capture.json`
+- `e2e/binance-orderbook/live-baselines/dialog-smoke.baseline.json`
+
+The dialog reference used HYPEUSDT userscript `2.7.126` with one far-from-market,
+Post Only test order per confirm sample. It contains three isolated cancel samples
+and three isolated confirm samples. Every sample restored the page state, recorded
+zero fills, left zero test-owned residual orders, and observed zero uncaught errors.
+The reference medians are 66.3 ms from action click to native dialog for cancel,
+85.0 ms for confirm, 43.6 ms from cancel decision to final readiness, and 1285.7 ms
+from confirm decision to final readiness. These values describe one captured Chrome
+and Binance environment; comparison policy, rather than a copied timing constant,
+defines the regression threshold.
 
 Each scenario kind owns one exact wall-clock segment contract. A scenario cannot add,
 omit, or reorder segments independently of its kind and must contain at least three
@@ -319,6 +331,12 @@ preferred and effective target counts, and sample count. Every sample persists i
 live capacity evidence. Capacity shortfalls must skip or abort the scale explicitly;
 they must never silently relabel a smaller run as medium or large. Current leverage is
 read-only evidence for this calculation and the live runner must not change it.
+
+Capacity evidence persists `testBudget`, not the exact account balance. The caller
+allocates a positive test budget no greater than the verified live balance, and the
+capacity helper proves the requested order count against that budget. This preserves
+the capacity contract without publishing account financial data in repository
+artifacts.
 
 `testOrderLedger` is the evidence behind the fill and cleanup claims. Its `created`,
 `fills`, and `residual` collections use the same exact order identity: symbol, side,
