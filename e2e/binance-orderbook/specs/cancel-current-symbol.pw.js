@@ -138,10 +138,53 @@ test('a 70-order drawing burst split across tasks performs one full save per tog
       .filter((event) => event.type === 'chart-orders-checked')
       .map((event) => event.value),
   ).toEqual([false, true]);
+  for (const checked of [false, true]) {
+    const checkedIndex = state.events.findIndex(
+      (event) => event.type === 'chart-orders-checked' && event.value === checked,
+    );
+    const popoverClosedIndex = state.events.findIndex(
+      (event, index) => index > checkedIndex && event.type === 'chart-orders-popover-closed',
+    );
+    const finalSaveRequestIndex = state.events.findLastIndex(
+      (event) => event.type === 'chart-save-requested' && event.checked === checked,
+    );
+    const fullSaveIndex = state.events.findIndex(
+      (event, index) => index > finalSaveRequestIndex
+        && event.type === 'chart-saved'
+        && event.snapshot.checked === checked,
+    );
+    expect(popoverClosedIndex).toBeGreaterThan(checkedIndex);
+    expect(popoverClosedIndex).toBeLessThan(finalSaveRequestIndex);
+    expect(popoverClosedIndex).toBeLessThan(fullSaveIndex);
+  }
   await expectRestoredState(page, scenario);
   const probe = await finishInteractionProbe(page);
   assertResponsiveInteraction(expect, probe);
   assertStableGeometry(expect, probe.baseline, probe.current);
+  expect(errors).toEqual([]);
+});
+
+test('a popover close failure does not discard coalesced chart saves', async ({ page }) => {
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.current,
+    orders: ORDER_SETS.current,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+    host: { chartOrdersPopoverCloseMode: 'stuck' },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+
+  await page.getByRole('button', { name: '撤单' }).click();
+  await expect(page.getByText('未能恢复图表当前委托显示')).toBeVisible({ timeout: 6_000 });
+
+  const state = await readFixtureState(page);
+  expect(state.dialogOpen).toBe(false);
+  expect(state.orders).toEqual(ORDER_SETS.current);
+  expect(state.showOrders).toBe(true);
+  expect(state.events.filter((event) => event.type === 'chart-save-requested')).toHaveLength(2);
+  expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(2);
+  expect(
+    state.events.filter((event) => event.type === 'chart-orders-popover-close-requested'),
+  ).toHaveLength(2);
   expect(errors).toEqual([]);
 });
 
