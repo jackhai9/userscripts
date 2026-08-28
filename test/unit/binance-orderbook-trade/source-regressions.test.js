@@ -782,6 +782,7 @@ test('stopping a ladder preserves confirmed submit and cancel progress', () => {
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*abortController\.signal/);
   assert.match(startBody, /isLadderStoppedError\(e\)[\s\S]*formatStoppedLadderProgress\(spec\.label,\s*progress\)/);
   assert.match(startBody, /formatCompletedLadderProgress\(\s*spec\.label,\s*done,\s*plan\.orders\.length,\s*progress/);
+  assert.match(runBody, /buildLadderPlan\(actionType,\s*replacementContext\)[\s\S]*setLadderPlannedOrders\(progress,\s*plan\.orders\.length\)/);
   assert.match(runBody, /executeLadderPlan\(plan,\s*progress,\s*abortSignal\)/);
   assert.match(runBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*progress,\s*abortSignal/);
   assert.match(executeBody, /waitForOrderSubmitAcknowledgement\([\s\S]*recordLadderSubmittedOrder\(progress\)/);

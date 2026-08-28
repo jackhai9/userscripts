@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.149
+// @version      2.7.150
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -837,7 +837,7 @@
 
   // src/binance-orderbook-trade/core/ladder-progress.js
   function assertLadderProgress(progress) {
-    if (!progress || !Number.isInteger(progress.submittedOrders) || progress.submittedOrders < 0 || !Number.isInteger(progress.cancelledOrders) || progress.cancelledOrders < 0) {
+    if (!progress || !Number.isInteger(progress.submittedOrders) || progress.submittedOrders < 0 || !Number.isInteger(progress.cancelledOrders) || progress.cancelledOrders < 0 || !Number.isInteger(progress.currentPlanSubmittedOrders) || progress.currentPlanSubmittedOrders < 0 || (progress.plannedOrders === null ? progress.currentPlanSubmittedOrders !== 0 : !(Number.isInteger(progress.plannedOrders) && progress.plannedOrders > 0 && progress.currentPlanSubmittedOrders <= progress.plannedOrders))) {
       throw new Error("Invalid ladder progress");
     }
   }
@@ -854,7 +854,11 @@
   function formatLadderProgressCounts(progress) {
     assertLadderProgress(progress);
     const counts = [];
-    if (progress.submittedOrders > 0) counts.push(`已挂 ${progress.submittedOrders} 笔`);
+    if (progress.plannedOrders !== null) {
+      counts.push(`已挂 ${progress.currentPlanSubmittedOrders}/${progress.plannedOrders} 笔`);
+    } else if (progress.submittedOrders > 0) {
+      counts.push(`已挂 ${progress.submittedOrders} 笔`);
+    }
     if (progress.cancelledOrders > 0) counts.push(`已撤 ${progress.cancelledOrders} 笔`);
     return counts;
   }
@@ -865,12 +869,26 @@
   function createLadderProgress() {
     return {
       submittedOrders: 0,
-      cancelledOrders: 0
+      cancelledOrders: 0,
+      plannedOrders: null,
+      currentPlanSubmittedOrders: 0
     };
+  }
+  function setLadderPlannedOrders(progress, plannedOrders) {
+    assertLadderProgress(progress);
+    if (!Number.isInteger(plannedOrders) || plannedOrders <= 0) {
+      throw new Error("Invalid ladder planned orders");
+    }
+    progress.plannedOrders = plannedOrders;
+    progress.currentPlanSubmittedOrders = 0;
   }
   function recordLadderSubmittedOrder(progress) {
     assertLadderProgress(progress);
+    if (progress.plannedOrders !== null && progress.currentPlanSubmittedOrders >= progress.plannedOrders) {
+      throw new Error("Ladder submitted orders exceed plan");
+    }
     progress.submittedOrders += 1;
+    if (progress.plannedOrders !== null) progress.currentPlanSubmittedOrders += 1;
   }
   function recordLadderCancelledOrder(progress) {
     assertLadderProgress(progress);
@@ -897,6 +915,9 @@
       throw new Error("Invalid completed ladder total");
     }
     if (completedOrders !== totalOrders) {
+      throw new Error("Completed ladder progress mismatch");
+    }
+    if (progress.plannedOrders !== totalOrders || progress.currentPlanSubmittedOrders !== completedOrders) {
       throw new Error("Completed ladder progress mismatch");
     }
     const cancelledText = progress.cancelledOrders > 0 ? ` · 已撤 ${progress.cancelledOrders} 笔` : "";
@@ -5958,6 +5979,7 @@
         let plan = null;
         try {
           plan = await buildLadderPlan(actionType, replacementContext);
+          setLadderPlannedOrders(progress, plan.orders.length);
           throwIfAborted(abortSignal);
           setLadderStatus(formatLadderPlanStatus(plan));
           const execution = await executeLadderPlan(plan, progress, abortSignal);

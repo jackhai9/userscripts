@@ -190,9 +190,7 @@ test('starting a ladder preserves action slots and turns only the active action 
   const submissionsAfterStop = state.events
     .filter((event) => event.type === 'order-submitted').length;
   await expect(status).toHaveText(
-    submissionsAfterStop > 0
-      ? `阶梯开多已停止 · 已挂 ${submissionsAfterStop} 笔`
-      : '阶梯开多已停止',
+    `阶梯开多已停止 · 已挂 ${submissionsAfterStop}/5 笔`,
   );
   expect(submissionsAfterStop).toBeLessThanOrEqual(submissionsBeforeStop + 1);
   await page.waitForTimeout(700);
