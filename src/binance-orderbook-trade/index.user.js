@@ -4454,9 +4454,9 @@ import {
 
   function formatLadderPlanStatus(plan) {
     const levelText = plan.levels === plan.requestedLevels
-      ? `${plan.levels}`
-      : `${plan.levels}/${plan.requestedLevels}`;
-    return `${plan.spec.label}计划：比例 ${plan.percent}% · 笔数 ${levelText} · 间距 ${plan.ladderStep}`;
+      ? `${plan.levels}档`
+      : `${plan.levels}/${plan.requestedLevels}档`;
+    return `${plan.spec.label}计划：${plan.percent}% / ${levelText} / 幅${plan.ladderStep}`;
   }
 
   function isReplaceableCloseLadderOpenOrdersFailure(plan, error) {

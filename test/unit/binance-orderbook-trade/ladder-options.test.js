@@ -224,7 +224,7 @@ test('ladder execution and UI updates use one captured mode-symbol-precision con
   assert.match(source, /const optionContext = getPanelOptionContext\(\)/);
   assert.match(source, /setLadderLevels\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
   assert.match(source, /setLadderStep\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
-  assert.match(source, /计划：比例 \$\{plan\.percent\}% · 笔数 \$\{levelText\} · 间距 \$\{plan\.ladderStep\}/);
+  assert.match(source, /计划：\$\{plan\.percent\}% \/ \$\{levelText\} \/ 幅\$\{plan\.ladderStep\}/);
 });
 
 test('open and close ladder percentage rows share the centralized ratio label', () => {
