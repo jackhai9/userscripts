@@ -154,6 +154,10 @@ test('ladder execution waits for the current semantic action button before every
 
   assert.match(readyButtonBody, /await waitForTradeActionButtonFrameState/);
   assert.match(readyButtonBody, /plan\.spec\.buttonGetter/);
+  assert.match(source, /const TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS = 3;/);
+  assert.match(source, /const TRADE_ACTION_BUTTON_READY_TIMEOUT_MS = TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS \* 1000;/);
+  assert.match(readyButtonBody, /下单按钮 \$\{TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS\} 秒内未恢复可点击/);
+  assert.doesNotMatch(readyButtonBody, /持续处理中/);
   assert.doesNotMatch(executeBody, /const button = plan\.spec\.buttonGetter\(\);\s*if/);
   assert.match(readyButtonBody, /isSubmitButtonBusy/);
   assert.doesNotMatch(source, /LADDER_ORDER_DELAY_MS/);
