@@ -34,6 +34,10 @@ export function renderBinanceFuturesFixture(scenario) {
     .row-content { display: flex; gap: 16px; }
     .emit-price { display: inline-block; min-width: 70px; min-height: 20px; }
     .chart-widget-root { width: 700px; height: 300px; margin-top: 20px; border: 1px solid #d8dce1; }
+    .chart-toolbar { display: flex; align-items: center; gap: 12px; height: 32px; padding: 6px; }
+    .chart-toolbar .bn-tooltips-wrap { display: inline-block; min-width: 24px; min-height: 18px; }
+    .chart-orders-popover { position: absolute; z-index: 50; display: none; padding: 8px; background: #fff; border: 1px solid #d8dce1; }
+    .chart-orders-popover.active { display: block; }
     .chart-widget-root iframe { width: 100%; height: 100%; border: 0; }
     .react-grid-item { margin: 16px 20px; min-height: 240px; padding: 12px; }
     #account-tabs { margin-bottom: 12px; }
@@ -70,7 +74,18 @@ export function renderBinanceFuturesFixture(scenario) {
         <span class="price emit-price">81.02</span><span class="price emit-price">81.03</span>
         <span class="price emit-price">81.04</span><span class="price emit-price">81.05</span>
       </section>
-      <section class="chart-widget-root"><iframe title="TradingView chart"></iframe></section>
+      <section class="chart-widget-root">
+        <div class="chart-toolbar flex items-center gap-[--space-m]">
+          <span>intervals</span>
+          <span class="bn-tooltips-wrap bn-tooltips-web" data-testid="chart-screenshot">shot</span>
+          <span class="bn-tooltips-wrap bn-tooltips-web" data-testid="chart-orders-trigger">
+            <span class="bn-tooltips-ele" aria-describedby="chart-orders-menu">orders</span>
+          </span>
+          <span class="bn-tooltips-wrap bn-tooltips-web w-full cursor-pointer">最新价格</span>
+        </div>
+        <iframe title="TradingView chart"></iframe>
+      </section>
+      <div id="chart-orders-menu" role="tooltip" class="bn-bubble chart-orders-popover"></div>
     </main>
     <section id="trade-form">
       <div class="trade-header">
@@ -320,18 +335,81 @@ export function renderBinanceFuturesFixture(scenario) {
         }
       }
 
-      const chart = {
-        properties() {
-          return { tradingProperties: { showOrders: { value: () => state.showOrders } } };
+      const chartOrdersPopover = document.querySelector('#chart-orders-menu');
+      const chartOrdersTrigger = document.querySelector('[data-testid="chart-orders-trigger"]');
+      const chartRoot = document.querySelector('.chart-widget-root');
+      const chartEventListeners = new Map();
+      const tradingViewApi = {
+        saveChart(snapshot) {
+          record('chart-saved', { snapshot });
         },
-        applyOverrides(overrides) {
-          state.showOrders = overrides['tradingProperties.showOrders'];
-          record('show-orders', { value: state.showOrders });
+        subscribe(eventName, listener) {
+          const listeners = chartEventListeners.get(eventName) || new Set();
+          listeners.add(listener);
+          chartEventListeners.set(eventName, listeners);
+        },
+        unsubscribe(eventName, listener) {
+          const listeners = chartEventListeners.get(eventName);
+          if (!listeners?.delete(listener)) {
+            throw new Error('Fixture could not unsubscribe the TradingView listener');
+          }
+          if (!listeners.size) chartEventListeners.delete(eventName);
+        },
+        emit(eventName, ...args) {
+          for (const listener of chartEventListeners.get(eventName) || []) listener(...args);
         },
       };
-      document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi = {
-        activeChart: () => chart,
-      };
+
+      function renderChartOrdersPopover() {
+        chartOrdersPopover.innerHTML =
+          '<div role="checkbox" aria-checked="true">仓位</div>' +
+          '<div role="checkbox" data-chart-orders-checkbox aria-checked="' + state.showOrders + '">当前委托</div>' +
+          '<div role="checkbox" aria-checked="true">止盈止损</div>';
+        chartOrdersPopover.querySelector('[data-chart-orders-checkbox]').addEventListener('click', () => {
+          const nextChecked = !state.showOrders;
+          const drawings = currentOrders().map((order) => ({ ...order }));
+          state.showOrders = nextChecked;
+          renderChartOrdersPopover();
+          record('chart-orders-checked', { value: nextChecked, drawings: drawings.length });
+          drawings.forEach((order, index) => {
+            setTimeout(() => {
+              tradingViewApi.emit(
+                'drawing_event',
+                'order-' + order.id,
+                nextChecked ? 'properties_changed' : 'remove',
+              );
+              record('chart-save-requested', {
+                checked: nextChecked,
+                index,
+                orderId: order.id,
+              });
+              tradingViewApi.saveChart({
+                checked: nextChecked,
+                drawingCount: drawings.length,
+                finalOrderId: order.id,
+              });
+            }, scenario.host.mutationDelayMs + (index * 2));
+          });
+        });
+      }
+
+      function openChartOrdersPopover() {
+        chartOrdersPopover.classList.add('active');
+        record('chart-orders-popover-opened');
+      }
+
+      function closeChartOrdersPopover() {
+        if (!chartOrdersPopover.classList.contains('active')) return;
+        chartOrdersPopover.classList.remove('active');
+        record('chart-orders-popover-closed');
+      }
+
+      chartOrdersTrigger.addEventListener('mouseenter', openChartOrdersPopover);
+      chartRoot.addEventListener('mouseenter', (event) => {
+        if (event.target === chartRoot) closeChartOrdersPopover();
+      });
+      document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi = tradingViewApi;
+      renderChartOrdersPopover();
 
       window.__BINANCE_FIXTURE__ = {
         snapshot: () => JSON.parse(JSON.stringify({

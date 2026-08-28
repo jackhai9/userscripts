@@ -2,43 +2,43 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  createTradingViewOrdersRecoveryRecord,
-  parseTradingViewOrdersRecoveryRecord,
-} from '../../../src/binance-orderbook-trade/core/tradingview-orders-recovery.js';
+  createChartOrdersRecoveryRecord,
+  parseChartOrdersRecoveryRecord,
+} from '../../../src/binance-orderbook-trade/core/chart-orders-recovery.js';
 
-test('creates and parses an exact TradingView orders reload recovery record', () => {
-  const raw = createTradingViewOrdersRecoveryRecord(1_000);
+test('creates and parses an exact chart orders reload recovery record', () => {
+  const raw = createChartOrdersRecoveryRecord(1_000);
   assert.deepEqual(JSON.parse(raw), {
-    version: 1,
-    originalVisible: true,
+    version: 2,
+    originalChecked: true,
     createdAtMs: 1_000,
   });
-  assert.deepEqual(parseTradingViewOrdersRecoveryRecord(raw, 2_000), {
+  assert.deepEqual(parseChartOrdersRecoveryRecord(raw, 2_000), {
     status: 'valid',
-    record: { version: 1, originalVisible: true, createdAtMs: 1_000 },
+    record: { version: 2, originalChecked: true, createdAtMs: 1_000 },
   });
 });
 
 test('distinguishes missing, invalid, and future recovery records', () => {
-  assert.deepEqual(parseTradingViewOrdersRecoveryRecord(null, 2_000), {
+  assert.deepEqual(parseChartOrdersRecoveryRecord(null, 2_000), {
     status: 'missing',
     record: null,
   });
-  assert.deepEqual(parseTradingViewOrdersRecoveryRecord('{', 2_000), {
+  assert.deepEqual(parseChartOrdersRecoveryRecord('{', 2_000), {
     status: 'invalid',
     record: null,
   });
-  assert.deepEqual(parseTradingViewOrdersRecoveryRecord(JSON.stringify({
-    version: 1,
-    originalVisible: false,
+  assert.deepEqual(parseChartOrdersRecoveryRecord(JSON.stringify({
+    version: 2,
+    originalChecked: false,
     createdAtMs: 1_000,
   }), 2_000), {
     status: 'invalid',
     record: null,
   });
-  assert.deepEqual(parseTradingViewOrdersRecoveryRecord(JSON.stringify({
-    version: 1,
-    originalVisible: true,
+  assert.deepEqual(parseChartOrdersRecoveryRecord(JSON.stringify({
+    version: 2,
+    originalChecked: true,
     createdAtMs: 3_000,
   }), 2_000), {
     status: 'invalid',
@@ -47,8 +47,8 @@ test('distinguishes missing, invalid, and future recovery records', () => {
 });
 
 test('valid recovery records do not expire before the hidden chart state is restored', () => {
-  const oldRecord = { version: 1, originalVisible: true, createdAtMs: 1_000 };
-  assert.deepEqual(parseTradingViewOrdersRecoveryRecord(
+  const oldRecord = { version: 2, originalChecked: true, createdAtMs: 1_000 };
+  assert.deepEqual(parseChartOrdersRecoveryRecord(
     JSON.stringify(oldRecord),
     1_000 + (365 * 24 * 60 * 60 * 1000),
   ), {
@@ -58,14 +58,14 @@ test('valid recovery records do not expire before the hidden chart state is rest
 });
 
 test('recovery records reject extra fields and invalid timestamps', () => {
-  assert.throws(() => createTradingViewOrdersRecoveryRecord(Number.NaN), /timestamp is invalid/);
+  assert.throws(() => createChartOrdersRecoveryRecord(Number.NaN), /timestamp is invalid/);
   assert.throws(
-    () => parseTradingViewOrdersRecoveryRecord('{}', Number.NaN),
+    () => parseChartOrdersRecoveryRecord('{}', Number.NaN),
     /current time is invalid/,
   );
-  assert.deepEqual(parseTradingViewOrdersRecoveryRecord(JSON.stringify({
-    version: 1,
-    originalVisible: true,
+  assert.deepEqual(parseChartOrdersRecoveryRecord(JSON.stringify({
+    version: 2,
+    originalChecked: true,
     createdAtMs: 1_000,
     symbol: 'HYPEUSDT',
   }), 2_000), {
