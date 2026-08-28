@@ -33,7 +33,7 @@ test('live probe captures a no-order run and destroys every listener', async ({ 
   const firstFeedback = snapshot.events.find((event) => event.kind === 'first-feedback');
   expect(snapshot.finishedAtMonotonicMs - snapshot.startedAtMonotonicMs - firstFeedback.atMs)
     .toBeLessThan(50);
-  expect(snapshot.lastSemanticState.statusText).toBe('HYPEUSDT 当前币无挂单');
+  expect(snapshot.lastSemanticState.statusText).toBe('当前币无挂单');
 
   const finishedEventCount = snapshot.events.length;
   await page.evaluate(() => {
@@ -75,7 +75,7 @@ test('live probe has no user-decision deadline and follows a replaced portal dia
 
   await page.getByRole('button', { name: '取消' }).click();
   const snapshot = await finishLivePerformanceProbeWhenReady(page);
-  await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
   expect(snapshot.events.map((event) => event.kind)).toEqual(expect.arrayContaining([
     'dialog-visible',
@@ -102,7 +102,7 @@ test('live completion waits for confirmed cancellation cleanup', async ({ page }
 
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
   expect(snapshot.events.find((event) => event.kind === 'dialog-action')?.detail?.primary).toBe(true);
-  expect(snapshot.lastSemanticState.statusText).toBe('HYPEUSDT 撤单流程结束，已恢复筛选状态');
+  expect(snapshot.lastSemanticState.statusText).toBe('撤单流程结束，已恢复筛选状态');
   await destroyLivePerformanceProbe(page);
 });
 
