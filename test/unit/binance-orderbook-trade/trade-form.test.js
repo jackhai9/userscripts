@@ -15,6 +15,7 @@ import {
   parseTradeModeLabel,
   placeTradePanelSpacer,
   readTradeAvailableBalance,
+  waitForTradeActionButtonFrameState,
   waitForTradeFormFrameState,
   waitForTradeFormMutationState,
 } from '../../../src/binance-orderbook-trade/dom/trade-form.js';
@@ -221,6 +222,88 @@ test('trade form frame wait rejects a value that never remains synchronized', as
       root,
       () => (matches ? { price: '81.9', qty: '0.01' } : null),
       20,
+      2,
+    ),
+    null,
+  );
+});
+
+test('trade action button wait survives the selected tab preceding its action buttons', async () => {
+  const dom = loadFixtureDom('<section id="trade-form"><div role="tab" aria-selected="true">开仓</div></section>');
+  const { document } = dom.window;
+  const root = document.querySelector('#trade-form');
+  let frame = 0;
+  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(() => {
+    frame += 1;
+    if (frame === 2) {
+      const button = document.createElement('button');
+      button.textContent = '开空';
+      root.append(button);
+    }
+    callback();
+  }, 0);
+  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+
+  const button = await waitForTradeActionButtonFrameState(
+    document,
+    () => Array.from(root.querySelectorAll('button')).find((candidate) => candidate.textContent === '开空') || null,
+    () => true,
+    100,
+    2,
+  );
+
+  assert.equal(button?.textContent, '开空');
+  assert.equal(button?.isConnected, true);
+  assert.equal(frame, 3);
+});
+
+test('trade action button wait restarts stability after React replaces the button node', async () => {
+  const dom = loadFixtureDom('<section id="trade-form"><button>平空</button></section>');
+  const { document } = dom.window;
+  const root = document.querySelector('#trade-form');
+  const originalButton = root.querySelector('button');
+  let replacementButton = null;
+  let resolvedButton = originalButton;
+  let frame = 0;
+  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(() => {
+    frame += 1;
+    if (frame === 2) {
+      replacementButton = document.createElement('button');
+      replacementButton.textContent = '平空';
+      originalButton.replaceWith(replacementButton);
+    }
+    if (frame === 3) resolvedButton = replacementButton;
+    callback();
+  }, 0);
+  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+
+  const button = await waitForTradeActionButtonFrameState(
+    document,
+    () => resolvedButton,
+    () => true,
+    100,
+    2,
+  );
+
+  assert.equal(button, replacementButton);
+  assert.equal(originalButton.isConnected, false);
+  assert.equal(button?.isConnected, true);
+  assert.equal(frame, 4);
+});
+
+test('trade action button wait rejects a button that remains disabled', async () => {
+  const dom = loadFixtureDom('<section id="trade-form"><button aria-disabled="true">开多</button></section>');
+  const { document } = dom.window;
+  const root = document.querySelector('#trade-form');
+  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(callback, 0);
+  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+
+  assert.equal(
+    await waitForTradeActionButtonFrameState(
+      document,
+      () => root.querySelector('button'),
+      () => true,
+      10,
       2,
     ),
     null,

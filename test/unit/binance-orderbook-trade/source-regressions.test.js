@@ -144,6 +144,14 @@ test('trade mode and Post Only switches wait for observed state instead of fixed
   assert.doesNotMatch(source, /findConditionalSubtypeCombobox|findPostOnlyOption|clickElementLikeUser/);
 });
 
+test('ladder execution waits for the current semantic action button before every submit', () => {
+  const executeBody = readFunctionBody('executeLadderPlan');
+
+  assert.match(executeBody, /await waitForTradeActionButtonFrameState/);
+  assert.match(executeBody, /plan\.spec\.buttonGetter/);
+  assert.doesNotMatch(executeBody, /const button = plan\.spec\.buttonGetter\(\);\s*if/);
+});
+
 test('trade input synchronization confirms live controlled values instead of sleeping', () => {
   const setInputBody = readFunctionBody('setInputValueReact');
   const syncBody = readFunctionBody('syncTradeInputs');
