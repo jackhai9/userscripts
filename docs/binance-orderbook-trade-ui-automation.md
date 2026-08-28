@@ -174,9 +174,14 @@ userscript. Save the complete MCP response and use `--compare-mcp-readback` when
 response includes that footer. The parser removes only this exact, validated footer;
 an unrecognized response shape fails instead of silently trimming source text.
 
-The MCP write uses the last-read modification token when the server provides one.
-A concurrent-edit error must stop the release check; it must not overwrite a newer
-manual edit or create a second script with `put`.
+The pre-write MCP read records `Last modified` as synchronization evidence only.
+Do not pass that value to `tampermonkey_patch`: the current Tampermonkey Editors
+bridge preserves the supplied value as the dashboard timestamp instead of advancing
+it. Patch the existing script without `lastModified`, then immediately read it back
+and require an exact source match plus a `Last modified` value inside the current
+synchronization window. If the source or timestamp changes unexpectedly across this
+read-patch-read sequence, stop the release check; do not apply another patch or create
+a second script with `put`.
 
 L2 owns isolated and deterministic host-state coverage. L3 intentionally uses the
 connected Chrome profile because that is where the MCP-managed Tampermonkey script
