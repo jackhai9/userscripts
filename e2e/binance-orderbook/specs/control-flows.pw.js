@@ -264,6 +264,73 @@ test('a complete ladder submits the planned five native orders and restores cont
   expect(submissions.every((event) => event.action === '开多')).toBe(true);
   expect(submissions.every((event) => Number(event.price) < 81.1)).toBe(true);
   expect(submissions.every((event) => Number(event.quantity) > 0)).toBe(true);
+  const events = (await readFixtureState(page)).events;
+  for (let index = 0; index < submissions.length - 1; index += 1) {
+    const nextInputWrite = events.find(
+      (event) => event.type === 'trade-input-written' && event.at > submissions[index].at,
+    );
+    expect(nextInputWrite.at - submissions[index].at).toBeLessThan(700);
+  }
+  expect(errors).toEqual([]);
+});
+
+test('a late toast from the previous order cannot acknowledge the next order', async ({ page }) => {
+  const scenario = createCancelScenario({
+    ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },
+    host: {
+      submitFeedbackDelayMs: 500,
+      submitApiResponseDelayMsByOrder: [20, 700, 20, 20, 20],
+    },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  const panel = page.locator(PANEL_SELECTOR);
+
+  await panel.getByRole('button', { name: '阶梯开多' }).click();
+  await expect(panel.locator('#jh-binance-ladder-status')).toHaveText(
+    '阶梯开多已完成 · 已挂 5/5 笔',
+    { timeout: 12_000 },
+  );
+
+  const events = (await readFixtureState(page)).events;
+  const submissions = events.filter((event) => event.type === 'order-submitted');
+  expect(submissions).toHaveLength(5);
+  for (let index = 0; index < submissions.length - 1; index += 1) {
+    const acknowledgement = events.find(
+      (event) => event.type === 'order-submit-api-success'
+        && event.submitSequence === submissions[index].submitSequence,
+    );
+    expect(acknowledgement.at).toBeLessThan(submissions[index + 1].at);
+  }
+  expect(errors).toEqual([]);
+});
+
+test('ladder waits for the native submit button to leave its busy state', async ({ page }) => {
+  const scenario = createCancelScenario({
+    ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },
+    host: {
+      submitButtonBusyMs: 450,
+      submitButtonBusyAttribute: 'aria-busy',
+      submitButtonClearsInputsWhenReady: true,
+    },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  const panel = page.locator(PANEL_SELECTOR);
+
+  await panel.getByRole('button', { name: '阶梯开多' }).click();
+  await expect(panel.locator('#jh-binance-ladder-status')).toHaveText(
+    '阶梯开多已完成 · 已挂 5/5 笔',
+    { timeout: 12_000 },
+  );
+
+  const state = await readFixtureState(page);
+  const submissions = state.events.filter((event) => event.type === 'order-submitted');
+  expect(submissions).toHaveLength(5);
+  expect(submissions.every((event) => Number(event.price) > 0)).toBe(true);
+  expect(submissions.every((event) => Number(event.quantity) > 0)).toBe(true);
+  expect(state.events.filter((event) => event.type === 'order-submit-while-busy')).toEqual([]);
+  for (let index = 1; index < submissions.length; index += 1) {
+    expect(submissions[index].at - submissions[index - 1].at).toBeGreaterThanOrEqual(450);
+  }
   expect(errors).toEqual([]);
 });
 

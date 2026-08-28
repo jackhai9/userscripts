@@ -56,6 +56,11 @@ export function createCancelScenario(overrides = {}) {
       dialogReplacementDelayMs: null,
       clearMode: 'currentSymbol',
       chartOrdersPopoverCloseMode: 'normal',
+      submitFeedbackDelayMs: 0,
+      submitButtonBusyMs: 0,
+      submitButtonBusyAttribute: 'data-loading',
+      submitButtonClearsInputsWhenReady: false,
+      submitApiResponseDelayMsByOrder: [0, 0, 0, 0, 0],
       precisionOptions: ['0.001', '0.01', '0.1', '1'],
       ...overrides.host,
     },
@@ -89,6 +94,26 @@ export function createCancelScenario(overrides = {}) {
     throw new Error(
       `Unsupported chart-orders popover close mode: ${scenario.host.chartOrdersPopoverCloseMode}`,
     );
+  }
+  for (const key of ['submitFeedbackDelayMs', 'submitButtonBusyMs']) {
+    if (!Number.isInteger(scenario.host[key]) || scenario.host[key] < 0) {
+      throw new Error(`${key} must be a non-negative integer`);
+    }
+  }
+  if (!['data-loading', 'aria-busy'].includes(scenario.host.submitButtonBusyAttribute)) {
+    throw new Error(`Unsupported submit button busy attribute: ${scenario.host.submitButtonBusyAttribute}`);
+  }
+  if (typeof scenario.host.submitButtonClearsInputsWhenReady !== 'boolean') {
+    throw new Error('submitButtonClearsInputsWhenReady must be a boolean');
+  }
+  if (
+    !Array.isArray(scenario.host.submitApiResponseDelayMsByOrder)
+    || scenario.host.submitApiResponseDelayMsByOrder.length !== 5
+    || scenario.host.submitApiResponseDelayMsByOrder.some(
+      (delayMs) => !Number.isInteger(delayMs) || delayMs < 0,
+    )
+  ) {
+    throw new Error('submitApiResponseDelayMsByOrder must contain five non-negative integers');
   }
   if (
     scenario.host.dialogReplacementDelayMs !== null
