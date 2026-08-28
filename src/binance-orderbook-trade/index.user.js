@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.144
+// @version      2.7.145
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -158,17 +158,11 @@ import {
   saveSymbolSide,
 } from './core/panel-options.js';
 import {
-  TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY,
-  createTradingViewOrdersRecoveryRecord,
-  parseTradingViewOrdersRecoveryRecord,
-} from './core/tradingview-orders-recovery.js';
-import {
-  assertTradingViewOrdersTarget,
-  captureTradingViewOrdersVisibility,
-  hideTradingViewOrders,
-  readTradingViewOrdersVisibility,
-  restoreTradingViewOrders,
-} from './core/tradingview-orders.js';
+  CHART_ORDERS_RECOVERY_STORAGE_KEY,
+  createChartOrdersRecoveryRecord,
+  parseChartOrdersRecoveryRecord,
+} from './core/chart-orders-recovery.js';
+import { coalesceTradingViewDrawingSaves } from './core/chart-save-coalescer.js';
 import { resolveCancelDialogDecision } from './core/cancel-dialog-decision.js';
 import {
   classifyBinanceCancelAllDialogAction,
@@ -182,9 +176,11 @@ import {
   getOpenOrderRowCells,
 } from './dom/open-order-rows.js';
 import {
-  findBinanceTradingViewTarget as findBinanceTradingViewTargetDom,
-  getBinanceTradingViewTarget as getBinanceTradingViewTargetDom,
-} from './dom/tradingview-target.js';
+  assertSameBinanceChartOrdersTarget,
+  findActiveBinanceChartOrdersPopover,
+  findBinanceChartOrdersTarget as findBinanceChartOrdersTargetDom,
+  getBinanceChartOrdersTarget as getBinanceChartOrdersTargetDom,
+} from './dom/chart-orders.js';
 
 (function () {
   'use strict';
@@ -278,6 +274,8 @@ import {
   const ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 60000;
   const CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS = 1800;
   const CANCEL_NO_ORDERS_FEEDBACK_MS = 600;
+  const CHART_ORDERS_MENU_TIMEOUT_MS = 1800;
+  const CHART_ORDERS_MENU_POLL_MS = 50;
   const LADDER_MAKER_BUFFER_LEVELS = 1;
   const LADDER_REPRICE_MAX_ATTEMPTS = 5;
   const LADDER_REPRICE_DELAY_MS = 180;
@@ -370,10 +368,10 @@ import {
   let cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
   let cancelNoOrdersFeedbackActive = false;
   let cancelNoOrdersFeedbackTimer = 0;
-  let tradingViewOrdersRecoveryPendingAtStartup =
-    sessionStorage.getItem(TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY) !== null;
-  let tradingViewOrdersRecoveryTask = null;
-  let tradingViewOrdersRecoveryLastError = null;
+  let chartOrdersRecoveryPendingAtStartup =
+    sessionStorage.getItem(CHART_ORDERS_RECOVERY_STORAGE_KEY) !== null;
+  let chartOrdersRecoveryTask = null;
+  let chartOrdersRecoveryLastError = null;
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
   let ladderStatusTitle = '空闲';
@@ -3644,112 +3642,226 @@ import {
     }
   }
 
-  function writeTradingViewOrdersRecoveryRecord() {
+  function getBinanceChartOrdersTarget() {
+    return getBinanceChartOrdersTargetDom(document);
+  }
+
+  function writeChartOrdersRecoveryRecord() {
     sessionStorage.setItem(
-      TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY,
-      createTradingViewOrdersRecoveryRecord(Date.now()),
+      CHART_ORDERS_RECOVERY_STORAGE_KEY,
+      createChartOrdersRecoveryRecord(Date.now()),
     );
   }
 
-  function clearTradingViewOrdersRecoveryRecord() {
-    sessionStorage.removeItem(TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY);
+  function clearChartOrdersRecoveryRecord() {
+    sessionStorage.removeItem(CHART_ORDERS_RECOVERY_STORAGE_KEY);
   }
 
-  function readTradingViewOrdersRecoveryRecord() {
-    return parseTradingViewOrdersRecoveryRecord(
-      sessionStorage.getItem(TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY),
+  function readChartOrdersRecoveryRecord() {
+    return parseChartOrdersRecoveryRecord(
+      sessionStorage.getItem(CHART_ORDERS_RECOVERY_STORAGE_KEY),
       Date.now(),
     );
   }
 
-  async function waitForTwoAnimationFrames() {
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  }
-
-  function getCurrentBinanceTradingViewApi() {
-    return getBinanceTradingViewTargetDom(document).tradingViewApi;
-  }
-
-  function assertTradingViewOrdersVisibility(state, expectedVisible) {
-    const api = getCurrentBinanceTradingViewApi();
-    assertTradingViewOrdersTarget(api, state);
-    const visible = readTradingViewOrdersVisibility(api);
-    if (visible !== expectedVisible) {
-      throw new Error(`TradingView showOrders is ${visible}`);
+  function dispatchChartOrdersPointerEvents(element, eventTypes, relatedTarget = null) {
+    for (const type of eventTypes) {
+      element.dispatchEvent(new MouseEvent(type, {
+        bubbles: type !== 'mouseenter' && type !== 'mouseleave',
+        cancelable: true,
+        composed: true,
+        relatedTarget,
+        view: window,
+      }));
     }
   }
 
-  async function hideTradingViewOrdersForBulkCancel(api, state) {
-    assertTradingViewOrdersTarget(api, state);
-    if (state.originalVisible) writeTradingViewOrdersRecoveryRecord();
-    try {
-      hideTradingViewOrders(api, state);
-    } catch (error) {
-      // Keep the journal only after an override may have changed the chart.
-      if (!state.changed) clearTradingViewOrdersRecoveryRecord();
-      throw error;
+  async function waitForBinanceChartOrdersPopover(target, expectedChecked = null) {
+    const deadline = Date.now() + CHART_ORDERS_MENU_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const current = findActiveBinanceChartOrdersPopover(
+        document,
+        target,
+        isVisibleElement,
+      );
+      if (current && (expectedChecked === null || current.checked === expectedChecked)) {
+        return current;
+      }
+      await delay(CHART_ORDERS_MENU_POLL_MS);
     }
-    if (!state.changed) return;
-
-    await waitForTwoAnimationFrames();
-    assertTradingViewOrdersVisibility(state, false);
+    const current = findActiveBinanceChartOrdersPopover(
+      document,
+      target,
+      isVisibleElement,
+    );
+    if (current && (expectedChecked === null || current.checked === expectedChecked)) {
+      return current;
+    }
+    throw new Error(expectedChecked === null
+      ? 'Binance chart OpenOrders popover did not open'
+      : `Binance chart OpenOrders state did not become ${expectedChecked}`);
   }
 
-  async function restoreTradingViewOrdersAfterBulkCancel(state) {
-    const api = getCurrentBinanceTradingViewApi();
-    assertTradingViewOrdersTarget(api, state);
-    restoreTradingViewOrders(api, state);
-    if (state.changed) {
-      await waitForTwoAnimationFrames();
-      assertTradingViewOrdersVisibility(state, state.originalVisible);
+  async function openBinanceChartOrdersPopover(target) {
+    const currentTarget = getBinanceChartOrdersTarget();
+    assertSameBinanceChartOrdersTarget(target, currentTarget);
+    dispatchChartOrdersPointerEvents(
+      currentTarget.trigger,
+      ['pointerover', 'mouseover', 'mouseenter'],
+    );
+    return waitForBinanceChartOrdersPopover(currentTarget);
+  }
+
+  async function closeBinanceChartOrdersPopover(target) {
+    const currentTarget = getBinanceChartOrdersTarget();
+    assertSameBinanceChartOrdersTarget(target, currentTarget);
+    const current = findActiveBinanceChartOrdersPopover(
+      document,
+      currentTarget,
+      isVisibleElement,
+    );
+    if (!current) return;
+
+    dispatchChartOrdersPointerEvents(
+      current.popover,
+      ['pointerout', 'mouseout', 'mouseleave'],
+      currentTarget.chartRoot,
+    );
+    dispatchChartOrdersPointerEvents(
+      currentTarget.trigger,
+      ['pointerout', 'mouseout', 'mouseleave'],
+      currentTarget.chartRoot,
+    );
+    dispatchChartOrdersPointerEvents(
+      currentTarget.chartRoot,
+      ['pointerover', 'mouseover', 'mouseenter'],
+      currentTarget.trigger,
+    );
+
+    const deadline = Date.now() + CHART_ORDERS_MENU_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (!findActiveBinanceChartOrdersPopover(
+        document,
+        currentTarget,
+        isVisibleElement,
+      )) return;
+      await delay(CHART_ORDERS_MENU_POLL_MS);
     }
-    clearTradingViewOrdersRecoveryRecord();
+    if (findActiveBinanceChartOrdersPopover(
+      document,
+      currentTarget,
+      isVisibleElement,
+    )) {
+      throw new Error('Binance chart OpenOrders popover did not close');
+    }
+  }
+
+  async function toggleBinanceChartOrdersWithCoalescedSave(
+    target,
+    checkbox,
+    expectedChecked,
+    expectDrawingEvents,
+  ) {
+    if (typeof expectDrawingEvents !== 'boolean') {
+      throw new Error('Chart orders drawing-event expectation is invalid');
+    }
+    const result = await coalesceTradingViewDrawingSaves(
+      target.tradingViewApi,
+      async () => {
+        checkbox.click();
+        await waitForBinanceChartOrdersPopover(target, expectedChecked);
+      },
+      expectDrawingEvents ? {} : { eventDiscoveryTimeoutMs: 0 },
+    );
+    log('图表当前委托保存已合并', {
+      drawingEvents: result.drawingEventCount,
+      saveRequests: result.saveRequestCount,
+      fullSaves: result.fullSaveCount,
+    });
+  }
+
+  async function hideBinanceChartOrdersForBulkCancel(target, state) {
+    const current = await openBinanceChartOrdersPopover(target);
+    state.originalChecked = current.checked;
+    if (current.checked) {
+      writeChartOrdersRecoveryRecord();
+      state.changed = true;
+      await toggleBinanceChartOrdersWithCoalescedSave(
+        target,
+        current.checkbox,
+        false,
+        true,
+      );
+    }
+    await closeBinanceChartOrdersPopover(target);
+  }
+
+  async function restoreBinanceChartOrdersAfterBulkCancel(
+    target,
+    state,
+    expectDrawingEvents,
+  ) {
+    if (typeof expectDrawingEvents !== 'boolean') {
+      throw new Error('Chart orders drawing-event expectation is invalid');
+    }
+    assertSameBinanceChartOrdersTarget(target, getBinanceChartOrdersTarget());
+    const current = await openBinanceChartOrdersPopover(target);
+    if (current.checked !== state.originalChecked) {
+      await toggleBinanceChartOrdersWithCoalescedSave(
+        target,
+        current.checkbox,
+        state.originalChecked,
+        expectDrawingEvents,
+      );
+    }
+    await closeBinanceChartOrdersPopover(target);
+    clearChartOrdersRecoveryRecord();
   }
 
   async function recoverChartOrdersStateAfterReload() {
-    const recovery = readTradingViewOrdersRecoveryRecord();
+    const recovery = readChartOrdersRecoveryRecord();
     if (recovery.status === 'missing') {
-      tradingViewOrdersRecoveryPendingAtStartup = false;
+      chartOrdersRecoveryPendingAtStartup = false;
       return { status: 'missing' };
     }
     if (recovery.status === 'invalid') {
       emit('ERR', '图表当前委托恢复记录无效，未修改页面状态');
-      clearTradingViewOrdersRecoveryRecord();
-      tradingViewOrdersRecoveryPendingAtStartup = false;
+      clearChartOrdersRecoveryRecord();
+      chartOrdersRecoveryPendingAtStartup = false;
       return { status: recovery.status };
     }
 
-    const target = findBinanceTradingViewTargetDom(document);
+    const target = findBinanceChartOrdersTargetDom(document);
     if (!target) return { status: 'target_not_ready' };
-    const state = captureTradingViewOrdersVisibility(target.tradingViewApi);
-    state.changed = state.originalVisible !== recovery.record.originalVisible;
-    state.originalVisible = recovery.record.originalVisible;
-    await restoreTradingViewOrdersAfterBulkCancel(state);
-    tradingViewOrdersRecoveryPendingAtStartup = false;
-    tradingViewOrdersRecoveryLastError = null;
+    await restoreBinanceChartOrdersAfterBulkCancel(target, {
+      originalChecked: recovery.record.originalChecked,
+      changed: true,
+    }, true);
+    chartOrdersRecoveryPendingAtStartup = false;
+    chartOrdersRecoveryLastError = null;
     log('已恢复刷新前的图表当前委托显示状态');
     return { status: 'restored' };
   }
 
   function scheduleChartOrdersRecovery() {
     if (
-      !tradingViewOrdersRecoveryPendingAtStartup
-      || tradingViewOrdersRecoveryTask
+      !chartOrdersRecoveryPendingAtStartup
+      || chartOrdersRecoveryTask
       || cancelCurrentSymbolOpenOrdersTask
       || document.hidden
       || !isFuturesTradingPage()
     ) return;
 
     const task = recoverChartOrdersStateAfterReload();
-    tradingViewOrdersRecoveryTask = task;
+    chartOrdersRecoveryTask = task;
     task.catch((error) => {
       const message = String(error?.message || error);
-      if (message !== tradingViewOrdersRecoveryLastError) {
-        tradingViewOrdersRecoveryLastError = message;
+      if (message !== chartOrdersRecoveryLastError) {
+        chartOrdersRecoveryLastError = message;
         emit('ERR', '恢复刷新前的图表当前委托显示失败', error);
       }
     }).finally(() => {
-      if (tradingViewOrdersRecoveryTask === task) tradingViewOrdersRecoveryTask = null;
+      if (chartOrdersRecoveryTask === task) chartOrdersRecoveryTask = null;
     });
   }
 
@@ -3775,8 +3887,10 @@ import {
     let previousOpenOrdersSubTabIdentity = null;
     let symbolFilterOriginalChecked = null;
     let restoreTemporaryUiState = true;
-    let tradingViewOrdersState = null;
-    let restoreTradingViewOrdersState = true;
+    let chartOrdersTarget = null;
+    const chartOrdersState = { originalChecked: null, changed: false };
+    let restoreChartOrdersState = true;
+    let chartOrdersDefinitivelyCleared = false;
     let successStatusMessage = null;
 
     try {
@@ -3846,9 +3960,8 @@ import {
       scheduleRenderPanel();
 
       try {
-        const tradingViewApi = getCurrentBinanceTradingViewApi();
-        tradingViewOrdersState = captureTradingViewOrdersVisibility(tradingViewApi);
-        await hideTradingViewOrdersForBulkCancel(tradingViewApi, tradingViewOrdersState);
+        chartOrdersTarget = getBinanceChartOrdersTarget();
+        await hideBinanceChartOrdersForBulkCancel(chartOrdersTarget, chartOrdersState);
       } catch (e) {
         emit('ERR', '撤单前隐藏图表当前委托失败', e);
         const message = '未能确认图表当前委托已隐藏，未打开撤单确认框';
@@ -3900,7 +4013,7 @@ import {
       }
       if (dialogDecision.status === 'aborted') {
         restoreTemporaryUiState = false;
-        restoreTradingViewOrdersState = false;
+        restoreChartOrdersState = false;
         const interruptedBaseAsset = formatStatusBaseAsset(symbol);
         const message = `原交易对 ${interruptedBaseAsset} 页面已离开，撤单确认跟踪已停止`;
         setLadderStatus(message);
@@ -3954,6 +4067,7 @@ import {
         setLadderStatus(message);
         return { ok: false, status: 'not_cleared', message };
       }
+      chartOrdersDefinitivelyCleared = clearResult.definitivelyCleared === true;
       successStatusMessage = waitUntilCleared
         ? '当前币挂单已撤，继续重挂'
         : '撤单流程结束，已恢复筛选状态';
@@ -3981,12 +4095,18 @@ import {
         }
       }
 
-      let tradingViewOrdersRestoreSucceeded = true;
-      if (restoreTradingViewOrdersState && tradingViewOrdersState?.changed) {
+      let chartOrdersRestoreSucceeded = true;
+      if (restoreChartOrdersState && chartOrdersState.changed) {
         try {
-          await restoreTradingViewOrdersAfterBulkCancel(tradingViewOrdersState);
+          const chartOrdersStillDefinitivelyCleared =
+            chartOrdersDefinitivelyCleared && getOpenOrdersTabCount() === 0;
+          await restoreBinanceChartOrdersAfterBulkCancel(
+            chartOrdersTarget,
+            chartOrdersState,
+            !chartOrdersStillDefinitivelyCleared,
+          );
         } catch (e) {
-          tradingViewOrdersRestoreSucceeded = false;
+          chartOrdersRestoreSucceeded = false;
           emit('ERR', '恢复图表当前委托显示失败', e);
           setLadderStatus('未能恢复图表当前委托显示');
         }
@@ -3995,7 +4115,7 @@ import {
       if (
         restoreTemporaryUiState &&
         isCurrentObservedSymbol(symbol) &&
-        tradingViewOrdersRestoreSucceeded &&
+        chartOrdersRestoreSucceeded &&
         temporaryUiRestoreSucceeded &&
         successStatusMessage
       ) {

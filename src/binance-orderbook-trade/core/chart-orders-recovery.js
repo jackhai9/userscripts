@@ -1,12 +1,12 @@
-export const TRADINGVIEW_ORDERS_RECOVERY_STORAGE_KEY =
-  'binance-orderbook-trade:tradingview-orders-recovery:v1';
+export const CHART_ORDERS_RECOVERY_STORAGE_KEY =
+  'binance-orderbook-trade:chart-orders-recovery:v2';
 
-export function createTradingViewOrdersRecoveryRecord(nowMs) {
+export function createChartOrdersRecoveryRecord(nowMs) {
   if (!Number.isFinite(nowMs)) throw new Error('Chart orders recovery timestamp is invalid');
-  return JSON.stringify({ version: 1, originalVisible: true, createdAtMs: nowMs });
+  return JSON.stringify({ version: 2, originalChecked: true, createdAtMs: nowMs });
 }
 
-export function parseTradingViewOrdersRecoveryRecord(rawValue, nowMs) {
+export function parseChartOrdersRecoveryRecord(rawValue, nowMs) {
   if (rawValue === null) return { status: 'missing', record: null };
   if (!Number.isFinite(nowMs)) throw new Error('Chart orders recovery current time is invalid');
 
@@ -18,9 +18,9 @@ export function parseTradingViewOrdersRecoveryRecord(rawValue, nowMs) {
   }
   const keys = record && typeof record === 'object' ? Object.keys(record).sort() : [];
   if (
-    keys.join(',') !== 'createdAtMs,originalVisible,version'
-    || record.version !== 1
-    || record.originalVisible !== true
+    keys.join(',') !== 'createdAtMs,originalChecked,version'
+    || record.version !== 2
+    || record.originalChecked !== true
     || !Number.isFinite(record.createdAtMs)
     || record.createdAtMs > nowMs
   ) {

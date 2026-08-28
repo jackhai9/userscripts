@@ -78,6 +78,21 @@ for (const entry of CANCEL_COVERING_SCENARIOS) {
     expect(state.events.filter((event) => event.type === 'cancel-requested')).toHaveLength(
       hasCurrentOrders && vector.dialogOutcome === 'confirm' ? 1 : 0,
     );
+    const currentOrderCount = currentSymbolOrders(scenario).length;
+    const expectedChartToggleCount = hasCurrentOrders && scenario.ui.showOrders ? 2 : 0;
+    const expectedChartSaveBurstCount = expectedChartToggleCount === 0
+      ? 0
+      : vector.dialogOutcome === 'confirm' ? 1 : 2;
+    const expectedChartSaveRequestCount = expectedChartSaveBurstCount * currentOrderCount;
+    expect(state.events.filter((event) => event.type === 'chart-orders-checked')).toHaveLength(
+      expectedChartToggleCount,
+    );
+    expect(state.events.filter((event) => event.type === 'chart-save-requested')).toHaveLength(
+      expectedChartSaveRequestCount,
+    );
+    expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(
+      expectedChartSaveBurstCount,
+    );
     expect(errors).toEqual([]);
   });
 }

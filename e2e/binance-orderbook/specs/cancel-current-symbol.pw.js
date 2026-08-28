@@ -105,6 +105,46 @@ test('cancelling the native dialog preserves current and other orders and restor
   expect(errors).toEqual([]);
 });
 
+test('a 70-order drawing burst split across tasks performs one full save per toggle', async ({ page }) => {
+  const orders = Array.from({ length: 70 }, (_, index) => ({
+    id: `current-${index + 1}`,
+    symbol: 'HYPEUSDT',
+    side: 'SELL',
+    price: String(90 + (index / 100)),
+    quantity: '0.01',
+  }));
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.current,
+    orders,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  await installInteractionProbe(page, CANCEL_BUTTON_SELECTOR);
+
+  await page.getByRole('button', { name: '撤单' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(false);
+  await page.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
+
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(orders);
+  expect(
+    state.events.filter((event) => event.type === 'chart-save-requested'),
+  ).toHaveLength(140);
+  expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(2);
+  expect(
+    state.events
+      .filter((event) => event.type === 'chart-orders-checked')
+      .map((event) => event.value),
+  ).toEqual([false, true]);
+  await expectRestoredState(page, scenario);
+  const probe = await finishInteractionProbe(page);
+  assertResponsiveInteraction(expect, probe);
+  assertStableGeometry(expect, probe.baseline, probe.current);
+  expect(errors).toEqual([]);
+});
+
 test('confirming with mixed-symbol orders clears only the current symbol', async ({ page }) => {
   const scenario = createCancelScenario({
     positions: POSITION_SETS.both,
@@ -141,7 +181,7 @@ test('an originally enabled symbol filter remains enabled after confirmation', a
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(otherSymbolOrders(scenario));
   await expectRestoredState(page, scenario);
-  expect(state.events.filter((event) => event.type === 'show-orders')).toEqual([]);
+  expect(state.events.filter((event) => event.type === 'chart-orders-checked')).toEqual([]);
   expect(errors).toEqual([]);
 });
 
@@ -279,7 +319,7 @@ for (const dialogMode of ['extraAction', 'missingPrimary']) {
     expect(state.events.filter((event) => event.type === 'cancel-requested')).toEqual([]);
     expect(
       state.events
-        .filter((event) => event.type === 'show-orders')
+        .filter((event) => event.type === 'chart-orders-checked')
         .map((event) => event.value),
     ).toEqual([false, true]);
     expect(state.showOrders).toBe(true);
