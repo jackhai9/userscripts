@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.147
+// @version      2.7.148
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -264,7 +264,6 @@ import {
     LOCAL_LADDER_OPEN_STEP_KEY,
     LOCAL_LADDER_CLOSE_STEP_KEY,
   ];
-  const LADDER_ORDER_DELAY_MS = 520;
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
   const LADDER_SUBMIT_POLL_MS = 80;
   const LADDER_ACTION_FEEDBACK_MIN_MS = 240;
@@ -2363,11 +2362,35 @@ import {
     return (
       button.disabled ||
       button.getAttribute('aria-disabled') === 'true' ||
+      button.getAttribute('aria-busy') === 'true' ||
       button.getAttribute('data-loading') === 'true' ||
       includesBinancePageText(text, BINANCE_PAGE_TEXT.submitBusy) ||
       cls.includes('loading') ||
       !!button.querySelector('[class*="loading"], [class*="spinner"], [aria-busy="true"]')
     );
+  }
+
+  async function waitForReadyLadderSubmitButton(plan) {
+    const resolveReadyButton = () => {
+      const candidate = plan.spec.buttonGetter();
+      return candidate && !isSubmitButtonBusy(candidate) ? candidate : null;
+    };
+    const button = await waitForTradeActionButtonFrameState(
+      document,
+      resolveReadyButton,
+      isVisibleElement,
+      TRADE_ACTION_BUTTON_READY_TIMEOUT_MS,
+    );
+    if (button) return button;
+
+    const currentButton = plan.spec.buttonGetter();
+    if (!currentButton || !currentButton.isConnected || !isVisibleElement(currentButton)) {
+      throw new Error(`${plan.spec.label}按钮尚未渲染完成，已停止`);
+    }
+    if (isSubmitButtonBusy(currentButton)) {
+      throw new Error(`${plan.spec.label}按钮持续处理中，已停止`);
+    }
+    throw new Error(`${plan.spec.label}按钮当前不可点击，已停止`);
   }
 
   function readVisibleOrderFeedbackEntries() {
@@ -2460,7 +2483,6 @@ import {
       }
       const capturedApiSuccessesNow = readLadderSubmitApiSuccesses(submitCaptureId);
       if (capturedApiSuccessesNow.length === 1) return;
-      if (acknowledgement.status === 'success') return;
 
       const busy = isSubmitButtonBusy(button);
       if (busy) sawBusy = true;
@@ -2468,7 +2490,7 @@ import {
       await delay(LADDER_SUBMIT_POLL_MS);
     }
 
-    const settleHint = sawBusy ? '按钮已恢复但未收到明确成功反馈' : '未观察到提交按钮状态变化';
+    const settleHint = sawBusy ? '按钮已恢复但未捕获当前下单 API 成功响应' : '未捕获当前下单 API 成功响应';
     throw new Error(`未收到明确${label}成功反馈（${settleHint}），已停止；请核对当前委托/历史成交`);
   }
 
@@ -2492,6 +2514,11 @@ import {
         assertLadderExecutionContext(plan);
         assertLadderMakerPrice(plan, order.price);
 
+        await waitForReadyLadderSubmitButton(plan);
+        throwIfAborted(abortSignal);
+        assertLadderExecutionContext(plan);
+        assertLadderMakerPrice(plan, order.price);
+
         const currentPriceInput = findPriceInput();
         const currentQtyInput = findQtyInput();
         if (!currentPriceInput || !currentQtyInput) throw new Error('执行中价格或数量输入框丢失');
@@ -2507,20 +2534,18 @@ import {
         assertLadderExecutionContext(plan);
         assertLadderMakerPrice(plan, submittedPrice);
 
-        const button = await waitForTradeActionButtonFrameState(
-          document,
-          plan.spec.buttonGetter,
-          isVisibleElement,
-          TRADE_ACTION_BUTTON_READY_TIMEOUT_MS,
-        );
+        const button = await waitForReadyLadderSubmitButton(plan);
         throwIfAborted(abortSignal);
-        if (!button) {
-          const currentButton = plan.spec.buttonGetter();
-          if (!currentButton || !currentButton.isConnected || !isVisibleElement(currentButton)) {
-            throw new Error(`${plan.spec.label}按钮尚未渲染完成，已停止`);
-          }
-          throw new Error(`${plan.spec.label}按钮当前不可点击，已停止`);
-        }
+        assertSubmittedPriceMatchesExpectedPrice(
+          order.price,
+          findPriceInput()?.value || '',
+          '计划价',
+        );
+        assertSubmittedQtyMatchesExpectedQty(
+          order.qty,
+          findQtyInput()?.value || '',
+          '计划量',
+        );
 
         if (!CFG.SAFE_MODE) {
           const previousFeedback = takeOrderFeedbackSnapshot();
@@ -2565,7 +2590,6 @@ import {
       done++;
       recordLadderSubmittedOrder(progress);
       setLadderStatus(`${plan.spec.label}已挂 ${done}/${plan.orders.length} 笔`);
-      await delay(LADDER_ORDER_DELAY_MS);
       throwIfAborted(abortSignal);
     }
     return { done, repriceAttempts, lastRepriceApiErrorCode };

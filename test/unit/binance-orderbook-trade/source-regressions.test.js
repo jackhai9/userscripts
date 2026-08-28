@@ -146,10 +146,17 @@ test('trade mode and Post Only switches wait for observed state instead of fixed
 
 test('ladder execution waits for the current semantic action button before every submit', () => {
   const executeBody = readFunctionBody('executeLadderPlan');
+  const readyButtonBody = readFunctionBody('waitForReadyLadderSubmitButton');
 
-  assert.match(executeBody, /await waitForTradeActionButtonFrameState/);
-  assert.match(executeBody, /plan\.spec\.buttonGetter/);
+  assert.match(readyButtonBody, /await waitForTradeActionButtonFrameState/);
+  assert.match(readyButtonBody, /plan\.spec\.buttonGetter/);
   assert.doesNotMatch(executeBody, /const button = plan\.spec\.buttonGetter\(\);\s*if/);
+  assert.match(readyButtonBody, /isSubmitButtonBusy/);
+  assert.doesNotMatch(source, /LADDER_ORDER_DELAY_MS/);
+  assert.match(executeBody, /await waitForReadyLadderSubmitButton\(plan\)[\s\S]*syncTradeInputs/);
+  assert.match(executeBody, /syncTradeInputs[\s\S]*await waitForReadyLadderSubmitButton\(plan\)/);
+  assert.match(executeBody, /assertSubmittedPriceMatchesExpectedPrice[\s\S]*button\.click\(\)/);
+  assert.match(executeBody, /assertSubmittedQtyMatchesExpectedQty[\s\S]*button\.click\(\)/);
 });
 
 test('trade input synchronization confirms live controlled values instead of sleeping', () => {
@@ -302,6 +309,7 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(acknowledgementBody, /isPostOnlyMakerRejectionFeedback\(pendingFailure\.message\)/);
   assert.match(acknowledgementBody, /createLadderMakerPriceConflictError\(pendingFailure\.message\)/);
   assert.match(acknowledgementBody, /capturedApiSuccessesNow\.length === 1/);
+  assert.doesNotMatch(acknowledgementBody, /acknowledgement\.status === 'success'/);
   assert.doesNotMatch(source, /LADDER_SUBMIT_API_CODE_GRACE_MS/);
 
   const repriceBody = readFunctionBody('refreshRemainingLadderOrders');
@@ -318,6 +326,9 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   const executeBody = readFunctionBody('executeLadderPlan');
   assert.match(executeBody, /LADDER_REPRICE_MAX_ATTEMPTS/);
   assert.match(executeBody, /beginLadderSubmitResponseCapture\(\)/);
+  const readyButtonBody = readFunctionBody('waitForReadyLadderSubmitButton');
+  assert.match(readyButtonBody, /!isSubmitButtonBusy\(candidate\)/);
+  assert.match(source, /button\.getAttribute\('aria-busy'\) === 'true'/);
   assert.match(executeBody, /endLadderSubmitResponseCapture\(submitCaptureId\)/);
   assert.match(executeBody, /waitForOrderSubmitAcknowledgement\([\s\S]*plan\.spec\.mode/);
   assert.match(executeBody, /refreshRemainingLadderOrders\(plan,\s*done\)/);

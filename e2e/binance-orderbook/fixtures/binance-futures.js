@@ -135,6 +135,7 @@ export function renderBinanceFuturesFixture(scenario) {
       const visibleOrders = () => state.hideOtherSymbols ? currentOrders() : state.orders;
       const selected = (value, expected) => String(value === expected);
       const scheduleCommit = (callback) => setTimeout(callback, scenario.host.mutationDelayMs);
+      let orderSubmitSequence = 0;
       const userscriptFetch = window.fetch;
       window.fetch = async (...args) => {
         const response = await userscriptFetch(...args);
@@ -182,15 +183,56 @@ export function renderBinanceFuturesFixture(scenario) {
         });
         orderEntry.querySelectorAll('button').forEach((button) => {
           button.addEventListener('click', () => {
-            const feedback = document.createElement('div');
-            feedback.setAttribute('role', 'alert');
-            feedback.textContent = '订单已提交成功';
-            document.body.append(feedback);
+            const busyAttribute = scenario.host.submitButtonBusyAttribute;
+            if (button.getAttribute(busyAttribute) === 'true') {
+              record('order-submit-while-busy', { action: button.textContent.trim() });
+              return;
+            }
+            if (scenario.host.submitButtonBusyMs > 0) {
+              button.setAttribute(busyAttribute, 'true');
+              record('submit-button-busy', { action: button.textContent.trim() });
+              setTimeout(() => {
+                if (scenario.host.submitButtonClearsInputsWhenReady) {
+                  orderEntry.querySelectorAll('input').forEach((input) => {
+                    input.value = '';
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                  });
+                  record('native-submit-cleanup-cleared-inputs');
+                }
+                button.removeAttribute(busyAttribute);
+                record('submit-button-ready', { action: button.textContent.trim() });
+              }, scenario.host.submitButtonBusyMs);
+            }
+            orderSubmitSequence += 1;
+            const submitSequence = orderSubmitSequence;
             record('order-submitted', {
+              submitSequence,
               action: button.textContent.trim(),
               price: orderEntry.querySelector('input[id^="limitPrice-"]')?.value || '',
               quantity: orderEntry.querySelector('input[id^="unitAmount-"]')?.value || '',
             });
+            window.fetch('/bapi/futures/v1/private/future/order/place-order', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ submitSequence }),
+            }).then(() => record('order-submit-api-success', { submitSequence }));
+            const showFeedback = () => {
+              const feedback = document.createElement('div');
+              feedback.setAttribute('role', 'alert');
+              feedback.textContent = '订单已提交成功';
+              document.body.append(feedback);
+              record('order-submit-feedback', { action: button.textContent.trim(), submitSequence });
+            };
+            if (scenario.host.submitFeedbackDelayMs > 0) {
+              setTimeout(showFeedback, scenario.host.submitFeedbackDelayMs);
+            } else {
+              showFeedback();
+            }
+          });
+        });
+        orderEntry.querySelectorAll('input').forEach((input) => {
+          input.addEventListener('input', () => {
+            record('trade-input-written', { id: input.id, value: input.value });
           });
         });
       }

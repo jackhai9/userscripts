@@ -28,6 +28,7 @@ export async function openUserscriptScenario(page, scenario) {
     sha256: createHash('sha256').update(userscriptSource).digest('hex'),
   };
   evidenceByPage.set(page, { scenario, userscript, errors });
+  let placeOrderRequestCount = 0;
   await page.route('https://www.binance.com/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/__binance_orderbook_userscript__.js') {
@@ -39,6 +40,20 @@ export async function openUserscriptScenario(page, scenario) {
       return;
     }
     if (url.pathname === '/bapi/fixture-bootstrap') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+      return;
+    }
+    if (url.pathname === '/bapi/futures/v1/private/future/order/place-order') {
+      const delayMs = scenario.host.submitApiResponseDelayMsByOrder[placeOrderRequestCount];
+      placeOrderRequestCount += 1;
+      if (delayMs === undefined) {
+        throw new Error('Fixture received more than five ladder order requests');
+      }
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
