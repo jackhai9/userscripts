@@ -35,12 +35,16 @@ test('source and generated userscript versions stay synchronized', () => {
   assert.equal(generatedVersion, sourceVersion);
 });
 
-test('symbol-change polling is stopped while the tab is hidden', () => {
-  assert.doesNotMatch(source, /\n  setInterval\(checkSymbolChangeForLeverage,\s*500\);/);
-  assert.match(source, /function startSymbolChangeTimer\(\)/);
-  assert.match(source, /function stopSymbolChangeTimer\(\)/);
+test('route changes are event-driven with one low-frequency watchdog', () => {
+  assert.doesNotMatch(source, /function startSymbolChangeTimer\(\)/);
+  assert.doesNotMatch(source, /function startRenderPanelTimer\(\)/);
+  assert.match(source, /installSpaRouteChangeListener\(window, syncRouteState\)/);
+  assert.match(source, /const ROUTE_WATCHDOG_MS = 5000;/);
+  const startRouteBody = readFunctionBody('startRouteWatcher');
+  assert.match(startRouteBody, /setInterval/);
+  assert.match(startRouteBody, /ROUTE_WATCHDOG_MS/);
   const stopTradingBody = readFunctionBody('stopTradingTimers');
-  assert.match(stopTradingBody, /stopSymbolChangeTimer\(\)/);
+  assert.doesNotMatch(stopTradingBody, /stopSymbolChangeTimer|stopRenderPanelTimer/);
   const visibilityBody = source.match(/document\.addEventListener\('visibilitychange', \(\) => \{([\s\S]*?)\n  \}\);/)?.[1] || '';
   assert.match(visibilityBody, /stopTradingTimers\(\)/);
   assert.match(visibilityBody, /syncRouteState\(\)/);
@@ -285,30 +289,25 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(observeBody, /capture\.apiSuccesses\.push\(\{ requestUrl \}\)/);
   assert.match(observeBody, /capture\.apiErrors\.push\(\{ requestUrl, code \}\)/);
 
+  const trackBody = readFunctionBody('trackLadderSubmitResponse');
+  assert.match(trackBody, /capture\.resolveRequestStarted\(\)/);
+
   const observationBody = readFunctionBody('waitForLadderSubmitResponseObservations');
   assert.match(observationBody, /capture\.responseObservations\.slice\(\)/);
   assert.match(observationBody, /Promise\.race\(\[/);
   assert.match(observationBody, /delay\(timeoutMs\)/);
 
   const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
-  const apiCodeReadIndex = acknowledgementBody.indexOf('readLadderSubmitApiErrors(submitCaptureId)');
-  const pendingFailureIndex = acknowledgementBody.indexOf('if (pendingFailure)');
-  const apiSuccessReadIndex = acknowledgementBody.indexOf('readLadderSubmitApiSuccesses(submitCaptureId)');
-  assert.notEqual(apiCodeReadIndex, -1);
-  assert.notEqual(apiSuccessReadIndex, -1);
-  assert.ok(apiCodeReadIndex < pendingFailureIndex);
-  assert.ok(pendingFailureIndex < apiSuccessReadIndex);
+  assert.match(acknowledgementBody, /waitForOrderSubmitStartOrFailureFeedback\(/);
   assert.match(acknowledgementBody, /await waitForLadderSubmitResponseObservations\(/);
-  assert.match(acknowledgementBody, /capturedApiErrorsNow\.length === 1/);
-  assert.match(acknowledgementBody, /isBinancePostOnlyMakerRejectCode\(capturedApiErrorsNow\[0\]\.code\)/);
-  assert.match(acknowledgementBody, /createLadderSubmitApiError\(capturedApiErrorsNow\[0\]\.code\)/);
   assert.match(acknowledgementBody, /capturedApiErrors\.length === 1/);
   assert.match(acknowledgementBody, /isBinancePostOnlyMakerRejectCode\(capturedApiErrors\[0\]\.code\)/);
   assert.match(acknowledgementBody, /capturedApiErrors\.length === 0/);
   assert.match(acknowledgementBody, /mode === 'CLOSE'/);
-  assert.match(acknowledgementBody, /isPostOnlyMakerRejectionFeedback\(pendingFailure\.message\)/);
-  assert.match(acknowledgementBody, /createLadderMakerPriceConflictError\(pendingFailure\.message\)/);
-  assert.match(acknowledgementBody, /capturedApiSuccessesNow\.length === 1/);
+  assert.match(acknowledgementBody, /isPostOnlyMakerRejectionFeedback\(failureActivity\.message\)/);
+  assert.match(acknowledgementBody, /createLadderMakerPriceConflictError\(failureActivity\.message\)/);
+  assert.match(acknowledgementBody, /capturedApiSuccesses\.length === 1/);
+  assert.doesNotMatch(acknowledgementBody, /LADDER_SUBMIT_POLL_MS|await delay\(/);
   assert.doesNotMatch(acknowledgementBody, /acknowledgement\.status === 'success'/);
   assert.doesNotMatch(source, /LADDER_SUBMIT_API_CODE_GRACE_MS/);
 
@@ -343,6 +342,18 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(generatedSource, /刷新盘口/);
   assert.doesNotMatch(generatedSource, /自动刷新盘口/);
   assert.match(generatedSource, /isPostOnlyMakerRejectionFeedback/);
+});
+
+test('bapi headers wake leverage checks without startup or 500ms polling sleeps', () => {
+  const waitBody = readFunctionBody('waitForBncHeaders');
+  const cacheBody = readFunctionBody('cacheBncHeaders');
+  assert.match(waitBody, /bncHeadersReady/);
+  assert.match(waitBody, /BNC_HEADERS_READY_TIMEOUT_MS/);
+  assert.doesNotMatch(waitBody, /delay\(500\)|for\s*\(/);
+  assert.match(cacheBody, /resolveBncHeadersReady\(\)/);
+  assert.match(cacheBody, /queueAutoOpenLeveragePositionCheck\('headers_ready'\)/);
+  assert.doesNotMatch(source, /AUTO_OPEN_LEVERAGE_DELAY_MS/);
+  assert.doesNotMatch(source, /queueAutoOpenLeveragePositionCheck\('init'\)/);
 });
 
 test('stable panel renders avoid repeated orderbook scans and layout writes', () => {

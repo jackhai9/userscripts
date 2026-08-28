@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.148
+// @version      2.7.149
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -105,6 +105,10 @@ import {
   isFuturesTradingPathname,
   parseFuturesTradingSymbolFromPathname,
 } from '../shared/binance-futures-route.js';
+import {
+  ensureSpaRouteChangePatched,
+  installSpaRouteChangeListener,
+} from '../shared/spa-route-change.js';
 import {
   createAccountOrdersMutationSignal,
   findAccountOrdersTabByIdentity as findAccountOrdersTabByIdentityDom,
@@ -265,7 +269,6 @@ import {
     LOCAL_LADDER_CLOSE_STEP_KEY,
   ];
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
-  const LADDER_SUBMIT_POLL_MS = 80;
   const LADDER_ACTION_FEEDBACK_MIN_MS = 240;
   const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
   const LADDER_REPLACE_ROW_SETTLE_MS = 240;
@@ -309,7 +312,7 @@ import {
     '1000',
   ];
   const DEFAULT_OPEN_LEVERAGE = 2;
-  const AUTO_OPEN_LEVERAGE_DELAY_MS = 120;
+  const BNC_HEADERS_READY_TIMEOUT_MS = 5000;
   const AUTO_OPEN_LEVERAGE_DEDUPE_MS = 1200;
   const DOM_LOOKUP_CACHE_MS = 250;
   const INPUT_BORDER_COLOR = 'var(--color-InputLine)';
@@ -334,6 +337,7 @@ import {
   const PANEL_BOTTOM_TOOLTIP_GAP = 12;
   const TRADE_UI_STATE_TIMEOUT_MS = 1000;
   const TRADE_ACTION_BUTTON_READY_TIMEOUT_MS = 2000;
+  const ROUTE_WATCHDOG_MS = 5000;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -963,6 +967,10 @@ import {
   // 策略：拦截 window.fetch，从 Binance 自身发出的 bapi 请求里缓存 header，
   // 后续 adjustLeverageApi 复用这些 header。
   let cachedBncHeaders = null;
+  let resolveBncHeadersReady;
+  const bncHeadersReady = new Promise((resolve) => {
+    resolveBncHeadersReady = resolve;
+  });
   const HEADER_KEYS_TO_CACHE = [
     'csrftoken', 'bnc-uuid', 'device-info', 'fvideo-id',
     'clienttype', 'x-passthrough-token',
@@ -1023,11 +1031,17 @@ import {
 
   function beginLadderSubmitResponseCapture() {
     ladderSubmitCaptureSequence += 1;
+    let resolveRequestStarted;
+    const requestStarted = new Promise((resolve) => {
+      resolveRequestStarted = resolve;
+    });
     activeLadderSubmitCapture = {
       captureId: ladderSubmitCaptureSequence,
       apiErrors: [],
       apiSuccesses: [],
       responseObservations: [],
+      requestStarted,
+      resolveRequestStarted,
     };
     return activeLadderSubmitCapture.captureId;
   }
@@ -1055,6 +1069,20 @@ import {
       .then((response) => observeLadderSubmitResponse(response, capture, requestUrl))
       .catch(() => null);
     capture.responseObservations.push(observation);
+    capture.resolveRequestStarted();
+  }
+
+  function cacheBncHeaders(snapshot) {
+    const becameReady = !cachedBncHeaders;
+    cachedBncHeaders = snapshot;
+    if (!becameReady) return;
+    resolveBncHeadersReady();
+    resolveBncHeadersReady = null;
+    queueMicrotask(() => {
+      if (isFuturesTradingPage() && getActiveTradeMode() === 'OPEN') {
+        queueAutoOpenLeveragePositionCheck('headers_ready');
+      }
+    });
   }
 
   async function waitForLadderSubmitResponseObservations(captureId, timeoutMs) {
@@ -1093,7 +1121,7 @@ import {
     window.fetch = function (...args) {
       try {
         const snapshot = extractHeadersFromFetchArgs(args);
-        if (snapshot) cachedBncHeaders = snapshot;
+        if (snapshot) cacheBncHeaders(snapshot);
       } catch (_e) { /* 不干扰原始请求 */ }
       const capture = activeLadderSubmitCapture;
       const requestUrl = getFetchRequestUrl(args);
@@ -2435,60 +2463,133 @@ import {
     return '';
   }
 
+  function waitForOrderSubmitStartOrFailureFeedback(
+    submitCaptureId,
+    previousFeedbackSnapshot,
+    timeoutMs,
+  ) {
+    const capture = activeLadderSubmitCapture?.captureId === submitCaptureId
+      ? activeLadderSubmitCapture
+      : null;
+    if (!capture) throw new Error('下单响应捕获上下文丢失');
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        window.clearTimeout(timer);
+        resolve(result);
+      };
+      const readFailure = () => {
+        const feedback = readNewVisibleOrderFeedbackText(previousFeedbackSnapshot);
+        if (!feedback) return null;
+        const acknowledgement = evaluateOrderSubmitAcknowledgement({
+          feedback,
+          isNewFeedback: true,
+        });
+        return acknowledgement.status === 'failure'
+          ? { status: 'failure', message: acknowledgement.message }
+          : null;
+      };
+      const observer = new MutationObserver(() => {
+        const failure = readFailure();
+        if (failure) finish(failure);
+      });
+      const timer = window.setTimeout(() => finish({ status: 'timeout' }), timeoutMs);
+      observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+      capture.requestStarted.then(() => finish({ status: 'request_started' }));
+      const failure = readFailure();
+      if (failure) finish(failure);
+    });
+  }
+
+  function waitForOrderFailureFeedback(previousFeedbackSnapshot, timeoutMs) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        window.clearTimeout(timer);
+        resolve(result);
+      };
+      const readFailure = () => {
+        const feedback = readNewVisibleOrderFeedbackText(previousFeedbackSnapshot);
+        if (!feedback) return null;
+        const acknowledgement = evaluateOrderSubmitAcknowledgement({
+          feedback,
+          isNewFeedback: true,
+        });
+        return acknowledgement.status === 'failure'
+          ? { status: 'failure', message: acknowledgement.message }
+          : null;
+      };
+      const observer = new MutationObserver(() => {
+        const failure = readFailure();
+        if (failure) finish(failure);
+      });
+      const timer = window.setTimeout(() => finish({ status: 'timeout' }), timeoutMs);
+      observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+      const failure = readFailure();
+      if (failure) finish(failure);
+    });
+  }
+
   async function waitForOrderSubmitAcknowledgement(button, label, previousFeedbackSnapshot, submitCaptureId, mode) {
     const startedAt = Date.now();
-    let sawBusy = isSubmitButtonBusy(button);
-    let pendingFailure = null;
+    const sawBusy = isSubmitButtonBusy(button);
+    const activity = await waitForOrderSubmitStartOrFailureFeedback(
+      submitCaptureId,
+      previousFeedbackSnapshot,
+      LADDER_SUBMIT_ACK_TIMEOUT_MS,
+    );
+    const remainingAckMs = Math.max(0, LADDER_SUBMIT_ACK_TIMEOUT_MS - (Date.now() - startedAt));
+    const capturedApiErrors = activeLadderSubmitCapture.responseObservations.length > 0
+      ? await waitForLadderSubmitResponseObservations(submitCaptureId, remainingAckMs)
+      : [];
+    const capturedApiSuccesses = readLadderSubmitApiSuccesses(submitCaptureId);
 
-    while (Date.now() - startedAt < LADDER_SUBMIT_ACK_TIMEOUT_MS) {
-      const feedback = readNewVisibleOrderFeedbackText(previousFeedbackSnapshot);
-      const acknowledgement = evaluateOrderSubmitAcknowledgement({
-        feedback,
-        isNewFeedback: Boolean(feedback),
-      });
-      if (acknowledgement.status === 'failure' && !pendingFailure) {
-        pendingFailure = { message: acknowledgement.message };
-      }
-      const capturedApiErrorsNow = readLadderSubmitApiErrors(submitCaptureId);
-      if (
-        capturedApiErrorsNow.length === 1
-        && isBinancePostOnlyMakerRejectCode(capturedApiErrorsNow[0].code)
-      ) {
-        throw createLadderSubmitApiError(capturedApiErrorsNow[0].code);
-      }
-      if (pendingFailure) {
-        const remainingAckMs = Math.max(0, LADDER_SUBMIT_ACK_TIMEOUT_MS - (Date.now() - startedAt));
-        const capturedApiErrors = await waitForLadderSubmitResponseObservations(
-          submitCaptureId,
-          remainingAckMs,
-        );
-        if (
-          capturedApiErrors.length === 1
-          && isBinancePostOnlyMakerRejectCode(capturedApiErrors[0].code)
-        ) {
-          throw createLadderSubmitApiError(capturedApiErrors[0].code);
-        }
-        if (
-          capturedApiErrors.length === 0
-          && mode === 'CLOSE'
-          && isPostOnlyMakerRejectionFeedback(pendingFailure.message)
-        ) {
-          throw createLadderMakerPriceConflictError(pendingFailure.message);
-        }
-        const capturedCodes = [...new Set(capturedApiErrors.map(({ code }) => code))];
-        const diagnostic = capturedCodes.length === 0
-          ? '未捕获错误码'
-          : `错误码 ${capturedCodes.join(', ')}`;
-        throw new Error(`${pendingFailure.message}（${diagnostic}）`);
-      }
-      const capturedApiSuccessesNow = readLadderSubmitApiSuccesses(submitCaptureId);
-      if (capturedApiSuccessesNow.length === 1) return;
-
-      const busy = isSubmitButtonBusy(button);
-      if (busy) sawBusy = true;
-
-      await delay(LADDER_SUBMIT_POLL_MS);
+    if (
+      capturedApiErrors.length === 1
+      && isBinancePostOnlyMakerRejectCode(capturedApiErrors[0].code)
+    ) {
+      throw createLadderSubmitApiError(capturedApiErrors[0].code);
     }
+    let failureActivity = activity.status === 'failure' ? activity : null;
+    if (!failureActivity && capturedApiErrors.length > 0) {
+      const feedbackWaitMs = Math.max(0, LADDER_SUBMIT_ACK_TIMEOUT_MS - (Date.now() - startedAt));
+      failureActivity = await waitForOrderFailureFeedback(
+        previousFeedbackSnapshot,
+        feedbackWaitMs,
+      );
+      if (failureActivity.status !== 'failure') failureActivity = null;
+    }
+    if (
+      failureActivity
+      && capturedApiErrors.length === 0
+      && mode === 'CLOSE'
+      && isPostOnlyMakerRejectionFeedback(failureActivity.message)
+    ) {
+      throw createLadderMakerPriceConflictError(failureActivity.message);
+    }
+    if (failureActivity) {
+      const capturedCodes = [...new Set(capturedApiErrors.map(({ code }) => code))];
+      const diagnostic = capturedCodes.length === 0
+        ? '未捕获错误码'
+        : `错误码 ${capturedCodes.join(', ')}`;
+      throw new Error(`${failureActivity.message}（${diagnostic}）`);
+    }
+    if (capturedApiSuccesses.length === 1) return;
 
     const settleHint = sawBusy ? '按钮已恢复但未捕获当前下单 API 成功响应' : '未捕获当前下单 API 成功响应';
     throw new Error(`未收到明确${label}成功反馈（${settleHint}），已停止；请核对当前委托/历史成交`);
@@ -4724,10 +4825,10 @@ import {
 
   async function waitForBncHeaders(symbol) {
     if (cachedBncHeaders) return true;
-    for (let i = 0; i < 10; i++) {
-      await delay(500);
-      if (cachedBncHeaders || !isCurrentObservedSymbol(symbol)) break;
-    }
+    await Promise.race([
+      bncHeadersReady,
+      delay(BNC_HEADERS_READY_TIMEOUT_MS),
+    ]);
     return Boolean(cachedBncHeaders && isCurrentObservedSymbol(symbol));
   }
 
@@ -4759,7 +4860,6 @@ import {
   }
 
   async function autoResetOpenLeverageToDefault(symbol, triggerSource) {
-    await delay(AUTO_OPEN_LEVERAGE_DELAY_MS);
     if (!isStableOpenContext(symbol)) return false;
 
     if (!await waitForBncHeaders(symbol)) {
@@ -6335,51 +6435,22 @@ import {
     }
   }
 
-  let symbolChangeTimer = null;
-  function startSymbolChangeTimer() {
-    if (symbolChangeTimer || document.hidden) return;
-    // Binance SPA 切换币种时 URL 变化但不触发 popstate，用前台轮询检测。
-    symbolChangeTimer = window.setInterval(checkSymbolChangeForLeverage, 500);
-  }
-
-  function stopSymbolChangeTimer() {
-    if (!symbolChangeTimer) return;
-    window.clearInterval(symbolChangeTimer);
-    symbolChangeTimer = null;
-  }
-
-  let renderPanelTimer = null;
   let routeWatcherTimer = null;
+  let removeSpaRouteChangeListener = null;
   let routeWasTrading = isFuturesTradingPage();
-
-  function startRenderPanelTimer() {
-    if (renderPanelTimer || document.hidden || !isFuturesTradingPage()) return;
-    renderPanelTimer = setInterval(renderPanel, 1000);
-  }
-
-  function stopRenderPanelTimer() {
-    if (renderPanelTimer) {
-      clearInterval(renderPanelTimer);
-      renderPanelTimer = null;
-    }
-  }
 
   function startTradingTimers() {
     if (document.hidden || !isFuturesTradingPage()) return;
-    startSymbolChangeTimer();
     ensureTradeModeTabObserver();
     ensureAccountPositionObserver();
     ensureOrderbookPrecisionObserver();
-    startRenderPanelTimer();
   }
 
   function stopTradingTimers() {
-    stopSymbolChangeTimer();
     stopTradeModeTabObserver();
     stopAccountPositionObserver();
     stopOrderbookPrecisionObserver();
     clearTradeUiMutationWait();
-    stopRenderPanelTimer();
   }
 
   function syncRouteState() {
@@ -6402,35 +6473,39 @@ import {
       checkSymbolChangeForLeverage();
     }
 
-    const needsRender = !renderPanelTimer || !wasTrading;
+    const needsRender = !wasTrading || !document.getElementById(PANEL_ID);
     startTradingTimers();
     scheduleChartOrdersRecovery();
-    if (needsRender) renderPanel();
+    if (needsRender) scheduleRenderPanel();
     if (!wasTrading && getActiveTradeMode() === 'OPEN') {
       queueAutoOpenLeveragePositionCheck('route_return');
     }
   }
 
   function startRouteWatcher() {
-    if (routeWatcherTimer || document.hidden) return;
-    routeWatcherTimer = setInterval(syncRouteState, 1000);
+    if (document.hidden) return;
+    if (!removeSpaRouteChangeListener) {
+      removeSpaRouteChangeListener = installSpaRouteChangeListener(window, syncRouteState);
+    }
+    if (!routeWatcherTimer) {
+      routeWatcherTimer = setInterval(() => {
+        ensureSpaRouteChangePatched(window);
+        syncRouteState();
+        if (isFuturesTradingPage()) renderPanel();
+      }, ROUTE_WATCHDOG_MS);
+    }
   }
 
   function stopRouteWatcher() {
-    if (!routeWatcherTimer) return;
-    clearInterval(routeWatcherTimer);
+    if (routeWatcherTimer) clearInterval(routeWatcherTimer);
     routeWatcherTimer = null;
+    removeSpaRouteChangeListener?.();
+    removeSpaRouteChangeListener = null;
   }
 
   startRouteWatcher();
   startTradingTimers();
   scheduleChartOrdersRecovery();
-
-  window.setTimeout(() => {
-    if (isFuturesTradingPage() && getActiveTradeMode() === 'OPEN') {
-      queueAutoOpenLeveragePositionCheck('init');
-    }
-  }, 1500);
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {

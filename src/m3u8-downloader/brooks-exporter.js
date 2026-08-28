@@ -1,7 +1,6 @@
 import {
   BROOKS_MEDIA_EXPORT_SCHEMA_VERSION,
   BROOKS_MEDIA_EXPORT_STATUS_INTERVAL_MS,
-  BROOKS_MEDIA_EXPORT_STEP_DELAY_MS,
   BROOKS_MEDIA_EXPORT_TIMEOUT_MS,
   BROOKS_MEDIA_INDEX_MESSAGE_TYPE,
   BROOKS_MEDIA_INDEX_STATE_KEY,
@@ -37,6 +36,10 @@ export function createBrooksMediaExporter({ originXHR, downloadWithA, getTitle }
   var brooksMediaExportState = null
   var brooksMediaExportFrame = null
   var brooksMediaExportPending = null
+
+  function scheduleNextBrooksMediaExport() {
+    queueMicrotask(processNextBrooksMediaExport)
+  }
 
   function notifyBrooksMediaIndexDetected(url, referer) {
     if (!isBrooksHost(location.hostname)) {
@@ -75,7 +78,7 @@ export function createBrooksMediaExporter({ originXHR, downloadWithA, getTitle }
     saveBrooksMediaExportState()
     clearBrooksMediaExportFrame()
     updateBrooksMediaExportStatus()
-    setTimeout(processNextBrooksMediaExport, BROOKS_MEDIA_EXPORT_STEP_DELAY_MS)
+    scheduleNextBrooksMediaExport()
   }
 
   function isBrooksMediaExportFrameMessage(event, data) {
@@ -431,7 +434,7 @@ export function createBrooksMediaExporter({ originXHR, downloadWithA, getTitle }
     saveBrooksMediaExportState()
     clearBrooksMediaExportFrame()
     updateBrooksMediaExportStatus()
-    setTimeout(processNextBrooksMediaExport, BROOKS_MEDIA_EXPORT_STEP_DELAY_MS)
+    scheduleNextBrooksMediaExport()
   }
 
   function appendBrooksMediaExporterDom() {

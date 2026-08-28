@@ -24,7 +24,15 @@ function assertLadderMessage(message) {
 
 function formatLadderProgressCounts(progress) {
   assertLadderProgress(progress);
-  return `已挂 ${progress.submittedOrders} 笔 · 已撤 ${progress.cancelledOrders} 笔`;
+  const counts = [];
+  if (progress.submittedOrders > 0) counts.push(`已挂 ${progress.submittedOrders} 笔`);
+  if (progress.cancelledOrders > 0) counts.push(`已撤 ${progress.cancelledOrders} 笔`);
+  return counts;
+}
+
+function appendLadderProgressCounts(status, progress) {
+  const counts = formatLadderProgressCounts(progress);
+  return counts.length > 0 ? `${status} · ${counts.join(' · ')}` : status;
 }
 
 /**
@@ -49,19 +57,19 @@ export function recordLadderCancelledOrder(progress) {
 
 export function formatStoppedLadderProgress(label, progress) {
   assertLadderLabel(label);
-  return `${label}已停止 · ${formatLadderProgressCounts(progress)}`;
+  return appendLadderProgressCounts(`${label}已停止`, progress);
 }
 
 export function formatInterruptedLadderProgress(label, reason, progress) {
   assertLadderLabel(label);
   assertLadderMessage(reason);
-  return `${label}已中止：${reason} · ${formatLadderProgressCounts(progress)}`;
+  return appendLadderProgressCounts(`${label}已中止：${reason}`, progress);
 }
 
 export function formatFailedLadderProgress(label, message, progress) {
   assertLadderLabel(label);
   assertLadderMessage(message);
-  return `${label}失败：${message} · ${formatLadderProgressCounts(progress)}`;
+  return appendLadderProgressCounts(`${label}失败：${message}`, progress);
 }
 
 export function formatCompletedLadderProgress(label, completedOrders, totalOrders, progress) {
