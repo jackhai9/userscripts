@@ -833,7 +833,8 @@ test('ladder task statuses name the active action and observed outcome', () => {
   assert.match(startBody, /formatFailedLadderProgress\(spec\.label,\s*failureMessage,\s*progress\)/);
   assert.match(stopBody, /`\$\{activeSpec\.label\}停止中`/);
   assert.match(cancelPlanBody, /setPlanStepStatus\(`撤销 \$\{rowsToCancel\.length\} 笔当前币挂单`\)/);
-  assert.match(planStatusBody, /`\$\{plan\.spec\.label\}计划：/);
+  assert.match(planStatusBody, /`\$\{plan\.spec\.label\}计划：比例 \$\{plan\.percent\}% · 笔数 \$\{levelText\} · 间距 \$\{plan\.ladderStep\}`/);
+  assert.doesNotMatch(planStatusBody, /%\/|\/幅/);
   assert.match(replacementStatusBody, /`\$\{plan\.spec\.label\}：/);
   assert.match(cancelPlanBody, /const setPlanStepStatus = \(message\) =>/);
   assert.doesNotMatch(cancelPlanBody, /setLadderStatus\(message\)/);
