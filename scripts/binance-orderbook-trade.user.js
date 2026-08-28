@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.140
+// @version      2.7.141
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1227,6 +1227,19 @@
       return true;
     };
   }
+  function isScriptOwnedTradeInputRecoveryState({
+    preWriteValue,
+    rollbackValue,
+    submittedValue,
+    previousSubmittedValue,
+    compareValues
+  }) {
+    if (typeof compareValues !== "function") {
+      throw new Error("Trade input recovery comparison dependency is invalid");
+    }
+    const isScriptOwnedOrEmpty = (value) => value === null || previousSubmittedValue != null && compareValues(previousSubmittedValue, value) === 0;
+    return isScriptOwnedOrEmpty(preWriteValue) && isScriptOwnedOrEmpty(rollbackValue) && isScriptOwnedOrEmpty(submittedValue);
+  }
   function createTradeInputStateReader({
     resolveInputs,
     expectedPrice,
@@ -1239,7 +1252,7 @@
     requiredStableMatchFrames = 1,
     maxWriteAttempts = 2,
     recoverProvisionalMatchRollback = false,
-    isRecoveryWriteAllowed = () => true
+    isRecoveryWriteAllowed = ({ rollbackValue, submittedValue }) => rollbackValue === submittedValue
   }) {
     if (typeof resolveInputs !== "function" || typeof normalizeValue !== "function" || typeof compareValues !== "function" || typeof writeValue !== "function" || typeof isRecoveryWriteAllowed !== "function") {
       throw new Error("Trade input synchronizer dependencies are invalid");
@@ -1256,20 +1269,23 @@
     if (typeof recoverProvisionalMatchRollback !== "boolean") {
       throw new Error("Provisional trade input recovery flag must be boolean");
     }
-    const createSyncSlot = () => {
+    const createSyncSlot = (field) => {
       let root = null;
       let input = null;
       let writeCount = 0;
+      let preWriteValue = null;
       let rollbackValue = null;
       let recoveryEligible = false;
       let stableRollbackFrames = 0;
       let stableMatchFrames = 0;
       const clearRecovery = () => {
+        preWriteValue = null;
         rollbackValue = null;
         recoveryEligible = false;
         stableRollbackFrames = 0;
       };
       const writeExpectedValue = (currentInput, expectedValue, submittedValue) => {
+        preWriteValue = submittedValue;
         const wrote = writeValue(currentInput, expectedValue);
         if (wrote === false) {
           writeCount = maxWriteAttempts;
@@ -1307,7 +1323,7 @@
         }
         if (stableMatchFrames > 0) {
           stableMatchFrames = 0;
-          recoveryEligible = rollbackValue === submittedValue && writeCount < maxWriteAttempts;
+          recoveryEligible = writeCount < maxWriteAttempts;
           stableRollbackFrames = 0;
           if (!recoveryEligible) clearRecovery();
         }
@@ -1316,15 +1332,14 @@
           return false;
         }
         if (writeCount >= maxWriteAttempts || !recoveryEligible) return false;
-        if (rollbackValue !== submittedValue) {
-          clearRecovery();
-          return false;
-        }
         if (!isRecoveryWriteAllowed({
+          field,
           currentRoot,
           currentInput,
           expectedValue,
+          preWriteValue,
           rollbackValue,
+          submittedValue,
           writeCount
         })) {
           clearRecovery();
@@ -1336,8 +1351,8 @@
         return false;
       };
     };
-    const syncQty = createSyncSlot();
-    const syncPrice = createSyncSlot();
+    const syncQty = createSyncSlot("qty");
+    const syncPrice = createSyncSlot("price");
     return () => {
       const inputs = resolveInputs();
       if (!inputs?.qtyInput || includePrice && !inputs.priceInput) return null;
@@ -3674,7 +3689,24 @@
       const syncTimeoutMs = settleControlledForm ? LADDER_INPUT_SETTLE_TIMEOUT_MS : TRADE_INPUT_SYNC_TIMEOUT_MS;
       const stableMismatchFrames = settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : TRADE_INPUT_SYNC_STABLE_FRAMES;
       const maxWriteAttempts = settleControlledForm ? LADDER_INPUT_SETTLE_MAX_WRITES : 2;
-      const isRecoveryWriteAllowed = settleControlledForm ? ({ rollbackValue }) => rollbackValue === null : () => true;
+      const previousSubmittedInputs = settleControlledForm ? options?.previousSubmittedInputs || null : null;
+      const isRecoveryWriteAllowed = settleControlledForm ? ({
+        field,
+        preWriteValue,
+        rollbackValue,
+        submittedValue
+      }) => {
+        if (field !== "qty" && field !== "price") {
+          throw new Error("未知交易输入字段");
+        }
+        return isScriptOwnedTradeInputRecoveryState({
+          preWriteValue,
+          rollbackValue,
+          submittedValue,
+          previousSubmittedValue: field === "qty" ? previousSubmittedInputs?.submittedQty : previousSubmittedInputs?.submittedPrice,
+          compareValues: compareDecimalStrings
+        });
+      } : ({ rollbackValue, submittedValue }) => rollbackValue === submittedValue;
       const writeTradeInputValue = settleControlledForm ? createBoundedInputWriter({
         writeValue: setInputValueReact,
         maxWriteAttempts
@@ -3834,6 +3866,7 @@
       let done = 0;
       let repriceAttempts = 0;
       let lastRepriceApiErrorCode = null;
+      let previousAcknowledgedInputs = null;
       while (done < plan.orders.length) {
         throwIfAborted(abortSignal);
         if (ladderStopRequested) break;
@@ -3850,7 +3883,8 @@
           const synchronizedInputs = await syncTradeInputs(order.price, order.qty, {
             priceLabel: "计划价",
             qtyLabel: "计划量",
-            settleControlledForm: true
+            settleControlledForm: true,
+            previousSubmittedInputs: previousAcknowledgedInputs
           });
           throwIfAborted(abortSignal);
           const submittedPrice = synchronizedInputs.submittedPrice;
@@ -3879,6 +3913,10 @@
             } finally {
               endLadderSubmitResponseCapture(submitCaptureId);
             }
+            previousAcknowledgedInputs = {
+              submittedPrice: synchronizedInputs.submittedPrice,
+              submittedQty: synchronizedInputs.submittedQty
+            };
           }
         } catch (e) {
           if (!isRetryableLadderMakerPriceFailure(plan, e)) throw e;

@@ -143,13 +143,40 @@ export function createBoundedInputWriter({ writeValue, maxWriteAttempts }) {
   };
 }
 
+export function isScriptOwnedTradeInputRecoveryState({
+  preWriteValue,
+  rollbackValue,
+  submittedValue,
+  previousSubmittedValue,
+  compareValues,
+}) {
+  if (typeof compareValues !== 'function') {
+    throw new Error('Trade input recovery comparison dependency is invalid');
+  }
+
+  const isScriptOwnedOrEmpty = (value) => (
+    value === null
+    || (
+      previousSubmittedValue != null
+      && compareValues(previousSubmittedValue, value) === 0
+    )
+  );
+
+  return (
+    isScriptOwnedOrEmpty(preWriteValue)
+    && isScriptOwnedOrEmpty(rollbackValue)
+    && isScriptOwnedOrEmpty(submittedValue)
+  );
+}
+
 /**
  * Synchronize each live React input identity with a bounded post-transition budget.
  * Binance can synchronously restore a controlled input while a replacement form is
  * settling. A caller may preserve the pre-write value as a provisional rollback
  * contract because React can restore it after the write returns but before the
- * first frame observation. Only an identical same-node rollback observed across
- * consecutive frame reads earns another bounded write.
+ * first frame observation. Recovery policy owns the accepted state transition;
+ * generic callers retain exact rollback matching while ladder callers may identify
+ * a previous acknowledged script-owned value or Binance's empty post-submit state.
  */
 export function createTradeInputStateReader({
   resolveInputs,
@@ -163,7 +190,9 @@ export function createTradeInputStateReader({
   requiredStableMatchFrames = 1,
   maxWriteAttempts = 2,
   recoverProvisionalMatchRollback = false,
-  isRecoveryWriteAllowed = () => true,
+  isRecoveryWriteAllowed = ({ rollbackValue, submittedValue }) => (
+    rollbackValue === submittedValue
+  ),
 }) {
   if (
     typeof resolveInputs !== 'function'
@@ -190,22 +219,25 @@ export function createTradeInputStateReader({
     throw new Error('Provisional trade input recovery flag must be boolean');
   }
 
-  const createSyncSlot = () => {
+  const createSyncSlot = (field) => {
     let root = null;
     let input = null;
     let writeCount = 0;
+    let preWriteValue = null;
     let rollbackValue = null;
     let recoveryEligible = false;
     let stableRollbackFrames = 0;
     let stableMatchFrames = 0;
 
     const clearRecovery = () => {
+      preWriteValue = null;
       rollbackValue = null;
       recoveryEligible = false;
       stableRollbackFrames = 0;
     };
 
     const writeExpectedValue = (currentInput, expectedValue, submittedValue) => {
+      preWriteValue = submittedValue;
       const wrote = writeValue(currentInput, expectedValue);
       if (wrote === false) {
         writeCount = maxWriteAttempts;
@@ -249,10 +281,7 @@ export function createTradeInputStateReader({
 
       if (stableMatchFrames > 0) {
         stableMatchFrames = 0;
-        recoveryEligible = (
-          rollbackValue === submittedValue
-          && writeCount < maxWriteAttempts
-        );
+        recoveryEligible = writeCount < maxWriteAttempts;
         stableRollbackFrames = 0;
         if (!recoveryEligible) clearRecovery();
       }
@@ -263,15 +292,14 @@ export function createTradeInputStateReader({
       }
       if (writeCount >= maxWriteAttempts || !recoveryEligible) return false;
 
-      if (rollbackValue !== submittedValue) {
-        clearRecovery();
-        return false;
-      }
       if (!isRecoveryWriteAllowed({
+        field,
         currentRoot,
         currentInput,
         expectedValue,
+        preWriteValue,
         rollbackValue,
+        submittedValue,
         writeCount,
       })) {
         clearRecovery();
@@ -286,8 +314,8 @@ export function createTradeInputStateReader({
     };
   };
 
-  const syncQty = createSyncSlot();
-  const syncPrice = createSyncSlot();
+  const syncQty = createSyncSlot('qty');
+  const syncPrice = createSyncSlot('price');
   return () => {
     const inputs = resolveInputs();
     if (!inputs?.qtyInput || (includePrice && !inputs.priceInput)) return null;

@@ -169,12 +169,14 @@ test('trade input synchronization confirms live controlled values instead of sle
     (syncBody.match(/recoverProvisionalMatchRollback:\s*settleControlledForm/g) || []).length,
     2,
   );
-  assert.match(
-    syncBody,
-    /\?\s*\(\{\s*rollbackValue\s*\}\)\s*=>\s*rollbackValue\s*===\s*null/,
-  );
-  assert.doesNotMatch(syncBody, /rollbackValue\s*===\s*''/);
+  assert.match(syncBody, /isScriptOwnedTradeInputRecoveryState/);
+  assert.match(syncBody, /field[\s\S]*preWriteValue[\s\S]*rollbackValue[\s\S]*submittedValue/);
+  assert.match(syncBody, /previousSubmittedInputs\?\.submittedQty/);
+  assert.match(syncBody, /previousSubmittedInputs\?\.submittedPrice/);
+  assert.doesNotMatch(syncBody, /isRecoveryWriteAllowed\s*=\s*settleControlledForm[\s\S]*=>\s*true/);
   assert.match(syncBody, /settleControlledForm[\s\S]*LADDER_INPUT_SETTLE_MISMATCH_FRAMES/);
+  assert.match(source, /const LADDER_INPUT_SETTLE_TIMEOUT_MS = 1200;/);
+  assert.match(source, /const LADDER_INPUT_SETTLE_MAX_WRITES = 5;/);
   assert.match(syncBody, /waitForTradeFormFrameState/);
   assert.match(syncBody, /includePrice:\s*false/);
   assert.match(syncBody, /includePrice:\s*true/);
@@ -184,7 +186,12 @@ test('trade input synchronization confirms live controlled values instead of sle
   assert.match(syncBody, /assertSubmittedPriceMatchesExpectedPrice/);
   assert.match(syncBody, /assertSubmittedQtyMatchesExpectedQty/);
   assert.doesNotMatch(syncBody, /delay\(/);
-  assert.match(executeBody, /syncTradeInputs\(order\.price,\s*order\.qty,\s*\{[\s\S]*priceLabel:\s*'计划价'[\s\S]*settleControlledForm:\s*true/);
+  assert.match(executeBody, /syncTradeInputs\(order\.price,\s*order\.qty,\s*\{[\s\S]*priceLabel:\s*'计划价'[\s\S]*settleControlledForm:\s*true[\s\S]*previousSubmittedInputs:\s*previousAcknowledgedInputs/);
+  assert.equal((executeBody.match(/previousAcknowledgedInputs\s*=/g) || []).length, 2);
+  assert.ok(
+    executeBody.indexOf('previousAcknowledgedInputs = {')
+      > executeBody.indexOf('await waitForOrderSubmitAcknowledgement'),
+  );
   assert.doesNotMatch(executeBody, /await delay\(90\)|await delay\(120\)/);
   const clickSyncCall = source.match(/syncTradeInputs\(clickedPrice,\s*qtyPlan\.qty,\s*\{[\s\S]*?\}\);/)?.[0] || '';
   assert.match(clickSyncCall, /priceLabel:\s*'点击价'/);

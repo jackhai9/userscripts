@@ -9,6 +9,7 @@ import {
   findActiveTradeInputs,
   findTradeFormRoot,
   findTradePanelInsertionPoint,
+  isScriptOwnedTradeInputRecoveryState,
   isTradeModeTab,
   mutationTouchesCloseQuantity,
   parseTradeModeLabel,
@@ -446,7 +447,17 @@ test('trade input synchronization recovers a provisional match rolled back befor
     requiredStableMatchFrames: 2,
     maxWriteAttempts: 5,
     recoverProvisionalMatchRollback: true,
-    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === null,
+    isRecoveryWriteAllowed: ({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+    }) => isScriptOwnedTradeInputRecoveryState({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+      previousSubmittedValue: null,
+      compareValues: compareDecimalStrings,
+    }),
   });
 
   assert.equal(readState(), null);
@@ -459,6 +470,189 @@ test('trade input synchronization recovers a provisional match rolled back befor
     submittedQty: '0.07',
   });
   assert.deepEqual(writes.map(({ value }) => value), ['0.07', '0.07']);
+});
+
+test('script-owned trade input recovery accepts only the same field previous value or empty state', () => {
+  const previousSubmittedInputs = {
+    submittedPrice: '84.5',
+    submittedQty: '0.05',
+  };
+  const isAllowed = (field, state) => isScriptOwnedTradeInputRecoveryState({
+    ...state,
+    previousSubmittedValue: field === 'qty'
+      ? previousSubmittedInputs.submittedQty
+      : previousSubmittedInputs.submittedPrice,
+    compareValues: compareDecimalStrings,
+  });
+
+  assert.equal(isAllowed('qty', {
+    preWriteValue: '0.05',
+    rollbackValue: '0.05',
+    submittedValue: '0.05',
+  }), true);
+  assert.equal(isAllowed('qty', {
+    preWriteValue: '0.05',
+    rollbackValue: null,
+    submittedValue: null,
+  }), true);
+  assert.equal(isAllowed('qty', {
+    preWriteValue: '84.5',
+    rollbackValue: '84.5',
+    submittedValue: '84.5',
+  }), false);
+  assert.equal(isAllowed('price', {
+    preWriteValue: '84.5',
+    rollbackValue: '84.5',
+    submittedValue: null,
+  }), true);
+  assert.equal(isAllowed('qty', {
+    preWriteValue: '0.03',
+    rollbackValue: '0.03',
+    submittedValue: '0.03',
+  }), false);
+});
+
+test('trade input synchronization recovers a previous acknowledged quantity cleared by Binance', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '0.05' },
+  };
+  const writes = [];
+  const previousSubmittedInputs = {
+    submittedPrice: '84.5',
+    submittedQty: '0.05',
+  };
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.1',
+    includePrice: false,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = value;
+    },
+    requiredStableMismatchFrames: 2,
+    requiredStableMatchFrames: 2,
+    maxWriteAttempts: 5,
+    recoverProvisionalMatchRollback: true,
+    isRecoveryWriteAllowed: ({
+      field,
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+    }) => isScriptOwnedTradeInputRecoveryState({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+      previousSubmittedValue: field === 'qty'
+        ? previousSubmittedInputs.submittedQty
+        : previousSubmittedInputs.submittedPrice,
+      compareValues: compareDecimalStrings,
+    }),
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  currentInputs.qtyInput.value = '';
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedQty: '0.1',
+  });
+  assert.deepEqual(writes.map(({ value }) => value), ['0.1', '0.1']);
+});
+
+test('previous acknowledged recovery remains bounded when Binance repeatedly clears the input', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '0.05' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.1',
+    includePrice: false,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = '';
+    },
+    requiredStableMismatchFrames: 1,
+    maxWriteAttempts: 3,
+    recoverProvisionalMatchRollback: true,
+    isRecoveryWriteAllowed: ({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+    }) => isScriptOwnedTradeInputRecoveryState({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+      previousSubmittedValue: '0.05',
+      compareValues: compareDecimalStrings,
+    }),
+  });
+
+  for (let frame = 0; frame < 10; frame += 1) {
+    assert.equal(readState(), null);
+  }
+  assert.deepEqual(writes.map(({ value }) => value), ['0.1', '0.1', '0.1']);
+});
+
+test('previous acknowledged recovery gives a replacement input an independent bounded write', () => {
+  let currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '0.05' },
+  };
+  const writes = [];
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.1',
+    includePrice: false,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = value;
+    },
+    requiredStableMismatchFrames: 2,
+    requiredStableMatchFrames: 2,
+    maxWriteAttempts: 5,
+    recoverProvisionalMatchRollback: true,
+    isRecoveryWriteAllowed: ({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+    }) => isScriptOwnedTradeInputRecoveryState({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+      previousSubmittedValue: '0.05',
+      compareValues: compareDecimalStrings,
+    }),
+  });
+
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '0.05' },
+  };
+  assert.equal(readState(), null);
+  assert.equal(readState(), null);
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedQty: '0.1',
+  });
+  assert.deepEqual(writes.map(({ value }) => value), ['0.1', '0.1']);
 });
 
 test('trade input synchronization cancels provisional recovery for a different non-empty value', () => {
@@ -482,7 +676,17 @@ test('trade input synchronization cancels provisional recovery for a different n
     requiredStableMatchFrames: 2,
     maxWriteAttempts: 5,
     recoverProvisionalMatchRollback: true,
-    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === null,
+    isRecoveryWriteAllowed: ({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+    }) => isScriptOwnedTradeInputRecoveryState({
+      preWriteValue,
+      rollbackValue,
+      submittedValue,
+      previousSubmittedValue: null,
+      compareValues: compareDecimalStrings,
+    }),
   });
 
   assert.equal(readState(), null);
