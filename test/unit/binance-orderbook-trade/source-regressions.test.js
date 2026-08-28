@@ -467,6 +467,15 @@ test('multiplier row reads as a labeled value followed by decrement and incremen
   assert.match(refreshBody, /let multiplierHintText = PANEL_COPY\.field\.minimumOrderQuantity/);
 });
 
+test('multiplier clicks use non-blocking local feedback without writing business status', () => {
+  const feedbackBody = readFunctionBody('showMultiplierPressFeedback');
+  assert.match(feedbackBody, /button\.setAttribute\(MULTIPLIER_PRESS_FEEDBACK_ATTR, 'true'\)/);
+  assert.match(feedbackBody, /MULTIPLIER_PRESS_FEEDBACK_MS/);
+  assert.match(feedbackBody, /button\.removeAttribute\(MULTIPLIER_PRESS_FEEDBACK_ATTR\)/);
+  assert.doesNotMatch(feedbackBody, /disabled|setLadderStatus/);
+  assert.match(source, /if \(updateMultiplier\(String\(current \+ 1\), context\)\) \{\s*showMultiplierPressFeedback\(incBtn\);/);
+});
+
 test('multiplier calculation keeps the formula primary and separates the notional constraint visually', () => {
   const ensurePanelBody = readFunctionBody('ensurePanel');
   const refreshBody = readFunctionBody('refreshComputedInfo');
@@ -1110,7 +1119,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*`\$\{spec\.label\}尚未开始：撤本币挂单处理中`/);
   const actionRowsBody = readFunctionBody('getLadderControlSections');
-  assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
+  assert.match(actionRowsBody, /actionDisabled = ladderRunning[\s\S]*\|\| !!singleOrderTask[\s\S]*\|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
   assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
   assert.match(actionRowsBody, /ladderExecutionButton\('OPEN_LONG',[\s\S]*actionDisabled\)/);
   assert.match(startBody, /activeLadderActionType = actionType/);
@@ -1175,7 +1184,7 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(sampleBody, /saveStoredOrderbookPrecisionSamples/);
   assert.match(sampleBody, /samples: latestSamples,[\s\S]*recommendation,/);
   assert.match(sampleBody, /status: recommendation \? 'ready' : PANEL_COPY\.status\.precisionInsufficient/);
-  assert.match(sampleBody, /PANEL_COPY\.status\.precisionUpdated/);
+  assert.doesNotMatch(sampleBody, /setLadderStatus/);
   assert.doesNotMatch(sampleBody, /setTimeout|setInterval|await delay/);
   assert.doesNotMatch(sampleBody, /getCurrentOrderbookDisplayStep|fallbackMovement/);
 
@@ -1400,7 +1409,7 @@ test('pending close actions report position confirmation without starting execut
   assert.match(startBody, /spec\?\.mode === 'CLOSE' && !isCloseSnapshotReady\(actionSymbol\)/);
   assert.match(startBody, /setLadderStatus\(`\$\{spec\.label\}尚未开始：仓位确认中`\)/);
 
-  assert.match(source, /if \(getActiveTradeMode\(\) === 'CLOSE' && !isCloseSnapshotReady\(clickedSymbol\)\) \{\s*warn\('仓位确认中'\);\s*return;/);
+  assert.match(source, /if \(getActiveTradeMode\(\) === 'CLOSE' && !isCloseSnapshotReady\(clickedSymbol\)\) \{\s*warn\('仓位确认中'\);\s*setLadderStatus\('单击下单未执行：仓位确认中'\);\s*return;/);
 });
 
 test('cancel flow rechecks the captured symbol before destructive click and cleanup', () => {
@@ -1519,6 +1528,10 @@ test('single-order sizing and submission retain the captured orderbook precision
   assert.match(resolveBody, /loadMultiplier\(tradeMode, symbol, precision\)/);
   assert.match(resolveBody, /precision,/);
   assert.match(source, /readCurrentOrderbookPrecisionValue\(\) !== qtyPlan\.precision/);
+  assert.match(source, /const submitCaptureId = beginLadderSubmitResponseCapture\(\)/);
+  assert.match(source, /await waitForOrderSubmitAcknowledgement\([\s\S]*submitCaptureId,[\s\S]*action\.mode/);
+  assert.match(source, /setLadderStatus\(`单击\$\{action\.side\}已提交 · \$\{clickedPrice\} × \$\{qtyPlan\.qty\}`\)/);
+  assert.match(source, /singleOrderTask = null;[\s\S]*scheduleRenderPanel\(\)/);
 });
 
 test('precision shortcut selection and refresh do not commit after a symbol switch', () => {

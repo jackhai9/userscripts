@@ -31,6 +31,51 @@ async function expectStandardDisabledStyle(locator) {
   await expect(locator).toHaveCSS('cursor', 'not-allowed');
 }
 
+test('multiplier controls show local press feedback without changing operation status', async ({ page }) => {
+  const scenario = createCancelScenario({
+    ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  const panel = page.locator(PANEL_SELECTOR);
+  const status = panel.locator('#jh-binance-ladder-status');
+  const statusBefore = await status.textContent();
+  const input = panel.locator('#jh-binance-close-qty-multiplier-input');
+  const increment = panel.locator('#jh-binance-close-qty-multiplier-inc');
+
+  await expect(input).toHaveValue('1');
+  await increment.click();
+  await expect(increment).toHaveAttribute('data-jh-press-feedback', 'true');
+  await expect(increment).toHaveCSS('background-color', 'rgb(245, 245, 245)');
+  await increment.click();
+  await expect(input).toHaveValue('3');
+  await expect(status).toHaveText(statusBefore);
+  await expect(increment).not.toHaveAttribute('data-jh-press-feedback', 'true', {
+    timeout: 1_000,
+  });
+  expect(errors).toEqual([]);
+});
+
+test('single order reports success only after the matching Binance API response', async ({ page }) => {
+  const scenario = createCancelScenario({
+    ui: { tradeMode: 'OPEN', orderbookPrecision: '0.1' },
+    host: { submitApiResponseDelayMsByOrder: [350, 0, 0, 0, 0] },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  const panel = page.locator(PANEL_SELECTOR);
+  const status = panel.locator('#jh-binance-ladder-status');
+  const ladderGroup = panel.locator('[data-panel-group="ladder"]');
+
+  await expect(ladderGroup.locator('#jh-binance-ladder-status')).toHaveCount(0);
+  await page.locator('#futuresOrderbook .bid-light.emit-price').first().click();
+  await expect(status).toContainText('单击开多确认中');
+  await expect(status).toContainText('单击开多已提交', { timeout: 3_000 });
+
+  const events = (await readFixtureState(page)).events;
+  expect(events.filter((event) => event.type === 'order-submitted')).toHaveLength(1);
+  expect(events.filter((event) => event.type === 'order-submit-api-success')).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
 test('native open and close tabs drive one stable panel direction selector', async ({ page }) => {
   const scenario = createCancelScenario({
     positions: POSITION_SETS.current,
@@ -38,11 +83,14 @@ test('native open and close tabs drive one stable panel direction selector', asy
   });
   const { errors } = await openUserscriptScenario(page, scenario);
   const panel = page.locator(PANEL_SELECTOR);
+  const status = panel.locator('#jh-binance-ladder-status');
+  const statusBefore = await status.textContent();
   const directionGroup = panel.locator('[data-panel-group="direction"]');
   const initialRect = await readRect(directionGroup);
 
   await expect(panel.getByRole('radio', { name: '开多' })).toBeEnabled();
   await expect(panel.getByRole('radio', { name: '开空' })).toBeEnabled();
+  await expect(status).toHaveText(statusBefore);
   await installInteractionProbe(page, '#position-direction [data-trade-mode="CLOSE"]');
   await page.locator('#position-direction [data-trade-mode="CLOSE"]').click();
   await expect(panel.getByRole('radio', { name: '平多' })).toBeEnabled();
@@ -51,6 +99,7 @@ test('native open and close tabs drive one stable panel direction selector', asy
   await expect(panel.getByRole('button', { name: '阶梯平空' })).toBeDisabled();
   await expect(page.locator('.order-entry').getByRole('button', { name: '平多' })).toBeEnabled();
   await expect(page.locator('.order-entry').getByRole('button', { name: '平空' })).toBeDisabled();
+  await expect(status).toHaveText(statusBefore);
   const closeProbe = await finishInteractionProbe(page);
   assertResponsiveInteraction(expect, closeProbe);
   expect(await readRect(directionGroup)).toEqual(initialRect);
@@ -58,6 +107,7 @@ test('native open and close tabs drive one stable panel direction selector', asy
   await page.locator('#position-direction [data-trade-mode="OPEN"]').click();
   await expect(panel.getByRole('radio', { name: '开多' })).toBeEnabled();
   await expect(panel.getByRole('radio', { name: '开空' })).toBeEnabled();
+  await expect(status).toHaveText(statusBefore);
   expect(await readRect(directionGroup)).toEqual(initialRect);
 
   const state = await readFixtureState(page);
@@ -75,6 +125,8 @@ test('a precision shortcut selects the exact native orderbook option once', asyn
   });
   const { errors } = await openUserscriptScenario(page, scenario);
   const panel = page.locator(PANEL_SELECTOR);
+  const status = panel.locator('#jh-binance-ladder-status');
+  const statusBefore = await status.textContent();
   const precisionGroup = panel.locator('[data-panel-group="precision"]');
   const initialRect = await readRect(precisionGroup);
   const target = panel.locator('[data-orderbook-precision-value="0.01"]');
@@ -88,6 +140,7 @@ test('a precision shortcut selects the exact native orderbook option once', asyn
   await expect(target).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#futuresOrderbook .tick-content')).toHaveText('0.01');
   await expect(page.locator('.ob-ticksize-overlay')).toHaveCount(0);
+  await expect(status).toHaveText(statusBefore);
   const probe = await finishInteractionProbe(page);
   assertResponsiveInteraction(expect, probe);
   expect(await readRect(precisionGroup)).toEqual(initialRect);
@@ -131,6 +184,8 @@ test('precision refresh explains when the complete visible trade list still lack
   });
   const { errors } = await openUserscriptScenario(page, scenario);
   const panel = page.locator(PANEL_SELECTOR);
+  const status = panel.locator('#jh-binance-ladder-status');
+  const statusBefore = await status.textContent();
   await page.locator('.tradew-tradelist .price.emit-price').evaluateAll((nodes) => {
     nodes.forEach((node) => { node.textContent = '81.00'; });
   });
@@ -139,8 +194,7 @@ test('precision refresh explains when the complete visible trade list still lack
   await refresh.click();
   await expect(refresh).toHaveAttribute('data-orderbook-precision-refresh-state', 'retry');
   await expect(refresh).toHaveAttribute('aria-label', '近期价格变化不足，请稍后重试');
-  await expect(panel.locator('#jh-binance-ladder-status'))
-    .toHaveText('近期价格变化不足，请稍后重试');
+  await expect(status).toHaveText(statusBefore);
   await expect(panel.locator('[aria-label*="推荐档位"]')).toHaveCount(0);
   expect(await page.evaluate((symbol) => JSON.parse(
     localStorage.getItem(`jh_binance_orderbook_precision_samples_v3:${symbol}`)

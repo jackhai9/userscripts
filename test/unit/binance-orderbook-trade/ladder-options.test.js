@@ -86,10 +86,7 @@ test('retired close 100 percent profiles explicitly migrate to the close default
   assert.deepEqual(storage.entries(), [
     ['jh_binance_ladder_close_percent:BTCUSDT:0.01', '0.3'],
   ]);
-  assert.match(
-    source,
-    /if \(migrated\) \{\s*setLadderStatus\(`平仓量 100% 已调整为 \$\{DEFAULT_LADDER_CLOSE_PERCENT\}%`\);\s*\}/,
-  );
+  assert.doesNotMatch(source, /平仓量 100% 已调整为/);
 });
 
 test('retired option migration rejects an unsupported replacement', () => {
