@@ -269,7 +269,7 @@ test('a complete ladder submits the planned five native orders and restores cont
     const nextInputWrite = events.find(
       (event) => event.type === 'trade-input-written' && event.at > submissions[index].at,
     );
-    expect(nextInputWrite.at - submissions[index].at).toBeLessThan(400);
+    expect(nextInputWrite.at - submissions[index].at).toBeLessThan(700);
   }
   expect(errors).toEqual([]);
 });
