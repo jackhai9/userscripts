@@ -178,7 +178,8 @@ test('starting a ladder preserves action slots and turns only the active action 
   const submissionsBeforeStop = (await readFixtureState(page)).events
     .filter((event) => event.type === 'order-submitted').length;
   await stop.click();
-  await expect(panel.locator('#jh-binance-ladder-status')).toContainText('已停止');
+  const status = panel.locator('#jh-binance-ladder-status');
+  await expect(status).toContainText('阶梯开多已停止');
   await expect(startLong).toBeEnabled();
   await expect(startShort).toBeEnabled();
   await expect(stop).toHaveCount(0);
@@ -188,6 +189,9 @@ test('starting a ladder preserves action slots and turns only the active action 
   const state = await readFixtureState(page);
   const submissionsAfterStop = state.events
     .filter((event) => event.type === 'order-submitted').length;
+  await expect(status).toHaveText(
+    `阶梯开多已停止 · 已挂 ${submissionsAfterStop} 笔 · 已撤 0 笔`,
+  );
   expect(submissionsAfterStop).toBeLessThanOrEqual(submissionsBeforeStop + 1);
   await page.waitForTimeout(700);
   expect((await readFixtureState(page)).events
@@ -248,7 +252,7 @@ test('a complete ladder submits the planned five native orders and restores cont
   const stop = panel.getByRole('button', { name: '停止开多' });
 
   await startLong.click();
-  await expect(panel.locator('#jh-binance-ladder-status')).toContainText('完成 5/5', {
+  await expect(panel.locator('#jh-binance-ladder-status')).toHaveText('阶梯开多已完成 · 已挂 5/5 笔', {
     timeout: 12_000,
   });
   await expect(startLong).toBeEnabled();
