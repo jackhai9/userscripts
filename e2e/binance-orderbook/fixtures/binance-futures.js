@@ -400,6 +400,8 @@ export function renderBinanceFuturesFixture(scenario) {
 
       function closeChartOrdersPopover() {
         if (!chartOrdersPopover.classList.contains('active')) return;
+        record('chart-orders-popover-close-requested');
+        if (scenario.host.chartOrdersPopoverCloseMode === 'stuck') return;
         chartOrdersPopover.classList.remove('active');
         record('chart-orders-popover-closed');
       }

@@ -55,6 +55,7 @@ export function createCancelScenario(overrides = {}) {
       dialogMode: 'normal',
       dialogReplacementDelayMs: null,
       clearMode: 'currentSymbol',
+      chartOrdersPopoverCloseMode: 'normal',
       precisionOptions: ['0.001', '0.01', '0.1', '1'],
       ...overrides.host,
     },
@@ -83,6 +84,11 @@ export function createCancelScenario(overrides = {}) {
   }
   if (!['currentSymbol', 'none'].includes(scenario.host.clearMode)) {
     throw new Error(`Unsupported clear mode: ${scenario.host.clearMode}`);
+  }
+  if (!['normal', 'stuck'].includes(scenario.host.chartOrdersPopoverCloseMode)) {
+    throw new Error(
+      `Unsupported chart-orders popover close mode: ${scenario.host.chartOrdersPopoverCloseMode}`,
+    );
   }
   if (
     scenario.host.dialogReplacementDelayMs !== null
