@@ -71,7 +71,10 @@ test('CMC data panel stops business timers on non-trading routes but keeps a rou
   const startRouteBody = readFunctionBody(sources.cmc, 'startRouteWatcher');
   assert.match(pauseBody, /stopDataLoop\(\)/);
   assert.doesNotMatch(pauseBody, /stopRouteWatcher\(\)/);
+  assert.match(startRouteBody, /installSpaRouteChangeListener/);
   assert.match(startRouteBody, /setInterval/);
+  assert.match(startRouteBody, /ROUTE_WATCHDOG_MS/);
+  assert.doesNotMatch(sources.cmc, /symbolTimer|SYMBOL_CHECK_MS/);
 });
 
 test('CMC data panel invalidates superseded and paused refreshes with a monotonic epoch', () => {
@@ -90,6 +93,9 @@ for (const [name, source] of Object.entries(sources)) {
     const startupPrefix = source.slice(0, source.indexOf('const PANEL_ID'));
     assert.doesNotMatch(startupPrefix, /if \(!isFuturesTradingPage\(\)\) return;/);
     assert.match(source, /startRouteWatcher\(\)/);
+    const startRouteBody = readFunctionBody(source, 'startRouteWatcher');
+    assert.match(startRouteBody, /installSpaRouteChangeListener/);
+    assert.match(startRouteBody, /ROUTE_WATCHDOG_MS/);
   });
 }
 

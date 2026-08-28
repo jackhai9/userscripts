@@ -28,10 +28,24 @@ test('stopped ladder status reports confirmed submitted and cancelled orders', (
   );
 });
 
-test('stopped ladder status keeps explicit zero counts', () => {
+test('stopped ladder status omits counters for actions that did not happen', () => {
   assert.equal(
     formatStoppedLadderProgress('阶梯平多', createLadderProgress()),
-    '阶梯平多已停止 · 已挂 0 笔 · 已撤 0 笔',
+    '阶梯平多已停止',
+  );
+
+  const submittedOnly = createLadderProgress();
+  recordLadderSubmittedOrder(submittedOnly);
+  assert.equal(
+    formatStoppedLadderProgress('阶梯平空', submittedOnly),
+    '阶梯平空已停止 · 已挂 1 笔',
+  );
+
+  const cancelledOnly = createLadderProgress();
+  recordLadderCancelledOrder(cancelledOnly);
+  assert.equal(
+    formatStoppedLadderProgress('阶梯开多', cancelledOnly),
+    '阶梯开多已停止 · 已撤 1 笔',
   );
 });
 
@@ -65,6 +79,15 @@ test('failed and interrupted ladder statuses retain confirmed progress', () => {
   assert.equal(
     formatInterruptedLadderProgress('阶梯开多', '交易对已切换', progress),
     '阶梯开多已中止：交易对已切换 · 已挂 1 笔 · 已撤 1 笔',
+  );
+
+  assert.equal(
+    formatFailedLadderProgress('阶梯开空', '数量框状态未稳定', createLadderProgress()),
+    '阶梯开空失败：数量框状态未稳定',
+  );
+  assert.equal(
+    formatInterruptedLadderProgress('阶梯平多', '交易对已切换', createLadderProgress()),
+    '阶梯平多已中止：交易对已切换',
   );
 });
 

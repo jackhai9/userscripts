@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.1.14
+// @version      0.1.15
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -30,6 +30,52 @@
     return Boolean(parseFuturesTradingSymbolFromPathname(pathname));
   }
 
+  // src/shared/spa-route-change.js
+  var ROUTE_CHANGE_EVENT = "jh-userscripts:spa-route-change";
+  var ROUTE_PATCH_MARKER = Symbol.for("jh-userscripts.spa-route-change-patched");
+  var ROUTE_DISPATCH_STATE = Symbol.for("jh-userscripts.spa-route-change-dispatch");
+  function dispatchRouteChange(view) {
+    const href = view.location.href;
+    if (view[ROUTE_DISPATCH_STATE]?.href === href) return;
+    const state = { href };
+    view[ROUTE_DISPATCH_STATE] = state;
+    view.dispatchEvent(new view.Event(ROUTE_CHANGE_EVENT));
+    view.queueMicrotask(() => {
+      if (view[ROUTE_DISPATCH_STATE] === state) delete view[ROUTE_DISPATCH_STATE];
+    });
+  }
+  function patchHistoryMethod(view, methodName) {
+    const current = view.history[methodName];
+    if (current[ROUTE_PATCH_MARKER]) return;
+    function routeAwareHistoryMethod(...args) {
+      const previousHref = view.location.href;
+      const result = Reflect.apply(current, this, args);
+      if (view.location.href !== previousHref) dispatchRouteChange(view);
+      return result;
+    }
+    Object.defineProperty(routeAwareHistoryMethod, ROUTE_PATCH_MARKER, { value: true });
+    view.history[methodName] = routeAwareHistoryMethod;
+  }
+  function ensureSpaRouteChangePatched(view) {
+    if (!view?.history) throw new Error("SPA route patch requires a window");
+    patchHistoryMethod(view, "pushState");
+    patchHistoryMethod(view, "replaceState");
+  }
+  function installSpaRouteChangeListener(view, listener) {
+    if (!view?.history || typeof listener !== "function") {
+      throw new Error("SPA route listener requires a window and callback");
+    }
+    ensureSpaRouteChangePatched(view);
+    view.addEventListener(ROUTE_CHANGE_EVENT, listener);
+    view.addEventListener("popstate", listener);
+    view.addEventListener("hashchange", listener);
+    return () => {
+      view.removeEventListener(ROUTE_CHANGE_EVENT, listener);
+      view.removeEventListener("popstate", listener);
+      view.removeEventListener("hashchange", listener);
+    };
+  }
+
   // src/binance-coinmarketcap-data/index.user.js
   (function() {
     "use strict";
@@ -41,7 +87,7 @@
     const STORAGE_COLLAPSED_KEY = "jh_binance_cmc_data_collapsed";
     const PANEL_WIDTH = 240;
     const REFRESH_MS = 30 * 1e3;
-    const SYMBOL_CHECK_MS = 1500;
+    const ROUTE_WATCHDOG_MS = 5e3;
     const CMC_BASE = "https://coinmarketcap.com/zh/currencies/";
     const CMC_MAP_API = "https://api.coinmarketcap.com/data-api/v1/cryptocurrency/map";
     const CMC_DETAIL_API = "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail";
@@ -62,8 +108,8 @@
     let lastSymbol = null;
     let lastUpdateTs = 0;
     let refreshTimer = null;
-    let symbolTimer = null;
     let routeTimer = null;
+    let removeSpaRouteChangeListener = null;
     let dragCleanup = null;
     let unloadCleanup = null;
     let inFlightSymbol = null;
@@ -642,31 +688,20 @@
           refreshForCurrentSymbol(false, true);
         }, REFRESH_MS);
       }
-      if (!symbolTimer) {
-        symbolTimer = setInterval(function() {
-          if (!isFuturesTradingPage()) {
-            pauseForNonTradingPage();
-            return;
-          }
-          const symbol = getCurrentSymbol();
-          if (symbol && symbol !== lastSymbol && symbol !== inFlightSymbol) {
-            lastRowsHtml = "";
-            refreshForCurrentSymbol(true, false);
-          }
-        }, SYMBOL_CHECK_MS);
-      }
     }
     function stopDataLoop() {
       refreshEpoch++;
       inFlightSymbol = null;
       if (refreshTimer) clearInterval(refreshTimer);
-      if (symbolTimer) clearInterval(symbolTimer);
       refreshTimer = null;
-      symbolTimer = null;
     }
     function stopRouteWatcher() {
       if (routeTimer) clearInterval(routeTimer);
       routeTimer = null;
+      if (removeSpaRouteChangeListener) {
+        removeSpaRouteChangeListener();
+        removeSpaRouteChangeListener = null;
+      }
     }
     function stopLoop() {
       stopDataLoop();
@@ -705,9 +740,17 @@
       startDataLoop();
     }
     function startRouteWatcher() {
-      if (routeTimer || document.hidden || panelClosed) return;
+      if (document.hidden || panelClosed) return;
       lastPath = location.pathname;
-      routeTimer = setInterval(handleRouteChange, SYMBOL_CHECK_MS);
+      if (!removeSpaRouteChangeListener) {
+        removeSpaRouteChangeListener = installSpaRouteChangeListener(window, handleRouteChange);
+      }
+      if (!routeTimer) {
+        routeTimer = setInterval(function() {
+          ensureSpaRouteChangePatched(window);
+          handleRouteChange();
+        }, ROUTE_WATCHDOG_MS);
+      }
     }
     function setupDrag(panel) {
       const header = panel.querySelector("#" + PANEL_ID + "-header");

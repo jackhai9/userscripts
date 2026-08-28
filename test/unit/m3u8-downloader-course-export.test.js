@@ -26,6 +26,21 @@ import {
 
 const source = await readFile(new URL('../../scripts/m3u8-downloader.user.js', import.meta.url), 'utf8');
 
+test('Brooks media export advances successful pages without a fixed step delay', async () => {
+  const exporterSource = await readFile(
+    new URL('../../src/m3u8-downloader/brooks-exporter.js', import.meta.url),
+    'utf8',
+  );
+  const constantsSource = await readFile(
+    new URL('../../src/m3u8-downloader/constants.js', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(exporterSource, /queueMicrotask\(processNextBrooksMediaExport\)/);
+  assert.doesNotMatch(exporterSource, /BROOKS_MEDIA_EXPORT_STEP_DELAY_MS/);
+  assert.doesNotMatch(constantsSource, /BROOKS_MEDIA_EXPORT_STEP_DELAY_MS/);
+});
+
 test('external downloader preserves the complete tokenized m3u8 source URL', () => {
   const sourceUrl = 'https://cdn.example/video.m3u8?token=keep&expires=123';
   const target = new URL(buildExternalDownloaderUrl(sourceUrl));
