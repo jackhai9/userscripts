@@ -2,6 +2,8 @@ import { findBinanceTradingViewTarget } from './tradingview-target.js';
 
 const ACTIVE_POPOVER_SELECTOR = '.bn-bubble.active';
 const OPEN_ORDERS_LABEL_PATTERN = /^(?:当前委托|Open Orders)$/i;
+const LATEST_PRICE_CONTROL_SELECTOR =
+  '.bn-tooltips-wrap.bn-tooltips-web.w-full.cursor-pointer';
 
 function normalizeLabel(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -23,13 +25,14 @@ export function findBinanceChartOrdersTarget(document) {
       if (toolbar.children.length < 2) return false;
       const trigger = toolbar.children[toolbar.children.length - 2];
       const latestPriceSlot = toolbar.children[toolbar.children.length - 1];
+      const latestPriceControl = latestPriceSlot.matches(LATEST_PRICE_CONTROL_SELECTOR)
+        ? latestPriceSlot
+        : Array.from(latestPriceSlot.children)
+          .find((child) => child.matches(LATEST_PRICE_CONTROL_SELECTOR));
       return hasVisibleBox(toolbar)
         && hasVisibleBox(trigger)
         && trigger.matches('.bn-tooltips-wrap.bn-tooltips-web')
-        && hasVisibleBox(latestPriceSlot)
-        && latestPriceSlot.matches(
-          '.bn-tooltips-wrap.bn-tooltips-web.w-full.cursor-pointer',
-        );
+        && hasVisibleBox(latestPriceControl);
     });
   if (!toolbars.length) return null;
   if (toolbars.length > 1) {
