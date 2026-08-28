@@ -102,7 +102,9 @@ export function formatInterruptedLadderProgress(label, reason, progress) {
 export function formatFailedLadderProgress(label, message, progress) {
   assertLadderLabel(label);
   assertLadderMessage(message);
-  return appendLadderProgressCounts(`${label}失败：${message}`, progress);
+  const counts = formatLadderProgressCounts(progress);
+  const details = counts.length > 0 ? `${counts.join(' · ')} · ${message}` : message;
+  return `${label}失败：${details}`;
 }
 
 export function formatCompletedLadderProgress(label, completedOrders, totalOrders, progress) {

@@ -89,7 +89,7 @@ test('failed and interrupted ladder statuses retain confirmed progress', () => {
 
   assert.equal(
     formatFailedLadderProgress('阶梯开多', '数量框状态未稳定', progress),
-    '阶梯开多失败：数量框状态未稳定 · 已挂 1/5 笔 · 已撤 1 笔',
+    '阶梯开多失败：已挂 1/5 笔 · 已撤 1 笔 · 数量框状态未稳定',
   );
   assert.equal(
     formatInterruptedLadderProgress('阶梯开多', '交易对已切换', progress),
@@ -103,6 +103,18 @@ test('failed and interrupted ladder statuses retain confirmed progress', () => {
   assert.equal(
     formatInterruptedLadderProgress('阶梯平多', '交易对已切换', createLadderProgress()),
     '阶梯平多已中止：交易对已切换',
+  );
+
+  const buttonNotReady = createLadderProgress();
+  setLadderPlannedOrders(buttonNotReady, 2);
+  recordLadderSubmittedOrder(buttonNotReady);
+  assert.equal(
+    formatFailedLadderProgress(
+      '阶梯开空',
+      '下单按钮 3 秒内未恢复可点击',
+      buttonNotReady,
+    ),
+    '阶梯开空失败：已挂 1/2 笔 · 下单按钮 3 秒内未恢复可点击',
   );
 });
 
