@@ -13,10 +13,19 @@ function createChartMarkup({
   mode = 'tradingview',
   popoverId = 'chart-orders-menu',
   latestPriceLabel = '最新价格',
+  wrapLatestPrice = false,
 } = {}) {
   const chartBody = mode === 'tradingview'
     ? '<div id="chart_futures-tradingview"><iframe id="tradingview_fixture"></iframe></div>'
     : '<div data-testid="basic-chart"><iframe id="basic_fixture"></iframe></div>';
+  const latestPriceControl = `
+    <span class="bn-tooltips-wrap bn-tooltips-web w-full cursor-pointer" data-testid="latest-price">
+      ${latestPriceLabel}
+    </span>
+  `;
+  const latestPriceSlot = wrapLatestPrice
+    ? `<span class="contents">${latestPriceControl}</span>`
+    : latestPriceControl;
   return `
     <div class="chart-widget-root">
       <div class="flex items-center gap-[--space-m]" data-testid="chart-toolbar">
@@ -25,9 +34,7 @@ function createChartMarkup({
         <span class="bn-tooltips-wrap bn-tooltips-web" data-testid="orders-trigger">
           <span class="bn-tooltips-ele" aria-describedby="${popoverId}">orders</span>
         </span>
-        <span class="bn-tooltips-wrap bn-tooltips-web w-full cursor-pointer" data-testid="latest-price">
-          ${latestPriceLabel}
-        </span>
+        ${latestPriceSlot}
       </div>
       ${chartBody}
     </div>
@@ -70,6 +77,14 @@ test('locates the current chart Open Orders target in TradingView and Basic mode
 
 test('supports the English current-price label without broad text scanning', () => {
   const { dom } = loadChartTarget({ latestPriceLabel: 'Last Price' });
+  assert.equal(
+    getBinanceChartOrdersTarget(dom.window.document).trigger.getAttribute('data-testid'),
+    'orders-trigger',
+  );
+});
+
+test('supports Binance wrapping the current-price control in a contents slot', () => {
+  const { dom } = loadChartTarget({ wrapLatestPrice: true });
   assert.equal(
     getBinanceChartOrdersTarget(dom.window.document).trigger.getAttribute('data-testid'),
     'orders-trigger',
