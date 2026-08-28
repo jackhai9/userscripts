@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.150
+// @version      2.7.151
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -231,6 +231,7 @@ import {
   const SIDE_SHORT_ID = 'jh-binance-close-side-short';
   const LADDER_BODY_ID = 'jh-binance-ladder-body';
   const LADDER_STATUS_ID = 'jh-binance-ladder-status';
+  const MULTIPLIER_PRESS_FEEDBACK_ATTR = 'data-jh-press-feedback';
   const ORDERBOOK_PRECISION_RECOMMENDATION_ID = 'jh-binance-orderbook-precision-recommendation';
   const DEFAULT_MULTIPLIER = '1';
   const DEFAULT_CLOSE_SIDE = 'LONG';
@@ -271,6 +272,7 @@ import {
   ];
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
   const LADDER_ACTION_FEEDBACK_MIN_MS = 240;
+  const MULTIPLIER_PRESS_FEEDBACK_MS = 140;
   const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
   const LADDER_REPLACE_ROW_SETTLE_MS = 240;
   const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
@@ -365,6 +367,7 @@ import {
   let tradeButtonCache = { mode: null, expiresAt: 0, buttons: [] };
   let tradeScopeCache = { activeTab: null, expiresAt: 0, scopes: [] };
   let ladderTask = null;
+  let singleOrderTask = null;
   let ladderAbortController = null;
   let activeLadderActionType = null;
   let activeLadderPanelContext = null;
@@ -385,6 +388,7 @@ import {
   let panelResizeObserver = null;
   let ladderSubmitCaptureSequence = 0;
   let activeLadderSubmitCapture = null;
+  const multiplierPressFeedbackTimers = new WeakMap();
   let orderbookPrecisionSelectionTask = null;
   let orderbookPrecisionOptionsLoadRequestedSymbol = null;
   let orderbookPrecisionOptionsLoadAttemptedSymbol = null;
@@ -426,6 +430,12 @@ import {
         opacity: ${DISABLED_CONTROL_OPACITY} !important;
         font-weight: ${CONTROL_FONT_WEIGHT} !important;
         cursor: not-allowed !important;
+      }
+      #${PANEL_ID} button[${MULTIPLIER_PRESS_FEEDBACK_ATTR}="true"] {
+        background: ${DISABLED_CONTROL_BG} !important;
+        color: ${DISABLED_CONTROL_TEXT} !important;
+        border-color: ${DISABLED_CONTROL_BORDER} !important;
+        opacity: ${DISABLED_CONTROL_OPACITY} !important;
       }
       button[${NATIVE_ACTION_DISABLED_ATTR}="true"] {
         pointer-events: none !important;
@@ -590,7 +600,7 @@ import {
     symbol = getCurrentSymbol(),
     precision = readCurrentOrderbookPrecisionValue(),
   ) {
-    const migrated = migrateModeSymbolPrecisionNumberOption(
+    migrateModeSymbolPrecisionNumberOption(
       localStorage,
       LADDER_PERCENT_STORAGE_KEYS,
       'CLOSE',
@@ -600,9 +610,6 @@ import {
       DEFAULT_LADDER_CLOSE_PERCENT,
       LADDER_CLOSE_PERCENTS,
     );
-    if (migrated) {
-      setLadderStatus(`平仓量 100% 已调整为 ${DEFAULT_LADDER_CLOSE_PERCENT}%`);
-    }
     return loadModeSymbolPrecisionNumberOption(
       localStorage,
       LADDER_PERCENT_STORAGE_KEYS,
@@ -1873,11 +1880,6 @@ import {
       queueOrderbookPrecisionOptionsLoad(symbol, true);
     }
     refreshOrderbookPrecisionRecommendation();
-    setLadderStatus(
-      recommendation
-        ? PANEL_COPY.status.precisionUpdated
-        : PANEL_COPY.status.precisionInsufficient
-    );
     showOrderbookPrecisionRefreshFeedback(symbol, recommendation ? 'success' : 'retry');
     scheduleRenderPanel();
   }
@@ -2710,6 +2712,9 @@ import {
     }
     if (cancelCurrentSymbolOpenOrdersTask) {
       setLadderStatus(`${spec.label}尚未开始：撤本币挂单处理中`);
+      return;
+    }
+    if (singleOrderTask) {
       return;
     }
     if (ladderTask) {
@@ -4271,6 +4276,9 @@ import {
 
   async function cancelCurrentSymbolOpenOrders(options = null) {
     if (cancelCurrentSymbolOpenOrdersTask) return cancelCurrentSymbolOpenOrdersTask;
+    if (singleOrderTask) {
+      return { ok: false, status: 'single_order_running', message: '单击下单处理中' };
+    }
     if (ladderTask) {
       const message = '阶梯任务运行中，请先停止阶梯挂单';
       setLadderStatus(message);
@@ -5281,6 +5289,17 @@ import {
     return true;
   }
 
+  function showMultiplierPressFeedback(button) {
+    const existingTimer = multiplierPressFeedbackTimers.get(button);
+    if (existingTimer) window.clearTimeout(existingTimer);
+    button.setAttribute(MULTIPLIER_PRESS_FEEDBACK_ATTR, 'true');
+    const timer = window.setTimeout(() => {
+      button.removeAttribute(MULTIPLIER_PRESS_FEEDBACK_ATTR);
+      multiplierPressFeedbackTimers.delete(button);
+    }, MULTIPLIER_PRESS_FEEDBACK_MS);
+    multiplierPressFeedbackTimers.set(button, timer);
+  }
+
   function setNativeActionButtonDisabled(button, disabled) {
     if (!button) return;
     // 状态没变则不操作 DOM，避免产生多余的 mutation 触发 observer 死循环
@@ -5365,7 +5384,9 @@ import {
 
   function getLadderControlSections(tradeMode, closeContext, symbol, precision) {
     const ladderRunning = !!ladderTask;
-    const actionDisabled = ladderRunning || cancelCurrentSymbolOpenOrdersBlocksLadderActions;
+    const actionDisabled = ladderRunning
+      || !!singleOrderTask
+      || cancelCurrentSymbolOpenOrdersBlocksLadderActions;
     if (!['OPEN', 'CLOSE'].includes(tradeMode)) {
       return {
         optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待开仓/平仓状态</div>`],
@@ -5434,9 +5455,10 @@ import {
     const precision = activeLadderPanelContext?.precision || readCurrentOrderbookPrecisionValue();
     if (body) {
       const ladderRunning = !!ladderTask;
+      const singleOrderRunning = !!singleOrderTask;
       const cancelRunning = !!cancelCurrentSymbolOpenOrdersTask;
       const cancelPresentation = resolveCancelSymbolButtonPresentation({
-        ladderRunning,
+        ladderRunning: ladderRunning || singleOrderRunning,
         cancelRunning,
         noOrdersFeedback: cancelNoOrdersFeedbackActive,
       });
@@ -5815,8 +5837,8 @@ import {
       `<div data-panel-group="ladder" style="margin:12px -10px 0;padding:11px 10px 0;border-top:2px solid ${PANEL_DIVIDER_COLOR};">`,
       `<div title="${PANEL_COPY.tooltip.ladderMaker}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${PANEL_COPY.section.ladderMaker}</div>`,
       `<div id="${LADDER_BODY_ID}"></div>`,
-      `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
       '</div>',
+      `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
     ].join('');
     panelPositionInvalidated = true;
     document.body.appendChild(panel);
@@ -5880,7 +5902,9 @@ import {
         const context = getPanelOptionContext();
         if (!context || !isCurrentObservedSymbol(context.symbol)) return;
         const current = Number(loadMultiplier(context.mode, context.symbol, context.precision));
-        updateMultiplier(String(Math.max(1, current - 1)), context);
+        if (updateMultiplier(String(Math.max(1, current - 1)), context)) {
+          showMultiplierPressFeedback(decBtn);
+        }
       });
     }
     if (incBtn) {
@@ -5888,7 +5912,9 @@ import {
         const context = getPanelOptionContext();
         if (!context || !isCurrentObservedSymbol(context.symbol)) return;
         const current = Number(loadMultiplier(context.mode, context.symbol, context.precision));
-        updateMultiplier(String(current + 1), context);
+        if (updateMultiplier(String(current + 1), context)) {
+          showMultiplierPressFeedback(incBtn);
+        }
       });
     }
     if (sideLongBtn) {
@@ -6268,10 +6294,12 @@ import {
       const clickedSymbol = getCurrentSymbol();
       if (!isCurrentObservedSymbol(clickedSymbol)) {
         warn('交易对正在切换，已忽略本次点击');
+        setLadderStatus('单击下单未执行：交易对正在切换');
         return;
       }
       if (getActiveTradeMode() === 'CLOSE' && !isCloseSnapshotReady(clickedSymbol)) {
         warn('仓位确认中');
+        setLadderStatus('单击下单未执行：仓位确认中');
         return;
       }
 
@@ -6296,98 +6324,138 @@ import {
       const qtyInput = findQtyInput();
       if (!qtyInput) {
         warn('未找到数量输入框');
+        setLadderStatus('单击下单未执行：未找到数量输入框');
         return;
       }
       const priceInput = findPriceInput();
       if (!priceInput) {
         warn('未找到价格输入框');
+        setLadderStatus('单击下单未执行：未找到价格输入框');
         return;
       }
 
       const action = resolveTradeAction();
       if (!action || !action.button) {
-        warn(`未找到可用${getActiveTradeMode() === 'OPEN' ? '开仓' : '平仓'}动作`);
+        const message = `未找到可用${getActiveTradeMode() === 'OPEN' ? '开仓' : '平仓'}动作`;
+        warn(message);
+        setLadderStatus(`单击下单未执行：${message}`);
         return;
       }
 
       const qtyPlan = resolveTargetQty(action.mode, clickedPrice);
       if (!qtyPlan || !qtyPlan.qty) {
         warn('未找到可用数量来源（数量倍率/有效最小量）');
+        setLadderStatus('单击下单未执行：数量规则读取中');
+        return;
+      }
+      if (ladderTask || cancelCurrentSymbolOpenOrdersTask || singleOrderTask) {
         return;
       }
       lastTs = now;
+      setLadderStatus(`单击${action.side}准备中`);
+      singleOrderTask = (async () => {
+        await syncTradeInputs(clickedPrice, qtyPlan.qty, {
+          priceLabel: '点击价',
+          qtyLabel: '目标量',
+        });
 
-      await syncTradeInputs(clickedPrice, qtyPlan.qty, {
-        priceLabel: '点击价',
-        qtyLabel: '目标量',
-      });
+        const currentSymbol = getCurrentSymbol();
+        if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
+          const clickedBaseAsset = formatStatusBaseAsset(qtyPlan.symbol);
+          const currentBaseAsset = currentSymbol ? formatStatusBaseAsset(currentSymbol) : '未知';
+          throw new Error(`交易对已变化，点击时 ${clickedBaseAsset}，当前 ${currentBaseAsset}`);
+        }
+        if (getActiveTradeMode() !== action.mode) {
+          throw new Error('开仓/平仓模式已变化，已停止提交');
+        }
+        if (readCurrentOrderbookPrecisionValue() !== qtyPlan.precision) {
+          throw new Error('订单簿缩放值已变化，已停止提交');
+        }
+        const currentAction = resolveTradeAction();
+        if (
+          !currentAction ||
+          currentAction.mode !== action.mode ||
+          currentAction.side !== action.side ||
+          !currentAction.button ||
+          currentAction.button.disabled ||
+          currentAction.button.getAttribute('aria-disabled') === 'true'
+        ) {
+          throw new Error(`提交前${action.side}按钮状态已变化，已停止`);
+        }
+        log(
+          '已填价格/数量',
+          clickedPrice,
+          qtyPlan.qty,
+          '来源',
+          qtyPlan.source,
+          'symbol',
+          qtyPlan.symbol,
+          'effectiveMinQty',
+          qtyPlan.rule?.effectiveMinQty,
+          'referencePrice',
+          qtyPlan.rule?.referencePrice,
+          '触发价格',
+          clickedPrice,
+          'mode',
+          action.mode,
+          'action',
+          action.side,
+          'by',
+          action.by,
+          'qtySource',
+          action.qtySource,
+          'longQty',
+          action.longQty,
+          'shortQty',
+          action.shortQty
+        );
 
-      const currentSymbol = getCurrentSymbol();
-      if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
-        const clickedBaseAsset = formatStatusBaseAsset(qtyPlan.symbol);
-        const currentBaseAsset = currentSymbol ? formatStatusBaseAsset(currentSymbol) : '未知';
-        throw new Error(`交易对已变化，点击时 ${clickedBaseAsset}，当前 ${currentBaseAsset}`);
-      }
-      if (getActiveTradeMode() !== action.mode) {
-        throw new Error('开仓/平仓模式已变化，已停止提交');
-      }
-      if (readCurrentOrderbookPrecisionValue() !== qtyPlan.precision) {
-        throw new Error('订单簿缩放值已变化，已停止提交');
-      }
-      const currentAction = resolveTradeAction();
-      if (
-        !currentAction ||
-        currentAction.mode !== action.mode ||
-        currentAction.side !== action.side ||
-        !currentAction.button ||
-        currentAction.button.disabled ||
-        currentAction.button.getAttribute('aria-disabled') === 'true'
-      ) {
-        throw new Error(`提交前${action.side}按钮状态已变化，已停止`);
-      }
-      log(
-        '已填价格/数量',
-        clickedPrice,
-        qtyPlan.qty,
-        '来源',
-        qtyPlan.source,
-        'symbol',
-        qtyPlan.symbol,
-        'effectiveMinQty',
-        qtyPlan.rule?.effectiveMinQty,
-        'referencePrice',
-        qtyPlan.rule?.referencePrice,
-        '触发价格',
-        clickedPrice,
-        'mode',
-        action.mode,
-        'action',
-        action.side,
-        'by',
-        action.by,
-        'qtySource',
-        action.qtySource,
-        'longQty',
-        action.longQty,
-        'shortQty',
-        action.shortQty
-      );
+        if (CFG.SAFE_MODE) {
+          warn(`SAFE_MODE=true，仅填价格/数量，不点击${action.side}`);
+          return;
+        }
 
-      if (CFG.SAFE_MODE) {
-        warn(`SAFE_MODE=true，仅填价格/数量，不点击${action.side}`);
-        return;
-      }
-
-      if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
-        throw new Error('提交前交易对已变化，已停止');
-      }
-      currentAction.button.click();
+        if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
+          throw new Error('提交前交易对已变化，已停止');
+        }
+        const previousFeedback = takeOrderFeedbackSnapshot();
+        const submitCaptureId = beginLadderSubmitResponseCapture();
+        try {
+          currentAction.button.click();
+          setLadderStatus(`单击${action.side}确认中 · ${clickedPrice} × ${qtyPlan.qty}`);
+          waitForTradeUiMutation({ timeoutMs: 400 });
+          await waitForOrderSubmitAcknowledgement(
+            currentAction.button,
+            `单击${action.side}`,
+            previousFeedback,
+            submitCaptureId,
+            action.mode,
+          );
+        } finally {
+          endLadderSubmitResponseCapture(submitCaptureId);
+        }
+        setLadderStatus(`单击${action.side}已提交 · ${clickedPrice} × ${qtyPlan.qty}`);
+        log(`单击${action.side}已确认提交`);
+      })();
       scheduleRenderPanel();
-      waitForTradeUiMutation({ timeoutMs: 400 });
-      log(`已点击${action.side}`);
+      try {
+        await singleOrderTask;
+      } catch (singleOrderError) {
+        const message = singleOrderError?.message || '订单簿点击提交失败';
+        setLadderStatus(`单击${action.side}失败：${message}`, message);
+        err('single order submit failed:', singleOrderError);
+        warn(message);
+      } finally {
+        singleOrderTask = null;
+        scheduleRenderPanel();
+      }
     } catch (e2) {
       err('click handler 异常:', e2);
-      warn(e2?.message || '订单簿点击提交失败');
+      const message = e2?.message || '订单簿点击提交失败';
+      warn(message);
+      if (!ladderTask && !cancelCurrentSymbolOpenOrdersTask && !singleOrderTask) {
+        setLadderStatus(`单击下单失败：${message}`, message);
+      }
     }
   }, true);
 
