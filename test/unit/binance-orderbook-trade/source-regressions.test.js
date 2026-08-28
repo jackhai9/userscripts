@@ -1105,6 +1105,8 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.doesNotMatch(cancelRunBody, /查找 \$\{symbol\} 当前委托/);
   assert.doesNotMatch(cancelRunBody, /正在隐藏 \$\{symbol\} 图表当前委托/);
   assert.doesNotMatch(cancelRunBody, /正在恢复页面状态/);
+  assert.match(cancelRunBody, /const message = '撤单已取消';\s*successStatusMessage = message;/);
+  assert.doesNotMatch(cancelRunBody, /，已恢复页面状态/);
   assert.match(cancelRunBody, /撤单确认弹窗已打开/);
   assert.match(cancelRunBody, /已确认撤单，等待当前币挂单清空/);
   assert.match(cancelRunBody, /未能恢复隐藏其他合约状态/);

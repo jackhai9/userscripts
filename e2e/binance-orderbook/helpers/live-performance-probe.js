@@ -127,7 +127,7 @@ export function waitForBinanceLivePerformanceCompletion(options = {}) {
     const expectsPrimary = kind === 'dialog-confirm';
     if (dialogActions[0].detail?.primary !== expectsPrimary) return false;
     return kind === 'dialog-cancel'
-      ? /已取消撤单.*已恢复页面状态/.test(state.statusText)
+      ? state.statusText === '撤单已取消'
       : /撤单流程结束.*已恢复筛选状态/.test(state.statusText);
   };
 

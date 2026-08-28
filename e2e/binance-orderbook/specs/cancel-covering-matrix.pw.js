@@ -58,7 +58,7 @@ for (const entry of CANCEL_COVERING_SCENARIOS) {
       await expect(page.getByText(
         vector.dialogOutcome === 'confirm'
           ? '撤单流程结束，已恢复筛选状态'
-          : '已取消撤单，已恢复页面状态',
+          : '撤单已取消',
       )).toBeVisible();
     }
 
