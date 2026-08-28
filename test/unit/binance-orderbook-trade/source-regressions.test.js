@@ -800,11 +800,28 @@ test('ladder task statuses name the active action and observed outcome', () => {
   assert.match(startBody, /formatInterruptedLadderProgress\(\s*spec\.label,\s*'交易对已切换',\s*progress/);
   assert.match(startBody, /formatFailedLadderProgress\(spec\.label,\s*failureMessage,\s*progress\)/);
   assert.match(stopBody, /`\$\{activeSpec\.label\}停止中`/);
-  assert.match(cancelPlanBody, /setPlanStepStatus\(`\$\{symbol\} 撤销 \$\{rowsToCancel\.length\} 笔当前币挂单`\)/);
+  assert.match(cancelPlanBody, /setPlanStepStatus\(`撤销 \$\{rowsToCancel\.length\} 笔当前币挂单`\)/);
   assert.match(planStatusBody, /`\$\{plan\.spec\.label\}计划：/);
   assert.match(replacementStatusBody, /`\$\{plan\.spec\.label\}：/);
   assert.match(cancelPlanBody, /const setPlanStepStatus = \(message\) =>/);
   assert.doesNotMatch(cancelPlanBody, /setLadderStatus\(message\)/);
+});
+
+test('panel statuses omit the current full symbol and compact the retained interrupted symbol', () => {
+  const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
+  const cancelRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
+  const cancelPlanBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
+  const replacementStatusBody = readFunctionBody('formatOpenOrdersReplacementStatus');
+
+  for (const body of [cancelBody, cancelRowsBody, cancelPlanBody, replacementStatusBody]) {
+    assert.doesNotMatch(body, /`[^`]*\$\{symbol\}/);
+    assert.doesNotMatch(body, /`[^`]*\$\{plan\.symbol\}/);
+  }
+  assert.match(cancelBody, /const interruptedBaseAsset = formatStatusBaseAsset\(symbol\)/);
+  assert.match(cancelBody, /`原交易对 \$\{interruptedBaseAsset\} 页面已离开，撤单确认跟踪已停止`/);
+  assert.match(source, /const clickedBaseAsset = formatStatusBaseAsset\(qtyPlan\.symbol\)/);
+  assert.match(source, /const currentBaseAsset = currentSymbol \? formatStatusBaseAsset\(currentSymbol\) : '未知'/);
+  assert.doesNotMatch(source, /点击时 \$\{qtyPlan\.symbol\}/);
 });
 
 test('bulk cancel settles hidden TradingView orders before opening the native dialog', () => {

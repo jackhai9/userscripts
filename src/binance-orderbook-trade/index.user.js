@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.143
+// @version      2.7.144
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -90,6 +90,7 @@ import {
   throwIfAborted,
   waitForPromiseOrAbort,
 } from './core/abort.js';
+import { formatStatusBaseAsset } from './core/status-symbol.js';
 import {
   evaluateOrderSubmitAcknowledgement,
   getBinanceApiErrorCode,
@@ -3372,7 +3373,7 @@ import {
         { allowPartial: true }
       )[0];
       if (!row) {
-        throw new Error(`${plan.symbol} 当前币可撤挂单数量不足，已停止重挂`);
+        throw new Error('当前币可撤挂单数量不足，已停止重挂');
       }
       currentRoot = row.root || currentRoot;
       const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
@@ -3397,18 +3398,18 @@ import {
         throw new Error('逐行撤单时交易对已变化');
       }
       if (outcome.status === 'timeout') {
-        throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
+        throw new Error('当前币挂单仍存在，已停止重挂');
       }
       if (outcome.status === 'dialog_open') {
         const { dialog } = outcome;
-        setLadderStatus(`${plan.spec.label}：${plan.symbol} 单行撤单确认弹窗已打开`);
+        setLadderStatus(`${plan.spec.label}：单行撤单确认弹窗已打开`);
         const dialogClosed = await waitForDialogToClose(
           dialog,
           ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS,
           abortSignal,
         );
         if (!dialogClosed) {
-          const error = new Error(`${plan.symbol} 单行撤单确认弹窗仍未关闭，未恢复页面状态`);
+          const error = new Error('单行撤单确认弹窗仍未关闭，未恢复页面状态');
           error.name = 'DialogNotClosedError';
           throw error;
         }
@@ -3418,7 +3419,7 @@ import {
           previousKeyCount,
           abortSignal,
         ))) {
-          throw new Error(`${plan.symbol} 当前币挂单仍存在，已停止重挂`);
+          throw new Error('当前币挂单仍存在，已停止重挂');
         }
       }
       throwIfAborted(abortSignal);
@@ -3428,7 +3429,7 @@ import {
         previousKeyCount,
         abortSignal,
       ))) {
-        throw new Error(`${plan.symbol} 当前币挂单状态不稳定，已停止重挂`);
+        throw new Error('当前币挂单状态不稳定，已停止重挂');
       }
       cancelQty = addDecimalStrings(cancelQty, row.qty);
       recordLadderCancelledOrder(progress);
@@ -3765,7 +3766,7 @@ import {
       return { ok: false, status: 'symbol_changing', message };
     }
     if (getOpenOrdersTabCount() === 0) {
-      setLadderStatus(`${symbol} 当前币无挂单`);
+      setLadderStatus('当前币无挂单');
       return { ok: true, status: 'no_orders' };
     }
 
@@ -3824,7 +3825,7 @@ import {
         return { ok: false, status: 'symbol_changed', message };
       }
       if (!openOrdersEvidence.hasOrders) {
-        setLadderStatus(`${symbol} 当前币无挂单`);
+        setLadderStatus('当前币无挂单');
         return { ok: true, status: 'no_orders' };
       }
 
@@ -3886,12 +3887,12 @@ import {
         dialogDecision = await waitForBinanceCancelAllDialogDecision(
           dialogDecisionWatcher.watcher,
           dialogDecisionWatcher.lifecycleSignal,
-          () => setLadderStatus(`${symbol} 撤单确认弹窗已打开`),
+          () => setLadderStatus('撤单确认弹窗已打开'),
         );
       } catch (error) {
         restoreTemporaryUiState = false;
         emit('ERR', '币安撤单确认弹窗结构异常', error);
-        const message = `${symbol} 撤单确认弹窗结构异常，未执行弹窗操作`;
+        const message = '撤单确认弹窗结构异常，未执行弹窗操作';
         setLadderStatus(message);
         return { ok: false, status: 'dialog_contract_invalid', message };
       } finally {
@@ -3900,7 +3901,8 @@ import {
       if (dialogDecision.status === 'aborted') {
         restoreTemporaryUiState = false;
         restoreTradingViewOrdersState = false;
-        const message = `${symbol} 页面已离开，撤单确认跟踪已停止`;
+        const interruptedBaseAsset = formatStatusBaseAsset(symbol);
+        const message = `原交易对 ${interruptedBaseAsset} 页面已离开，撤单确认跟踪已停止`;
         setLadderStatus(message);
         return { ok: false, status: 'aborted', message };
       }
@@ -3910,17 +3912,17 @@ import {
         return { ok: false, status: 'symbol_changed', message };
       }
       if (dialogDecision.status === 'not_found') {
-        const message = `${symbol} 未识别到撤单确认弹窗，未继续撤单流程`;
+        const message = '未识别到撤单确认弹窗，未继续撤单流程';
         setLadderStatus(message);
         return { ok: false, status: 'dialog_not_found', message };
       }
       if (dialogDecision.status === 'cancelled') {
-        const message = `${symbol} 已取消撤单`;
+        const message = '已取消撤单';
         successStatusMessage = `${message}，已恢复页面状态`;
         return { ok: false, status: 'cancelled', message };
       }
       waitForTradeUiMutation({ timeoutMs: 800 });
-      setLadderStatus(`${symbol} 已确认撤单，等待当前币挂单清空`);
+      setLadderStatus('已确认撤单，等待当前币挂单清空');
 
       openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
@@ -3947,14 +3949,14 @@ import {
           return { ok: false, status: 'symbol_filter_not_confirmed', message };
         }
         const message = waitUntilCleared
-          ? `${symbol} 当前币挂单仍存在，已停止重挂`
-          : `${symbol} 当前币挂单仍存在，撤单流程未完成`;
+          ? '当前币挂单仍存在，已停止重挂'
+          : '当前币挂单仍存在，撤单流程未完成';
         setLadderStatus(message);
         return { ok: false, status: 'not_cleared', message };
       }
       successStatusMessage = waitUntilCleared
-        ? `${symbol} 当前币挂单已撤，继续重挂`
-        : `${symbol} 撤单流程结束，已恢复筛选状态`;
+        ? '当前币挂单已撤，继续重挂'
+        : '撤单流程结束，已恢复筛选状态';
       return { ok: true, status: 'cleared' };
     } finally {
       let temporaryUiRestoreSucceeded = true;
@@ -4063,7 +4065,7 @@ import {
     let restoreTemporaryUiState = true;
 
     try {
-      setPlanStepStatus(`查找 ${symbol} 当前委托`);
+      setPlanStepStatus('查找当前委托');
       const tabReady = await activateOpenOrdersTab(abortSignal);
       throwIfAborted(abortSignal);
       if (!tabReady || !isCurrentObservedSymbol(symbol)) {
@@ -4134,22 +4136,22 @@ import {
       throwIfAborted(abortSignal);
       if (!rows.length) {
         const directionLabel = getPlanDirectionLabel(plan);
-        const message = `未定位到 ${symbol}${directionLabel ? ` ${directionLabel}` : ''} 当前币可逐行撤单的基础单`;
+        const message = `未定位到当前币的${directionLabel || ''}可撤基础单`;
         setPlanStepStatus(message);
         return { ok: false, status: 'rows_not_found', message };
       }
 
       const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
       if (!rowsToCancel.length) {
-        const message = `未选中 ${symbol} 当前币待撤挂单`;
+        const message = '未选中当前币待撤挂单';
         setPlanStepStatus(message);
         return { ok: false, status: 'rows_not_selected', message };
       }
 
-      setPlanStepStatus(`${symbol} 撤销 ${rowsToCancel.length} 笔当前币挂单`);
+      setPlanStepStatus(`撤销 ${rowsToCancel.length} 笔当前币挂单`);
       await cancelOpenOrderRowsForPlan(openOrdersScope, plan, progress, abortSignal);
       throwIfAborted(abortSignal);
-      setPlanStepStatus(`${symbol} 当前币挂单已替换，继续重挂`);
+      setPlanStepStatus('当前币挂单已替换，继续重挂');
       return { ok: true, status: 'rows_cleared' };
     } catch (e) {
       if (isLadderStoppedError(e)) throw e;
@@ -4217,9 +4219,9 @@ import {
 
   function formatOpenOrdersReplacementStatus(plan) {
     if (plan?.spec?.mode === 'OPEN') {
-      return `${plan.spec.label}：${plan.symbol} 同向开仓挂单可能占用可开数量，准备替换`;
+      return `${plan.spec.label}：同向开仓挂单可能占用可开数量，准备替换`;
     }
-    return `${plan.spec.label}：${plan.symbol} 当前挂单占用可平数量，准备替换`;
+    return `${plan.spec.label}：当前挂单占用可平数量，准备替换`;
   }
 
   function createLadderExpectedContext(plan) {
@@ -6057,7 +6059,9 @@ import {
 
       const currentSymbol = getCurrentSymbol();
       if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
-        throw new Error(`交易对已变化，点击时 ${qtyPlan.symbol}，当前 ${currentSymbol || '-'}`);
+        const clickedBaseAsset = formatStatusBaseAsset(qtyPlan.symbol);
+        const currentBaseAsset = currentSymbol ? formatStatusBaseAsset(currentSymbol) : '未知';
+        throw new Error(`交易对已变化，点击时 ${clickedBaseAsset}，当前 ${currentBaseAsset}`);
       }
       if (getActiveTradeMode() !== action.mode) {
         throw new Error('开仓/平仓模式已变化，已停止提交');

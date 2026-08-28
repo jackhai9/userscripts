@@ -94,7 +94,7 @@ test('cancelling the native dialog preserves current and other orders and restor
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(false);
   await page.getByRole('button', { name: '取消' }).click();
-  await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(ORDER_SETS.both);
@@ -116,7 +116,7 @@ test('confirming with mixed-symbol orders clears only the current symbol', async
   await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '确认' }).click();
-  await expect(page.getByText('HYPEUSDT 撤单流程结束，已恢复筛选状态')).toBeVisible();
+  await expect(page.getByText('撤单流程结束，已恢复筛选状态')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(otherSymbolOrders(scenario));
@@ -136,7 +136,7 @@ test('an originally enabled symbol filter remains enabled after confirmation', a
   await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '确认' }).click();
-  await expect(page.getByText('HYPEUSDT 撤单流程结束，已恢复筛选状态')).toBeVisible();
+  await expect(page.getByText('撤单流程结束，已恢复筛选状态')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(otherSymbolOrders(scenario));
@@ -186,7 +186,7 @@ for (const closeMethod of ['Escape', 'backdrop']) {
     } else {
       await page.locator('.bn-modal-root').click({ position: { x: 4, y: 4 } });
     }
-    await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();
+    await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
 
     const state = await readFixtureState(page);
     expect(state.orders).toEqual(ORDER_SETS.both);
@@ -211,7 +211,7 @@ test('a BFCache pagehide does not abort the active native dialog', async ({ page
   })));
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '取消' }).click();
-  await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
   await expectRestoredState(page, scenario);
   expect(errors).toEqual([]);
 });
@@ -229,7 +229,7 @@ test('a real pagehide aborts dialog tracking without mutating orders', async ({ 
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', {
     persisted: false,
   })));
-  await expect(page.getByText('HYPEUSDT 页面已离开，撤单确认跟踪已停止')).toBeVisible();
+  await expect(page.getByText('原交易对 HYPE 页面已离开，撤单确认跟踪已停止')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(ORDER_SETS.current);
@@ -249,7 +249,7 @@ test('a missing native dialog stops cleanly and restores temporary UI state', as
   const { errors } = await openUserscriptScenario(page, scenario);
 
   await page.getByRole('button', { name: '撤单' }).click();
-  await expect(page.getByText('HYPEUSDT 未识别到撤单确认弹窗，未继续撤单流程')).toBeVisible({
+  await expect(page.getByText('未识别到撤单确认弹窗，未继续撤单流程')).toBeVisible({
     timeout: 3_000,
   });
 
@@ -271,7 +271,7 @@ for (const dialogMode of ['extraAction', 'missingPrimary']) {
 
     await page.getByRole('button', { name: '撤单' }).click();
     await expect(page.getByText(
-      'HYPEUSDT 撤单确认弹窗结构异常，未执行弹窗操作',
+      '撤单确认弹窗结构异常，未执行弹窗操作',
     )).toBeVisible();
 
     const state = await readFixtureState(page);
@@ -299,8 +299,8 @@ test('a delayed confirmation keeps visible progress and clears only the current 
 
   await page.getByRole('button', { name: '撤单' }).click();
   await page.getByRole('button', { name: '确认' }).click();
-  await expect(page.getByText('HYPEUSDT 已确认撤单，等待当前币挂单清空')).toBeVisible();
-  await expect(page.getByText('HYPEUSDT 撤单流程结束，已恢复筛选状态')).toBeVisible();
+  await expect(page.getByText('已确认撤单，等待当前币挂单清空')).toBeVisible();
+  await expect(page.getByText('撤单流程结束，已恢复筛选状态')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(otherSymbolOrders(scenario));
@@ -322,7 +322,7 @@ test('dialog tracking survives React replacing the native dialog subtree', async
     await readFixtureState(page)
   ).events.filter((event) => event.type === 'dialog-replaced').length).toBe(1);
   await page.getByRole('button', { name: '取消' }).click();
-  await expect(page.getByText('HYPEUSDT 已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(ORDER_SETS.current);
@@ -342,7 +342,7 @@ test('a confirmed dialog that does not clear current orders reports incomplete c
 
   await page.getByRole('button', { name: '撤单' }).click();
   await page.getByRole('button', { name: '确认' }).click();
-  await expect(page.getByText('HYPEUSDT 当前币挂单仍存在，撤单流程未完成')).toBeVisible({
+  await expect(page.getByText('当前币挂单仍存在，撤单流程未完成')).toBeVisible({
     timeout: 10_000,
   });
 
