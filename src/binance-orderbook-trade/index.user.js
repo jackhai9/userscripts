@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.142
+// @version      2.7.143
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -77,6 +77,15 @@ import {
   getLadderPercentForMode,
 } from './core/ladder-plan.js';
 import { keepInteractionFeedbackVisible } from './core/interaction-feedback.js';
+import {
+  createLadderProgress,
+  formatCompletedLadderProgress,
+  formatFailedLadderProgress,
+  formatInterruptedLadderProgress,
+  formatStoppedLadderProgress,
+  recordLadderCancelledOrder,
+  recordLadderSubmittedOrder,
+} from './core/ladder-progress.js';
 import {
   throwIfAborted,
   waitForPromiseOrAbort,
@@ -2464,7 +2473,7 @@ import {
     throw new Error(`未收到明确${label}成功反馈（${settleHint}），已停止；请核对当前委托/历史成交`);
   }
 
-  async function executeLadderPlan(plan, abortSignal = null) {
+  async function executeLadderPlan(plan, progress, abortSignal = null) {
     const priceInput = findPriceInput();
     const qtyInput = findQtyInput();
     if (!priceInput || !qtyInput) throw new Error('未找到价格或数量输入框');
@@ -2520,7 +2529,7 @@ import {
           try {
             throwIfAborted(abortSignal);
             button.click();
-            setLadderStatus(`${plan.spec.label} ${done + 1}/${plan.orders.length} 确认中`);
+            setLadderStatus(`${plan.spec.label}挂单 ${done + 1}/${plan.orders.length} 确认中`);
             waitForTradeUiMutation({ timeoutMs: 500 });
             await waitForOrderSubmitAcknowledgement(
               button,
@@ -2529,7 +2538,6 @@ import {
               submitCaptureId,
               plan.spec.mode,
             );
-            throwIfAborted(abortSignal);
           } finally {
             endLadderSubmitResponseCapture(submitCaptureId);
           }
@@ -2545,10 +2553,10 @@ import {
         }
         if (repriceAttempts >= LADDER_REPRICE_MAX_ATTEMPTS) {
           const codeText = lastRepriceApiErrorCode == null ? '' : `（错误码 ${lastRepriceApiErrorCode}）`;
-          throw new Error(`盘口连续移动，已自动刷新 ${repriceAttempts} 次${codeText}；已完成 ${done}/${plan.orders.length}，已停止`);
+          throw new Error(`盘口连续移动，已自动刷新 ${repriceAttempts} 次${codeText}；已挂 ${done}/${plan.orders.length} 笔后停止`);
         }
         repriceAttempts += 1;
-        setLadderStatus(`盘口已移动，刷新剩余 ${plan.orders.length - done} 档 (${repriceAttempts}/${LADDER_REPRICE_MAX_ATTEMPTS})`);
+        setLadderStatus(`${plan.spec.label}：盘口已移动，刷新剩余 ${plan.orders.length - done} 档 (${repriceAttempts}/${LADDER_REPRICE_MAX_ATTEMPTS})`);
         await delay(LADDER_REPRICE_DELAY_MS);
         throwIfAborted(abortSignal);
         if (ladderStopRequested) break;
@@ -2556,7 +2564,8 @@ import {
         continue;
       }
       done++;
-      setLadderStatus(`${plan.spec.label} ${done}/${plan.orders.length}`);
+      recordLadderSubmittedOrder(progress);
+      setLadderStatus(`${plan.spec.label}已挂 ${done}/${plan.orders.length} 笔`);
       await delay(LADDER_ORDER_DELAY_MS);
       throwIfAborted(abortSignal);
     }
@@ -2564,30 +2573,31 @@ import {
   }
 
   async function startLadder(actionType) {
-    const actionSymbol = getCurrentSymbol();
-    if (!isCurrentObservedSymbol(actionSymbol)) {
-      setLadderStatus('交易对正在切换');
-      return;
-    }
-    if (cancelCurrentSymbolOpenOrdersTask) {
-      setLadderStatus('撤本币挂单处理中，请等待完成');
-      return;
-    }
-    if (ladderTask) {
-      setLadderStatus('正在执行，先点停止');
-      return;
-    }
     const spec = getLadderActionSpec(actionType);
     if (!spec) {
       setLadderStatus('未知阶梯动作');
       return;
     }
+    const actionSymbol = getCurrentSymbol();
+    if (!isCurrentObservedSymbol(actionSymbol)) {
+      setLadderStatus(`${spec.label}尚未开始：交易对正在切换`);
+      return;
+    }
+    if (cancelCurrentSymbolOpenOrdersTask) {
+      setLadderStatus(`${spec.label}尚未开始：撤本币挂单处理中`);
+      return;
+    }
+    if (ladderTask) {
+      setLadderStatus(`${spec.label}尚未开始：已有阶梯任务正在执行，请先停止`);
+      return;
+    }
     if (spec?.mode === 'CLOSE' && !isCloseSnapshotReady(actionSymbol)) {
-      setLadderStatus('仓位确认中');
+      setLadderStatus(`${spec.label}尚未开始：仓位确认中`);
       return;
     }
     ladderStopRequested = false;
     const abortController = new AbortController();
+    const progress = createLadderProgress();
     ladderAbortController = abortController;
     activeLadderActionType = actionType;
     activeLadderPanelContext = {
@@ -2596,14 +2606,18 @@ import {
       precision: readCurrentOrderbookPrecisionValue(),
     };
     const feedbackStartedAt = performance.now();
-    setLadderStatus(`${spec?.label || '阶梯'} 准备中`);
+    setLadderStatus(`${spec.label}准备中`);
     const executionTask = (async () => {
       const {
         plan,
         done,
         repriceAttempts,
         lastRepriceApiErrorCode,
-      } = await runLadderPlanWithOpenOrderReplacement(actionType, abortController.signal);
+      } = await runLadderPlanWithOpenOrderReplacement(
+        actionType,
+        progress,
+        abortController.signal,
+      );
       return {
         plan,
         done,
@@ -2626,27 +2640,47 @@ import {
         wasStopped,
       }) => {
         if (!isCurrentObservedSymbol(actionSymbol)) {
-          setLadderStatus('交易对已切换');
+          setLadderStatus(formatInterruptedLadderProgress(
+            spec.label,
+            '交易对已切换',
+            progress,
+          ));
           return;
         }
         const diagnostics = formatLadderRepriceDiagnostics(repriceAttempts, lastRepriceApiErrorCode);
         setLadderStatus(
           wasStopped
-            ? `已停止 ${done}/${plan.orders.length}${diagnostics}`
-            : `完成 ${done}/${plan.orders.length}${diagnostics}`,
+            ? `${formatStoppedLadderProgress(spec.label, progress)}${diagnostics}`
+            : `${formatCompletedLadderProgress(
+                spec.label,
+                done,
+                plan.orders.length,
+                progress,
+              )}${diagnostics}`,
         );
       })
       .catch((e) => {
         if (isLadderStoppedError(e)) {
-          if (isCurrentObservedSymbol(actionSymbol)) setLadderStatus('已停止');
+          if (isCurrentObservedSymbol(actionSymbol)) {
+            setLadderStatus(formatStoppedLadderProgress(spec.label, progress));
+          }
           return;
         }
         err('Maker 阶梯执行失败:', e);
         if (!isCurrentObservedSymbol(actionSymbol)) {
-          setLadderStatus('交易对已切换');
+          setLadderStatus(formatInterruptedLadderProgress(
+            spec.label,
+            '交易对已切换',
+            progress,
+          ));
           return;
         }
-        setLadderStatus(e?.message || '执行失败', e?.statusTitle);
+        const failureMessage = e?.message || '未知错误';
+        const failureText = formatFailedLadderProgress(spec.label, failureMessage, progress);
+        const failureTitle = e?.statusTitle
+          ? formatFailedLadderProgress(spec.label, e.statusTitle, progress)
+          : failureText;
+        setLadderStatus(failureText, failureTitle);
       })
       .finally(() => {
         if (ladderAbortController === abortController) ladderAbortController = null;
@@ -2666,10 +2700,12 @@ import {
       return;
     }
     ladderStopRequested = true;
+    const activeSpec = getLadderActionSpec(activeLadderActionType);
+    if (!activeSpec) throw new Error('运行中的阶梯任务缺少动作类型');
     if (ladderAbortController && !ladderAbortController.signal.aborted) {
       ladderAbortController.abort(createLadderStoppedError());
     }
-    setLadderStatus('停止中');
+    setLadderStatus(`${activeSpec.label}停止中`);
     scheduleRenderPanel();
   }
 
@@ -3320,7 +3356,7 @@ import {
     return Boolean(activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount);
   }
 
-  async function cancelOpenOrderRowsForPlan(root, plan, abortSignal = null) {
+  async function cancelOpenOrderRowsForPlan(root, plan, progress, abortSignal = null) {
     let cancelQty = '0';
     let currentRoot = root;
     while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
@@ -3365,7 +3401,7 @@ import {
       }
       if (outcome.status === 'dialog_open') {
         const { dialog } = outcome;
-        setLadderStatus(`${plan.symbol} 单行撤单确认弹窗已打开`);
+        setLadderStatus(`${plan.spec.label}：${plan.symbol} 单行撤单确认弹窗已打开`);
         const dialogClosed = await waitForDialogToClose(
           dialog,
           ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS,
@@ -3394,8 +3430,8 @@ import {
       ))) {
         throw new Error(`${plan.symbol} 当前币挂单状态不稳定，已停止重挂`);
       }
-      throwIfAborted(abortSignal);
       cancelQty = addDecimalStrings(cancelQty, row.qty);
+      recordLadderCancelledOrder(progress);
     }
     return { ok: true, cancelQty };
   }
@@ -4008,12 +4044,15 @@ import {
     scheduleRenderPanel();
   }
 
-  async function cancelCurrentSymbolOpenOrdersForPlan(plan, abortSignal = null) {
+  async function cancelCurrentSymbolOpenOrdersForPlan(plan, progress, abortSignal = null) {
     throwIfAborted(abortSignal);
+    const setPlanStepStatus = (message) => {
+      setLadderStatus(`${plan.spec.label}：${message}`);
+    };
     const symbol = getCurrentSymbol();
     if (!isCurrentObservedSymbol(symbol) || symbol !== plan?.symbol) {
       const message = '逐行撤单前交易对已变化';
-      setLadderStatus(message);
+      setPlanStepStatus(message);
       return { ok: false, status: 'symbol_changed', message };
     }
 
@@ -4024,12 +4063,12 @@ import {
     let restoreTemporaryUiState = true;
 
     try {
-      setLadderStatus(`查找 ${symbol} 当前委托`);
+      setPlanStepStatus(`查找 ${symbol} 当前委托`);
       const tabReady = await activateOpenOrdersTab(abortSignal);
       throwIfAborted(abortSignal);
       if (!tabReady || !isCurrentObservedSymbol(symbol)) {
         const message = '当前委托页未就绪或交易对已变化';
-        setLadderStatus(message);
+        setPlanStepStatus(message);
         return { ok: false, status: 'tab_not_ready', message };
       }
 
@@ -4037,7 +4076,7 @@ import {
       throwIfAborted(abortSignal);
       if (!openOrdersScope) {
         const message = '未定位到当前委托面板';
-        setLadderStatus(message);
+        setPlanStepStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
 
@@ -4051,7 +4090,7 @@ import {
       throwIfAborted(abortSignal);
       if (!basicSubTabState.ready) {
         const message = '未定位到当前委托基础单';
-        setLadderStatus(message);
+        setPlanStepStatus(message);
         return { ok: false, status: 'basic_tab_not_ready', message };
       }
 
@@ -4059,7 +4098,7 @@ import {
       throwIfAborted(abortSignal);
       if (!openOrdersScope) {
         const message = '未定位到当前委托面板';
-        setLadderStatus(message);
+        setPlanStepStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
 
@@ -4074,7 +4113,7 @@ import {
       throwIfAborted(abortSignal);
       if (!symbolFilter.ok) {
         const message = '未确认只显示当前币挂单';
-        setLadderStatus(message);
+        setPlanStepStatus(message);
         return { ok: false, status: 'symbol_filter_not_confirmed', message };
       }
 
@@ -4082,7 +4121,7 @@ import {
       throwIfAborted(abortSignal);
       if (!openOrdersScope) {
         const message = '未定位到当前委托面板';
-        setLadderStatus(message);
+        setPlanStepStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
 
@@ -4096,27 +4135,27 @@ import {
       if (!rows.length) {
         const directionLabel = getPlanDirectionLabel(plan);
         const message = `未定位到 ${symbol}${directionLabel ? ` ${directionLabel}` : ''} 当前币可逐行撤单的基础单`;
-        setLadderStatus(message);
+        setPlanStepStatus(message);
         return { ok: false, status: 'rows_not_found', message };
       }
 
       const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
       if (!rowsToCancel.length) {
         const message = `未选中 ${symbol} 当前币待撤挂单`;
-        setLadderStatus(message);
+        setPlanStepStatus(message);
         return { ok: false, status: 'rows_not_selected', message };
       }
 
-      setLadderStatus(`${symbol} 撤销 ${rowsToCancel.length} 笔当前币挂单`);
-      await cancelOpenOrderRowsForPlan(openOrdersScope, plan, abortSignal);
+      setPlanStepStatus(`${symbol} 撤销 ${rowsToCancel.length} 笔当前币挂单`);
+      await cancelOpenOrderRowsForPlan(openOrdersScope, plan, progress, abortSignal);
       throwIfAborted(abortSignal);
-      setLadderStatus(`${symbol} 当前币挂单已替换，继续重挂`);
+      setPlanStepStatus(`${symbol} 当前币挂单已替换，继续重挂`);
       return { ok: true, status: 'rows_cleared' };
     } catch (e) {
       if (isLadderStoppedError(e)) throw e;
       if (e?.name === 'DialogNotClosedError') restoreTemporaryUiState = false;
       const message = e?.message || '当前币挂单逐行撤销失败，已停止重挂';
-      setLadderStatus(message);
+      setPlanStepStatus(message);
       const status = e?.name === 'DialogNotClosedError' ? 'dialog_not_closed' : 'row_cancel_failed';
       return { ok: false, status, message };
     } finally {
@@ -4126,7 +4165,7 @@ import {
           const restored = openOrdersScope
             ? await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol)
             : false;
-          if (!restored) setLadderStatus('未能恢复隐藏其他合约状态');
+          if (!restored) setPlanStepStatus('未能恢复隐藏其他合约状态');
         }
         if (previousOpenOrdersSubTabIdentity) {
           await restoreOpenOrdersSubTab(previousOpenOrdersSubTabIdentity, symbol);
@@ -4143,7 +4182,7 @@ import {
       ? `${plan.levels}档`
       : `${plan.levels}/${plan.requestedLevels}档`;
     const stepText = plan.ladderStep === DEFAULT_LADDER_STEP ? '' : `/幅${plan.ladderStep}`;
-    return `${plan.spec.label} ${plan.percent}%/${levelText}${stepText}`;
+    return `${plan.spec.label}计划：${plan.percent}%/${levelText}${stepText}`;
   }
 
   function isReplaceableCloseLadderOpenOrdersFailure(plan, error) {
@@ -4177,8 +4216,10 @@ import {
   }
 
   function formatOpenOrdersReplacementStatus(plan) {
-    if (plan?.spec?.mode === 'OPEN') return `${plan.symbol} 同向开仓挂单可能占用可开数量，准备替换`;
-    return `${plan.symbol} 当前挂单占用可平数量，准备替换`;
+    if (plan?.spec?.mode === 'OPEN') {
+      return `${plan.spec.label}：${plan.symbol} 同向开仓挂单可能占用可开数量，准备替换`;
+    }
+    return `${plan.spec.label}：${plan.symbol} 当前挂单占用可平数量，准备替换`;
   }
 
   function createLadderExpectedContext(plan) {
@@ -4189,7 +4230,7 @@ import {
     };
   }
 
-  async function runLadderPlanWithOpenOrderReplacement(actionType, abortSignal = null) {
+  async function runLadderPlanWithOpenOrderReplacement(actionType, progress, abortSignal = null) {
     let replacementContext = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       throwIfAborted(abortSignal);
@@ -4198,7 +4239,7 @@ import {
         plan = await buildLadderPlan(actionType, replacementContext);
         throwIfAborted(abortSignal);
         setLadderStatus(formatLadderPlanStatus(plan));
-        const execution = await executeLadderPlan(plan, abortSignal);
+        const execution = await executeLadderPlan(plan, progress, abortSignal);
         return { plan, ...execution };
       } catch (e) {
         const replacementPlan = getReplaceableLadderOpenOrdersPlan(plan, e);
@@ -4208,6 +4249,7 @@ import {
         replacementContext = createLadderExpectedContext(replacementPlan);
         const result = await cancelCurrentSymbolOpenOrdersForPlan(
           replacementPlan,
+          progress,
           abortSignal,
         );
         throwIfAborted(abortSignal);

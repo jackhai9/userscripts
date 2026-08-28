@@ -235,9 +235,9 @@ test('ladder retries with restricted open-order replacement after supported feed
   assert.match(replacePlanBody, /getOpenLadderMinimumQtyReplacementPlan\(error\)/);
 
   const retryBody = readFunctionBody('runLadderPlanWithOpenOrderReplacement');
-  assert.match(retryBody, /await executeLadderPlan\(plan,\s*abortSignal\)/);
+  assert.match(retryBody, /await executeLadderPlan\(plan,\s*progress,\s*abortSignal\)/);
   assert.match(retryBody, /getReplaceableLadderOpenOrdersPlan\(plan,\s*e\)/);
-  assert.match(retryBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*abortSignal/);
+  assert.match(retryBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*progress,\s*abortSignal/);
   assert.doesNotMatch(retryBody, /cancelCurrentSymbolOpenOrders\(\{\s*waitUntilCleared: true\s*\}\)/);
   assert.match(retryBody, /replacementContext = createLadderExpectedContext\(replacementPlan\)/);
   assert.match(retryBody, /buildLadderPlan\(actionType,\s*replacementContext\)/);
@@ -246,7 +246,7 @@ test('ladder retries with restricted open-order replacement after supported feed
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /const spec = getLadderActionSpec\(actionType\)/);
   assert.doesNotMatch(startBody, /cancelCurrentSymbolOpenOrders\(\{\s*waitUntilCleared: true\s*\}\)/);
-  assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(actionType,\s*abortController\.signal\)/);
+  assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*abortController\.signal/);
 });
 
 test('open and close ladders reprice only remaining orders after explicit maker conflicts', () => {
@@ -556,7 +556,9 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(statusBody, /statusEl\.title =/);
 
   const startBody = readFunctionBody('startLadder');
-  assert.match(startBody, /setLadderStatus\(e\?\.message \|\| '执行失败',\s*e\?\.statusTitle\)/);
+  assert.match(startBody, /const failureMessage = e\?\.message \|\| '未知错误'/);
+  assert.match(startBody, /const failureText = formatFailedLadderProgress\(spec\.label,\s*failureMessage,\s*progress\)/);
+  assert.match(startBody, /formatFailedLadderProgress\(spec\.label,\s*e\.statusTitle,\s*progress\)/);
 });
 
 test('ladder actions keep only their final UI feedback visible for a minimum window', () => {
@@ -732,12 +734,12 @@ test('stopping a ladder aborts replacement waits before another cancel or submit
 
   assert.match(source, /let ladderAbortController = null/);
   assert.match(startBody, /const abortController = new AbortController\(\)/);
-  assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(actionType,\s*abortController\.signal\)/);
+  assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*abortController\.signal/);
   assert.match(stopBody, /ladderAbortController\.abort\(createLadderStoppedError\(\)\)/);
-  assert.match(runBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*abortSignal/);
+  assert.match(runBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*progress,\s*abortSignal/);
   assert.match(runBody, /throwIfAborted\(abortSignal\)[\s\S]*buildLadderPlan/);
   assert.match(executeBody, /throwIfAborted\(abortSignal\)[\s\S]*button\.click\(\)/);
-  assert.match(cancelPlanBody, /cancelOpenOrderRowsForPlan\(openOrdersScope,\s*plan,\s*abortSignal\)/);
+  assert.match(cancelPlanBody, /cancelOpenOrderRowsForPlan\(openOrdersScope,\s*plan,\s*progress,\s*abortSignal\)/);
   assert.match(cancelPlanBody, /isLadderStoppedError\(e\)[\s\S]*throw e/);
   assert.match(cancelPlanBody, /previousOpenOrdersSubTabIdentity = getOpenOrdersSubTabIdentity\([\s\S]*activateOpenOrdersBasicSubTab\(/);
   assert.match(cancelPlanBody, /symbolFilterOriginalChecked = getCheckboxCheckedState\([\s\S]*ensureOpenOrdersLimitedToCurrentSymbol\(/);
@@ -745,6 +747,64 @@ test('stopping a ladder aborts replacement waits before another cancel or submit
   assert.match(cancelRowsBody, /waitForOpenOrderRowCancellationOutcome\([\s\S]*abortSignal/);
   assert.match(cancelRowsBody, /waitForDialogToClose\([\s\S]*abortSignal/);
   assert.match(waitOutcomeBody, /waitForPromiseOrAbort\([\s\S]*abortSignal/);
+});
+
+test('stopping a ladder preserves confirmed submit and cancel progress', () => {
+  const startBody = readFunctionBody('startLadder');
+  const runBody = readFunctionBody('runLadderPlanWithOpenOrderReplacement');
+  const executeBody = readFunctionBody('executeLadderPlan');
+  const cancelPlanBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
+  const cancelRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
+
+  assert.match(startBody, /const progress = createLadderProgress\(\)/);
+  assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*abortController\.signal/);
+  assert.match(startBody, /isLadderStoppedError\(e\)[\s\S]*formatStoppedLadderProgress\(spec\.label,\s*progress\)/);
+  assert.match(startBody, /formatCompletedLadderProgress\(\s*spec\.label,\s*done,\s*plan\.orders\.length,\s*progress/);
+  assert.match(runBody, /executeLadderPlan\(plan,\s*progress,\s*abortSignal\)/);
+  assert.match(runBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*progress,\s*abortSignal/);
+  assert.match(executeBody, /waitForOrderSubmitAcknowledgement\([\s\S]*recordLadderSubmittedOrder\(progress\)/);
+  assert.match(cancelPlanBody, /cancelOpenOrderRowsForPlan\(\s*openOrdersScope,\s*plan,\s*progress,\s*abortSignal/);
+  assert.match(cancelRowsBody, /confirmOpenOrderRowKeyCountBelow\([\s\S]*recordLadderCancelledOrder\(progress\)/);
+
+  const acknowledgementIndex = executeBody.indexOf('await waitForOrderSubmitAcknowledgement(');
+  const acknowledgementFinallyIndex = executeBody.indexOf('} finally {', acknowledgementIndex);
+  const submitRecordIndex = executeBody.indexOf('recordLadderSubmittedOrder(progress)');
+  assert.ok(
+    acknowledgementIndex >= 0
+    && acknowledgementIndex < acknowledgementFinallyIndex
+    && acknowledgementFinallyIndex < submitRecordIndex,
+  );
+  assert.doesNotMatch(
+    executeBody.slice(acknowledgementIndex, acknowledgementFinallyIndex),
+    /throwIfAborted/,
+  );
+
+  const cancellationConfirmationIndex = cancelRowsBody.indexOf('await confirmOpenOrderRowKeyCountBelow(');
+  const cancelRecordIndex = cancelRowsBody.indexOf('recordLadderCancelledOrder(progress)');
+  assert.ok(cancellationConfirmationIndex >= 0 && cancellationConfirmationIndex < cancelRecordIndex);
+  assert.doesNotMatch(cancelRowsBody.slice(cancellationConfirmationIndex, cancelRecordIndex), /throwIfAborted/);
+});
+
+test('ladder task statuses name the active action and observed outcome', () => {
+  const executeBody = readFunctionBody('executeLadderPlan');
+  const startBody = readFunctionBody('startLadder');
+  const stopBody = readFunctionBody('stopLadder');
+  const cancelPlanBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
+  const planStatusBody = readFunctionBody('formatLadderPlanStatus');
+  const replacementStatusBody = readFunctionBody('formatOpenOrdersReplacementStatus');
+
+  assert.match(executeBody, /setLadderStatus\(`\$\{plan\.spec\.label\}挂单 \$\{done \+ 1\}\/\$\{plan\.orders\.length\} 确认中`\)/);
+  assert.match(executeBody, /setLadderStatus\(`\$\{plan\.spec\.label\}已挂 \$\{done\}\/\$\{plan\.orders\.length\} 笔`\)/);
+  assert.match(executeBody, /setLadderStatus\(`\$\{plan\.spec\.label\}：盘口已移动/);
+  assert.match(startBody, /`\$\{spec\.label\}尚未开始：仓位确认中`/);
+  assert.match(startBody, /formatInterruptedLadderProgress\(\s*spec\.label,\s*'交易对已切换',\s*progress/);
+  assert.match(startBody, /formatFailedLadderProgress\(spec\.label,\s*failureMessage,\s*progress\)/);
+  assert.match(stopBody, /`\$\{activeSpec\.label\}停止中`/);
+  assert.match(cancelPlanBody, /setPlanStepStatus\(`\$\{symbol\} 撤销 \$\{rowsToCancel\.length\} 笔当前币挂单`\)/);
+  assert.match(planStatusBody, /`\$\{plan\.spec\.label\}计划：/);
+  assert.match(replacementStatusBody, /`\$\{plan\.spec\.label\}：/);
+  assert.match(cancelPlanBody, /const setPlanStepStatus = \(message\) =>/);
+  assert.doesNotMatch(cancelPlanBody, /setLadderStatus\(message\)/);
 });
 
 test('bulk cancel settles hidden TradingView orders before opening the native dialog', () => {
@@ -1002,7 +1062,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(cancelRunBody, /cancelCurrentSymbolOpenOrdersBlocksLadderActions = true;[\s\S]*scheduleRenderPanel\(\);/);
 
   const startBody = readFunctionBody('startLadder');
-  assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*撤本币挂单处理中，请等待完成/);
+  assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*`\$\{spec\.label\}尚未开始：撤本币挂单处理中`/);
   const actionRowsBody = readFunctionBody('getLadderControlSections');
   assert.match(actionRowsBody, /actionDisabled = ladderRunning \|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
   assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
@@ -1292,7 +1352,7 @@ test('confirmed close-quantity mutations bypass the generic trade UI debounce', 
 test('pending close actions report position confirmation without starting execution', () => {
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /spec\?\.mode === 'CLOSE' && !isCloseSnapshotReady\(actionSymbol\)/);
-  assert.match(startBody, /setLadderStatus\('仓位确认中'\)/);
+  assert.match(startBody, /setLadderStatus\(`\$\{spec\.label\}尚未开始：仓位确认中`\)/);
 
   assert.match(source, /if \(getActiveTradeMode\(\) === 'CLOSE' && !isCloseSnapshotReady\(clickedSymbol\)\) \{\s*warn\('仓位确认中'\);\s*return;/);
 });
