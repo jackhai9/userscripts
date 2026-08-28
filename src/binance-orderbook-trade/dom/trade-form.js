@@ -514,6 +514,78 @@ export function waitForTradeFormFrameState(
   });
 }
 
+/**
+ * Binance can mark the requested trade mode active before React replaces the
+ * native action buttons. Require one live button identity to remain actionable
+ * across consecutive paint frames so callers never click the outgoing node.
+ */
+export function waitForTradeActionButtonFrameState(
+  observationRoot,
+  findButton,
+  isVisibleElement,
+  timeoutMs,
+  requiredStableFrames = 2,
+) {
+  const view = observationRoot?.ownerDocument?.defaultView || observationRoot?.defaultView;
+  if (
+    !view
+    || typeof view.requestAnimationFrame !== 'function'
+    || typeof view.cancelAnimationFrame !== 'function'
+  ) {
+    throw new Error('Trade action button frame scheduler is unavailable');
+  }
+  if (typeof findButton !== 'function' || typeof isVisibleElement !== 'function') {
+    throw new Error('Trade action button resolver is unavailable');
+  }
+  if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
+    throw new Error('requiredStableFrames must be a positive integer');
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let frameHandle = 0;
+    let timer = 0;
+    let stableFrames = 0;
+    let stableButton = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (frameHandle) view.cancelAnimationFrame(frameHandle);
+      view.clearTimeout(timer);
+      resolve(value);
+    };
+    const check = () => {
+      frameHandle = 0;
+      const button = findButton();
+      const actionable = Boolean(
+        button
+        && button.isConnected
+        && isVisibleElement(button)
+        && !button.disabled
+        && button.getAttribute('aria-disabled') !== 'true'
+      );
+      if (actionable) {
+        if (button === stableButton) {
+          stableFrames += 1;
+        } else {
+          stableButton = button;
+          stableFrames = 1;
+        }
+        if (stableFrames >= requiredStableFrames) {
+          finish(button);
+          return;
+        }
+      } else {
+        stableButton = null;
+        stableFrames = 0;
+      }
+      frameHandle = view.requestAnimationFrame(check);
+    };
+    timer = view.setTimeout(() => finish(null), timeoutMs);
+    frameHandle = view.requestAnimationFrame(check);
+  });
+}
+
 export function isTradeModeTab(node, { panelId }) {
   if (!node?.matches?.('[role="tab"]')) return false;
   if (node.closest(`#${panelId}`)) return false;

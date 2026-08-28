@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.141
+// @version      2.7.142
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -129,6 +129,7 @@ import {
   parseLeverageButtonText,
   placeTradePanelSpacer,
   readTradeAvailableBalance,
+  waitForTradeActionButtonFrameState,
   waitForTradeFormFrameState,
   waitForTradeFormMutationState,
 } from './dom/trade-form.js';
@@ -325,6 +326,7 @@ import {
   const LADDER_CONTROL_BUTTON_FONT_SIZE = 14;
   const PANEL_BOTTOM_TOOLTIP_GAP = 12;
   const TRADE_UI_STATE_TIMEOUT_MS = 1000;
+  const TRADE_ACTION_BUTTON_READY_TIMEOUT_MS = 2000;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -2497,9 +2499,19 @@ import {
         assertLadderExecutionContext(plan);
         assertLadderMakerPrice(plan, submittedPrice);
 
-        const button = plan.spec.buttonGetter();
-        if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
-          throw new Error(`未找到可点击的${plan.spec.label}按钮`);
+        const button = await waitForTradeActionButtonFrameState(
+          document,
+          plan.spec.buttonGetter,
+          isVisibleElement,
+          TRADE_ACTION_BUTTON_READY_TIMEOUT_MS,
+        );
+        throwIfAborted(abortSignal);
+        if (!button) {
+          const currentButton = plan.spec.buttonGetter();
+          if (!currentButton || !currentButton.isConnected || !isVisibleElement(currentButton)) {
+            throw new Error(`${plan.spec.label}按钮尚未渲染完成，已停止`);
+          }
+          throw new Error(`${plan.spec.label}按钮当前不可点击，已停止`);
         }
 
         if (!CFG.SAFE_MODE) {
