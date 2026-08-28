@@ -75,7 +75,7 @@ test('live probe has no user-decision deadline and follows a replaced portal dia
 
   await page.getByRole('button', { name: '取消' }).click();
   const snapshot = await finishLivePerformanceProbeWhenReady(page);
-  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('撤单已取消')).toBeVisible();
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
   expect(snapshot.events.map((event) => event.kind)).toEqual(expect.arrayContaining([
     'dialog-visible',

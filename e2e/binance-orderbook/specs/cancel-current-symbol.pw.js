@@ -94,7 +94,7 @@ test('cancelling the native dialog preserves current and other orders and restor
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(false);
   await page.getByRole('button', { name: '取消' }).click();
-  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('撤单已取消')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(ORDER_SETS.both);
@@ -125,7 +125,7 @@ test('a 70-order drawing burst split across tasks performs one full save per tog
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(false);
   await page.getByRole('button', { name: '取消' }).click();
-  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('撤单已取消')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(orders);
@@ -269,7 +269,7 @@ for (const closeMethod of ['Escape', 'backdrop']) {
     } else {
       await page.locator('.bn-modal-root').click({ position: { x: 4, y: 4 } });
     }
-    await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
+    await expect(page.getByText('撤单已取消')).toBeVisible();
 
     const state = await readFixtureState(page);
     expect(state.orders).toEqual(ORDER_SETS.both);
@@ -294,7 +294,7 @@ test('a BFCache pagehide does not abort the active native dialog', async ({ page
   })));
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '取消' }).click();
-  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('撤单已取消')).toBeVisible();
   await expectRestoredState(page, scenario);
   expect(errors).toEqual([]);
 });
@@ -405,7 +405,7 @@ test('dialog tracking survives React replacing the native dialog subtree', async
     await readFixtureState(page)
   ).events.filter((event) => event.type === 'dialog-replaced').length).toBe(1);
   await page.getByRole('button', { name: '取消' }).click();
-  await expect(page.getByText('已取消撤单，已恢复页面状态')).toBeVisible();
+  await expect(page.getByText('撤单已取消')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(ORDER_SETS.current);
