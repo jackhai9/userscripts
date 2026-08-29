@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.154
+// @version      2.7.155
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -290,7 +290,7 @@ import {
   const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
   const TRADE_INPUT_SYNC_STABLE_FRAMES = 2;
   const LADDER_INPUT_SETTLE_TIMEOUT_MS = 1200;
-  const LADDER_INPUT_SETTLE_MISMATCH_FRAMES = 12;
+  const LADDER_INPUT_SETTLE_STABLE_MS = 180;
   const LADDER_INPUT_SETTLE_MAX_WRITES = 5;
   const ORDERBOOK_PRECISION_READY_POLL_MS = 100;
   const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5000;
@@ -2283,9 +2283,9 @@ import {
     const syncTimeoutMs = settleControlledForm
       ? LADDER_INPUT_SETTLE_TIMEOUT_MS
       : TRADE_INPUT_SYNC_TIMEOUT_MS;
-    const stableMismatchFrames = settleControlledForm
-      ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES
-      : TRADE_INPUT_SYNC_STABLE_FRAMES;
+    const stableDurationMs = settleControlledForm
+      ? LADDER_INPUT_SETTLE_STABLE_MS
+      : 0;
     const maxWriteAttempts = settleControlledForm
       ? LADDER_INPUT_SETTLE_MAX_WRITES
       : 2;
@@ -2319,40 +2319,10 @@ import {
         maxWriteAttempts,
       })
       : setInputValueReact;
-    let inputs = findTradeInputs();
+    const inputs = findTradeInputs();
     if (!inputs) throw new Error('未找到唯一的当前交易表单输入框');
 
-    let observationRoot = inputs.root;
-    const readQtyState = createTradeInputStateReader({
-      resolveInputs: findTradeInputs,
-      expectedQty,
-      includePrice: false,
-      normalizeValue: normalizeDecimalString,
-      compareValues: compareDecimalStrings,
-      writeValue: writeTradeInputValue,
-      requiredStableMismatchFrames: stableMismatchFrames,
-      requiredStableMatchFrames: settleControlledForm
-        ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES
-        : 1,
-      maxWriteAttempts,
-      recoverProvisionalMatchRollback: settleControlledForm,
-      isRecoveryWriteAllowed,
-    });
-    readQtyState();
-    const qtyReady = await waitForTradeFormFrameState(
-      observationRoot,
-      readQtyState,
-      syncTimeoutMs,
-      TRADE_INPUT_SYNC_STABLE_FRAMES,
-    );
-    if (!qtyReady) {
-      assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || '', qtyLabel);
-      throw new Error('数量框状态未稳定，已停止提交');
-    }
-
-    inputs = findTradeInputs();
-    if (!inputs) throw new Error('未找到唯一的当前交易表单输入框');
-    observationRoot = inputs.root;
+    const observationRoot = inputs.root;
     const readTradeState = createTradeInputStateReader({
       resolveInputs: findTradeInputs,
       expectedPrice,
@@ -2361,13 +2331,16 @@ import {
       normalizeValue: normalizeDecimalString,
       compareValues: compareDecimalStrings,
       writeValue: writeTradeInputValue,
-      requiredStableMismatchFrames: stableMismatchFrames,
+      requiredStableMismatchFrames: TRADE_INPUT_SYNC_STABLE_FRAMES,
+      requiredStableMismatchMs: stableDurationMs,
       requiredStableMatchFrames: settleControlledForm
-        ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES
+        ? TRADE_INPUT_SYNC_STABLE_FRAMES
         : 1,
+      requiredStableMatchMs: stableDurationMs,
       maxWriteAttempts,
       recoverProvisionalMatchRollback: settleControlledForm,
       isRecoveryWriteAllowed,
+      readNowMs: () => performance.now(),
     });
     readTradeState();
     const synchronized = await waitForTradeFormFrameState(

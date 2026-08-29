@@ -177,33 +177,32 @@ test('trade input synchronization confirms live controlled values instead of sle
   assert.match(setInputBody, /dispatchEvent\(new Event\('change'/);
   assert.match(setInputBody, /input\.blur\(\)/);
   assert.doesNotMatch(setInputBody, /dispatchEvent\(new Event\('blur'/);
-  assert.match(syncBody, /createTradeInputStateReader/);
+  assert.equal((syncBody.match(/createTradeInputStateReader/g) || []).length, 1);
   assert.match(syncBody, /createBoundedInputWriter/);
   assert.match(syncBody, /resolveInputs:\s*findTradeInputs/);
-  assert.equal((syncBody.match(/writeValue:\s*writeTradeInputValue/g) || []).length, 2);
-  assert.equal(
-    (syncBody.match(/requiredStableMismatchFrames:\s*stableMismatchFrames/g) || []).length,
-    2,
-  );
-  assert.equal((syncBody.match(/maxWriteAttempts,/g) || []).length, 3);
-  assert.equal((syncBody.match(/isRecoveryWriteAllowed,/g) || []).length, 2);
-  assert.equal((syncBody.match(/requiredStableMatchFrames:/g) || []).length, 2);
+  assert.equal((syncBody.match(/writeValue:\s*writeTradeInputValue/g) || []).length, 1);
+  assert.match(syncBody, /requiredStableMismatchFrames:\s*TRADE_INPUT_SYNC_STABLE_FRAMES/);
+  assert.match(syncBody, /requiredStableMismatchMs:\s*stableDurationMs/);
+  assert.equal((syncBody.match(/maxWriteAttempts,/g) || []).length, 2);
+  assert.equal((syncBody.match(/isRecoveryWriteAllowed,/g) || []).length, 1);
+  assert.equal((syncBody.match(/requiredStableMatchFrames:/g) || []).length, 1);
+  assert.match(syncBody, /requiredStableMatchMs:\s*stableDurationMs/);
   assert.equal(
     (syncBody.match(/recoverProvisionalMatchRollback:\s*settleControlledForm/g) || []).length,
-    2,
+    1,
   );
   assert.match(syncBody, /isScriptOwnedTradeInputRecoveryState/);
   assert.match(syncBody, /field[\s\S]*preWriteValue[\s\S]*rollbackValue[\s\S]*submittedValue/);
   assert.match(syncBody, /previousSubmittedInputs\?\.submittedQty/);
   assert.match(syncBody, /previousSubmittedInputs\?\.submittedPrice/);
   assert.doesNotMatch(syncBody, /isRecoveryWriteAllowed\s*=\s*settleControlledForm[\s\S]*=>\s*true/);
-  assert.match(syncBody, /settleControlledForm[\s\S]*LADDER_INPUT_SETTLE_MISMATCH_FRAMES/);
+  assert.match(syncBody, /settleControlledForm[\s\S]*LADDER_INPUT_SETTLE_STABLE_MS/);
   assert.match(source, /const LADDER_INPUT_SETTLE_TIMEOUT_MS = 1200;/);
+  assert.match(source, /const LADDER_INPUT_SETTLE_STABLE_MS = 180;/);
   assert.match(source, /const LADDER_INPUT_SETTLE_MAX_WRITES = 5;/);
-  assert.match(syncBody, /waitForTradeFormFrameState/);
-  assert.match(syncBody, /includePrice:\s*false/);
+  assert.equal((syncBody.match(/waitForTradeFormFrameState/g) || []).length, 1);
+  assert.doesNotMatch(syncBody, /includePrice:\s*false/);
   assert.match(syncBody, /includePrice:\s*true/);
-  assert.ok(syncBody.indexOf('includePrice: false') < syncBody.indexOf('includePrice: true'));
   assert.match(syncBody, /findPriceInput\(\)/);
   assert.match(syncBody, /findQtyInput\(\)/);
   assert.match(syncBody, /assertSubmittedPriceMatchesExpectedPrice/);

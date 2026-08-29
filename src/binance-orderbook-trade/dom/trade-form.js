@@ -174,9 +174,11 @@ export function isScriptOwnedTradeInputRecoveryState({
  * Binance can synchronously restore a controlled input while a replacement form is
  * settling. A caller may preserve the pre-write value as a provisional rollback
  * contract because React can restore it after the write returns but before the
- * first frame observation. Recovery policy owns the accepted state transition;
- * generic callers retain exact rollback matching while ladder callers may identify
- * a previous acknowledged script-owned value or Binance's empty post-submit state.
+ * first frame observation. Stability duration is measured in elapsed time instead
+ * of assuming a display refresh rate; frame counts remain a minimum observation
+ * guard. Recovery policy owns the accepted state transition; generic callers retain
+ * exact rollback matching while ladder callers may identify a previous acknowledged
+ * script-owned value or Binance's empty post-submit state.
  */
 export function createTradeInputStateReader({
   resolveInputs,
@@ -187,12 +189,15 @@ export function createTradeInputStateReader({
   compareValues,
   writeValue,
   requiredStableMismatchFrames = 2,
+  requiredStableMismatchMs = 0,
   requiredStableMatchFrames = 1,
+  requiredStableMatchMs = 0,
   maxWriteAttempts = 2,
   recoverProvisionalMatchRollback = false,
   isRecoveryWriteAllowed = ({ rollbackValue, submittedValue }) => (
     rollbackValue === submittedValue
   ),
+  readNowMs = Date.now,
 }) {
   if (
     typeof resolveInputs !== 'function'
@@ -200,6 +205,7 @@ export function createTradeInputStateReader({
     || typeof compareValues !== 'function'
     || typeof writeValue !== 'function'
     || typeof isRecoveryWriteAllowed !== 'function'
+    || typeof readNowMs !== 'function'
   ) {
     throw new Error('Trade input synchronizer dependencies are invalid');
   }
@@ -211,6 +217,12 @@ export function createTradeInputStateReader({
   }
   if (!Number.isInteger(requiredStableMatchFrames) || requiredStableMatchFrames < 1) {
     throw new Error('Trade input accepted stability must be a positive integer');
+  }
+  if (!Number.isFinite(requiredStableMismatchMs) || requiredStableMismatchMs < 0) {
+    throw new Error('Trade input rollback stability duration must be a non-negative number');
+  }
+  if (!Number.isFinite(requiredStableMatchMs) || requiredStableMatchMs < 0) {
+    throw new Error('Trade input accepted stability duration must be a non-negative number');
   }
   if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
     throw new Error('Trade input write attempts must be a positive integer');
@@ -227,13 +239,43 @@ export function createTradeInputStateReader({
     let rollbackValue = null;
     let recoveryEligible = false;
     let stableRollbackFrames = 0;
+    let stableRollbackStartedAt = null;
+    let stableRollbackValue = null;
     let stableMatchFrames = 0;
+    let stableMatchStartedAt = null;
 
     const clearRecovery = () => {
       preWriteValue = null;
       rollbackValue = null;
       recoveryEligible = false;
       stableRollbackFrames = 0;
+      stableRollbackStartedAt = null;
+      stableRollbackValue = null;
+    };
+
+    const clearMatchStability = () => {
+      stableMatchFrames = 0;
+      stableMatchStartedAt = null;
+    };
+
+    const hasStableDuration = (startedAt, requiredMs, nowMs) => (
+      requiredMs === 0
+      || (startedAt != null && nowMs - startedAt >= requiredMs)
+    );
+
+    const observeRollbackStability = (submittedValue) => {
+      const nowMs = readNowMs();
+      if (stableRollbackFrames === 0 || stableRollbackValue !== submittedValue) {
+        stableRollbackFrames = 1;
+        stableRollbackStartedAt = nowMs;
+        stableRollbackValue = submittedValue;
+      } else {
+        stableRollbackFrames += 1;
+      }
+      return (
+        stableRollbackFrames >= requiredStableMismatchFrames
+        && hasStableDuration(stableRollbackStartedAt, requiredStableMismatchMs, nowMs)
+      );
     };
 
     const writeExpectedValue = (currentInput, expectedValue, submittedValue) => {
@@ -269,20 +311,29 @@ export function createTradeInputStateReader({
         input = currentInput;
         writeCount = 0;
         clearRecovery();
-        stableMatchFrames = 0;
+        clearMatchStability();
       }
 
       if (matchesExpected) {
         recoveryEligible = false;
         stableRollbackFrames = 0;
+        stableRollbackStartedAt = null;
+        stableRollbackValue = null;
+        const nowMs = readNowMs();
+        if (stableMatchFrames === 0) stableMatchStartedAt = nowMs;
         stableMatchFrames += 1;
-        return stableMatchFrames >= requiredStableMatchFrames;
+        return (
+          stableMatchFrames >= requiredStableMatchFrames
+          && hasStableDuration(stableMatchStartedAt, requiredStableMatchMs, nowMs)
+        );
       }
 
       if (stableMatchFrames > 0) {
-        stableMatchFrames = 0;
+        clearMatchStability();
         recoveryEligible = writeCount < maxWriteAttempts;
         stableRollbackFrames = 0;
+        stableRollbackStartedAt = null;
+        stableRollbackValue = null;
         if (!recoveryEligible) clearRecovery();
       }
 
@@ -306,8 +357,7 @@ export function createTradeInputStateReader({
         return false;
       }
 
-      stableRollbackFrames += 1;
-      if (stableRollbackFrames < requiredStableMismatchFrames) return false;
+      if (!observeRollbackStability(submittedValue)) return false;
 
       writeExpectedValue(currentInput, expectedValue, submittedValue);
       return false;
