@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.154
+// @version      2.7.155
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1401,12 +1401,15 @@
     compareValues,
     writeValue,
     requiredStableMismatchFrames = 2,
+    requiredStableMismatchMs = 0,
     requiredStableMatchFrames = 1,
+    requiredStableMatchMs = 0,
     maxWriteAttempts = 2,
     recoverProvisionalMatchRollback = false,
-    isRecoveryWriteAllowed = ({ rollbackValue, submittedValue }) => rollbackValue === submittedValue
+    isRecoveryWriteAllowed = ({ rollbackValue, submittedValue }) => rollbackValue === submittedValue,
+    readNowMs = Date.now
   }) {
-    if (typeof resolveInputs !== "function" || typeof normalizeValue !== "function" || typeof compareValues !== "function" || typeof writeValue !== "function" || typeof isRecoveryWriteAllowed !== "function") {
+    if (typeof resolveInputs !== "function" || typeof normalizeValue !== "function" || typeof compareValues !== "function" || typeof writeValue !== "function" || typeof isRecoveryWriteAllowed !== "function" || typeof readNowMs !== "function") {
       throw new Error("Trade input synchronizer dependencies are invalid");
     }
     if (!Number.isInteger(requiredStableMismatchFrames) || requiredStableMismatchFrames < 1) {
@@ -1414,6 +1417,12 @@
     }
     if (!Number.isInteger(requiredStableMatchFrames) || requiredStableMatchFrames < 1) {
       throw new Error("Trade input accepted stability must be a positive integer");
+    }
+    if (!Number.isFinite(requiredStableMismatchMs) || requiredStableMismatchMs < 0) {
+      throw new Error("Trade input rollback stability duration must be a non-negative number");
+    }
+    if (!Number.isFinite(requiredStableMatchMs) || requiredStableMatchMs < 0) {
+      throw new Error("Trade input accepted stability duration must be a non-negative number");
     }
     if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
       throw new Error("Trade input write attempts must be a positive integer");
@@ -1429,12 +1438,33 @@
       let rollbackValue = null;
       let recoveryEligible = false;
       let stableRollbackFrames = 0;
+      let stableRollbackStartedAt = null;
+      let stableRollbackValue = null;
       let stableMatchFrames = 0;
+      let stableMatchStartedAt = null;
       const clearRecovery = () => {
         preWriteValue = null;
         rollbackValue = null;
         recoveryEligible = false;
         stableRollbackFrames = 0;
+        stableRollbackStartedAt = null;
+        stableRollbackValue = null;
+      };
+      const clearMatchStability = () => {
+        stableMatchFrames = 0;
+        stableMatchStartedAt = null;
+      };
+      const hasStableDuration = (startedAt, requiredMs, nowMs) => requiredMs === 0 || startedAt != null && nowMs - startedAt >= requiredMs;
+      const observeRollbackStability = (submittedValue) => {
+        const nowMs = readNowMs();
+        if (stableRollbackFrames === 0 || stableRollbackValue !== submittedValue) {
+          stableRollbackFrames = 1;
+          stableRollbackStartedAt = nowMs;
+          stableRollbackValue = submittedValue;
+        } else {
+          stableRollbackFrames += 1;
+        }
+        return stableRollbackFrames >= requiredStableMismatchFrames && hasStableDuration(stableRollbackStartedAt, requiredStableMismatchMs, nowMs);
       };
       const writeExpectedValue = (currentInput, expectedValue, submittedValue) => {
         preWriteValue = submittedValue;
@@ -1465,18 +1495,24 @@
           input = currentInput;
           writeCount = 0;
           clearRecovery();
-          stableMatchFrames = 0;
+          clearMatchStability();
         }
         if (matchesExpected) {
           recoveryEligible = false;
           stableRollbackFrames = 0;
+          stableRollbackStartedAt = null;
+          stableRollbackValue = null;
+          const nowMs = readNowMs();
+          if (stableMatchFrames === 0) stableMatchStartedAt = nowMs;
           stableMatchFrames += 1;
-          return stableMatchFrames >= requiredStableMatchFrames;
+          return stableMatchFrames >= requiredStableMatchFrames && hasStableDuration(stableMatchStartedAt, requiredStableMatchMs, nowMs);
         }
         if (stableMatchFrames > 0) {
-          stableMatchFrames = 0;
+          clearMatchStability();
           recoveryEligible = writeCount < maxWriteAttempts;
           stableRollbackFrames = 0;
+          stableRollbackStartedAt = null;
+          stableRollbackValue = null;
           if (!recoveryEligible) clearRecovery();
         }
         if (writeCount === 0) {
@@ -1497,8 +1533,7 @@
           clearRecovery();
           return false;
         }
-        stableRollbackFrames += 1;
-        if (stableRollbackFrames < requiredStableMismatchFrames) return false;
+        if (!observeRollbackStability(submittedValue)) return false;
         writeExpectedValue(currentInput, expectedValue, submittedValue);
         return false;
       };
@@ -2457,7 +2492,7 @@
     const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
     const TRADE_INPUT_SYNC_STABLE_FRAMES = 2;
     const LADDER_INPUT_SETTLE_TIMEOUT_MS = 1200;
-    const LADDER_INPUT_SETTLE_MISMATCH_FRAMES = 12;
+    const LADDER_INPUT_SETTLE_STABLE_MS = 180;
     const LADDER_INPUT_SETTLE_MAX_WRITES = 5;
     const ORDERBOOK_PRECISION_READY_POLL_MS = 100;
     const ORDERBOOK_PRECISION_READY_TIMEOUT_MS = 5e3;
@@ -4076,7 +4111,7 @@
       const qtyLabel = options?.qtyLabel || "目标量";
       const settleControlledForm = options?.settleControlledForm === true;
       const syncTimeoutMs = settleControlledForm ? LADDER_INPUT_SETTLE_TIMEOUT_MS : TRADE_INPUT_SYNC_TIMEOUT_MS;
-      const stableMismatchFrames = settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : TRADE_INPUT_SYNC_STABLE_FRAMES;
+      const stableDurationMs = settleControlledForm ? LADDER_INPUT_SETTLE_STABLE_MS : 0;
       const maxWriteAttempts = settleControlledForm ? LADDER_INPUT_SETTLE_MAX_WRITES : 2;
       const previousSubmittedInputs = settleControlledForm ? options?.previousSubmittedInputs || null : null;
       const isRecoveryWriteAllowed = settleControlledForm ? ({
@@ -4100,36 +4135,9 @@
         writeValue: setInputValueReact,
         maxWriteAttempts
       }) : setInputValueReact;
-      let inputs = findTradeInputs();
+      const inputs = findTradeInputs();
       if (!inputs) throw new Error("未找到唯一的当前交易表单输入框");
-      let observationRoot = inputs.root;
-      const readQtyState = createTradeInputStateReader({
-        resolveInputs: findTradeInputs,
-        expectedQty,
-        includePrice: false,
-        normalizeValue: normalizeDecimalString,
-        compareValues: compareDecimalStrings,
-        writeValue: writeTradeInputValue,
-        requiredStableMismatchFrames: stableMismatchFrames,
-        requiredStableMatchFrames: settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : 1,
-        maxWriteAttempts,
-        recoverProvisionalMatchRollback: settleControlledForm,
-        isRecoveryWriteAllowed
-      });
-      readQtyState();
-      const qtyReady = await waitForTradeFormFrameState(
-        observationRoot,
-        readQtyState,
-        syncTimeoutMs,
-        TRADE_INPUT_SYNC_STABLE_FRAMES
-      );
-      if (!qtyReady) {
-        assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || "", qtyLabel);
-        throw new Error("数量框状态未稳定，已停止提交");
-      }
-      inputs = findTradeInputs();
-      if (!inputs) throw new Error("未找到唯一的当前交易表单输入框");
-      observationRoot = inputs.root;
+      const observationRoot = inputs.root;
       const readTradeState = createTradeInputStateReader({
         resolveInputs: findTradeInputs,
         expectedPrice,
@@ -4138,11 +4146,14 @@
         normalizeValue: normalizeDecimalString,
         compareValues: compareDecimalStrings,
         writeValue: writeTradeInputValue,
-        requiredStableMismatchFrames: stableMismatchFrames,
-        requiredStableMatchFrames: settleControlledForm ? LADDER_INPUT_SETTLE_MISMATCH_FRAMES : 1,
+        requiredStableMismatchFrames: TRADE_INPUT_SYNC_STABLE_FRAMES,
+        requiredStableMismatchMs: stableDurationMs,
+        requiredStableMatchFrames: settleControlledForm ? TRADE_INPUT_SYNC_STABLE_FRAMES : 1,
+        requiredStableMatchMs: stableDurationMs,
         maxWriteAttempts,
         recoverProvisionalMatchRollback: settleControlledForm,
-        isRecoveryWriteAllowed
+        isRecoveryWriteAllowed,
+        readNowMs: () => performance.now()
       });
       readTradeState();
       const synchronized = await waitForTradeFormFrameState(

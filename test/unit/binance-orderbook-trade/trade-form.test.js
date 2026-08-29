@@ -555,6 +555,132 @@ test('trade input synchronization recovers a provisional match rolled back befor
   assert.deepEqual(writes.map(({ value }) => value), ['0.07', '0.07']);
 });
 
+test('trade input synchronization uses elapsed stability time instead of assuming a frame rate', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  let nowMs = 0;
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.08',
+    includePrice: false,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
+    writeValue: (input, value) => {
+      input.value = value;
+    },
+    requiredStableMatchFrames: 2,
+    requiredStableMatchMs: 180,
+    readNowMs: () => nowMs,
+  });
+
+  assert.equal(readState(), null);
+  nowMs = 100;
+  assert.equal(readState(), null);
+  nowMs = 150;
+  assert.equal(readState(), null);
+  nowMs = 280;
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedQty: '0.08',
+  });
+});
+
+test('one timed synchronization state machine confirms quantity before price without rechecking quantity from zero', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: { value: '' },
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  let nowMs = 0;
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedPrice: '81.9',
+    expectedQty: '0.08',
+    includePrice: true,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
+    writeValue: (input, value) => {
+      writes.push({ input, value });
+      input.value = value;
+    },
+    requiredStableMatchFrames: 2,
+    requiredStableMatchMs: 180,
+    readNowMs: () => nowMs,
+  });
+
+  assert.equal(readState(), null);
+  nowMs = 100;
+  assert.equal(readState(), null);
+  nowMs = 280;
+  assert.equal(readState(), null);
+  assert.deepEqual(writes.map(({ value }) => value), ['0.08', '81.9']);
+  nowMs = 380;
+  assert.equal(readState(), null);
+  nowMs = 460;
+  assert.equal(readState(), null);
+  nowMs = 560;
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedPrice: '81.9',
+    submittedQty: '0.08',
+  });
+  assert.deepEqual(writes.map(({ value }) => value), ['0.08', '81.9']);
+});
+
+test('trade input stability duration restarts after React rolls the accepted value back', () => {
+  const currentInputs = {
+    root: {},
+    priceInput: null,
+    qtyInput: { value: '' },
+  };
+  const writes = [];
+  let nowMs = 0;
+  const readState = createTradeInputStateReader({
+    resolveInputs: () => currentInputs,
+    expectedQty: '0.09',
+    includePrice: false,
+    normalizeValue: normalizeDecimalString,
+    compareValues: compareDecimalStrings,
+    writeValue: (input, value) => {
+      writes.push(value);
+      input.value = value;
+    },
+    requiredStableMismatchFrames: 2,
+    requiredStableMismatchMs: 180,
+    requiredStableMatchFrames: 2,
+    requiredStableMatchMs: 180,
+    maxWriteAttempts: 3,
+    recoverProvisionalMatchRollback: true,
+    isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === null,
+    readNowMs: () => nowMs,
+  });
+
+  assert.equal(readState(), null);
+  nowMs = 100;
+  assert.equal(readState(), null);
+  currentInputs.qtyInput.value = '';
+  nowMs = 150;
+  assert.equal(readState(), null);
+  nowMs = 250;
+  assert.equal(readState(), null);
+  nowMs = 330;
+  assert.equal(readState(), null);
+  assert.deepEqual(writes, ['0.09', '0.09']);
+  nowMs = 430;
+  assert.equal(readState(), null);
+  nowMs = 510;
+  assert.equal(readState(), null);
+  nowMs = 610;
+  assert.deepEqual(readState(), {
+    ...currentInputs,
+    submittedQty: '0.09',
+  });
+});
+
 test('script-owned trade input recovery accepts only the same field previous value or empty state', () => {
   const previousSubmittedInputs = {
     submittedPrice: '84.5',
@@ -928,6 +1054,30 @@ test('trade input synchronization rejects an invalid rollback stability contract
       requiredStableMatchFrames: 0,
     }),
     /Trade input accepted stability must be a positive integer/,
+  );
+  assert.throws(
+    () => createTradeInputStateReader({
+      resolveInputs: () => null,
+      expectedQty: '0.01',
+      includePrice: false,
+      normalizeValue: String,
+      compareValues: () => 1,
+      writeValue: () => {},
+      requiredStableMismatchMs: -1,
+    }),
+    /Trade input rollback stability duration must be a non-negative number/,
+  );
+  assert.throws(
+    () => createTradeInputStateReader({
+      resolveInputs: () => null,
+      expectedQty: '0.01',
+      includePrice: false,
+      normalizeValue: String,
+      compareValues: () => 1,
+      writeValue: () => {},
+      requiredStableMatchMs: Number.NaN,
+    }),
+    /Trade input accepted stability duration must be a non-negative number/,
   );
   assert.throws(
     () => createTradeInputStateReader({
