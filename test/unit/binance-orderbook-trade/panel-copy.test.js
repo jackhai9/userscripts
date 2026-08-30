@@ -29,6 +29,8 @@ test('panel copy provides complete Chinese and English values for every UI leaf'
   }
   assert.equal(formatLocalizedText(PANEL_COPY.action.accountRebalance, UI_LOCALE_ZH_CN), '账户再平衡');
   assert.equal(formatLocalizedText(PANEL_COPY.action.accountRebalance, UI_LOCALE_EN), 'Account Rebalance');
+  assert.equal(formatLocalizedText(PANEL_COPY.rebalanceDialog.confirm, UI_LOCALE_ZH_CN), '确认再平衡');
+  assert.equal(formatLocalizedText(PANEL_COPY.rebalanceDialog.confirm, UI_LOCALE_EN), 'Confirm Rebalance');
   assert.equal(formatLocalizedText(PANEL_COPY.action.cancel, UI_LOCALE_EN), 'Cancel');
   assert.equal(formatLocalizedText(PANEL_COPY.action.closeShort, UI_LOCALE_ZH_CN), '阶梯平空');
   assert.equal(formatLocalizedText(PANEL_COPY.action.closeShort, UI_LOCALE_EN), 'Close Short');
