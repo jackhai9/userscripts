@@ -87,7 +87,7 @@ export function recordContinuousLadderRound(progress, outcome) {
   if (recordedRoundOutcomes.has(outcome)) {
     throw new Error('连续阶梯本轮结果已记录');
   }
-  if (!['completed', 'stopped', 'failed', 'interrupted'].includes(outcome.status)) {
+  if (!['completed', 'position_closed', 'stopped', 'failed', 'interrupted'].includes(outcome.status)) {
     throw new Error('连续阶梯本轮结果无效');
   }
   const roundProgress = snapshotLadderProgress(outcome.progress);
@@ -168,6 +168,24 @@ export function formatContinuousLadderProgress(label, phase, progress, reason = 
   return parts.join(' · ');
 }
 
+export function formatContinuousLadderPositionClosedProgress(label, progress) {
+  if (typeof label !== 'string' || label.trim() === '') {
+    throw new Error('连续阶梯动作名称无效');
+  }
+  assertContinuousLadderProgress(progress);
+  const parts = [
+    `连续${label}`,
+    '已结束',
+    '当前方向已无持仓',
+    progress.startedRounds === 0
+      ? '0 轮'
+      : `${progress.completedRounds}/${progress.startedRounds} 轮`,
+    `累计 ${progress.submittedOrders} 笔`,
+  ];
+  if (progress.cancelledOrders > 0) parts.push(`撤 ${progress.cancelledOrders} 笔`);
+  return parts.join(' · ');
+}
+
 export function formatContinuousLadderWaitReason(phase, cooldownMs) {
   if (!Number.isFinite(cooldownMs) || cooldownMs < 0) {
     throw new Error('连续阶梯轮间等待时间无效');
@@ -205,7 +223,7 @@ async function waitUntilReadyOrStopped({
   let reported = waitingAlreadyReported;
   while (true) {
     throwIfAborted(signal);
-    const state = assertReadinessState(readReadiness());
+    const state = assertReadinessState(await readReadiness());
     if (state.status !== 'waiting') return state;
     if (!reported) {
       onWaitStateChange({ phase: 'waiting_ready', cooldownMs });
@@ -250,7 +268,7 @@ export async function waitForContinuousLadderNextRound({
     onWaitStateChange({ phase: 'cooldown', cooldownMs });
     await waitForPromiseOrAbort(delay(cooldownMs), signal);
     throwIfAborted(signal);
-    const afterCooldown = assertReadinessState(readReadiness());
+    const afterCooldown = assertReadinessState(await readReadiness());
     if (afterCooldown.status !== 'waiting') return afterCooldown;
     onWaitStateChange({ phase: 'waiting_ready', cooldownMs });
     waitingAlreadyReported = true;

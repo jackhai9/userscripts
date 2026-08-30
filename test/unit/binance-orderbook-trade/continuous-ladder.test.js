@@ -8,6 +8,7 @@ import {
   createContinuousLadderProgress,
   formatActiveContinuousLadderProgress,
   formatContinuousLadderProgress,
+  formatContinuousLadderPositionClosedProgress,
   formatContinuousLadderWaitProgress,
   formatContinuousLadderWaitReason,
   recordContinuousLadderRound,
@@ -349,6 +350,35 @@ test('continuous ladder returns a terminal readiness state without another coold
 
   assert.equal(result, stopped);
   assert.deepEqual(delays, []);
+});
+
+test('continuous ladder supports an asynchronous confirmed-flat readiness check', async () => {
+  const delays = [];
+  const result = await waitForContinuousLadderNextRound({
+    readReadiness: async () => ({ status: 'stopped', reason: 'position_flat' }),
+    delay: async (ms) => delays.push(ms),
+  });
+
+  assert.deepEqual(result, { status: 'stopped', reason: 'position_flat' });
+  assert.deepEqual(delays, []);
+});
+
+test('continuous ladder formats confirmed flat as an ended outcome without a failed round detail', () => {
+  const progress = createContinuousLadderProgress();
+  recordContinuousLadderRound(progress, {
+    status: 'position_closed',
+    progress: roundProgress({
+      submittedOrders: 0,
+      cancelledOrders: 1,
+      plannedOrders: 3,
+      currentPlanSubmittedOrders: 0,
+    }),
+  });
+
+  assert.equal(
+    formatContinuousLadderPositionClosedProgress('阶梯平空', progress),
+    '连续阶梯平空 · 已结束 · 当前方向已无持仓 · 0/1 轮 · 累计 0 笔 · 撤 1 笔',
+  );
 });
 
 test('continuous ladder cooldown is abortable', async () => {

@@ -142,3 +142,8 @@ export function formatCompletedLadderProgress(label, completedOrders, totalOrder
     : '';
   return `${label}已完成 · 已挂 ${completedOrders}/${totalOrders} 笔${cancelledText}`;
 }
+
+export function formatPositionClosedLadderProgress(label, progress) {
+  assertLadderLabel(label);
+  return appendLadderProgressCounts(`${label}已结束 · 当前方向已无持仓`, progress);
+}
