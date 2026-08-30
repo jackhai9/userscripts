@@ -1,3 +1,12 @@
+import {
+  combineLocalizedText,
+  formatLocalizedText,
+  isLocalizedText,
+  localizedText,
+  UI_LOCALE_EN,
+  UI_LOCALE_ZH_CN,
+} from '../contracts/panel-copy.js';
+
 function assertLadderProgress(progress) {
   if (
     !progress
@@ -22,32 +31,40 @@ function assertLadderProgress(progress) {
 }
 
 function assertLadderLabel(label) {
-  if (typeof label !== 'string' || label.trim() === '') {
+  if (!(isLocalizedText(label) || (typeof label === 'string' && label.trim() !== ''))) {
     throw new Error('阶梯动作名称无效');
   }
 }
 
 function assertLadderMessage(message) {
-  if (typeof message !== 'string' || message.trim() === '') {
+  if (!(isLocalizedText(message) || (typeof message === 'string' && message.trim() !== ''))) {
     throw new Error('阶梯进度信息无效');
   }
 }
 
 function formatLadderProgressCounts(progress) {
   assertLadderProgress(progress);
-  const counts = [];
+  const zhCN = [];
+  const en = [];
   if (progress.plannedOrders !== null) {
-    counts.push(`已挂 ${progress.currentPlanSubmittedOrders}/${progress.plannedOrders} 笔`);
+    zhCN.push(`已挂 ${progress.currentPlanSubmittedOrders}/${progress.plannedOrders} 笔`);
+    en.push(`Placed ${progress.currentPlanSubmittedOrders}/${progress.plannedOrders}`);
   } else if (progress.submittedOrders > 0) {
-    counts.push(`已挂 ${progress.submittedOrders} 笔`);
+    zhCN.push(`已挂 ${progress.submittedOrders} 笔`);
+    en.push(`Placed ${progress.submittedOrders}`);
   }
-  if (progress.cancelledOrders > 0) counts.push(`已撤 ${progress.cancelledOrders} 笔`);
-  return counts;
+  if (progress.cancelledOrders > 0) {
+    zhCN.push(`已撤 ${progress.cancelledOrders} 笔`);
+    en.push(`Cancelled ${progress.cancelledOrders}`);
+  }
+  return zhCN.map((text, index) => localizedText(text, en[index]));
 }
 
 function appendLadderProgressCounts(status, progress) {
   const counts = formatLadderProgressCounts(progress);
-  return counts.length > 0 ? `${status} · ${counts.join(' · ')}` : status;
+  return counts.length > 0
+    ? combineLocalizedText([status, ...counts], ' · ')
+    : status;
 }
 
 /**
@@ -100,21 +117,32 @@ export function recordLadderCancelledOrder(progress) {
 
 export function formatStoppedLadderProgress(label, progress) {
   assertLadderLabel(label);
-  return appendLadderProgressCounts(`${label}已停止`, progress);
+  return appendLadderProgressCounts(localizedText(
+    `${formatLocalizedText(label, UI_LOCALE_ZH_CN)}已停止`,
+    `${formatLocalizedText(label, UI_LOCALE_EN)} stopped`,
+  ), progress);
 }
 
 export function formatInterruptedLadderProgress(label, reason, progress) {
   assertLadderLabel(label);
   assertLadderMessage(reason);
-  return appendLadderProgressCounts(`${label}已中止：${reason}`, progress);
+  return appendLadderProgressCounts(localizedText(
+    `${formatLocalizedText(label, UI_LOCALE_ZH_CN)}已中止：${formatLocalizedText(reason, UI_LOCALE_ZH_CN)}`,
+    `${formatLocalizedText(label, UI_LOCALE_EN)} interrupted: ${formatLocalizedText(reason, UI_LOCALE_EN)}`,
+  ), progress);
 }
 
 export function formatFailedLadderProgress(label, message, progress) {
   assertLadderLabel(label);
   assertLadderMessage(message);
   const counts = formatLadderProgressCounts(progress);
-  const details = counts.length > 0 ? `${counts.join(' · ')} · ${message}` : message;
-  return `${label}失败：${details}`;
+  const details = counts.length > 0
+    ? combineLocalizedText([...counts, message], ' · ')
+    : message;
+  return localizedText(
+    `${formatLocalizedText(label, UI_LOCALE_ZH_CN)}失败：${formatLocalizedText(details, UI_LOCALE_ZH_CN)}`,
+    `${formatLocalizedText(label, UI_LOCALE_EN)} failed: ${formatLocalizedText(details, UI_LOCALE_EN)}`,
+  );
 }
 
 export function formatCompletedLadderProgress(label, completedOrders, totalOrders, progress) {
@@ -137,13 +165,26 @@ export function formatCompletedLadderProgress(label, completedOrders, totalOrder
   ) {
     throw new Error('阶梯完成进度与计划不一致');
   }
-  const cancelledText = progress.cancelledOrders > 0
-    ? ` · 已撤 ${progress.cancelledOrders} 笔`
-    : '';
-  return `${label}已完成 · 已挂 ${completedOrders}/${totalOrders} 笔${cancelledText}`;
+  const parts = [localizedText(
+    `${formatLocalizedText(label, UI_LOCALE_ZH_CN)}已完成`,
+    `${formatLocalizedText(label, UI_LOCALE_EN)} completed`,
+  ), localizedText(
+    `已挂 ${completedOrders}/${totalOrders} 笔`,
+    `Placed ${completedOrders}/${totalOrders}`,
+  )];
+  if (progress.cancelledOrders > 0) {
+    parts.push(localizedText(
+      `已撤 ${progress.cancelledOrders} 笔`,
+      `Cancelled ${progress.cancelledOrders}`,
+    ));
+  }
+  return combineLocalizedText(parts, ' · ');
 }
 
 export function formatPositionClosedLadderProgress(label, progress) {
   assertLadderLabel(label);
-  return appendLadderProgressCounts(`${label}已结束 · 当前方向已无持仓`, progress);
+  return appendLadderProgressCounts(localizedText(
+    `${formatLocalizedText(label, UI_LOCALE_ZH_CN)}已结束 · 当前方向已无持仓`,
+    `${formatLocalizedText(label, UI_LOCALE_EN)} ended · No position in this direction`,
+  ), progress);
 }

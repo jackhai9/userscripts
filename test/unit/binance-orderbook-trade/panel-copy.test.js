@@ -3,60 +3,71 @@ import assert from 'node:assert/strict';
 
 import {
   PANEL_COPY,
+  SUPPORTED_UI_LOCALES,
+  UI_LOCALE_EN,
+  UI_LOCALE_ZH_CN,
+  combineLocalizedText,
+  formatLocalizedText,
   formatPrecisionRefreshTooltip,
+  isLocalizedText,
+  localizedText,
+  resolveUiLocaleFromPathname,
 } from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
 
-test('panel copy keeps the approved labels and tooltips in one contract', () => {
-  assert.deepEqual(PANEL_COPY, {
-    section: {
-      singleOrder: '单击下单',
-      ladderMaker: '阶梯下单 · Maker',
-    },
-    field: {
-      clickOrderbook: '单击订单簿时',
-      minimumOrderQuantity: '最小下单量的',
-      minimumOpenQuantity: '最小开仓量的',
-      minimumCloseQuantity: '最小平仓量的',
-      ratio: '比例',
-      orderCount: '笔数',
-      interval: '间距',
-      pricePrecision: '精度',
-    },
-    action: {
-      openLong: '阶梯开多',
-      openShort: '阶梯开空',
-      closeLong: '阶梯平多',
-      closeShort: '阶梯平空',
-      cancel: '撤单',
-      cancelRunning: '撤单处理中',
-      noOrders: '无挂单',
-      stopLadderByAction: {
-        OPEN_LONG: '停止开多',
-        OPEN_SHORT: '停止开空',
-        CLOSE_LONG: '停止平多',
-        CLOSE_SHORT: '停止平空',
-      },
-    },
-    status: {
-      precisionUpdated: '精度推荐已更新',
-      precisionInsufficient: '近期价格变化不足，请稍后重试',
-    },
-    tooltip: {
-      singleOrder: '单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。',
-      ladderMaker: '根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。',
-      ratio: '本次阶梯下单使用可开/可平数量的百分比。',
-      orderCount: '计划拆分成多少笔阶梯订单。',
-      interval: '相邻订单跨越多少个订单簿价格级别。',
-      pricePrecision: '与订单簿中的价格精度联动。黄点表示推荐值。比例、笔数、间距会随所选精度恢复对应设置。',
-    },
-  });
+function collectLeaves(value) {
+  if (isLocalizedText(value)) return [value];
+  return Object.values(value).flatMap(collectLeaves);
+}
+
+test('panel copy provides complete Chinese and English values for every UI leaf', () => {
+  assert.deepEqual(SUPPORTED_UI_LOCALES, [UI_LOCALE_ZH_CN, UI_LOCALE_EN]);
+  const leaves = collectLeaves(PANEL_COPY);
+  assert.ok(leaves.length > 0);
+  for (const leaf of leaves) {
+    assert.notEqual(formatLocalizedText(leaf, UI_LOCALE_ZH_CN), '');
+    assert.notEqual(formatLocalizedText(leaf, UI_LOCALE_EN), '');
+  }
+  assert.equal(formatLocalizedText(PANEL_COPY.action.accountRebalance, UI_LOCALE_ZH_CN), '账户再平衡');
+  assert.equal(formatLocalizedText(PANEL_COPY.action.accountRebalance, UI_LOCALE_EN), 'Account Rebalance');
+  assert.equal(formatLocalizedText(PANEL_COPY.action.closeShort, UI_LOCALE_ZH_CN), '阶梯平空');
+  assert.equal(formatLocalizedText(PANEL_COPY.action.closeShort, UI_LOCALE_EN), 'Close Short');
 });
 
-test('precision refresh tooltip describes the latest trade snapshot without calling it a minimum', () => {
+test('Binance pathname selects Chinese only for zh-CN and otherwise falls back to English', () => {
+  assert.equal(resolveUiLocaleFromPathname('/zh-CN/futures/BTRUSDT'), UI_LOCALE_ZH_CN);
+  assert.equal(resolveUiLocaleFromPathname('/zh-cn/futures/BTRUSDT'), UI_LOCALE_ZH_CN);
+  assert.equal(resolveUiLocaleFromPathname('/en/futures/BTRUSDT'), UI_LOCALE_EN);
+  assert.equal(resolveUiLocaleFromPathname('/fr/futures/BTRUSDT'), UI_LOCALE_EN);
+  assert.equal(resolveUiLocaleFromPathname('/futures/BTRUSDT'), UI_LOCALE_EN);
+});
+
+test('localized status values survive locale switches without losing their data', () => {
+  const progress = combineLocalizedText([
+    localizedText('连续阶梯平空', 'Continuous Close Short'),
+    localizedText('2/3 轮', '2/3 rounds'),
+    localizedText('累计 6 笔', 'Total 6'),
+  ], ' · ');
   assert.equal(
-    formatPrecisionRefreshTooltip(10),
+    formatLocalizedText(progress, UI_LOCALE_ZH_CN),
+    '连续阶梯平空 · 2/3 轮 · 累计 6 笔',
+  );
+  assert.equal(
+    formatLocalizedText(progress, UI_LOCALE_EN),
+    'Continuous Close Short · 2/3 rounds · Total 6',
+  );
+  assert.equal(formatLocalizedText('TypeError: percent is undefined', UI_LOCALE_EN), 'TypeError: percent is undefined');
+});
+
+test('precision refresh tooltip is localized and validates its trade count', () => {
+  const tooltip = formatPrecisionRefreshTooltip(10);
+  assert.equal(
+    formatLocalizedText(tooltip, UI_LOCALE_ZH_CN),
     '优先根据最新 10 条成交价；价格变化不足时自动扩大范围，重新计算推荐精度。',
   );
-  assert.doesNotMatch(formatPrecisionRefreshTooltip(10), /最小值/);
+  assert.equal(
+    formatLocalizedText(tooltip, UI_LOCALE_EN),
+    'Use the latest 10 trades first; expand the range when price movement is insufficient and recalculate the recommended precision.',
+  );
+  assert.doesNotMatch(formatLocalizedText(tooltip, UI_LOCALE_ZH_CN), /最小值/);
   assert.throws(() => formatPrecisionRefreshTooltip(1), /价格精度成交样本数无效/);
 });

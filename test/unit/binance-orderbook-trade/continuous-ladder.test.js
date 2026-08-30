@@ -1,5 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  formatLocalizedText,
+  localizedText,
+  UI_LOCALE_EN,
+  UI_LOCALE_ZH_CN,
+} from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
 
 import {
   CONTINUOUS_LADDER_COOLDOWN_MS,
@@ -15,6 +21,9 @@ import {
   resolveContinuousLadderRecovery,
   waitForContinuousLadderNextRound,
 } from '../../../src/binance-orderbook-trade/core/continuous-ladder.js';
+
+const zh = (value) => formatLocalizedText(value, UI_LOCALE_ZH_CN);
+const en = (value) => formatLocalizedText(value, UI_LOCALE_EN);
 
 function roundProgress({
   submittedOrders,
@@ -55,7 +64,7 @@ test('continuous ladder status summarizes completed rounds and cumulative submis
     },
   });
   assert.equal(
-    formatContinuousLadderProgress('阶梯平空', 'running', progress),
+    zh(formatContinuousLadderProgress('阶梯平空', 'running', progress)),
     '连续阶梯平空 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
   );
 });
@@ -79,7 +88,7 @@ test('continuous ladder stopped status separates completed rounds from a partial
   });
 
   assert.equal(
-    formatContinuousLadderProgress('阶梯平空', 'stopped', progress),
+    zh(formatContinuousLadderProgress('阶梯平空', 'stopped', progress)),
     '连续阶梯平空 · 已停止 · 2/3 轮 · 本轮 1/3 笔 · 累计 7 笔',
   );
 });
@@ -97,7 +106,7 @@ test('continuous ladder status shows cancellations only when they occurred', () 
   });
 
   assert.equal(
-    formatContinuousLadderProgress('阶梯平多', 'failed', progress, '下单按钮 3 秒内未恢复可点击'),
+    zh(formatContinuousLadderProgress('阶梯平多', 'failed', progress, '下单按钮 3 秒内未恢复可点击')),
     '连续阶梯平多 · 失败 · 0/1 轮 · 本轮 2/3 笔 · 累计 2 笔 · 撤 1 笔 · 下单按钮 3 秒内未恢复可点击',
   );
 });
@@ -113,7 +122,7 @@ test('active continuous ladder status keeps the continuous action and live round
   recordContinuousLadderRound(progress, { status: 'completed', progress: completedRound });
 
   assert.equal(
-    formatActiveContinuousLadderProgress(
+    zh(formatActiveContinuousLadderProgress(
       '阶梯平空',
       '第 2 笔确认中',
       progress,
@@ -123,7 +132,7 @@ test('active continuous ladder status keeps the continuous action and live round
         plannedOrders: 3,
         currentPlanSubmittedOrders: 1,
       }),
-    ),
+    )),
     '连续阶梯平空 · 第 2 笔确认中 · 2/3 轮 · 本轮 1/3 笔 · 累计 7 笔 · 撤 1 笔',
   );
 });
@@ -170,18 +179,18 @@ test('continuous ladder retries only explicitly safe transient failures', () => 
   const precisionChanged = new Error('价格精度已变化');
   precisionChanged.safeNoSubmit = true;
   precisionChanged.continuousRecoveryKind = 'precision_changed';
-  assert.deepEqual(resolveContinuousLadderRecovery(precisionChanged), {
-    cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
-    reason: '价格精度已变化，下一轮按新精度继续',
-  });
+  const precisionRecovery = resolveContinuousLadderRecovery(precisionChanged);
+  assert.equal(precisionRecovery.cooldownMs, CONTINUOUS_LADDER_COOLDOWN_MS);
+  assert.equal(zh(precisionRecovery.reason), '价格精度已变化，下一轮按新精度继续');
+  assert.equal(en(precisionRecovery.reason), 'Precision changed; the next round will use the new precision');
 
   const optionsChanged = new Error('阶梯设置已变化');
   optionsChanged.safeNoSubmit = true;
   optionsChanged.continuousRecoveryKind = 'options_changed';
-  assert.deepEqual(resolveContinuousLadderRecovery(optionsChanged), {
-    cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
-    reason: '比例、笔数或间距已变化，下一轮按新设置继续',
-  });
+  const optionsRecovery = resolveContinuousLadderRecovery(optionsChanged);
+  assert.equal(optionsRecovery.cooldownMs, CONTINUOUS_LADDER_COOLDOWN_MS);
+  assert.equal(zh(optionsRecovery.reason), '比例、笔数或间距已变化，下一轮按新设置继续');
+  assert.equal(en(optionsRecovery.reason), 'Ratio, orders, or gap changed; the next round will use the new settings');
 
   const unknownOutcome = new Error('仍未确认订单结果');
   unknownOutcome.safeNoSubmit = false;
@@ -212,17 +221,15 @@ test('a settings change preserves the partial round before the next round uses n
   recordContinuousLadderRound(progress, outcome);
   const recovery = resolveContinuousLadderRecovery(optionsChanged);
 
-  assert.deepEqual(recovery, {
-    cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
-    reason: '比例、笔数或间距已变化，下一轮按新设置继续',
-  });
+  assert.equal(recovery.cooldownMs, CONTINUOUS_LADDER_COOLDOWN_MS);
+  assert.equal(zh(recovery.reason), '比例、笔数或间距已变化，下一轮按新设置继续');
   assert.equal(
-    formatContinuousLadderWaitProgress(
+    zh(formatContinuousLadderWaitProgress(
       '阶梯平空',
       progress,
       'cooldown',
       recovery.cooldownMs,
-    ),
+    )),
     '连续阶梯平空 · 1s 后继续 · 0/1 轮 · 本轮 2/3 笔 · 累计 2 笔',
   );
 });
@@ -287,11 +294,11 @@ test('continuous ladder restarts a full cooldown if readiness is lost', async ()
 
 test('continuous ladder wait reasons distinguish readiness from the actual cooldown', () => {
   assert.equal(
-    formatContinuousLadderWaitReason('waiting_ready', CONTINUOUS_LADDER_COOLDOWN_MS),
+    zh(formatContinuousLadderWaitReason('waiting_ready', CONTINUOUS_LADDER_COOLDOWN_MS)),
     '等待按钮恢复',
   );
   assert.equal(
-    formatContinuousLadderWaitReason('cooldown', CONTINUOUS_LADDER_COOLDOWN_MS),
+    zh(formatContinuousLadderWaitReason('cooldown', CONTINUOUS_LADDER_COOLDOWN_MS)),
     '1s 后继续',
   );
   assert.throws(
@@ -320,21 +327,21 @@ test('continuous ladder wait status puts the current wait before progress counte
   });
 
   assert.equal(
-    formatContinuousLadderWaitProgress(
+    zh(formatContinuousLadderWaitProgress(
       '阶梯平空',
       progress,
       'cooldown',
       CONTINUOUS_LADDER_COOLDOWN_MS,
-    ),
+    )),
     '连续阶梯平空 · 1s 后继续 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
   );
   assert.equal(
-    formatContinuousLadderWaitProgress(
+    zh(formatContinuousLadderWaitProgress(
       '阶梯平空',
       progress,
       'waiting_ready',
       CONTINUOUS_LADDER_COOLDOWN_MS,
-    ),
+    )),
     '连续阶梯平空 · 等待按钮恢复 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
   );
 });
@@ -376,8 +383,30 @@ test('continuous ladder formats confirmed flat as an ended outcome without a fai
   });
 
   assert.equal(
-    formatContinuousLadderPositionClosedProgress('阶梯平空', progress),
+    zh(formatContinuousLadderPositionClosedProgress('阶梯平空', progress)),
     '连续阶梯平空 · 已结束 · 当前方向已无持仓 · 0/1 轮 · 累计 0 笔 · 撤 1 笔',
+  );
+});
+
+test('continuous ladder progress renders its counters in English', () => {
+  const progress = createContinuousLadderProgress();
+  recordContinuousLadderRound(progress, {
+    status: 'completed',
+    progress: roundProgress({
+      submittedOrders: 3,
+      plannedOrders: 3,
+      currentPlanSubmittedOrders: 3,
+    }),
+  });
+
+  assert.equal(
+    en(formatContinuousLadderWaitProgress(
+      localizedText('阶梯平空', 'Close Short'),
+      progress,
+      'cooldown',
+      CONTINUOUS_LADDER_COOLDOWN_MS,
+    )),
+    'Continuous Close Short · Continue in 1s · 1/1 rounds · This round 3/3 · Total 3',
   );
 });
 

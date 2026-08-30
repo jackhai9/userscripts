@@ -1,5 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  formatLocalizedText,
+  localizedText,
+  UI_LOCALE_EN,
+  UI_LOCALE_ZH_CN,
+} from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
 
 import {
   createLadderProgress,
@@ -13,6 +19,9 @@ import {
   setLadderPlannedOrders,
   snapshotLadderProgress,
 } from '../../../src/binance-orderbook-trade/core/ladder-progress.js';
+
+const zh = (value) => formatLocalizedText(value, UI_LOCALE_ZH_CN);
+const en = (value) => formatLocalizedText(value, UI_LOCALE_EN);
 
 test('ladder progress snapshot is detached from later mutations', () => {
   const progress = createLadderProgress();
@@ -45,14 +54,14 @@ test('stopped ladder status reports confirmed submitted and cancelled orders', (
     currentPlanSubmittedOrders: 2,
   });
   assert.equal(
-    formatStoppedLadderProgress('阶梯开空', progress),
+    zh(formatStoppedLadderProgress('阶梯开空', progress)),
     '阶梯开空已停止 · 已挂 2/5 笔 · 已撤 1 笔',
   );
 });
 
 test('stopped ladder status omits counters for actions that did not happen', () => {
   assert.equal(
-    formatStoppedLadderProgress('阶梯平多', createLadderProgress()),
+    zh(formatStoppedLadderProgress('阶梯平多', createLadderProgress())),
     '阶梯平多已停止',
   );
 
@@ -60,21 +69,21 @@ test('stopped ladder status omits counters for actions that did not happen', () 
   setLadderPlannedOrders(submittedOnly, 3);
   recordLadderSubmittedOrder(submittedOnly);
   assert.equal(
-    formatStoppedLadderProgress('阶梯平空', submittedOnly),
+    zh(formatStoppedLadderProgress('阶梯平空', submittedOnly)),
     '阶梯平空已停止 · 已挂 1/3 笔',
   );
 
   const stoppedBeforeFirstOrder = createLadderProgress();
   setLadderPlannedOrders(stoppedBeforeFirstOrder, 5);
   assert.equal(
-    formatStoppedLadderProgress('阶梯开空', stoppedBeforeFirstOrder),
+    zh(formatStoppedLadderProgress('阶梯开空', stoppedBeforeFirstOrder)),
     '阶梯开空已停止 · 已挂 0/5 笔',
   );
 
   const cancelledOnly = createLadderProgress();
   recordLadderCancelledOrder(cancelledOnly);
   assert.equal(
-    formatStoppedLadderProgress('阶梯开多', cancelledOnly),
+    zh(formatStoppedLadderProgress('阶梯开多', cancelledOnly)),
     '阶梯开多已停止 · 已撤 1 笔',
   );
 });
@@ -85,7 +94,7 @@ test('completed ladder status names the action and confirmed result', () => {
   for (let index = 0; index < 5; index += 1) recordLadderSubmittedOrder(progress);
 
   assert.equal(
-    formatCompletedLadderProgress('阶梯平空', 5, 5, progress),
+    zh(formatCompletedLadderProgress('阶梯平空', 5, 5, progress)),
     '阶梯平空已完成 · 已挂 5/5 笔',
   );
 
@@ -94,7 +103,7 @@ test('completed ladder status names the action and confirmed result', () => {
   for (let index = 0; index < 5; index += 1) recordLadderSubmittedOrder(progressWithCancellation);
   recordLadderCancelledOrder(progressWithCancellation);
   assert.equal(
-    formatCompletedLadderProgress('阶梯平空', 5, 5, progressWithCancellation),
+    zh(formatCompletedLadderProgress('阶梯平空', 5, 5, progressWithCancellation)),
     '阶梯平空已完成 · 已挂 5/5 笔 · 已撤 1 笔',
   );
 });
@@ -105,7 +114,7 @@ test('confirmed flat position is an ended business outcome with retained progres
   recordLadderCancelledOrder(progress);
 
   assert.equal(
-    formatPositionClosedLadderProgress('阶梯平空', progress),
+    zh(formatPositionClosedLadderProgress('阶梯平空', progress)),
     '阶梯平空已结束 · 当前方向已无持仓 · 已挂 0/3 笔 · 已撤 1 笔',
   );
 });
@@ -117,20 +126,20 @@ test('failed and interrupted ladder statuses retain confirmed progress', () => {
   recordLadderCancelledOrder(progress);
 
   assert.equal(
-    formatFailedLadderProgress('阶梯开多', '数量框状态未稳定', progress),
+    zh(formatFailedLadderProgress('阶梯开多', '数量框状态未稳定', progress)),
     '阶梯开多失败：已挂 1/5 笔 · 已撤 1 笔 · 数量框状态未稳定',
   );
   assert.equal(
-    formatInterruptedLadderProgress('阶梯开多', '交易对已切换', progress),
+    zh(formatInterruptedLadderProgress('阶梯开多', '交易对已切换', progress)),
     '阶梯开多已中止：交易对已切换 · 已挂 1/5 笔 · 已撤 1 笔',
   );
 
   assert.equal(
-    formatFailedLadderProgress('阶梯开空', '数量框状态未稳定', createLadderProgress()),
+    zh(formatFailedLadderProgress('阶梯开空', '数量框状态未稳定', createLadderProgress())),
     '阶梯开空失败：数量框状态未稳定',
   );
   assert.equal(
-    formatInterruptedLadderProgress('阶梯平多', '交易对已切换', createLadderProgress()),
+    zh(formatInterruptedLadderProgress('阶梯平多', '交易对已切换', createLadderProgress())),
     '阶梯平多已中止：交易对已切换',
   );
 
@@ -138,11 +147,11 @@ test('failed and interrupted ladder statuses retain confirmed progress', () => {
   setLadderPlannedOrders(buttonNotReady, 2);
   recordLadderSubmittedOrder(buttonNotReady);
   assert.equal(
-    formatFailedLadderProgress(
+    zh(formatFailedLadderProgress(
       '阶梯开空',
       '下单按钮 3 秒内未恢复可点击',
       buttonNotReady,
-    ),
+    )),
     '阶梯开空失败：已挂 1/2 笔 · 下单按钮 3 秒内未恢复可点击',
   );
 });
@@ -192,7 +201,7 @@ test('a replacement plan resets only the ratio numerator and retains cumulative 
   recordLadderSubmittedOrder(progress);
 
   assert.equal(
-    formatStoppedLadderProgress('阶梯平空', progress),
+    zh(formatStoppedLadderProgress('阶梯平空', progress)),
     '阶梯平空已停止 · 已挂 1/3 笔 · 已撤 2 笔',
   );
   assert.deepEqual(progress, {
@@ -201,4 +210,20 @@ test('a replacement plan resets only the ratio numerator and retains cumulative 
     plannedOrders: 3,
     currentPlanSubmittedOrders: 1,
   });
+});
+
+test('ladder progress renders the same result data in English', () => {
+  const progress = createLadderProgress();
+  setLadderPlannedOrders(progress, 3);
+  recordLadderSubmittedOrder(progress);
+  recordLadderCancelledOrder(progress);
+
+  assert.equal(
+    en(formatFailedLadderProgress(
+      localizedText('阶梯平空', 'Close Short'),
+      localizedText('数量框状态未稳定', 'Quantity input did not stabilize'),
+      progress,
+    )),
+    'Close Short failed: Placed 1/3 · Cancelled 1 · Quantity input did not stabilize',
+  );
 });

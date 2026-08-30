@@ -21,28 +21,42 @@ import {
   hasBinanceCurrentSymbolOpenOrdersEmptyText,
   isBinanceCancelAllText,
 } from '../../../src/binance-orderbook-trade/contracts/binance-page-text.js';
+import {
+  formatLocalizedText,
+  UI_LOCALE_EN,
+  UI_LOCALE_ZH_CN,
+} from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
 
 test('cancel button exposes no-order completion feedback without disabling new actions', () => {
-  assert.deepEqual(resolveCancelSymbolButtonPresentation({
+  const idle = resolveCancelSymbolButtonPresentation({
     ladderRunning: false,
     cancelRunning: false,
     noOrdersFeedback: false,
-  }), { disabled: false, label: '撤单' });
-  assert.deepEqual(resolveCancelSymbolButtonPresentation({
+  });
+  assert.equal(idle.disabled, false);
+  assert.equal(formatLocalizedText(idle.label, UI_LOCALE_ZH_CN), '撤单');
+  assert.equal(formatLocalizedText(idle.label, UI_LOCALE_EN), 'Cancel Orders');
+  const running = resolveCancelSymbolButtonPresentation({
     ladderRunning: false,
     cancelRunning: true,
     noOrdersFeedback: false,
-  }), { disabled: true, label: '撤单处理中' });
-  assert.deepEqual(resolveCancelSymbolButtonPresentation({
+  });
+  assert.equal(running.disabled, true);
+  assert.equal(formatLocalizedText(running.label, UI_LOCALE_ZH_CN), '撤单处理中');
+  const noOrders = resolveCancelSymbolButtonPresentation({
     ladderRunning: false,
     cancelRunning: false,
     noOrdersFeedback: true,
-  }), { disabled: false, label: '无挂单' });
-  assert.deepEqual(resolveCancelSymbolButtonPresentation({
+  });
+  assert.equal(noOrders.disabled, false);
+  assert.equal(formatLocalizedText(noOrders.label, UI_LOCALE_EN), 'No Orders');
+  const blocked = resolveCancelSymbolButtonPresentation({
     ladderRunning: true,
     cancelRunning: false,
     noOrdersFeedback: true,
-  }), { disabled: true, label: '撤单' });
+  });
+  assert.equal(blocked.disabled, true);
+  assert.equal(formatLocalizedText(blocked.label, UI_LOCALE_ZH_CN), '撤单');
 });
 
 test('normalizes text and recognizes open-orders tab labels', () => {

@@ -98,6 +98,14 @@ scripts/
 - panel rendering
 - async execution flow
 
+## UI Localization
+
+The userscript UI supports exactly `zh-CN` and English. Resolve the locale from the first Binance pathname segment: `/zh-CN/...` uses Chinese, while `/en/...`, other locales, and locale-less futures paths use English. A Binance SPA language switch must rebuild only the userscript panel; it must not abort a ladder, cancel, single-order, or account-rebalance task, and it must not reset the active symbol-mode-precision profile.
+
+Keep script-owned UI copy in `contracts/panel-copy.js` as paired `localizedText(zhCN, en)` values. Dynamic status formatters must retain both languages until render time so current order, round, and cancellation counters survive a locale switch. Raw technical exceptions, Binance response messages, error codes, and native `TypeError` text stay unchanged so they remain copyable for diagnosis.
+
+Do not merge this contract with `contracts/binance-page-text.js`. `BINANCE_PAGE_TEXT` recognizes Binance-owned DOM in every supported page language; `PANEL_COPY` and localized status values render userscript-owned UI in the current two-language contract.
+
 ## Testing Strategy
 
 Prefer unit tests for pure business logic. Add or update tests before moving logic into `core/`.
@@ -220,6 +228,8 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - verify account-orders tab and hide-other-symbol state are restored
 - verify the userscript version or live behavior after a Tampermonkey update before continuing live tests
 - hide the tab and return, then verify the panel recovers
+- switch the Binance page from Chinese to English and back without reloading; verify panel headings, controls, tooltips, current status, round/order counters, and account-rebalance confirmation switch immediately while the current task and saved profile remain unchanged
+- on an English page, trigger one expected business refusal and one raw script exception; verify the business status is English while the raw exception text and Binance error code remain unchanged and copyable
 
 If a path was not manually tested, state that in the final summary.
 

@@ -224,8 +224,9 @@ test('ladder execution and UI updates use one captured mode-symbol-precision con
   assert.match(source, /const optionContext = getPanelOptionContext\(\)/);
   assert.match(source, /setLadderLevels\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
   assert.match(source, /setLadderStep\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
-  assert.match(source, /return `\$\{plan\.percent\}% \/ \$\{levelText\} \/ 幅\$\{plan\.ladderStep\}`/);
-  assert.match(source, /return `\$\{plan\.spec\.label\}计划：\$\{formatLadderPlanDetail\(plan\)\}`/);
+  assert.match(source, /const zhLevelText = plan\.levels === plan\.requestedLevels/);
+  assert.match(source, /`\$\{plan\.percent\}% \/ \$\{zhLevelText\} \/ 幅\$\{plan\.ladderStep\}`/);
+  assert.match(source, /localizedActionStatus\(plan\.spec\.statusLabel, '计划', ' plan'\)/);
 });
 
 test('open and close ladder percentage rows share the centralized ratio label', () => {
@@ -235,7 +236,8 @@ test('open and close ladder percentage rows share the centralized ratio label', 
 test('ladder quantity levels and step options share one stable five-slot grid', () => {
   const optionRow = source.match(/function ladderOptionRow[\s\S]*?\n  }/)?.[0] || '';
 
-  assert.match(optionRow, /grid-template-columns:36px repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(optionRow, /activeUiLocale === 'en' \? '52px' : '36px'/);
+  assert.match(optionRow, /repeat\(5,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(optionRow, /flex-wrap/);
   assert.match(source, /data-ladder-value="\$\{value\}" style="box-sizing:border-box;width:100%;min-width:0;height:28px/);
   assert.equal((source.match(/ladderOptionRow\(PANEL_COPY\.field\.orderCount, PANEL_COPY\.tooltip\.orderCount, LADDER_LEVEL_OPTIONS/g) || []).length, 2);
