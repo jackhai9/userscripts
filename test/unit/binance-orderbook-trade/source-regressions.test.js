@@ -83,7 +83,8 @@ test('fixed ladder panel avoids rebuilding unchanged body markup', () => {
   assert.match(ladderBody, /ladderPanelBodySignature/);
   assert.match(ladderBody, /body\.innerHTML = bodyHtml/);
   assert.doesNotMatch(ladderBody, /body\.innerHTML !== bodyHtml/);
-  assert.match(ladderBody, /cancelButton\.textContent = cancelPresentation\.label/);
+  assert.match(ladderBody, /const cancelLabel = ui\(cancelPresentation\.label\)/);
+  assert.match(ladderBody, /cancelButton\.textContent = cancelLabel/);
   assert.match(ladderBody, /cancelButton\.disabled = cancelPresentation\.disabled/);
 });
 
@@ -100,7 +101,7 @@ test('panel primary values and ladder selections share the Binance emphasis stan
   const panelBody = readFunctionBody('ensurePanel');
   assert.match(panelBody, /id="\$\{INPUT_ID\}"[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}/);
   assert.match(panelBody, /id="jh-binance-close-qty-final"[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}/);
-  assert.match(panelBody, /title="\$\{PANEL_COPY\.tooltip\.ladderMaker\}"[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}[^`]*\$\{PANEL_COPY\.section\.ladderMaker\}/);
+  assert.match(panelBody, /title="\$\{ui\(PANEL_COPY\.tooltip\.ladderMaker\)\}"[^`]*color:\$\{PRIMARY_EMPHASIS_COLOR\}[^`]*font-weight:\$\{PRIMARY_EMPHASIS_FONT_WEIGHT\}[^`]*\$\{ui\(PANEL_COPY\.section\.ladderMaker\)\}/);
 });
 
 test('panel buttons inherit one scoped disabled-state contract', () => {
@@ -413,7 +414,8 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.match(source, /data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden/);
   assert.match(source, /data-side-selector role="radiogroup"[^>]*display:grid;grid-template-columns:54px 54px;[^>]*border-radius:6px;[^>]*overflow:hidden/);
   assert.match(source, new RegExp(`id="\\$\\{MODE_HINT_ID\\}" style="width:78px;flex:0 0 78px;[^\"]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
-  assert.match(source, /grid-template-columns:36px repeat\(4,minmax\(0,1fr\)\) 32px;align-items:center;gap:4px;height:32px;overflow:hidden/);
+  assert.match(source, /activeUiLocale === 'en' \? '52px' : '36px'/);
+  assert.match(source, /repeat\(4,minmax\(0,1fr\)\) 32px;align-items:center;gap:4px;height:32px;overflow:hidden/);
   assert.doesNotMatch(source, /buttonBaseStyle = `width:68px;height:24px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcut'), /height:32px[^`]*font-size:12px;line-height:30px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcutSlots'), /while \(slots\.length < ORDERBOOK_PRECISION_SHORTCUT_LIMIT\)/);
@@ -466,7 +468,7 @@ test('multiplier row reads as a labeled value followed by decrement and incremen
   const refreshBody = readFunctionBody('refreshComputedInfo');
   const labelIndex = ensurePanelBody.indexOf('id="${MULTIPLIER_HINT_ID}"');
   const inputIndex = ensurePanelBody.indexOf('id="${INPUT_ID}"');
-  const suffixIndex = ensurePanelBody.indexOf('>倍</span>');
+  const suffixIndex = ensurePanelBody.indexOf('PANEL_COPY.field.multiplierUnit');
   const decrementIndex = ensurePanelBody.indexOf('id="${DEC_ID}"');
   const incrementIndex = ensurePanelBody.indexOf('id="${INC_ID}"');
 
@@ -512,10 +514,10 @@ test('direction selector is a compact mutually exclusive radio group', () => {
   assert.match(ensurePanelBody, /id="\$\{SIDE_LONG_ID\}"[^>]*border:0;/);
   assert.match(ensurePanelBody, /id="\$\{SIDE_SHORT_ID\}"[^>]*border:0;/);
   assert.match(ensurePanelBody, /border-left:1px solid var\(--color-InputLine\)/);
-  assert.match(refreshBody, /let hintText = PANEL_COPY\.field\.clickOrderbook/);
+  assert.match(refreshBody, /let hintText = ui\(PANEL_COPY\.field\.clickOrderbook\)/);
   assert.doesNotMatch(refreshBody, /hintText = '仓位确认中'/);
-  assert.match(refreshBody, /hintTitle = isUsingCache/);
-  assert.match(refreshBody, /hintText = '暂无可平仓位'/);
+  assert.match(refreshBody, /hintTitle = ui\(isUsingCache/);
+  assert.match(refreshBody, /hintText = ui\(PANEL_COPY\.state\.noClosablePosition\)/);
   assert.doesNotMatch(refreshBody, /正在读取仓位|正在刷新仓位|暂未识别仓位/);
   assert.match(
     refreshBody,
@@ -604,9 +606,9 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(statusBody, /statusEl\.title =/);
 
   const startBody = readFunctionBody('startLadder');
-  assert.match(startBody, /const failureMessage = e\?\.message \|\| '未知错误'/);
-  assert.match(startBody, /const failureText = formatFailedLadderProgress\(spec\.label,\s*failureMessage,\s*progress\)/);
-  assert.match(startBody, /formatFailedLadderProgress\(spec\.label,\s*e\.statusTitle,\s*progress\)/);
+  assert.match(startBody, /const failureMessage = localizeKnownUiStatus/);
+  assert.match(startBody, /const failureText = formatFailedLadderProgress\(spec\.statusLabel, failureMessage, progress\)/);
+  assert.match(startBody, /formatFailedLadderProgress\(\s*spec\.statusLabel,\s*localizeKnownUiStatus/);
 });
 
 test('ladder actions keep only their final UI feedback visible for a minimum window', () => {
@@ -669,7 +671,7 @@ test('Option or Alt click continuously repeats close ladders only after readines
 
   assert.match(stopBody, /continuousLadderAbortController\.abort\(stoppedError\)/);
   assert.match(stopBody, /formatActiveContinuousLadderProgress\(/);
-  assert.match(actionButtonBody, /Option\/Alt \+ 单击：连续交易/);
+  assert.match(actionButtonBody, /PANEL_COPY\.tooltip\.continuousClose/);
   assert.doesNotMatch(source, /Continuous trading (?:stopped|failed)/);
   assert.match(executionButtonBody, /activeLadderActionType \|\| activeContinuousLadderActionType/);
   assert.match(executionButtonBody, /PANEL_COPY\.action\.stopLadderByAction\[actionType\]/);
@@ -881,8 +883,8 @@ test('stopping a ladder preserves confirmed submit and cancel progress', () => {
 
   assert.match(startBody, /const progress = createLadderProgress\(\)/);
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*setExecutionStatus,\s*abortController\.signal/);
-  assert.match(startBody, /isLadderStoppedError\(e\)[\s\S]*formatStoppedLadderProgress\(spec\.label,\s*progress\)/);
-  assert.match(startBody, /formatCompletedLadderProgress\(\s*spec\.label,\s*done,\s*plan\.orders\.length,\s*progress/);
+  assert.match(startBody, /isLadderStoppedError\(e\)[\s\S]*formatStoppedLadderProgress\(spec\.statusLabel, progress\)/);
+  assert.match(startBody, /formatCompletedLadderProgress\(\s*spec\.statusLabel,\s*done,\s*plan\.orders\.length,\s*progress/);
   assert.match(runBody, /buildLadderPlan\(actionType,\s*replacementContext\)[\s\S]*setLadderPlannedOrders\(progress,\s*plan\.orders\.length\)/);
   assert.match(runBody, /executeLadderPlan\(\s*plan,\s*progress,\s*setExecutionStatus,\s*abortSignal/);
   assert.match(runBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*progress,\s*setExecutionStatus,\s*abortSignal/);
@@ -917,18 +919,19 @@ test('ladder task statuses name the active action and observed outcome', () => {
   const planStatusBody = readFunctionBody('formatLadderPlanStatus');
   const replacementStatusBody = readFunctionBody('formatOpenOrdersReplacementStatus');
 
-  assert.match(executeBody, /setExecutionStatus\(\s*`\$\{plan\.spec\.label\}挂单 \$\{done \+ 1\}\/\$\{plan\.orders\.length\} 确认中`,\s*`第 \$\{done \+ 1\} 笔确认中`,\s*\)/);
-  assert.match(executeBody, /setExecutionStatus\(`\$\{plan\.spec\.label\}已挂 \$\{done\}\/\$\{plan\.orders\.length\} 笔`, null\)/);
-  assert.match(executeBody, /setExecutionStatus\(`\$\{plan\.spec\.label\}：\$\{repriceDetail\}`, repriceDetail\)/);
-  assert.match(startBody, /`\$\{spec\.label\}尚未开始：仓位确认中`/);
-  assert.match(startBody, /formatInterruptedLadderProgress\(\s*spec\.label,\s*'交易对已切换',\s*progress/);
-  assert.match(startBody, /formatFailedLadderProgress\(spec\.label,\s*failureMessage,\s*progress\)/);
-  assert.match(stopBody, /formatActiveContinuousLadderProgress\(\s*activeSpec\.label,\s*'停止中'/);
-  assert.match(stopBody, /setLadderStatus\(`\$\{activeSpec\.label\}停止中`\)/);
+  assert.match(executeBody, /localizedActionStatus\(\s*plan\.spec\.statusLabel,\s*`挂单 \$\{done \+ 1\}\/\$\{plan\.orders\.length\} 确认中`/);
+  assert.match(executeBody, /localizedActionStatus\(\s*plan\.spec\.statusLabel,\s*`已挂 \$\{done\}\/\$\{plan\.orders\.length\} 笔`/);
+  assert.match(executeBody, /combineLocalizedText\(\[plan\.spec\.statusLabel, repriceDetail\], '：'\)/);
+  assert.match(startBody, /localizedActionStatus\(spec\.statusLabel, '尚未开始：仓位确认中'/);
+  assert.match(startBody, /formatInterruptedLadderProgress\(\s*spec\.statusLabel,\s*localizedText\('交易对已切换', 'Symbol changed'\),\s*progress/);
+  assert.match(startBody, /formatFailedLadderProgress\(spec\.statusLabel, failureMessage, progress\)/);
+  assert.match(stopBody, /formatActiveContinuousLadderProgress\(\s*activeSpec\.statusLabel,\s*localizedText\('停止中', 'Stopping'\)/);
+  assert.match(stopBody, /localizedActionStatus\(activeSpec\.statusLabel, '停止中', ' stopping'\)/);
   assert.match(cancelPlanBody, /setPlanStepStatus\(`撤销 \$\{rowsToCancel\.length\} 笔同向挂单`\)/);
-  assert.match(planStatusBody, /`\$\{plan\.spec\.label\}计划：\$\{formatLadderPlanDetail\(plan\)\}`/);
+  assert.match(planStatusBody, /localizedActionStatus\(plan\.spec\.statusLabel, '计划', ' plan'\)/);
   assert.doesNotMatch(planStatusBody, /%\/|\/幅/);
-  assert.match(replacementStatusBody, /`\$\{plan\.spec\.label\}：/);
+  assert.match(replacementStatusBody, /plan\.spec\.statusLabel/);
+  assert.match(replacementStatusBody, /formatOpenOrdersReplacementDetail\(plan\)/);
   assert.match(cancelPlanBody, /const setPlanStepStatus = \(message\) =>/);
   assert.doesNotMatch(cancelPlanBody, /setLadderStatus\(message\)/);
 });
@@ -1085,6 +1088,20 @@ test('chart Open Orders reload recovery remains pending until restoration succee
   assert.match(source, /startTradingTimers\(\);\s*scheduleChartOrdersRecovery\(\);/);
 });
 
+test('Binance SPA locale changes rebuild only the userscript panel and preserve task state', () => {
+  assert.match(source, /let activeUiLocale = resolveUiLocaleFromPathname\(location\.pathname\)/);
+  const syncRouteBody = readFunctionBody('syncRouteState');
+  assert.match(syncRouteBody, /const nextUiLocale = resolveUiLocaleFromPathname\(location\.pathname\)/);
+  assert.match(syncRouteBody, /const uiLocaleChanged = nextUiLocale !== activeUiLocale/);
+  assert.match(syncRouteBody, /activeUiLocale = nextUiLocale;\s*removePanel\(\);/);
+  assert.match(syncRouteBody, /const needsRender = uiLocaleChanged \|\| !wasTrading/);
+  assert.doesNotMatch(syncRouteBody, /abort|stopLadder|clearSymbolOwnedRuntimeState\(.*uiLocale/);
+
+  const statusBody = readFunctionBody('setLadderStatus');
+  assert.match(statusBody, /ladderStatusText = localizeKnownUiStatus\(text\)/);
+  assert.match(statusBody, /const renderedText = ui\(ladderStatusText\)/);
+});
+
 test('cancel current-symbol open orders wait for confirmed clearing before restoring page state', () => {
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /waitUntilCleared = false/);
@@ -1174,8 +1191,8 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.doesNotMatch(panelBody, /grid-column:span 2/);
   assert.match(panelBody, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(panelBody, /actionColumnCount/);
-  assert.match(panelBody, /data-ladder-cancel-symbol="true"[^`]*>\$\{PANEL_COPY\.action\.cancel\}<\/button>/);
-  assert.match(panelBody, /cancelButton\.textContent = cancelPresentation\.label/);
+  assert.match(panelBody, /data-ladder-cancel-symbol="true"[^`]*>\$\{ui\(PANEL_COPY\.action\.cancel\)\}<\/button>/);
+  assert.match(panelBody, /cancelButton\.textContent = cancelLabel/);
 
   assert.match(source, /const CANCEL_NO_ORDERS_FEEDBACK_MS = 600/);
   const feedbackBody = readFunctionBody('showCancelNoOrdersFeedback');
@@ -1213,7 +1230,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(cancelRunBody, /cancelCurrentSymbolOpenOrdersBlocksLadderActions = true;[\s\S]*scheduleRenderPanel\(\);/);
 
   const startBody = readFunctionBody('startLadder');
-  assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*`\$\{spec\.label\}尚未开始：撤单处理中`/);
+  assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*localizedActionStatus\(spec\.statusLabel, '尚未开始：撤单处理中'/);
   const actionRowsBody = readFunctionBody('getLadderControlSections');
   assert.match(actionRowsBody, /actionDisabled = ladderRunning[\s\S]*\|\| !!singleOrderTask[\s\S]*\|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
   assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
@@ -1229,12 +1246,12 @@ test('cancel current-symbol open orders are single-flight and follow the native 
 
 test('stable panel refreshes avoid writing unchanged text and state attributes', () => {
   const statusBody = readFunctionBody('setLadderStatus');
-  assert.match(statusBody, /statusEl\.textContent !== ladderStatusText/);
-  assert.match(statusBody, /statusEl\.title !== statusTitle/);
+  assert.match(statusBody, /statusEl\.textContent !== renderedText/);
+  assert.match(statusBody, /statusEl\.title !== renderedTitle/);
 
   const panelBody = readFunctionBody('refreshLadderPanel');
   assert.doesNotMatch(panelBody, /toggle|expanded/);
-  assert.match(panelBody, /status\.textContent !== ladderStatusText/);
+  assert.match(panelBody, /status\.textContent !== renderedText/);
   assert.match(panelBody, /rebalanceButton\.hidden/);
 
   const computedBody = readFunctionBody('refreshComputedInfo');
@@ -1242,7 +1259,7 @@ test('stable panel refreshes avoid writing unchanged text and state attributes',
   assert.match(computedBody, /finalEl\.textContent !== finalText/);
   assert.match(computedBody, /minEl\.textContent !== constraintText/);
   assert.match(computedBody, /calculationEl\.title !== calculationTitle/);
-  assert.match(computedBody, /multiplierHintEl\.textContent !== multiplierHintText/);
+  assert.match(computedBody, /multiplierHintEl\.textContent !== renderedMultiplierHint/);
   assert.match(computedBody, /hintEl\.textContent !== hintText/);
   assert.match(computedBody, /hintEl\.title !== hintTitle/);
   assert.match(computedBody, /decBtn\.disabled !== decrementDisabled/);
@@ -1317,7 +1334,8 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(refreshBody, /PANEL_COPY\.field\.pricePrecision/);
   assert.match(refreshBody, /PANEL_COPY\.tooltip\.pricePrecision/);
   assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy\)/);
-  assert.match(refreshBody, /grid-template-columns:36px repeat\(4,minmax\(0,1fr\)\) 32px/);
+  assert.match(refreshBody, /activeUiLocale === 'en' \? '52px' : '36px'/);
+  assert.match(refreshBody, /repeat\(4,minmax\(0,1fr\)\) 32px/);
   assert.match(refreshBody, /renderOrderbookPrecisionRefreshButton\(symbol, !canRefresh\)/);
   assert.match(refreshButtonBody, /data-orderbook-precision-refresh="true"[^`]*\$\{feedback\.icon\}/);
   assert.doesNotMatch(refreshBody, /data-orderbook-precision-status/);
@@ -1504,7 +1522,7 @@ test('confirmed close-quantity mutations bypass the generic trade UI debounce', 
 test('pending close actions report position confirmation without starting execution', () => {
   const startBody = readFunctionBody('startLadder');
   assert.match(startBody, /spec\?\.mode === 'CLOSE' && !isCloseSnapshotReady\(actionSymbol\)/);
-  assert.match(startBody, /setStartStatus\(`\$\{spec\.label\}尚未开始：仓位确认中`, '尚未开始 · 仓位确认中'\)/);
+  assert.match(startBody, /setStartStatus\(\s*localizedActionStatus\(spec\.statusLabel, '尚未开始：仓位确认中'/);
 
   assert.match(source, /if \(getActiveTradeMode\(\) === 'CLOSE' && !isCloseSnapshotReady\(clickedSymbol\)\) \{\s*warn\('仓位确认中'\);\s*setLadderStatus\('单击下单未执行：仓位确认中'\);\s*return;/);
 });
@@ -1582,8 +1600,8 @@ test('panel numeric options wait for a complete mode-symbol-precision context', 
   assert.match(renderBody, /const storedMultiplier = optionContext/);
 
   const refreshBody = readFunctionBody('refreshComputedInfo');
-  assert.match(refreshBody, /finalText = '等待价格精度'/);
-  assert.match(refreshBody, /finalText = '等待开仓\/平仓状态'/);
+  assert.match(refreshBody, /finalText = ui\(PANEL_COPY\.state\.waitingPricePrecision\)/);
+  assert.match(refreshBody, /finalText = ui\(PANEL_COPY\.state\.waitingTradeMode\)/);
   assert.match(refreshBody, /const numericContextReady = modeReady && precisionReady/);
 });
 

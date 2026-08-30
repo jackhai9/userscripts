@@ -3,6 +3,14 @@ import {
   waitForPromiseOrAbort,
 } from './abort.js';
 import { snapshotLadderProgress } from './ladder-progress.js';
+import {
+  combineLocalizedText,
+  formatLocalizedText,
+  isLocalizedText,
+  localizedText,
+  UI_LOCALE_EN,
+  UI_LOCALE_ZH_CN,
+} from '../contracts/panel-copy.js';
 
 export const CONTINUOUS_LADDER_COOLDOWN_MS = 1000;
 export const CONTINUOUS_LADDER_READY_CHECK_MS = 50;
@@ -20,22 +28,32 @@ const CONTINUOUS_LADDER_RECOVERY = Object.freeze({
   },
   precision_changed: {
     cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
-    reason: '价格精度已变化，下一轮按新精度继续',
+    reason: localizedText(
+      '价格精度已变化，下一轮按新精度继续',
+      'Precision changed; the next round will use the new precision',
+    ),
   },
   options_changed: {
     cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
-    reason: '比例、笔数或间距已变化，下一轮按新设置继续',
+    reason: localizedText(
+      '比例、笔数或间距已变化，下一轮按新设置继续',
+      'Ratio, orders, or gap changed; the next round will use the new settings',
+    ),
   },
 });
 
 const recordedRoundOutcomes = new WeakSet();
 const CONTINUOUS_LADDER_PHASE_TEXT = Object.freeze({
   running: null,
-  stopping: '停止中',
-  stopped: '已停止',
-  failed: '失败',
-  interrupted: '已中止',
+  stopping: localizedText('停止中', 'Stopping'),
+  stopped: localizedText('已停止', 'Stopped'),
+  failed: localizedText('失败', 'Failed'),
+  interrupted: localizedText('已中止', 'Interrupted'),
 });
+
+function isValidLocalizedValue(value) {
+  return isLocalizedText(value) || (typeof value === 'string' && value.trim() !== '');
+}
 
 function assertContinuousLadderProgress(progress) {
   if (
@@ -75,7 +93,7 @@ export function resolveContinuousLadderRecovery(error) {
   if (!recovery) return null;
   return {
     cooldownMs: recovery.cooldownMs,
-    reason: recovery.reason || error.message,
+    reason: recovery.reason || error.localizedText || error.message,
   };
 }
 
@@ -104,7 +122,7 @@ export function recordContinuousLadderRound(progress, outcome) {
 }
 
 function buildContinuousLadderProgressParts(label, phase, progress) {
-  if (typeof label !== 'string' || label.trim() === '') {
+  if (!isValidLocalizedValue(label)) {
     throw new Error('连续阶梯动作名称无效');
   }
   const phaseText = CONTINUOUS_LADDER_PHASE_TEXT[phase];
@@ -113,20 +131,38 @@ function buildContinuousLadderProgressParts(label, phase, progress) {
   }
   assertContinuousLadderProgress(progress);
 
-  const parts = [`连续${label}`];
+  const parts = [localizedText(
+    `连续${formatLocalizedText(label, UI_LOCALE_ZH_CN)}`,
+    `Continuous ${formatLocalizedText(label, UI_LOCALE_EN)}`,
+  )];
   if (phaseText !== null) parts.push(phaseText);
   parts.push(progress.startedRounds === 0
-    ? '0 轮'
-    : `${progress.completedRounds}/${progress.startedRounds} 轮`);
+    ? localizedText('0 轮', '0 rounds')
+    : localizedText(
+      `${progress.completedRounds}/${progress.startedRounds} 轮`,
+      `${progress.completedRounds}/${progress.startedRounds} rounds`,
+    ));
   if (progress.lastRound?.plannedOrders !== null) {
-    parts.push(
+    parts.push(localizedText(
       `本轮 ${progress.lastRound.currentPlanSubmittedOrders}/${progress.lastRound.plannedOrders} 笔`,
-    );
+      `This round ${progress.lastRound.currentPlanSubmittedOrders}/${progress.lastRound.plannedOrders}`,
+    ));
   } else if (progress.lastRound?.submittedOrders > 0) {
-    parts.push(`本轮 ${progress.lastRound.submittedOrders} 笔`);
+    parts.push(localizedText(
+      `本轮 ${progress.lastRound.submittedOrders} 笔`,
+      `This round ${progress.lastRound.submittedOrders}`,
+    ));
   }
-  parts.push(`累计 ${progress.submittedOrders} 笔`);
-  if (progress.cancelledOrders > 0) parts.push(`撤 ${progress.cancelledOrders} 笔`);
+  parts.push(localizedText(
+    `累计 ${progress.submittedOrders} 笔`,
+    `Total ${progress.submittedOrders}`,
+  ));
+  if (progress.cancelledOrders > 0) {
+    parts.push(localizedText(
+      `撤 ${progress.cancelledOrders} 笔`,
+      `Cancelled ${progress.cancelledOrders}`,
+    ));
+  }
   return parts;
 }
 
@@ -136,72 +172,100 @@ export function formatActiveContinuousLadderProgress(
   progress,
   roundProgress,
 ) {
-  if (typeof label !== 'string' || label.trim() === '') {
+  if (!isValidLocalizedValue(label)) {
     throw new Error('连续阶梯动作名称无效');
   }
-  if (detail !== null && (typeof detail !== 'string' || detail.trim() === '')) {
+  if (detail !== null && !isValidLocalizedValue(detail)) {
     throw new Error('连续阶梯当前进度信息无效');
   }
   assertContinuousLadderProgress(progress);
   const round = snapshotLadderProgress(roundProgress);
 
-  const parts = [`连续${label}`];
+  const parts = [localizedText(
+    `连续${formatLocalizedText(label, UI_LOCALE_ZH_CN)}`,
+    `Continuous ${formatLocalizedText(label, UI_LOCALE_EN)}`,
+  )];
   if (detail !== null) parts.push(detail);
-  parts.push(`${progress.completedRounds}/${progress.startedRounds + 1} 轮`);
+  parts.push(localizedText(
+    `${progress.completedRounds}/${progress.startedRounds + 1} 轮`,
+    `${progress.completedRounds}/${progress.startedRounds + 1} rounds`,
+  ));
   if (round.plannedOrders !== null) {
-    parts.push(`本轮 ${round.currentPlanSubmittedOrders}/${round.plannedOrders} 笔`);
+    parts.push(localizedText(
+      `本轮 ${round.currentPlanSubmittedOrders}/${round.plannedOrders} 笔`,
+      `This round ${round.currentPlanSubmittedOrders}/${round.plannedOrders}`,
+    ));
   } else if (round.submittedOrders > 0) {
-    parts.push(`本轮 ${round.submittedOrders} 笔`);
+    parts.push(localizedText(
+      `本轮 ${round.submittedOrders} 笔`,
+      `This round ${round.submittedOrders}`,
+    ));
   }
-  parts.push(`累计 ${progress.submittedOrders + round.submittedOrders} 笔`);
+  parts.push(localizedText(
+    `累计 ${progress.submittedOrders + round.submittedOrders} 笔`,
+    `Total ${progress.submittedOrders + round.submittedOrders}`,
+  ));
   const cancelledOrders = progress.cancelledOrders + round.cancelledOrders;
-  if (cancelledOrders > 0) parts.push(`撤 ${cancelledOrders} 笔`);
-  return parts.join(' · ');
+  if (cancelledOrders > 0) {
+    parts.push(localizedText(`撤 ${cancelledOrders} 笔`, `Cancelled ${cancelledOrders}`));
+  }
+  return combineLocalizedText(parts, ' · ');
 }
 
 export function formatContinuousLadderProgress(label, phase, progress, reason = null) {
-  if (reason !== null && (typeof reason !== 'string' || reason.trim() === '')) {
+  if (reason !== null && !isValidLocalizedValue(reason)) {
     throw new Error('连续阶梯停止原因无效');
   }
   const parts = buildContinuousLadderProgressParts(label, phase, progress);
   if (reason !== null) parts.push(reason);
-  return parts.join(' · ');
+  return combineLocalizedText(parts, ' · ');
 }
 
 export function formatContinuousLadderPositionClosedProgress(label, progress) {
-  if (typeof label !== 'string' || label.trim() === '') {
+  if (!isValidLocalizedValue(label)) {
     throw new Error('连续阶梯动作名称无效');
   }
   assertContinuousLadderProgress(progress);
   const parts = [
-    `连续${label}`,
-    '已结束',
-    '当前方向已无持仓',
+    localizedText(
+      `连续${formatLocalizedText(label, UI_LOCALE_ZH_CN)}`,
+      `Continuous ${formatLocalizedText(label, UI_LOCALE_EN)}`,
+    ),
+    localizedText('已结束', 'Ended'),
+    localizedText('当前方向已无持仓', 'No position in this direction'),
     progress.startedRounds === 0
-      ? '0 轮'
-      : `${progress.completedRounds}/${progress.startedRounds} 轮`,
-    `累计 ${progress.submittedOrders} 笔`,
+      ? localizedText('0 轮', '0 rounds')
+      : localizedText(
+        `${progress.completedRounds}/${progress.startedRounds} 轮`,
+        `${progress.completedRounds}/${progress.startedRounds} rounds`,
+      ),
+    localizedText(`累计 ${progress.submittedOrders} 笔`, `Total ${progress.submittedOrders}`),
   ];
-  if (progress.cancelledOrders > 0) parts.push(`撤 ${progress.cancelledOrders} 笔`);
-  return parts.join(' · ');
+  if (progress.cancelledOrders > 0) {
+    parts.push(localizedText(
+      `撤 ${progress.cancelledOrders} 笔`,
+      `Cancelled ${progress.cancelledOrders}`,
+    ));
+  }
+  return combineLocalizedText(parts, ' · ');
 }
 
 export function formatContinuousLadderWaitReason(phase, cooldownMs) {
   if (!Number.isFinite(cooldownMs) || cooldownMs < 0) {
     throw new Error('连续阶梯轮间等待时间无效');
   }
-  if (phase === 'waiting_ready') return '等待按钮恢复';
+  if (phase === 'waiting_ready') return localizedText('等待按钮恢复', 'Waiting for button');
   if (phase !== 'cooldown') throw new Error('连续阶梯等待阶段无效');
   const duration = cooldownMs % 1000 === 0
     ? `${cooldownMs / 1000}s`
     : `${cooldownMs}ms`;
-  return `${duration} 后继续`;
+  return localizedText(`${duration} 后继续`, `Continue in ${duration}`);
 }
 
 export function formatContinuousLadderWaitProgress(label, progress, phase, cooldownMs) {
   const parts = buildContinuousLadderProgressParts(label, 'running', progress);
   parts.splice(1, 0, formatContinuousLadderWaitReason(phase, cooldownMs));
-  return parts.join(' · ');
+  return combineLocalizedText(parts, ' · ');
 }
 
 function assertReadinessState(state) {

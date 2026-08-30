@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.167
+// @version      2.7.168
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -41,7 +41,11 @@ import {
 } from './contracts/binance-page-text.js';
 import {
   PANEL_COPY,
+  combineLocalizedText,
+  formatLocalizedText,
   formatPrecisionRefreshTooltip,
+  localizedText,
+  resolveUiLocaleFromPathname,
 } from './contracts/panel-copy.js';
 import {
   resolveCloseDisplayQuantities,
@@ -59,7 +63,6 @@ import {
   buildUsdtRebalancePlan,
   parseUsdtWalletBalances,
   resolveAllFuturesPositionStatus,
-  USDT_REBALANCE_ACCOUNTS,
   withFuturesTransferableBalance,
 } from './core/usdt-rebalance.js';
 import {
@@ -419,8 +422,9 @@ import {
   let chartOrdersRecoveryTask = null;
   let chartOrdersRecoveryLastError = null;
   let ladderStopRequested = false;
-  let ladderStatusText = '空闲';
-  let ladderStatusTitle = '空闲';
+  let activeUiLocale = resolveUiLocaleFromPathname(location.pathname);
+  let ladderStatusText = PANEL_COPY.state.idle;
+  let ladderStatusTitle = PANEL_COPY.state.idle;
   let usdtRebalanceEligibilityTimer = 0;
   let usdtRebalanceEligibilityEpoch = 0;
   let usdtRebalanceEligibilityTask = null;
@@ -607,9 +611,11 @@ import {
   }
 
   function createContinuousRecoverableLadderError(kind, message) {
-    const error = new Error(message);
+    const localizedMessage = localizeKnownUiStatus(message);
+    const error = new Error(formatLocalizedText(localizedMessage, 'zh-CN'));
     error.safeNoSubmit = true;
     error.continuousRecoveryKind = kind;
+    error.localizedText = localizedMessage;
     return error;
   }
 
@@ -790,14 +796,195 @@ import {
     return !areLadderOptionContextsEqual(current, plan.optionContext);
   }
 
-  function setLadderStatus(text, title = null) {
-    ladderStatusText = String(text || '空闲');
-    const statusTitle = String(title || ladderStatusText);
-    ladderStatusTitle = statusTitle;
+  function ui(text) {
+    return formatLocalizedText(text, activeUiLocale);
+  }
+
+  const LOCALIZED_STATUS_EXACT = new Map([
+    ['未知阶梯动作', 'Unknown ladder action'],
+    ['未识别当前交易对', 'Current symbol not recognized'],
+    ['交易对正在切换', 'Symbol is changing'],
+    ['当前交易对无挂单', 'No open orders for this symbol'],
+    ['打开当前委托时交易对已变化', 'Symbol changed while opening Open Orders'],
+    ['未能打开当前委托', 'Could not open Open Orders'],
+    ['未找到当前委托面板', 'Open Orders panel not found'],
+    ['未找到当前委托基础单', 'Basic Open Orders tab not found'],
+    ['未确认仅显示当前交易对挂单', 'Could not confirm that only this symbol is shown'],
+    ['读取挂单时交易对已变化', 'Symbol changed while reading open orders'],
+    ['未找到当前委托的全撤按钮', 'Cancel All was not found in Open Orders'],
+    ['撤单前交易对已变化', 'Symbol changed before cancellation'],
+    ['未能准备撤单页面，未打开确认弹窗', 'Could not prepare the cancellation page; confirmation was not opened'],
+    ['准备撤单时交易对已变化', 'Symbol changed while preparing cancellation'],
+    ['准备撤单时未找到当前委托面板', 'Open Orders panel was not found while preparing cancellation'],
+    ['准备撤单时未确认仅显示当前交易对挂单', 'Could not confirm this-symbol-only orders while preparing cancellation'],
+    ['准备撤单时未找到全撤按钮', 'Cancel All was not found while preparing cancellation'],
+    ['撤单确认弹窗已打开', 'Cancellation confirmation opened'],
+    ['撤单确认弹窗结构异常，未执行弹窗操作', 'Cancellation dialog changed; no dialog action was taken'],
+    ['确认撤单前交易对已变化', 'Symbol changed before cancellation was confirmed'],
+    ['未识别到撤单确认弹窗，未继续撤单流程', 'Cancellation dialog was not detected; cancellation stopped'],
+    ['撤单已取消', 'Cancellation cancelled'],
+    ['撤单已确认，等待挂单清空', 'Cancellation confirmed; waiting for open orders to clear'],
+    ['等待撤单完成时交易对已变化', 'Symbol changed while waiting for cancellation'],
+    ['等待撤单完成时未找到当前委托面板', 'Open Orders panel was not found while waiting for cancellation'],
+    ['等待撤单完成时未确认仅显示当前交易对挂单', 'Could not confirm this-symbol-only orders while waiting for cancellation'],
+    ['当前交易对挂单仍存在，已停止重新挂单', 'Open orders still exist for this symbol; replacement stopped'],
+    ['当前交易对挂单仍存在，撤单未完成', 'Open orders still exist for this symbol; cancellation is incomplete'],
+    ['原挂单已撤，继续阶梯挂单', 'Previous orders cancelled; continuing ladder placement'],
+    ['撤单已完成', 'Cancellation completed'],
+    ['未能恢复图表当前委托显示', 'Could not restore chart open-order display'],
+    ['阶梯任务运行中，请先停止阶梯挂单', 'A ladder task is running; stop it first'],
+    ['连续交易运行中，请先停止阶梯挂单', 'Continuous trading is running; stop it first'],
+    ['正在读取账户再平衡计划', 'Loading account rebalance plan'],
+    ['USDT 已按 5:4:1 分配', 'USDT is already allocated at 5:4:1'],
+    ['账户再平衡已取消', 'Account rebalance cancelled'],
+    ['已全部平仓', 'All positions closed'],
+    ['空闲', 'Idle'],
+    ['单击下单未执行：交易对正在切换', 'Single order not placed: symbol is changing'],
+    ['单击下单未执行：仓位确认中', 'Single order not placed: confirming positions'],
+    ['单击下单未执行：未找到数量输入框', 'Single order not placed: quantity input not found'],
+    ['单击下单未执行：未找到价格输入框', 'Single order not placed: price input not found'],
+    ['单击下单未执行：数量规则读取中', 'Single order not placed: loading quantity rules'],
+    ['交易对已切换', 'Symbol changed'],
+    ['开仓/平仓模式已切换', 'Trade mode changed'],
+    ['当前方向已无持仓', 'No position in this direction'],
+    ['价格精度已变化，下一轮按新精度继续', 'Precision changed; the next round will use the new precision'],
+    ['比例、笔数或间距已变化，下一轮按新设置继续', 'Ratio, orders, or gap changed; the next round will use the new settings'],
+    ['价格框或数量框未稳定', 'Price or quantity input did not stabilize'],
+    ['未找到价格输入框', 'Price input not found'],
+    ['未找到数量输入框', 'Quantity input not found'],
+    ['交易规则尚未就绪，请稍后重试', 'Trading rules are not ready; try again shortly'],
+    ['下单数量规则尚未就绪，请稍后重试', 'Order quantity rules are not ready; try again shortly'],
+    ['只做 Maker 未生效，请刷新页面后重试', 'Post Only is not active; refresh the page and try again'],
+    ['未识别价格精度', 'Price precision not recognized'],
+    ['重挂前价格精度已变化，已停止', 'Precision changed before replacement; stopped'],
+    ['读取交易规则时价格精度已变化，已停止', 'Precision changed while reading trading rules; stopped'],
+    ['读取下单数量时比例、笔数或间距已变化', 'Ratio, orders, or gap changed while reading order quantity'],
+    ['盘口已刷新，未读取到对手盘价格', 'Order book refreshed, but the opposite-side price is unavailable'],
+    ['刷新盘口后最小下单量未就绪', 'Minimum order quantity is not ready after refreshing the order book'],
+    ['执行中价格精度已变化，已停止', 'Precision changed during execution; stopped'],
+    ['执行中比例、笔数或间距已变化', 'Ratio, orders, or gap changed during execution'],
+    ['未能确定唯一的当前交易表单输入框', 'Could not identify one active trade-form input set'],
+    ['执行中价格输入框已消失', 'Price input disappeared during execution'],
+    ['执行中数量输入框已消失', 'Quantity input disappeared during execution'],
+    ['当前方向暂无可平数量', 'No closable quantity in this direction'],
+    ['查找当前委托', 'Locating Open Orders'],
+    ['未选中待替换挂单', 'No replacement orders were selected'],
+    ['原挂单未完成替换，已停止重新挂单', 'Previous orders were not fully replaced; replacement stopped'],
+    ['撤销待替换挂单前交易对已变化', 'Symbol changed before cancelling replacement orders'],
+    ['撤销待替换挂单时交易对已变化', 'Symbol changed while cancelling replacement orders'],
+    ['同向可撤挂单数量不足，已停止重新挂单', 'Not enough cancellable same-direction orders; replacement stopped'],
+    ['待替换挂单的撤单按钮已失效，已停止重新挂单', 'Replacement-order cancel control became unavailable; replacement stopped'],
+    ['待替换挂单的撤单按钮点击失败，已停止重新挂单', 'Could not click the replacement-order cancel control; replacement stopped'],
+    ['待替换挂单仍存在，已停止重新挂单', 'Replacement orders still exist; replacement stopped'],
+    ['待替换挂单状态未稳定，已停止重新挂单', 'Replacement-order state did not stabilize; replacement stopped'],
+    ['未能恢复隐藏其他合约状态', 'Could not restore Hide Other Symbols'],
+    ['账户余额已变化，已停止账户再平衡', 'Account balances changed; account rebalance stopped'],
+    ['划转后账户余额未及时更新', 'Account balances did not update after the transfer'],
+    ['当前不在可操作的合约页面', 'The current page is not an operable Futures trading page'],
+    ['当前仍有交易任务运行', 'A trading task is still running'],
+    ['未读取到全账户持仓数量', 'Could not read the account-wide position count'],
+    ['全账户仍有持仓', 'Positions still exist in the account'],
+    ['未读取到全账户当前委托数量', 'Could not read the account-wide open-order count'],
+    ['全账户仍有当前委托', 'Open orders still exist in the account'],
+    ['Binance 登录态已失效', 'Binance session has expired'],
+    ['Binance 请求超时', 'Binance request timed out'],
+  ]);
+
+  function localizeKnownUiStatus(text) {
+    if (typeof text !== 'string') return text;
+    const exactEnglish = LOCALIZED_STATUS_EXACT.get(text);
+    if (exactEnglish) return localizedText(text, exactEnglish);
+
+    let match = /^原交易对 (.+) 页面已离开，撤单确认跟踪已停止$/.exec(text);
+    if (match) return localizedText(text, `Left the original ${match[1]} page; cancellation tracking stopped`);
+
+    match = /^账户再平衡中 · (\d+\/\d+) 笔$/.exec(text);
+    if (match) return localizedText(text, `Account rebalance · ${match[1]} transfers`);
+    match = /^账户再平衡已完成 · (\d+\/\d+) 笔$/.exec(text);
+    if (match) return localizedText(text, `Account rebalance completed · ${match[1]} transfers`);
+    match = /^账户再平衡部分完成 · (\d+\/\d+) 笔 · (.+)$/.exec(text);
+    if (match) return localizedText(
+      text,
+      `Account rebalance partially completed · ${match[1]} transfers · ${formatLocalizedText(localizeKnownUiStatus(match[2]), 'en')}`,
+    );
+    match = /^账户再平衡失败 · (.+)$/.exec(text);
+    if (match) return localizedText(
+      text,
+      `Account rebalance failed · ${formatLocalizedText(localizeKnownUiStatus(match[1]), 'en')}`,
+    );
+
+    match = /^单击下单未执行：未找到可用(开仓|平仓)动作$/.exec(text);
+    if (match) return localizedText(
+      text,
+      `Single order not placed: no available ${match[1] === '开仓' ? 'open' : 'close'} action`,
+    );
+
+    const actionEnglish = {
+      开多: 'Open Long',
+      开空: 'Open Short',
+      平多: 'Close Long',
+      平空: 'Close Short',
+    };
+    match = /^单击(开多|开空|平多|平空)(准备中|确认中|已提交)(.*)$/.exec(text);
+    if (match) {
+      const phaseEnglish = {
+        准备中: 'preparing',
+        确认中: 'confirming',
+        已提交: 'submitted',
+      }[match[2]];
+      return localizedText(text, `${actionEnglish[match[1]]} single order ${phaseEnglish}${match[3]}`);
+    }
+    match = /^单击(开多|开空|平多|平空)失败：(.+)$/.exec(text);
+    if (match) return localizedText(
+      text,
+      `${actionEnglish[match[1]]} single order failed: ${formatLocalizedText(localizeKnownUiStatus(match[2]), 'en')}`,
+    );
+    match = /^单击下单失败：(.+)$/.exec(text);
+    if (match) return localizedText(
+      text,
+      `Single order failed: ${formatLocalizedText(localizeKnownUiStatus(match[1]), 'en')}`,
+    );
+
+    match = /^未能切换至(开仓|平仓)$/.exec(text);
+    if (match) return localizedText(text, `Could not switch to ${match[1] === '开仓' ? 'Open' : 'Close'} mode`);
+    match = /^订单簿(买盘|卖盘)不足 (\d+) 档，档幅 (\d+)$/.exec(text);
+    if (match) return localizedText(
+      text,
+      `${match[1] === '买盘' ? 'Bid' : 'Ask'} depth is below ${match[2]} levels at gap ${match[3]}`,
+    );
+    match = /^刷新后订单簿(买盘|卖盘)不足 (\d+) 档$/.exec(text);
+    if (match) return localizedText(
+      text,
+      `After refresh, ${match[1] === '买盘' ? 'bid' : 'ask'} depth is below ${match[2]} levels`,
+    );
+    match = /^读取(可开数量|可平数量)时价格精度已变化，已停止$/.exec(text);
+    if (match) return localizedText(text, `Precision changed while reading ${match[1] === '可开数量' ? 'openable' : 'closable'} quantity; stopped`);
+    match = /^下单按钮 (\d+) 秒内未(渲染完成|恢复可点击|达到可点击状态)$/.exec(text);
+    if (match) {
+      const ending = {
+        渲染完成: 'finish rendering',
+        恢复可点击: 'become clickable again',
+        达到可点击状态: 'become clickable',
+      }[match[2]];
+      return localizedText(text, `Order button did not ${ending} within ${match[1]} seconds`);
+    }
+    match = /^未找到(.*)方向的可撤基础单$/.exec(text);
+    if (match) return localizedText(text, `No cancellable Basic orders found for ${match[1] || 'the current'} direction`);
+    match = /^撤销 (\d+) 笔同向挂单$/.exec(text);
+    if (match) return localizedText(text, `Cancelling ${match[1]} same-direction orders`);
+
+    return text;
+  }
+
+  function setLadderStatus(text = PANEL_COPY.state.idle, title = null) {
+    ladderStatusText = localizeKnownUiStatus(text);
+    ladderStatusTitle = localizeKnownUiStatus(title ?? text);
+    const renderedText = ui(ladderStatusText);
+    const renderedTitle = ui(ladderStatusTitle);
     const statusEl = document.getElementById(LADDER_STATUS_ID);
     if (statusEl) {
-      if (statusEl.textContent !== ladderStatusText) statusEl.textContent = ladderStatusText;
-      if (statusEl.title !== statusTitle) statusEl.title = statusTitle;
+      if (statusEl.textContent !== renderedText) statusEl.textContent = renderedText;
+      if (statusEl.title !== renderedTitle) statusEl.title = renderedTitle;
     }
   }
 
@@ -1594,21 +1781,25 @@ import {
     const recommended = value === recommendation;
     const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
     const title = disabled
-      ? '价格精度暂不可调整'
+      ? ui(localizedText('价格精度暂不可调整', 'Precision is temporarily unavailable'))
       : selected && recommended
-        ? `当前且推荐的价格精度 ${value}`
+        ? ui(localizedText(`当前且推荐的价格精度 ${value}`, `Current and recommended precision: ${value}`))
         : selected
-        ? `当前价格精度 ${value}`
+        ? ui(localizedText(`当前价格精度 ${value}`, `Current precision: ${value}`))
         : recommended
-          ? `推荐价格精度 ${value}`
-          : `切换到价格精度 ${value}`;
+          ? ui(localizedText(`推荐价格精度 ${value}`, `Recommended precision: ${value}`))
+          : ui(localizedText(`切换到价格精度 ${value}`, `Switch to precision ${value}`));
     const activeStyle = selected
       ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};`
       : NEUTRAL_CONTROL_STYLE;
     const recommendationMarker = recommended
       ? '<span aria-hidden="true" style="position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--color-PrimaryYellow);box-shadow:0 0 0 1px #fff;"></span>'
       : '';
-    return `<button type="button" data-orderbook-precision-value="${value}"${disabledAttrs} aria-pressed="${selected}" aria-label="切换价格精度到 ${value}${recommended ? '，推荐档位' : ''}" title="${title}" style="position:relative;box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:30px;white-space:nowrap;overflow:hidden;cursor:pointer;${activeStyle}">${recommendationMarker}${formatOrderbookPrecisionShortcutLabel(value)}</button>`;
+    const ariaLabel = ui(localizedText(
+      `切换价格精度到 ${value}${recommended ? '，推荐档位' : ''}`,
+      `Switch precision to ${value}${recommended ? ', recommended' : ''}`,
+    ));
+    return `<button type="button" data-orderbook-precision-value="${value}"${disabledAttrs} aria-pressed="${selected}" aria-label="${ariaLabel}" title="${title}" style="position:relative;box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:30px;white-space:nowrap;overflow:hidden;cursor:pointer;${activeStyle}">${recommendationMarker}${formatOrderbookPrecisionShortcutLabel(value)}</button>`;
   }
 
   function renderOrderbookPrecisionShortcutSlots(options, current, recommendation, disabled) {
@@ -1643,7 +1834,8 @@ import {
             icon: '<svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;fill:currentColor;"><path d="M19.5 7.2A8 8 0 1 0 20 15h-2.25a6 6 0 1 1-.1-5.8L15 12h7V5l-2.5 2.2Z"></path></svg>',
           };
     const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
-    return `<button type="button" data-orderbook-precision-refresh="true" data-orderbook-precision-refresh-state="${feedbackState}"${disabledAttrs} title="${feedback.label}" aria-label="${feedback.label}" aria-live="polite" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};display:flex;align-items:center;justify-content:center;${NEUTRAL_CONTROL_STYLE}color:${feedback.color};">${feedback.icon}</button>`;
+    const feedbackLabel = ui(feedback.label);
+    return `<button type="button" data-orderbook-precision-refresh="true" data-orderbook-precision-refresh-state="${feedbackState}"${disabledAttrs} title="${feedbackLabel}" aria-label="${feedbackLabel}" aria-live="polite" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};display:flex;align-items:center;justify-content:center;${NEUTRAL_CONTROL_STYLE}color:${feedback.color};">${feedback.icon}</button>`;
   }
 
   function showOrderbookPrecisionRefreshFeedback(symbol, state) {
@@ -1710,8 +1902,8 @@ import {
     const canRefresh = !controlsBusy;
     const recommendationHtml = [
       '<div style="margin-top:10px;">',
-      '<div style="display:grid;grid-template-columns:36px repeat(4,minmax(0,1fr)) 32px;align-items:center;gap:4px;height:32px;overflow:hidden;">',
-      `<span title="${PANEL_COPY.tooltip.pricePrecision}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${PANEL_COPY.field.pricePrecision}</span>`,
+      `<div style="display:grid;grid-template-columns:${activeUiLocale === 'en' ? '52px' : '36px'} repeat(4,minmax(0,1fr)) 32px;align-items:center;gap:4px;height:32px;overflow:hidden;">`,
+      `<span title="${ui(PANEL_COPY.tooltip.pricePrecision)}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${ui(PANEL_COPY.field.pricePrecision)}</span>`,
       ...renderOrderbookPrecisionShortcutSlots(shortcutOptions, current, recommendation, controlsBusy),
       renderOrderbookPrecisionRefreshButton(symbol, !canRefresh),
       '</div>',
@@ -1984,10 +2176,31 @@ import {
       CLOSE_LONG: findCloseLongButton,
       CLOSE_SHORT: findCloseShortButton,
     };
+    const statusLabels = {
+      OPEN_LONG: PANEL_COPY.action.openLong,
+      OPEN_SHORT: PANEL_COPY.action.openShort,
+      CLOSE_LONG: PANEL_COPY.action.closeLong,
+      CLOSE_SHORT: PANEL_COPY.action.closeShort,
+    };
     return {
       ...spec,
+      statusLabel: statusLabels[actionType],
       buttonGetter: buttonGetters[actionType],
     };
+  }
+
+  function localizedActionStatus(label, zhCN, en) {
+    return localizedText(
+      `${formatLocalizedText(label, 'zh-CN')}${zhCN}`,
+      `${formatLocalizedText(label, 'en')}${en}`,
+    );
+  }
+
+  function localizedContinuousAction(label) {
+    return localizedText(
+      `连续${formatLocalizedText(label, 'zh-CN')}`,
+      `Continuous ${formatLocalizedText(label, 'en')}`,
+    );
   }
 
   function findTradeModeTabByMode(mode) {
@@ -2332,6 +2545,10 @@ import {
     const actionLabel = mode === 'OPEN' ? '开仓' : '平仓';
     const percentHint = minimumPercent ? `，需 >= ${minimumPercent}%` : '';
     const error = new Error(`数量低于最小下单量 ${minRequiredQty}${percentHint}`);
+    error.localizedText = localizedText(
+      error.message,
+      `Quantity is below the minimum order quantity ${minRequiredQty}${minimumPercent ? `; requires at least ${minimumPercent}%` : ''}`,
+    );
     const minimumText = minimumPercent
       ? `至少需要${percentLabel} ${minimumPercent}% 才能保持当前档位。`
       : '';
@@ -2341,6 +2558,10 @@ import {
       ? '脚本只会尝试替换当前交易对的同向开仓基础单，不会自动全撤。'
       : '脚本不会自动撤单。';
     error.statusTitle = `当前${percentLabel} ${percent}%，目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；${levelsText}${minimumText}${maxText}已尝试自动提高比例和自动降档；${replacementText}`;
+    error.localizedStatusTitle = localizedText(
+      error.statusTitle,
+      `Current ${mode === 'OPEN' ? 'open' : 'close'} ratio is ${percent}%. The target quantity is below the minimum order quantity ${minRequiredQty}, so the ladder cannot ${mode === 'OPEN' ? 'open' : 'close'}. ${levels ? `Current plan: ${levels} orders. ` : ''}${minimumPercent ? `At least ${minimumPercent}% is required to keep the current order count. ` : ''}${maxAutoFitPercent ? `Automatic limit: ${maxAutoFitPercent}%. ` : ''}The script tried increasing the ratio and reducing the order count. ${mode === 'OPEN' ? 'Only same-symbol, same-direction Basic open orders may be replaced; Cancel All is never automatic.' : 'Orders are not cancelled automatically.'}`,
+    );
     if (
       mode === 'OPEN' &&
       spec &&
@@ -2403,8 +2624,12 @@ import {
 
   function formatLadderRepriceDiagnostics(repriceAttempts, lastRepriceApiErrorCode) {
     if (repriceAttempts <= 0) return '';
-    const codeText = lastRepriceApiErrorCode == null ? '' : `，错误码 ${lastRepriceApiErrorCode}`;
-    return `（刷新盘口 ${repriceAttempts} 次${codeText}）`;
+    const zhCode = lastRepriceApiErrorCode == null ? '' : `，错误码 ${lastRepriceApiErrorCode}`;
+    const enCode = lastRepriceApiErrorCode == null ? '' : `, error code ${lastRepriceApiErrorCode}`;
+    return localizedText(
+      `（刷新盘口 ${repriceAttempts} 次${zhCode}）`,
+      ` (Order book refreshed ${repriceAttempts} times${enCode})`,
+    );
   }
 
   function refreshRemainingLadderOrders(plan, completedCount) {
@@ -2871,8 +3096,15 @@ import {
             throwIfAborted(abortSignal);
             button.click();
             setExecutionStatus(
-              `${plan.spec.label}挂单 ${done + 1}/${plan.orders.length} 确认中`,
-              `第 ${done + 1} 笔确认中`,
+              localizedActionStatus(
+                plan.spec.statusLabel,
+                `挂单 ${done + 1}/${plan.orders.length} 确认中`,
+                ` order ${done + 1}/${plan.orders.length} confirming`,
+              ),
+              localizedText(
+                `第 ${done + 1} 笔确认中`,
+                `Order ${done + 1} confirming`,
+              ),
             );
             waitForTradeUiMutation({ timeoutMs: 500 });
             await waitForOrderSubmitAcknowledgement(
@@ -2900,9 +3132,18 @@ import {
         const shouldPause = consecutiveRepriceAttempts >= LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS;
         const remainingLevels = plan.orders.length - done;
         const repriceDetail = shouldPause
-          ? `盘口持续移动，3s 后继续 · 剩余 ${remainingLevels} 档 · 已刷新 ${repriceAttempts} 次`
-          : `盘口已移动，刷新剩余 ${remainingLevels} 档 · 已刷新 ${repriceAttempts} 次`;
-        setExecutionStatus(`${plan.spec.label}：${repriceDetail}`, repriceDetail);
+          ? localizedText(
+            `盘口持续移动，3s 后继续 · 剩余 ${remainingLevels} 档 · 已刷新 ${repriceAttempts} 次`,
+            `Order book keeps moving; continue in 3s · ${remainingLevels} remaining · Refreshed ${repriceAttempts} times`,
+          )
+          : localizedText(
+            `盘口已移动，刷新剩余 ${remainingLevels} 档 · 已刷新 ${repriceAttempts} 次`,
+            `Order book moved; refreshing ${remainingLevels} remaining · Refreshed ${repriceAttempts} times`,
+          );
+        setExecutionStatus(
+          combineLocalizedText([plan.spec.statusLabel, repriceDetail], '：'),
+          repriceDetail,
+        );
         await waitForPromiseOrAbort(
           delay(shouldPause ? LADDER_REPRICE_PAUSE_MS : LADDER_REPRICE_DELAY_MS),
           abortSignal,
@@ -2916,7 +3157,11 @@ import {
       done++;
       consecutiveRepriceAttempts = 0;
       recordLadderSubmittedOrder(progress);
-      setExecutionStatus(`${plan.spec.label}已挂 ${done}/${plan.orders.length} 笔`, null);
+      setExecutionStatus(localizedActionStatus(
+        plan.spec.statusLabel,
+        `已挂 ${done}/${plan.orders.length} 笔`,
+        ` placed ${done}/${plan.orders.length}`,
+      ), null);
       throwIfAborted(abortSignal);
     }
     return { done, repriceAttempts, lastRepriceApiErrorCode };
@@ -2932,22 +3177,22 @@ import {
     const setStartStatus = (singleStatus, continuousDetail) => {
       setLadderStatus(
         continuousSession
-          ? `连续${spec.label} · ${continuousDetail}`
+          ? combineLocalizedText([localizedContinuousAction(spec.statusLabel), continuousDetail], ' · ')
           : singleStatus,
       );
     };
     const actionSymbol = getCurrentSymbol();
     if (!isCurrentObservedSymbol(actionSymbol)) {
       setStartStatus(
-        `${spec.label}尚未开始：交易对正在切换`,
-        '尚未开始 · 交易对正在切换',
+        localizedActionStatus(spec.statusLabel, '尚未开始：交易对正在切换', ' not started: symbol is changing'),
+        localizedText('尚未开始 · 交易对正在切换', 'Not started · Symbol is changing'),
       );
       return { status: 'not_started' };
     }
     if (cancelCurrentSymbolOpenOrdersTask) {
       setStartStatus(
-        `${spec.label}尚未开始：撤单处理中`,
-        '尚未开始 · 撤单处理中',
+        localizedActionStatus(spec.statusLabel, '尚未开始：撤单处理中', ' not started: cancelling orders'),
+        localizedText('尚未开始 · 撤单处理中', 'Not started · Cancelling orders'),
       );
       return { status: 'not_started' };
     }
@@ -2956,17 +3201,24 @@ import {
     }
     if (ladderTask) {
       setStartStatus(
-        `${spec.label}尚未开始：已有阶梯任务正在执行，请先停止`,
-        '尚未开始 · 已有阶梯任务正在执行，请先停止',
+        localizedActionStatus(spec.statusLabel, '尚未开始：已有阶梯任务正在执行，请先停止', ' not started: another ladder is running; stop it first'),
+        localizedText('尚未开始 · 已有阶梯任务正在执行，请先停止', 'Not started · Another ladder is running; stop it first'),
       );
       return { status: 'not_started' };
     }
     if (continuousLadderTask && !continuousSession) {
-      setLadderStatus(`${spec.label}尚未开始：连续交易正在运行，请先停止`);
+      setLadderStatus(localizedActionStatus(
+        spec.statusLabel,
+        '尚未开始：连续交易正在运行，请先停止',
+        ' not started: continuous trading is running; stop it first',
+      ));
       return { status: 'not_started' };
     }
     if (spec?.mode === 'CLOSE' && !isCloseSnapshotReady(actionSymbol)) {
-      setStartStatus(`${spec.label}尚未开始：仓位确认中`, '尚未开始 · 仓位确认中');
+      setStartStatus(
+        localizedActionStatus(spec.statusLabel, '尚未开始：仓位确认中', ' not started: confirming positions'),
+        localizedText('尚未开始 · 仓位确认中', 'Not started · Confirming positions'),
+      );
       return { status: 'not_started' };
     }
     ladderStopRequested = false;
@@ -2975,7 +3227,7 @@ import {
     const setExecutionStatus = (singleStatus, continuousDetail) => {
       if (continuousSession) {
         setLadderStatus(formatActiveContinuousLadderProgress(
-          spec.label,
+          spec.statusLabel,
           continuousDetail,
           continuousProgress,
           progress,
@@ -2994,7 +3246,10 @@ import {
       precision: readCurrentOrderbookPrecisionValue(),
     };
     const feedbackStartedAt = performance.now();
-    setExecutionStatus(`${spec.label}准备中`, '准备中');
+    setExecutionStatus(
+      localizedActionStatus(spec.statusLabel, '准备中', ' preparing'),
+      localizedText('准备中', 'Preparing'),
+    );
     const executionTask = (async () => {
       const {
         plan,
@@ -3031,8 +3286,8 @@ import {
         if (!isCurrentObservedSymbol(actionSymbol)) {
           if (!continuousSession) {
             setLadderStatus(formatInterruptedLadderProgress(
-              spec.label,
-              '交易对已切换',
+              spec.statusLabel,
+              localizedText('交易对已切换', 'Symbol changed'),
               progress,
             ));
           }
@@ -3046,13 +3301,13 @@ import {
         if (!continuousSession) {
           setLadderStatus(
             wasStopped
-              ? `${formatStoppedLadderProgress(spec.label, progress)}${diagnostics}`
-              : `${formatCompletedLadderProgress(
-                  spec.label,
+              ? combineLocalizedText([formatStoppedLadderProgress(spec.statusLabel, progress), diagnostics])
+              : combineLocalizedText([formatCompletedLadderProgress(
+                  spec.statusLabel,
                   done,
                   plan.orders.length,
                   progress,
-                )}${diagnostics}`,
+                ), diagnostics]),
           );
         }
         return {
@@ -3063,7 +3318,7 @@ import {
       .catch(async (e) => {
         if (isLadderStoppedError(e)) {
           if (!continuousSession && isCurrentObservedSymbol(actionSymbol)) {
-            setLadderStatus(formatStoppedLadderProgress(spec.label, progress));
+            setLadderStatus(formatStoppedLadderProgress(spec.statusLabel, progress));
           }
           return {
             status: 'stopped',
@@ -3072,7 +3327,7 @@ import {
         }
         if (isClosePositionCompletedError(e)) {
           if (!continuousSession && isCurrentObservedSymbol(actionSymbol)) {
-            setLadderStatus(formatPositionClosedLadderProgress(spec.label, progress));
+            setLadderStatus(formatPositionClosedLadderProgress(spec.statusLabel, progress));
           }
           return {
             status: 'position_closed',
@@ -3089,7 +3344,7 @@ import {
           } catch (positionError) {
             if (isClosePositionCompletedError(positionError)) {
               if (!continuousSession && isCurrentObservedSymbol(actionSymbol)) {
-                setLadderStatus(formatPositionClosedLadderProgress(spec.label, progress));
+                setLadderStatus(formatPositionClosedLadderProgress(spec.statusLabel, progress));
               }
               return {
                 status: 'position_closed',
@@ -3104,8 +3359,8 @@ import {
         if (!isCurrentObservedSymbol(actionSymbol)) {
           if (!continuousSession) {
             setLadderStatus(formatInterruptedLadderProgress(
-              spec.label,
-              '交易对已切换',
+              spec.statusLabel,
+              localizedText('交易对已切换', 'Symbol changed'),
               progress,
             ));
           }
@@ -3115,17 +3370,23 @@ import {
             progress: snapshotLadderProgress(progress),
           };
         }
-        const failureMessage = e?.message || '未知错误';
-        const failureText = formatFailedLadderProgress(spec.label, failureMessage, progress);
+        const failureMessage = localizeKnownUiStatus(
+          e?.localizedText || e?.message || localizedText('未知错误', 'Unknown error'),
+        );
+        const failureText = formatFailedLadderProgress(spec.statusLabel, failureMessage, progress);
         const failureTitle = e?.statusTitle
-          ? formatFailedLadderProgress(spec.label, e.statusTitle, progress)
+          ? formatFailedLadderProgress(
+            spec.statusLabel,
+            localizeKnownUiStatus(e.localizedStatusTitle || e.statusTitle),
+            progress,
+          )
           : failureText;
         if (!continuousSession) setLadderStatus(failureText, failureTitle);
         return {
           status: 'failed',
           error: e,
           reason: failureMessage,
-          titleReason: e?.statusTitle || failureMessage,
+          titleReason: e?.localizedStatusTitle || e?.statusTitle || failureMessage,
           progress: snapshotLadderProgress(progress),
         };
       })
@@ -3188,8 +3449,8 @@ import {
 
   function getContinuousLadderStopReason(reason) {
     const reasonTextByCode = {
-      symbol_changed: '交易对已切换',
-      mode_changed: '开仓/平仓模式已切换',
+      symbol_changed: localizedText('交易对已切换', 'Symbol changed'),
+      mode_changed: localizedText('开仓/平仓模式已切换', 'Trade mode changed'),
     };
     const reasonText = reasonTextByCode[reason];
     if (!reasonText) throw new Error(`未知连续交易停止原因：${reason}`);
@@ -3216,7 +3477,11 @@ import {
 
     const actionSymbol = getCurrentSymbol();
     if (!isCurrentObservedSymbol(actionSymbol)) {
-      setLadderStatus(`${spec.label}尚未开始：交易对正在切换`);
+      setLadderStatus(localizedActionStatus(
+        spec.statusLabel,
+        '尚未开始：交易对正在切换',
+        ' not started: symbol is changing',
+      ));
       return { status: 'not_started' };
     }
 
@@ -3235,7 +3500,7 @@ import {
         recordContinuousLadderRound(continuousProgress, outcome);
         if (outcome.status === 'position_closed') {
           setLadderStatus(formatContinuousLadderPositionClosedProgress(
-            spec.label,
+            spec.statusLabel,
             continuousProgress,
           ));
           return outcome;
@@ -3245,7 +3510,7 @@ import {
           : resolveContinuousLadderRecovery(outcome.error);
         if (outcome.status !== 'completed' && !recovery) {
           setContinuousLadderProgressStatus(
-            spec.label,
+            spec.statusLabel,
             outcome.status,
             continuousProgress,
             outcome.reason || null,
@@ -3254,7 +3519,7 @@ import {
           return outcome;
         }
         if (!recovery) {
-          setContinuousLadderProgressStatus(spec.label, 'running', continuousProgress);
+          setContinuousLadderProgressStatus(spec.statusLabel, 'running', continuousProgress);
         }
 
         const readiness = await waitForContinuousLadderNextRound({
@@ -3277,24 +3542,26 @@ import {
           cooldownMs: recovery?.cooldownMs,
           onWaitStateChange: ({ phase, cooldownMs }) => {
             const waitStatus = formatContinuousLadderWaitProgress(
-              spec.label,
+              spec.statusLabel,
               continuousProgress,
               phase,
               cooldownMs,
             );
-            setLadderStatus(recovery ? `${waitStatus} · ${recovery.reason}` : waitStatus);
+            setLadderStatus(recovery
+              ? combineLocalizedText([waitStatus, recovery.reason], ' · ')
+              : waitStatus);
           },
         });
         if (readiness.status === 'stopped') {
           if (readiness.reason === 'position_flat') {
             setLadderStatus(formatContinuousLadderPositionClosedProgress(
-              spec.label,
+              spec.statusLabel,
               continuousProgress,
             ));
             return { status: 'position_closed', reason: '当前方向已无持仓' };
           }
           setContinuousLadderProgressStatus(
-            spec.label,
+            spec.statusLabel,
             'stopped',
             continuousProgress,
             getContinuousLadderStopReason(readiness.reason),
@@ -3308,16 +3575,16 @@ import {
     continuousLadderTask = executionTask
       .catch((e) => {
         if (isLadderStoppedError(e)) {
-          setContinuousLadderProgressStatus(spec.label, 'stopped', continuousProgress);
+          setContinuousLadderProgressStatus(spec.statusLabel, 'stopped', continuousProgress);
           return { status: 'stopped' };
         }
         err('连续阶梯交易失败:', e);
         setContinuousLadderProgressStatus(
-          spec.label,
+          spec.statusLabel,
           'failed',
           continuousProgress,
-          e?.message || '未知错误',
-          e?.statusTitle || e?.message || '未知错误',
+          localizeKnownUiStatus(e?.localizedText || e?.message || localizedText('未知错误', 'Unknown error')),
+          localizeKnownUiStatus(e?.localizedStatusTitle || e?.statusTitle || e?.localizedText || e?.message || localizedText('未知错误', 'Unknown error')),
         );
         return { status: 'failed', error: e };
       })
@@ -3336,7 +3603,7 @@ import {
 
   function stopLadder() {
     if (!ladderTask && !continuousLadderTask) {
-      setLadderStatus('空闲');
+      setLadderStatus(PANEL_COPY.state.idle);
       return;
     }
     const activeActionType = activeLadderActionType || activeContinuousLadderActionType;
@@ -3356,17 +3623,17 @@ import {
           throw new Error('运行中的连续阶梯任务缺少轮次进度');
         }
         setLadderStatus(formatActiveContinuousLadderProgress(
-          activeSpec.label,
-          '停止中',
+          activeSpec.statusLabel,
+          localizedText('停止中', 'Stopping'),
           activeContinuousLadderProgress,
           activeContinuousLadderRoundProgress,
         ));
       } else {
-        setLadderStatus(`${activeSpec.label}停止中`);
+        setLadderStatus(localizedActionStatus(activeSpec.statusLabel, '停止中', ' stopping'));
       }
     } else {
       setContinuousLadderProgressStatus(
-        activeSpec.label,
+        activeSpec.statusLabel,
         'stopping',
         activeContinuousLadderProgress,
       );
@@ -4073,8 +4340,11 @@ import {
       if (outcome.status === 'dialog_open') {
         const { dialog } = outcome;
         setExecutionStatus(
-          `${plan.spec.label}：单行撤单确认弹窗已打开`,
-          '单行撤单确认弹窗已打开',
+          combineLocalizedText([
+            plan.spec.statusLabel,
+            localizedText('单行撤单确认弹窗已打开', 'Single-order cancellation dialog opened'),
+          ], '：'),
+          localizedText('单行撤单确认弹窗已打开', 'Single-order cancellation dialog opened'),
         );
         const dialogClosed = await waitForDialogToClose(
           dialog,
@@ -4882,7 +5152,11 @@ import {
   ) {
     throwIfAborted(abortSignal);
     const setPlanStepStatus = (message) => {
-      setExecutionStatus(`${plan.spec.label}：${message}`, message);
+      const localizedMessage = localizeKnownUiStatus(message);
+      setExecutionStatus(
+        combineLocalizedText([plan.spec.statusLabel, localizedMessage], '：'),
+        localizedMessage,
+      );
     };
     const symbol = getCurrentSymbol();
     if (!isCurrentObservedSymbol(symbol) || symbol !== plan?.symbol) {
@@ -5024,14 +5298,23 @@ import {
   }
 
   function formatLadderPlanDetail(plan) {
-    const levelText = plan.levels === plan.requestedLevels
+    const zhLevelText = plan.levels === plan.requestedLevels
       ? `${plan.levels}档`
       : `${plan.levels}/${plan.requestedLevels}档`;
-    return `${plan.percent}% / ${levelText} / 幅${plan.ladderStep}`;
+    const enLevelText = plan.levels === plan.requestedLevels
+      ? `${plan.levels} orders`
+      : `${plan.levels}/${plan.requestedLevels} orders`;
+    return localizedText(
+      `${plan.percent}% / ${zhLevelText} / 幅${plan.ladderStep}`,
+      `${plan.percent}% / ${enLevelText} / gap ${plan.ladderStep}`,
+    );
   }
 
   function formatLadderPlanStatus(plan) {
-    return `${plan.spec.label}计划：${formatLadderPlanDetail(plan)}`;
+    return combineLocalizedText([
+      localizedActionStatus(plan.spec.statusLabel, '计划', ' plan'),
+      formatLadderPlanDetail(plan),
+    ], '：');
   }
 
   function isReplaceableCloseLadderOpenOrdersFailure(plan, error) {
@@ -5070,13 +5353,22 @@ import {
 
   function formatOpenOrdersReplacementDetail(plan) {
     if (plan?.spec?.mode === 'OPEN') {
-      return '同向开仓挂单可能占用可开数量，准备撤销后重新挂单';
+      return localizedText(
+        '同向开仓挂单可能占用可开数量，准备撤销后重新挂单',
+        'Same-direction open orders may consume available quantity; cancelling before replacement',
+      );
     }
-    return '同向平仓挂单占用可平数量，准备撤销后重新挂单';
+    return localizedText(
+      '同向平仓挂单占用可平数量，准备撤销后重新挂单',
+      'Same-direction close orders consume available quantity; cancelling before replacement',
+    );
   }
 
   function formatOpenOrdersReplacementStatus(plan) {
-    return `${plan.spec.label}：${formatOpenOrdersReplacementDetail(plan)}`;
+    return combineLocalizedText([
+      plan.spec.statusLabel,
+      formatOpenOrdersReplacementDetail(plan),
+    ], '：');
   }
 
   function createLadderExpectedContext(plan) {
@@ -5528,22 +5820,33 @@ import {
   }
 
   function formatUsdtRebalanceConfirmation(plan) {
+    const accountLabels = {
+      FUNDING: localizedText('资金', 'Funding'),
+      MAIN: localizedText('现货', 'Spot'),
+      UMFUTURE: localizedText('U本位合约', 'USDⓈ-M Futures'),
+    };
     const accountText = (balances) => [
-      `资金 ${balances.FUNDING}`,
-      `现货 ${balances.MAIN}`,
-      `U本位 ${balances.UMFUTURE}`,
+      `${ui(accountLabels.FUNDING)} ${balances.FUNDING}`,
+      `${ui(accountLabels.MAIN)} ${balances.MAIN}`,
+      `${ui(accountLabels.UMFUTURE)} ${balances.UMFUTURE}`,
     ].join(' / ');
     const transferText = plan.transfers.map((transfer, index) => {
-      const from = USDT_REBALANCE_ACCOUNTS[transfer.from].label;
-      const to = USDT_REBALANCE_ACCOUNTS[transfer.to].label;
-      return `${index + 1}. ${from} → ${to}：${transfer.amount} USDT`;
+      const from = ui(accountLabels[transfer.from]);
+      const to = ui(accountLabels[transfer.to]);
+      return `${index + 1}. ${from} → ${to}: ${transfer.amount} USDT`;
     }).join('\n');
     return [
-      '将全部可划转 USDT 调整为 资金 50% / 现货 40% / U本位 10%',
-      `当前：${accountText(plan.before)}`,
-      `目标：${accountText(plan.targets)}`,
+      ui(localizedText(
+        '将全部可划转 USDT 调整为 资金 50% / 现货 40% / U本位 10%',
+        'Reallocate all transferable USDT to Funding 50% / Spot 40% / USDⓈ-M Futures 10%',
+      )),
+      `${ui(localizedText('当前', 'Current'))}: ${accountText(plan.before)}`,
+      `${ui(localizedText('目标', 'Target'))}: ${accountText(plan.targets)}`,
       transferText,
-      `确认执行 ${plan.transfers.length} 笔划转？`,
+      ui(localizedText(
+        `确认执行 ${plan.transfers.length} 笔划转？`,
+        `Confirm ${plan.transfers.length} transfer${plan.transfers.length === 1 ? '' : 's'}?`,
+      )),
     ].filter(Boolean).join('\n\n');
   }
 
@@ -5798,9 +6101,9 @@ import {
     usdtRebalanceEligibilityTimer = 0;
     usdtRebalanceEligibilityEpoch += 1;
     if (!usdtRebalanceTask) usdtRebalanceEligible = false;
-    const resetFlatStatus = !usdtRebalanceTask && ladderStatusText === '已全部平仓';
+    const resetFlatStatus = !usdtRebalanceTask && ladderStatusText === PANEL_COPY.state.allPositionsClosed;
     if (resetFlatStatus) {
-      setLadderStatus('空闲');
+      setLadderStatus(PANEL_COPY.state.idle);
     }
     if (hadPendingTimer || wasEligible || resetFlatStatus) scheduleRenderPanel();
   }
@@ -5817,7 +6120,7 @@ import {
     if (epoch !== usdtRebalanceEligibilityEpoch) return false;
     if (positionState.status !== 'flat') return false;
     usdtRebalanceEligible = true;
-    setLadderStatus('已全部平仓');
+    setLadderStatus(PANEL_COPY.state.allPositionsClosed);
     scheduleRenderPanel();
     return true;
   }
@@ -6211,8 +6514,8 @@ import {
 
   function ladderOptionRow(title, tooltip, options, selected, group, suffix = '') {
     return [
-      '<div style="display:grid;grid-template-columns:36px repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">',
-      `<span title="${tooltip}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${title}</span>`,
+      `<div style="display:grid;grid-template-columns:${activeUiLocale === 'en' ? '52px' : '36px'} repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">`,
+      `<span title="${ui(tooltip)}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${ui(title)}</span>`,
       ...options.map((value) => ladderOptionButton(`${value}${suffix}`, value, Number(value) === Number(selected), group)),
       '</div>',
     ].join('');
@@ -6224,10 +6527,10 @@ import {
     const background = isBuyTone ? 'var(--color-GreenAlpha01)' : 'var(--color-RedAlpha01)';
     const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
     const continuousHint = actionType.startsWith('CLOSE_')
-      ? ' title="Option/Alt + 单击：连续交易"'
+      ? ` title="${ui(PANEL_COPY.tooltip.continuousClose)}"`
       : '';
     const cursor = disabled ? 'not-allowed' : 'pointer';
-    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs}${continuousHint} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${cursor};opacity:1;">${label}</button>`;
+    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs}${continuousHint} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${cursor};opacity:1;">${ui(label)}</button>`;
   }
 
   function ladderExecutionButton(actionType, label, tone, disabled = false) {
@@ -6236,7 +6539,7 @@ import {
       return ladderActionButton(actionType, label, tone, disabled);
     }
     const stopLabel = PANEL_COPY.action.stopLadderByAction[actionType];
-    return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" style="box-sizing:border-box;min-width:0;height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;white-space:nowrap;overflow:hidden;cursor:pointer;">${stopLabel}</button>`;
+    return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" style="box-sizing:border-box;min-width:0;height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;white-space:nowrap;overflow:hidden;cursor:pointer;">${ui(stopLabel)}</button>`;
   }
 
   function getLadderControlSections(tradeMode, closeContext, symbol, precision) {
@@ -6246,13 +6549,13 @@ import {
       || cancelCurrentSymbolOpenOrdersBlocksLadderActions;
     if (!['OPEN', 'CLOSE'].includes(tradeMode)) {
       return {
-        optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待开仓/平仓状态</div>`],
+        optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">${ui(PANEL_COPY.state.waitingTradeMode)}</div>`],
         actionButtons: [],
       };
     }
     if (!precision) {
       return {
-        optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">等待价格精度</div>`],
+        optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">${ui(PANEL_COPY.state.waitingPricePrecision)}</div>`],
         actionButtons: [],
       };
     }
@@ -6327,7 +6630,7 @@ import {
         `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}" data-panel-group="precision"></div>`,
         '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:12px;">',
         ...controlSections.actionButtons,
-        `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${PANEL_COPY.action.cancel}</button>`,
+        `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${ui(PANEL_COPY.action.cancel)}</button>`,
         '</div>',
       ].join('');
       if (ladderPanelBodySignature !== bodyHtml) {
@@ -6336,8 +6639,9 @@ import {
       }
       const cancelButton = body.querySelector('[data-ladder-cancel-symbol="true"]');
       if (cancelButton) {
-        if (cancelButton.textContent !== cancelPresentation.label) {
-          cancelButton.textContent = cancelPresentation.label;
+        const cancelLabel = ui(cancelPresentation.label);
+        if (cancelButton.textContent !== cancelLabel) {
+          cancelButton.textContent = cancelLabel;
         }
         if (cancelButton.disabled !== cancelPresentation.disabled) {
           cancelButton.disabled = cancelPresentation.disabled;
@@ -6355,8 +6659,10 @@ import {
       if (statusRow.style.visibility !== 'visible') statusRow.style.visibility = 'visible';
     }
     if (status) {
-      if (status.textContent !== ladderStatusText) status.textContent = ladderStatusText;
-      if (status.title !== ladderStatusTitle) status.title = ladderStatusTitle;
+      const renderedText = ui(ladderStatusText);
+      const renderedTitle = ui(ladderStatusTitle);
+      if (status.textContent !== renderedText) status.textContent = renderedText;
+      if (status.title !== renderedTitle) status.title = renderedTitle;
     }
     if (rebalanceButton) {
       const shouldShow = usdtRebalanceEligible || Boolean(usdtRebalanceTask);
@@ -6403,11 +6709,11 @@ import {
     let finalText = '';
     let constraintText = '';
     if (!precisionReady) {
-      finalText = '等待价格精度';
+      finalText = ui(PANEL_COPY.state.waitingPricePrecision);
     } else if (!modeReady) {
-      finalText = '等待开仓/平仓状态';
+      finalText = ui(PANEL_COPY.state.waitingTradeMode);
     } else if (rulesPending || !effectiveMinQty) {
-      finalText = '最小量读取中';
+      finalText = ui(PANEL_COPY.state.minimumQuantityLoading);
     } else if (isValidMultiplier(multiplier) && finalQty) {
       formulaPrefixText = `${effectiveMinQty} × ${multiplier} =`;
       finalText = finalQty;
@@ -6415,7 +6721,7 @@ import {
         constraintText = `≥${qtyRuleContext.minNotional}U @ ${qtyRuleContext.referencePrice}`;
       }
     } else {
-      finalText = '请输入正整数倍数';
+      finalText = ui(PANEL_COPY.state.positiveIntegerMultiplier);
     }
     if (formulaPrefixEl) {
       if (formulaPrefixEl.textContent !== formulaPrefixText) {
@@ -6445,30 +6751,50 @@ import {
       } else if (tradeMode === 'CLOSE') {
         multiplierHintText = PANEL_COPY.field.minimumCloseQuantity;
       }
-      if (multiplierHintEl.textContent !== multiplierHintText) {
-        multiplierHintEl.textContent = multiplierHintText;
+      const renderedMultiplierHint = ui(multiplierHintText);
+      if (multiplierHintEl.textContent !== renderedMultiplierHint) {
+        multiplierHintEl.textContent = renderedMultiplierHint;
       }
     }
-    let hintText = PANEL_COPY.field.clickOrderbook;
+    let hintText = ui(PANEL_COPY.field.clickOrderbook);
     let hintTitle = '';
     if (hintEl) {
       if (tradeMode === 'OPEN') {
-        const action = openSide === 'LONG' ? '开多' : '开空';
-        hintTitle = `开仓模式：单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
+        const action = openSide === 'LONG' ? PANEL_COPY.side.openLong : PANEL_COPY.side.openShort;
+        hintTitle = ui(localizedText(
+          `开仓模式：单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : formatLocalizedText(action, 'zh-CN')}`,
+          `Open mode: clicking an order-book price will ${CFG.SAFE_MODE ? 'fill the quantity' : formatLocalizedText(action, 'en')}`,
+        ));
       } else if (!rawCloseReady) {
-        hintTitle = isUsingCache
-          ? '平仓模式：正在确认可平仓位，暂沿用上次识别结果'
-          : '平仓模式：正在确认可平仓位';
+        hintTitle = ui(isUsingCache
+          ? localizedText(
+            '平仓模式：正在确认可平仓位，暂沿用上次识别结果',
+            'Close mode: confirming positions; showing the last known result',
+          )
+          : localizedText('平仓模式：正在确认可平仓位', 'Close mode: confirming positions'));
       } else if (closeMode === 'single_long') {
-        hintTitle = `平仓模式：当前仅有多仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平多'}`;
+        hintTitle = ui(localizedText(
+          `平仓模式：当前仅有多仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平多'}`,
+          `Close mode: long position only; clicking an order-book price will ${CFG.SAFE_MODE ? 'fill the quantity' : 'close long'}`,
+        ));
       } else if (closeMode === 'single_short') {
-        hintTitle = `平仓模式：当前仅有空仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平空'}`;
+        hintTitle = ui(localizedText(
+          `平仓模式：当前仅有空仓，单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : '平空'}`,
+          `Close mode: short position only; clicking an order-book price will ${CFG.SAFE_MODE ? 'fill the quantity' : 'close short'}`,
+        ));
       } else if (closeMode === 'dual') {
         const action = closeSide === 'LONG' ? '平多' : '平空';
-        hintTitle = `平仓模式：双向持仓时单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
+        const englishAction = closeSide === 'LONG' ? 'close long' : 'close short';
+        hintTitle = ui(localizedText(
+          `平仓模式：双向持仓时单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`,
+          `Close mode: hedged positions; clicking an order-book price will ${CFG.SAFE_MODE ? 'fill the quantity' : englishAction}`,
+        ));
       } else {
-        hintText = '暂无可平仓位';
-        hintTitle = '平仓模式：当前交易对暂无可平仓位';
+        hintText = ui(PANEL_COPY.state.noClosablePosition);
+        hintTitle = ui(localizedText(
+          '平仓模式：当前交易对暂无可平仓位',
+          'Close mode: no position to close for this symbol',
+        ));
       }
       if (hintEl.textContent !== hintText) hintEl.textContent = hintText;
       if (hintEl.title !== hintTitle) hintEl.title = hintTitle;
@@ -6496,8 +6822,10 @@ import {
       const isActive = isOpenMode
         ? openSide === 'LONG'
         : closeMode === 'single_long' || (closeMode !== 'single_short' && closeSide === 'LONG');
-      const sideLongText = isOpenMode ? '开多' : '平多';
+      const sideLongText = ui(localizedText(isOpenMode ? '开多' : '平多', 'Long'));
+      const sideLongTitle = ui(isOpenMode ? PANEL_COPY.side.openLong : PANEL_COPY.side.closeLong);
       if (sideLongBtn.textContent !== sideLongText) sideLongBtn.textContent = sideLongText;
+      if (sideLongBtn.title !== sideLongTitle) sideLongBtn.title = sideLongTitle;
       sideLongBtn.style.order = '0';
       if (sideLongBtn.disabled !== isDisabled) sideLongBtn.disabled = isDisabled;
       if (sideLongBtn.getAttribute('aria-checked') !== String(isActive)) {
@@ -6524,8 +6852,10 @@ import {
       const isActive = isOpenMode
         ? openSide === 'SHORT'
         : closeMode === 'single_short' || (closeMode !== 'single_long' && closeSide === 'SHORT');
-      const sideShortText = isOpenMode ? '开空' : '平空';
+      const sideShortText = ui(localizedText(isOpenMode ? '开空' : '平空', 'Short'));
+      const sideShortTitle = ui(isOpenMode ? PANEL_COPY.side.openShort : PANEL_COPY.side.closeShort);
       if (sideShortBtn.textContent !== sideShortText) sideShortBtn.textContent = sideShortText;
+      if (sideShortBtn.title !== sideShortTitle) sideShortBtn.title = sideShortTitle;
       sideShortBtn.style.order = '1';
       if (sideShortBtn.disabled !== isDisabled) sideShortBtn.disabled = isDisabled;
       if (sideShortBtn.getAttribute('aria-checked') !== String(isActive)) {
@@ -6678,23 +7008,24 @@ import {
     panel.style.fontFamily = 'BinancePlex, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
     panel.style.boxShadow = 'none';
     panel.style.visibility = 'hidden';
+    const initialStatus = ui(PANEL_COPY.state.idle);
     panel.innerHTML = [
       '<div data-panel-zone="single-order">',
-      `<div title="${PANEL_COPY.tooltip.singleOrder}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${PANEL_COPY.section.singleOrder}</div>`,
+      `<div title="${ui(PANEL_COPY.tooltip.singleOrder)}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${ui(PANEL_COPY.section.singleOrder)}</div>`,
       '<div data-panel-group="direction" style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden;">',
-      `<span id="${MODE_HINT_ID}" style="width:78px;flex:0 0 78px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${PANEL_COPY.field.clickOrderbook}</span>`,
+      `<span id="${MODE_HINT_ID}" style="width:78px;flex:0 0 78px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ui(PANEL_COPY.field.clickOrderbook)}</span>`,
       `<div data-side-selector role="radiogroup" aria-labelledby="${MODE_HINT_ID}" style="box-sizing:border-box;display:grid;grid-template-columns:54px 54px;height:32px;border:1px solid var(--color-InputLine);border-radius:6px;overflow:hidden;background:${CONTROL_BACKGROUND_COLOR};">`,
-      `<button id="${SIDE_LONG_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-radius:5px 0 0 5px;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平多</button>`,
-      `<button id="${SIDE_SHORT_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-left:1px solid var(--color-InputLine);border-radius:0 5px 5px 0;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">平空</button>`,
+      `<button id="${SIDE_LONG_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-radius:5px 0 0 5px;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">${ui(PANEL_COPY.side.long)}</button>`,
+      `<button id="${SIDE_SHORT_ID}" type="button" role="radio" aria-checked="false" style="width:54px;height:30px;padding:0;border:0;border-left:1px solid var(--color-InputLine);border-radius:0 5px 5px 0;background:${CONTROL_BACKGROUND_COLOR};color:${CONTROL_TEXT_COLOR};font-size:14px;font-weight:${CONTROL_FONT_WEIGHT};line-height:30px;cursor:pointer;">${ui(PANEL_COPY.side.short)}</button>`,
       '</div>',
       '</div>',
       '<div data-panel-group="multiplier" style="margin-top:8px;">',
       '<div data-multiplier-controls style="display:flex;align-items:center;justify-content:flex-start;gap:6px;height:32px;overflow:hidden;">',
-      `<label id="${MULTIPLIER_HINT_ID}" for="${INPUT_ID}" style="color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;">${PANEL_COPY.field.minimumOrderQuantity}</label>`,
+      `<label id="${MULTIPLIER_HINT_ID}" for="${INPUT_ID}" style="color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;">${ui(PANEL_COPY.field.minimumOrderQuantity)}</label>`,
       `<input id="${INPUT_ID}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid ${INPUT_BORDER_COLOR};background:${INPUT_DEFAULT_BG};color:${PRIMARY_EMPHASIS_COLOR};caret-color:${INPUT_FOCUS_COLOR};outline:none;font-size:15px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:32px;transition:border-color .16s ease,background-color .16s ease,box-shadow .16s ease;">`,
-      `<span style="font-size:13px;font-weight:${CONTROL_FONT_WEIGHT};color:${CONTROL_TEXT_COLOR};">倍</span>`,
-      `<button id="${DEC_ID}" type="button" aria-label="减少倍数" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">-</button>`,
-      `<button id="${INC_ID}" type="button" aria-label="增加倍数" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">+</button>`,
+      `<span style="font-size:13px;font-weight:${CONTROL_FONT_WEIGHT};color:${CONTROL_TEXT_COLOR};">${ui(PANEL_COPY.field.multiplierUnit)}</span>`,
+      `<button id="${DEC_ID}" type="button" aria-label="${ui(PANEL_COPY.aria.decrementMultiplier)}" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">-</button>`,
+      `<button id="${INC_ID}" type="button" aria-label="${ui(PANEL_COPY.aria.incrementMultiplier)}" style="width:32px;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:18px;line-height:30px;${NEUTRAL_CONTROL_STYLE}">+</button>`,
       '</div>',
       '<div data-multiplier-calculation style="display:flex;align-items:center;gap:7px;height:18px;margin-top:4px;overflow:hidden;white-space:nowrap;">',
       `<span data-multiplier-formula-prefix style="flex:0 1 auto;min-width:0;color:${MUTED_TEXT_COLOR};overflow:hidden;text-overflow:ellipsis;"></span>`,
@@ -6705,12 +7036,12 @@ import {
       '</div>',
       '</div>',
       `<div data-panel-group="ladder" style="margin:12px -10px 0;padding:11px 10px 0;border-top:2px solid ${PANEL_DIVIDER_COLOR};">`,
-      `<div title="${PANEL_COPY.tooltip.ladderMaker}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${PANEL_COPY.section.ladderMaker}</div>`,
+      `<div title="${ui(PANEL_COPY.tooltip.ladderMaker)}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${ui(PANEL_COPY.section.ladderMaker)}</div>`,
       `<div id="${LADDER_BODY_ID}"></div>`,
       '</div>',
       `<div id="${LADDER_STATUS_ROW_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
-      `<span id="${LADDER_STATUS_ID}" title="空闲" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">空闲</span>`,
-      `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="将资金、现货和 U 本位账户的 USDT 按 5:4:1 分配" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">账户再平衡</button>`,
+      `<span id="${LADDER_STATUS_ID}" title="${initialStatus}" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">${initialStatus}</span>`,
+      `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(PANEL_COPY.tooltip.accountRebalance)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
       '</div>',
     ].join('');
     panelPositionInvalidated = true;
@@ -7410,6 +7741,12 @@ import {
 
   function syncRouteState() {
     if (document.hidden) return;
+    const nextUiLocale = resolveUiLocaleFromPathname(location.pathname);
+    const uiLocaleChanged = nextUiLocale !== activeUiLocale;
+    if (uiLocaleChanged) {
+      activeUiLocale = nextUiLocale;
+      removePanel();
+    }
     const isTradingRoute = isFuturesTradingPage();
     if (!isTradingRoute) {
       if (routeWasTrading) {
@@ -7428,7 +7765,7 @@ import {
       checkSymbolChangeForLeverage();
     }
 
-    const needsRender = !wasTrading || !document.getElementById(PANEL_ID);
+    const needsRender = uiLocaleChanged || !wasTrading || !document.getElementById(PANEL_ID);
     startTradingTimers();
     scheduleChartOrdersRecovery();
     if (needsRender) scheduleRenderPanel();
