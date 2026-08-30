@@ -36,6 +36,10 @@ test('panel copy keeps the approved labels and tooltips in one contract', () => 
         CLOSE_LONG: '停止平多',
         CLOSE_SHORT: '停止平空',
       },
+      stopContinuousLadderByAction: {
+        CLOSE_LONG: '停止连续平多',
+        CLOSE_SHORT: '停止连续平空',
+      },
     },
     status: {
       precisionUpdated: '精度推荐已更新',

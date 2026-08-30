@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.157
+// @version      2.7.158
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -80,6 +80,7 @@ import { keepInteractionFeedbackVisible } from './core/interaction-feedback.js';
 import {
   createContinuousLadderProgress,
   formatContinuousLadderProgress,
+  formatContinuousLadderWaitProgress,
   recordContinuousLadderRound,
   waitForContinuousLadderNextRound,
 } from './core/continuous-ladder.js';
@@ -2930,6 +2931,14 @@ import {
           readReadiness: () => readContinuousLadderReadiness(actionType, actionSymbol),
           delay,
           signal: abortController.signal,
+          onWaitStateChange: ({ phase, cooldownMs }) => {
+            setLadderStatus(formatContinuousLadderWaitProgress(
+              spec.label,
+              continuousProgress,
+              phase,
+              cooldownMs,
+            ));
+          },
         });
         if (readiness.status === 'stopped') {
           setContinuousLadderProgressStatus(
@@ -5548,7 +5557,10 @@ import {
     if (activeActionType !== actionType) {
       return ladderActionButton(actionType, label, tone, disabled);
     }
-    return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">${PANEL_COPY.action.stopLadderByAction[actionType]}</button>`;
+    const stopLabel = activeContinuousLadderActionType === actionType
+      ? PANEL_COPY.action.stopContinuousLadderByAction[actionType]
+      : PANEL_COPY.action.stopLadderByAction[actionType];
+    return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">${stopLabel}</button>`;
   }
 
   function getLadderControlSections(tradeMode, closeContext, symbol, precision) {

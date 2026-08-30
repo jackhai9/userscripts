@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.157
+// @version      2.7.158
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -153,6 +153,10 @@
         OPEN_SHORT: "停止开空",
         CLOSE_LONG: "停止平多",
         CLOSE_SHORT: "停止平空"
+      }),
+      stopContinuousLadderByAction: freezeCopy({
+        CLOSE_LONG: "停止连续平多",
+        CLOSE_SHORT: "停止连续平空"
       })
     }),
     status: freezeCopy({
@@ -1014,15 +1018,12 @@
     recordedRoundOutcomes.add(outcome);
     assertContinuousLadderProgress(progress);
   }
-  function formatContinuousLadderProgress(label, phase, progress, reason = null) {
+  function buildContinuousLadderProgressParts(label, phase, progress) {
     if (typeof label !== "string" || label.trim() === "") {
       throw new Error("Invalid continuous ladder label");
     }
     const phaseText = CONTINUOUS_LADDER_PHASE_TEXT[phase];
     if (!phaseText) throw new Error("Invalid continuous ladder phase");
-    if (reason !== null && (typeof reason !== "string" || reason.trim() === "")) {
-      throw new Error("Invalid continuous ladder reason");
-    }
     assertContinuousLadderProgress(progress);
     const parts = [`${label}${phaseText}`];
     parts.push(progress.startedRounds === 0 ? "0 轮" : `${progress.completedRounds}/${progress.startedRounds} 轮`);
@@ -1035,7 +1036,28 @@
     }
     parts.push(`累计 ${progress.submittedOrders} 笔`);
     if (progress.cancelledOrders > 0) parts.push(`撤 ${progress.cancelledOrders} 笔`);
+    return parts;
+  }
+  function formatContinuousLadderProgress(label, phase, progress, reason = null) {
+    if (reason !== null && (typeof reason !== "string" || reason.trim() === "")) {
+      throw new Error("Invalid continuous ladder reason");
+    }
+    const parts = buildContinuousLadderProgressParts(label, phase, progress);
     if (reason !== null) parts.push(reason);
+    return parts.join(" · ");
+  }
+  function formatContinuousLadderWaitReason(phase, cooldownMs) {
+    if (!Number.isFinite(cooldownMs) || cooldownMs < 0) {
+      throw new Error("Invalid continuous ladder cooldown");
+    }
+    if (phase === "waiting_ready") return "等待按钮恢复";
+    if (phase !== "cooldown") throw new Error("Invalid continuous ladder wait phase");
+    const duration = cooldownMs % 1e3 === 0 ? `${cooldownMs / 1e3}s` : `${cooldownMs}ms`;
+    return `${duration} 后继续`;
+  }
+  function formatContinuousLadderWaitProgress(label, progress, phase, cooldownMs) {
+    const parts = buildContinuousLadderProgressParts(label, "running", progress);
+    parts.splice(1, 0, formatContinuousLadderWaitReason(phase, cooldownMs));
     return parts.join(" · ");
   }
   function assertReadinessState(state) {
@@ -1048,12 +1070,20 @@
     readReadiness,
     delay,
     signal,
-    readyCheckMs
+    readyCheckMs,
+    cooldownMs,
+    onWaitStateChange,
+    waitingAlreadyReported
   }) {
+    let reported = waitingAlreadyReported;
     while (true) {
       throwIfAborted(signal);
       const state = assertReadinessState(readReadiness());
       if (state.status !== "waiting") return state;
+      if (!reported) {
+        onWaitStateChange({ phase: "waiting_ready", cooldownMs });
+        reported = true;
+      }
       await waitForPromiseOrAbort(delay(readyCheckMs), signal);
     }
   }
@@ -1062,22 +1092,35 @@
     delay,
     signal = null,
     cooldownMs = CONTINUOUS_LADDER_COOLDOWN_MS,
-    readyCheckMs = CONTINUOUS_LADDER_READY_CHECK_MS
+    readyCheckMs = CONTINUOUS_LADDER_READY_CHECK_MS,
+    onWaitStateChange = () => {
+    }
   }) {
     if (!(cooldownMs >= 0)) throw new Error("Invalid continuous ladder cooldown");
     if (!(readyCheckMs > 0)) throw new Error("Invalid continuous ladder readiness interval");
+    if (typeof onWaitStateChange !== "function") {
+      throw new Error("Invalid continuous ladder wait-state callback");
+    }
+    let waitingAlreadyReported = false;
     while (true) {
       const readyState = await waitUntilReadyOrStopped({
         readReadiness,
         delay,
         signal,
-        readyCheckMs
+        readyCheckMs,
+        cooldownMs,
+        onWaitStateChange,
+        waitingAlreadyReported
       });
       if (readyState.status === "stopped") return readyState;
+      waitingAlreadyReported = false;
+      onWaitStateChange({ phase: "cooldown", cooldownMs });
       await waitForPromiseOrAbort(delay(cooldownMs), signal);
       throwIfAborted(signal);
       const afterCooldown = assertReadinessState(readReadiness());
       if (afterCooldown.status !== "waiting") return afterCooldown;
+      onWaitStateChange({ phase: "waiting_ready", cooldownMs });
+      waitingAlreadyReported = true;
     }
   }
 
@@ -4776,7 +4819,15 @@
           const readiness = await waitForContinuousLadderNextRound({
             readReadiness: () => readContinuousLadderReadiness(actionType, actionSymbol),
             delay,
-            signal: abortController.signal
+            signal: abortController.signal,
+            onWaitStateChange: ({ phase, cooldownMs }) => {
+              setLadderStatus(formatContinuousLadderWaitProgress(
+                spec.label,
+                continuousProgress,
+                phase,
+                cooldownMs
+              ));
+            }
           });
           if (readiness.status === "stopped") {
             setContinuousLadderProgressStatus(
@@ -7016,7 +7067,8 @@
       if (activeActionType !== actionType) {
         return ladderActionButton(actionType, label, tone, disabled);
       }
-      return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">${PANEL_COPY.action.stopLadderByAction[actionType]}</button>`;
+      const stopLabel = activeContinuousLadderActionType === actionType ? PANEL_COPY.action.stopContinuousLadderByAction[actionType] : PANEL_COPY.action.stopLadderByAction[actionType];
+      return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:pointer;">${stopLabel}</button>`;
     }
     function getLadderControlSections(tradeMode, closeContext, symbol, precision) {
       const ladderRunning = !!ladderTask || !!continuousLadderTask;
