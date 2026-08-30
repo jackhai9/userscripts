@@ -420,10 +420,10 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.doesNotMatch(source, /data-orderbook-precision-status/);
 
   const ladderBody = readFunctionBody('refreshLadderPanel');
-  assert.match(ladderBody, /status\.style\.visibility !== 'visible'/);
-  assert.doesNotMatch(ladderBody, /status\.style\.display/);
-  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*display:flex;[^>]*height:18px;[^>]*visibility:visible;[^>]*white-space:nowrap;overflow:hidden`));
-  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_TEXT_ID\\}"[^>]*flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis`));
+  assert.match(ladderBody, /statusRow\.style\.visibility !== 'visible'/);
+  assert.doesNotMatch(ladderBody, /statusRow\.style\.display/);
+  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ROW_ID\\}"[^>]*display:flex;[^>]*height:18px;[^>]*visibility:visible;[^>]*white-space:nowrap;overflow:hidden`));
+  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis`));
   assert.match(source, new RegExp(`id="\\$\\{USDT_REBALANCE_ACTION_ID\\}"[^>]*data-usdt-rebalance="true" hidden`));
 });
 
@@ -1234,7 +1234,7 @@ test('stable panel refreshes avoid writing unchanged text and state attributes',
 
   const panelBody = readFunctionBody('refreshLadderPanel');
   assert.doesNotMatch(panelBody, /toggle|expanded/);
-  assert.match(panelBody, /statusText\.textContent !== ladderStatusText/);
+  assert.match(panelBody, /status\.textContent !== ladderStatusText/);
   assert.match(panelBody, /rebalanceButton\.hidden/);
 
   const computedBody = readFunctionBody('refreshComputedInfo');

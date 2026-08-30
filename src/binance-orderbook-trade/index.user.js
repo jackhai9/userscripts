@@ -253,7 +253,7 @@ import {
   const SIDE_SHORT_ID = 'jh-binance-close-side-short';
   const LADDER_BODY_ID = 'jh-binance-ladder-body';
   const LADDER_STATUS_ID = 'jh-binance-ladder-status';
-  const LADDER_STATUS_TEXT_ID = 'jh-binance-ladder-status-text';
+  const LADDER_STATUS_ROW_ID = 'jh-binance-ladder-status-row';
   const USDT_REBALANCE_ACTION_ID = 'jh-binance-usdt-rebalance-action';
   const MULTIPLIER_PRESS_FEEDBACK_ATTR = 'data-jh-press-feedback';
   const ORDERBOOK_PRECISION_RECOMMENDATION_ID = 'jh-binance-orderbook-precision-recommendation';
@@ -794,7 +794,7 @@ import {
     ladderStatusText = String(text || '空闲');
     const statusTitle = String(title || ladderStatusText);
     ladderStatusTitle = statusTitle;
-    const statusEl = document.getElementById(LADDER_STATUS_TEXT_ID);
+    const statusEl = document.getElementById(LADDER_STATUS_ID);
     if (statusEl) {
       if (statusEl.textContent !== ladderStatusText) statusEl.textContent = ladderStatusText;
       if (statusEl.title !== statusTitle) statusEl.title = statusTitle;
@@ -6306,7 +6306,7 @@ import {
   function refreshLadderPanel(panel, tradeMode, closeContext) {
     const body = panel.querySelector(`#${LADDER_BODY_ID}`);
     const status = panel.querySelector(`#${LADDER_STATUS_ID}`);
-    const statusText = panel.querySelector(`#${LADDER_STATUS_TEXT_ID}`);
+    const statusRow = panel.querySelector(`#${LADDER_STATUS_ROW_ID}`);
     const rebalanceButton = panel.querySelector(`#${USDT_REBALANCE_ACTION_ID}`);
     const mode = activeLadderPanelContext?.mode
       || (['OPEN', 'CLOSE'].includes(tradeMode) ? tradeMode : null);
@@ -6351,12 +6351,12 @@ import {
         }
       }
     }
-    if (status) {
-      if (status.style.visibility !== 'visible') status.style.visibility = 'visible';
+    if (statusRow) {
+      if (statusRow.style.visibility !== 'visible') statusRow.style.visibility = 'visible';
     }
-    if (statusText) {
-      if (statusText.textContent !== ladderStatusText) statusText.textContent = ladderStatusText;
-      if (statusText.title !== ladderStatusTitle) statusText.title = ladderStatusTitle;
+    if (status) {
+      if (status.textContent !== ladderStatusText) status.textContent = ladderStatusText;
+      if (status.title !== ladderStatusTitle) status.title = ladderStatusTitle;
     }
     if (rebalanceButton) {
       const shouldShow = usdtRebalanceEligible || Boolean(usdtRebalanceTask);
@@ -6708,8 +6708,8 @@ import {
       `<div title="${PANEL_COPY.tooltip.ladderMaker}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${PANEL_COPY.section.ladderMaker}</div>`,
       `<div id="${LADDER_BODY_ID}"></div>`,
       '</div>',
-      `<div id="${LADDER_STATUS_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
-      `<span id="${LADDER_STATUS_TEXT_ID}" title="空闲" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">空闲</span>`,
+      `<div id="${LADDER_STATUS_ROW_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
+      `<span id="${LADDER_STATUS_ID}" title="空闲" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">空闲</span>`,
       `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">再平衡</button>`,
       '</div>',
     ].join('');
