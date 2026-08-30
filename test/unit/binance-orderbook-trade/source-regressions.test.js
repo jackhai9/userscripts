@@ -554,7 +554,7 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(buildBody, /autoFitLevels = autoFit\.levels/);
   assert.match(buildBody, /autoFitPercent: autoFitPercent/);
   assert.match(buildBody, /autoFitLevels/);
-  assert.match(buildBody, /createLadderMinimumQtyFailure\(\{\s*spec,\s*symbol: startSymbol,\s*precision: startPrecision,\s*mode: spec\.mode,\s*minRequiredQty,\s*baseQty,\s*percent,\s*levels,\s*minimumPercent: autoFit\.minimumPercent,\s*maxAutoFitPercent: autoFit\.maxPercent,\s*replacementTotalQty: spec\.mode === 'OPEN' \? multiplyDecimalByInt\(minRequiredQty,\s*levels\) : null,\s*\}\)/);
+  assert.match(buildBody, /createLadderMinimumQtyFailure\(\{\s*spec,\s*symbol: startSymbol,\s*precision: startPrecision,\s*mode: spec\.mode,\s*minRequiredQty,\s*baseQty,\s*percent,\s*levels,\s*optionContext,\s*minimumPercent: autoFit\.minimumPercent,\s*maxAutoFitPercent: autoFit\.maxPercent,\s*replacementTotalQty: spec\.mode === 'OPEN' \? multiplyDecimalByInt\(minRequiredQty,\s*levels\) : null,\s*\}\)/);
 
   const errorBody = readFunctionBody('createLadderMinimumQtyFailure');
   assert.match(errorBody, /数量低于最小下单量/);
@@ -568,11 +568,15 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(errorBody, /自动提高比例/);
   assert.match(errorBody, /自动降档/);
   assert.match(errorBody, /openOrdersReplacementPlan/);
+  assert.match(errorBody, /precision,\s*optionContext,\s*totalQty: replacementTotalQty/);
   assert.match(errorBody, /replacementTotalQty/);
   assert.doesNotMatch(errorBody, /allowPartialReplacement/);
   assert.match(errorBody, /脚本只会尝试替换当前交易对的同向开仓基础单，不会自动全撤/);
   assert.match(errorBody, /脚本不会自动撤单/);
   assert.doesNotMatch(errorBody, /将自动撤单/);
+
+  const replacementPlanBody = readFunctionBody('getOpenLadderMinimumQtyReplacementPlan');
+  assert.match(replacementPlanBody, /plan\.optionContext/);
 
   const percentBody = readFunctionBody('computeMinimumLadderPercent', ladderPlanSource);
   assert.match(percentBody, /parseDecimalString\(baseQty\)/);
