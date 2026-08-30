@@ -612,6 +612,37 @@ test('ladder actions keep only their final UI feedback visible for a minimum win
   }
 });
 
+test('Option or Alt click continuously repeats close ladders only after readiness and cooldown', () => {
+  const continuousBody = readFunctionBody('startContinuousLadder');
+  const readinessBody = readFunctionBody('readContinuousLadderReadiness');
+  const stopBody = readFunctionBody('stopLadder');
+  const actionButtonBody = readFunctionBody('ladderActionButton');
+  const executionButtonBody = readFunctionBody('ladderExecutionButton');
+  const controlSectionsBody = readFunctionBody('getLadderControlSections');
+
+  assert.match(source, /if \(event\.altKey && getLadderActionSpec\(actionType\)\?\.mode === 'CLOSE'\)/);
+  assert.match(source, /startContinuousLadder\(actionType\)/);
+  assert.match(continuousBody, /spec\.mode !== 'CLOSE'\) return startLadder\(actionType\)/);
+  assert.match(continuousBody, /while \(true\)/);
+  assert.match(continuousBody, /await startLadder\(actionType, true\)/);
+  assert.match(continuousBody, /outcome\?\.status !== 'completed'/);
+  assert.match(continuousBody, /await waitForContinuousLadderNextRound\(/);
+  assert.match(continuousBody, /readContinuousLadderReadiness\(actionType, actionSymbol\)/);
+
+  assert.match(readinessBody, /isCurrentObservedSymbol\(actionSymbol\)/);
+  assert.match(readinessBody, /getActiveTradeMode\(\) !== spec\.mode/);
+  assert.match(readinessBody, /document\.hidden/);
+  assert.match(readinessBody, /!readCurrentOrderbookPrecisionValue\(\)/);
+  assert.match(readinessBody, /!isCloseSnapshotReady\(actionSymbol\)/);
+  assert.match(readinessBody, /const button = spec\.buttonGetter\(\)/);
+  assert.match(readinessBody, /isSubmitButtonBusy\(button\)/);
+
+  assert.match(stopBody, /continuousLadderAbortController\.abort\(stoppedError\)/);
+  assert.match(actionButtonBody, /Option\/Alt \+ click: continuous trading/);
+  assert.match(executionButtonBody, /activeLadderActionType \|\| activeContinuousLadderActionType/);
+  assert.match(controlSectionsBody, /!!ladderTask \|\| !!continuousLadderTask/);
+});
+
 test('open ladder stops immediately only for a confirmed zero available balance', () => {
   const readOpenQtyBody = readFunctionBody('readOpenBaseQtyForLadder');
   assert.match(readOpenQtyBody, /isConfirmedZeroOpenBalance\(qty\)/);
@@ -769,7 +800,8 @@ test('stopping a ladder aborts replacement waits before another cancel or submit
   assert.match(source, /let ladderAbortController = null/);
   assert.match(startBody, /const abortController = new AbortController\(\)/);
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*abortController\.signal/);
-  assert.match(stopBody, /ladderAbortController\.abort\(createLadderStoppedError\(\)\)/);
+  assert.match(stopBody, /const stoppedError = createLadderStoppedError\(\)/);
+  assert.match(stopBody, /ladderAbortController\.abort\(stoppedError\)/);
   assert.match(runBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*progress,\s*abortSignal/);
   assert.match(runBody, /throwIfAborted\(abortSignal\)[\s\S]*buildLadderPlan/);
   assert.match(executeBody, /throwIfAborted\(abortSignal\)[\s\S]*button\.click\(\)/);
