@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.156
+// @version      2.7.157
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -78,6 +78,9 @@ import {
 } from './core/ladder-plan.js';
 import { keepInteractionFeedbackVisible } from './core/interaction-feedback.js';
 import {
+  createContinuousLadderProgress,
+  formatContinuousLadderProgress,
+  recordContinuousLadderRound,
   waitForContinuousLadderNextRound,
 } from './core/continuous-ladder.js';
 import {
@@ -89,6 +92,7 @@ import {
   recordLadderCancelledOrder,
   recordLadderSubmittedOrder,
   setLadderPlannedOrders,
+  snapshotLadderProgress,
 } from './core/ladder-progress.js';
 import {
   throwIfAborted,
@@ -377,6 +381,7 @@ import {
   let continuousLadderAbortController = null;
   let activeLadderActionType = null;
   let activeContinuousLadderActionType = null;
+  let activeContinuousLadderProgress = null;
   let activeLadderPanelContext = null;
   let cancelCurrentSymbolOpenOrdersTask = null;
   let cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
@@ -2759,7 +2764,11 @@ import {
             '交易对已切换',
             progress,
           ));
-          return { status: 'interrupted' };
+          return {
+            status: 'interrupted',
+            reason: '交易对已切换',
+            progress: snapshotLadderProgress(progress),
+          };
         }
         const diagnostics = formatLadderRepriceDiagnostics(repriceAttempts, lastRepriceApiErrorCode);
         setLadderStatus(
@@ -2772,14 +2781,20 @@ import {
                 progress,
               )}${diagnostics}`,
         );
-        return { status: wasStopped ? 'stopped' : 'completed' };
+        return {
+          status: wasStopped ? 'stopped' : 'completed',
+          progress: snapshotLadderProgress(progress),
+        };
       })
       .catch((e) => {
         if (isLadderStoppedError(e)) {
           if (isCurrentObservedSymbol(actionSymbol)) {
             setLadderStatus(formatStoppedLadderProgress(spec.label, progress));
           }
-          return { status: 'stopped' };
+          return {
+            status: 'stopped',
+            progress: snapshotLadderProgress(progress),
+          };
         }
         err('Maker 阶梯执行失败:', e);
         if (!isCurrentObservedSymbol(actionSymbol)) {
@@ -2788,7 +2803,11 @@ import {
             '交易对已切换',
             progress,
           ));
-          return { status: 'interrupted' };
+          return {
+            status: 'interrupted',
+            reason: '交易对已切换',
+            progress: snapshotLadderProgress(progress),
+          };
         }
         const failureMessage = e?.message || '未知错误';
         const failureText = formatFailedLadderProgress(spec.label, failureMessage, progress);
@@ -2796,7 +2815,13 @@ import {
           ? formatFailedLadderProgress(spec.label, e.statusTitle, progress)
           : failureText;
         setLadderStatus(failureText, failureTitle);
-        return { status: 'failed', error: e };
+        return {
+          status: 'failed',
+          error: e,
+          reason: failureMessage,
+          titleReason: e?.statusTitle || failureMessage,
+          progress: snapshotLadderProgress(progress),
+        };
       })
       .finally(() => {
         if (ladderAbortController === abortController) ladderAbortController = null;
@@ -2813,7 +2838,7 @@ import {
   function readContinuousLadderReadiness(actionType, actionSymbol) {
     const spec = getLadderActionSpec(actionType);
     if (!spec || spec.mode !== 'CLOSE') {
-      throw new Error('Continuous ladder trading requires a close action');
+      throw new Error('连续交易仅支持阶梯平仓');
     }
     if (!isCurrentObservedSymbol(actionSymbol)) {
       return { status: 'stopped', reason: 'symbol_changed' };
@@ -2843,14 +2868,27 @@ import {
     return { status: 'ready' };
   }
 
-  function setContinuousLadderStoppedStatus(reason) {
+  function getContinuousLadderStopReason(reason) {
     const reasonTextByCode = {
-      symbol_changed: 'symbol changed',
-      mode_changed: 'trade mode changed',
+      symbol_changed: '交易对已切换',
+      mode_changed: '开仓/平仓模式已切换',
     };
     const reasonText = reasonTextByCode[reason];
-    if (!reasonText) throw new Error(`Unknown continuous ladder stop reason: ${reason}`);
-    setLadderStatus(`Continuous trading stopped: ${reasonText}`);
+    if (!reasonText) throw new Error(`未知连续交易停止原因：${reason}`);
+    return reasonText;
+  }
+
+  function setContinuousLadderProgressStatus(
+    label,
+    phase,
+    progress,
+    reason = null,
+    titleReason = reason,
+  ) {
+    setLadderStatus(
+      formatContinuousLadderProgress(label, phase, progress, reason),
+      formatContinuousLadderProgress(label, phase, progress, titleReason),
+    );
   }
 
   async function startContinuousLadder(actionType) {
@@ -2865,14 +2903,28 @@ import {
     }
 
     const abortController = new AbortController();
+    const continuousProgress = createContinuousLadderProgress();
     continuousLadderAbortController = abortController;
     activeContinuousLadderActionType = actionType;
+    activeContinuousLadderProgress = continuousProgress;
 
     const executionTask = (async () => {
       while (true) {
         throwIfAborted(abortController.signal);
         const outcome = await startLadder(actionType, true);
-        if (outcome?.status !== 'completed') return outcome;
+        if (!outcome?.progress) return outcome;
+        recordContinuousLadderRound(continuousProgress, outcome);
+        if (outcome.status !== 'completed') {
+          setContinuousLadderProgressStatus(
+            spec.label,
+            outcome.status,
+            continuousProgress,
+            outcome.reason || null,
+            outcome.titleReason || outcome.reason || null,
+          );
+          return outcome;
+        }
+        setContinuousLadderProgressStatus(spec.label, 'running', continuousProgress);
 
         const readiness = await waitForContinuousLadderNextRound({
           readReadiness: () => readContinuousLadderReadiness(actionType, actionSymbol),
@@ -2880,7 +2932,12 @@ import {
           signal: abortController.signal,
         });
         if (readiness.status === 'stopped') {
-          setContinuousLadderStoppedStatus(readiness.reason);
+          setContinuousLadderProgressStatus(
+            spec.label,
+            'stopped',
+            continuousProgress,
+            getContinuousLadderStopReason(readiness.reason),
+          );
           return readiness;
         }
       }
@@ -2888,9 +2945,18 @@ import {
 
     continuousLadderTask = executionTask
       .catch((e) => {
-        if (isLadderStoppedError(e)) return { status: 'stopped' };
-        err('Continuous ladder trading failed:', e);
-        setLadderStatus(`Continuous trading failed: ${e?.message || 'unknown error'}`);
+        if (isLadderStoppedError(e)) {
+          setContinuousLadderProgressStatus(spec.label, 'stopped', continuousProgress);
+          return { status: 'stopped' };
+        }
+        err('连续阶梯交易失败:', e);
+        setContinuousLadderProgressStatus(
+          spec.label,
+          'failed',
+          continuousProgress,
+          e?.message || '未知错误',
+          e?.statusTitle || e?.message || '未知错误',
+        );
         return { status: 'failed', error: e };
       })
       .finally(() => {
@@ -2899,6 +2965,7 @@ import {
         }
         continuousLadderTask = null;
         activeContinuousLadderActionType = null;
+        activeContinuousLadderProgress = null;
         scheduleRenderPanel();
       });
     scheduleRenderPanel();
@@ -2922,9 +2989,13 @@ import {
       if (ladderAbortController && !ladderAbortController.signal.aborted) {
         ladderAbortController.abort(stoppedError);
       }
-      setLadderStatus(`${activeSpec.label}停止中`);
+      setLadderStatus(`${activeSpec.label}${continuousLadderTask ? '连续' : ''}停止中`);
     } else {
-      setLadderStatus(`${ladderStatusText} · Continuous trading stopped`);
+      setContinuousLadderProgressStatus(
+        activeSpec.label,
+        'stopping',
+        activeContinuousLadderProgress,
+      );
     }
     scheduleRenderPanel();
   }
@@ -5466,7 +5537,7 @@ import {
     const background = isBuyTone ? 'var(--color-GreenAlpha01)' : 'var(--color-RedAlpha01)';
     const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
     const continuousHint = actionType.startsWith('CLOSE_')
-      ? ' title="Option/Alt + click: continuous trading"'
+      ? ' title="Option/Alt + 单击：连续交易"'
       : '';
     const cursor = disabled ? 'not-allowed' : 'pointer';
     return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs}${continuousHint} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${cursor};opacity:1;">${label}</button>`;
