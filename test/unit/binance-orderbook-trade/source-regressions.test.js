@@ -422,11 +422,24 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.doesNotMatch(source, /data-orderbook-precision-status/);
 
   const ladderBody = readFunctionBody('refreshLadderPanel');
+  const actionButtonBody = readFunctionBody('ladderActionButton');
   assert.match(ladderBody, /statusRow\.style\.visibility !== 'visible'/);
   assert.doesNotMatch(ladderBody, /statusRow\.style\.display/);
   assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ROW_ID\\}"[^>]*display:flex;[^>]*height:18px;[^>]*visibility:visible;[^>]*white-space:nowrap;overflow:hidden`));
   assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis`));
   assert.match(source, new RegExp(`id="\\$\\{USDT_REBALANCE_ACTION_ID\\}"[^>]*data-usdt-rebalance="true" hidden`));
+  assert.match(actionButtonBody, /white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
+  assert.match(ladderBody, /data-ladder-cancel-symbol="true"[^`]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
+});
+
+test('floating panel stays below Binance native portal overlays', () => {
+  const floatingBody = readFunctionBody('placePanelFloating');
+  const panelBody = readFunctionBody('ensurePanel');
+
+  assert.match(source, /const PANEL_Z_INDEX = 1000/);
+  assert.match(floatingBody, /panel\.style\.zIndex = String\(PANEL_Z_INDEX\)/);
+  assert.match(panelBody, /panel\.style\.zIndex = String\(PANEL_Z_INDEX\)/);
+  assert.doesNotMatch(source, /panel\.style\.zIndex = '999999'/);
 });
 
 test('panel keeps controls in cohesive ordered semantic groups', () => {
