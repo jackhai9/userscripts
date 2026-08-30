@@ -52,6 +52,7 @@ src/binance-orderbook-trade/
   index.user.js
   core/
     cancel-orders.js
+    continuous-ladder.js
     decimal.js
     ladder-plan.js
     orderbook.js
@@ -154,6 +155,8 @@ Do not auto-confirm destructive Binance dialogs. The script may open Binance's n
 
 Ladder replacement must stay scoped and direction-aware. Automatic replacement may cancel only visible basic open-order rows for the current symbol and the same plan direction (`开多`, `开空`, `平多`, or `平空`). It must not use current-symbol cancel-all for ladder replacement, must not touch conditional/protection orders, and must retry the ladder plan only after the replacement path is validated by current DOM rows.
 
+Continuous ladder trading is available only for close actions through `Option/Alt + click`; an ordinary click remains one round. A round is the complete existing ladder-close workflow, including any scoped same-direction replacement and cleanup. After a completed round, the runner must observe the same symbol, close mode, current precision, and native close button as ready before starting a full one-second cooldown. It must validate readiness again after the cooldown; losing readiness restarts the wait and a new full cooldown. Every new round must rebuild its plan from the latest panel profile and live trading context. A failed, stopped, or interrupted round ends the continuous session.
+
 When selecting account-order tabs, scope to the bottom account-orders tab group. Do not globally match `当前委托` or `Open Orders`.
 
 When a pane is found through `aria-controls`, confirm it contains current-orders controls such as `隐藏其他合约` or `全撤`. Binance may reuse pane ids in unrelated tab systems.
@@ -191,6 +194,8 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - verify the precision apply button changes Binance orderbook precision only after an explicit user click
 - verify precision decrease/increase selects the exact native divide-by-10/multiply-by-10 option, restores the corresponding symbol-mode-precision panel profile, and stops at a missing native decade option
 - start ladder order, confirm start buttons are disabled while running
+- Option/Alt-click a close ladder button, confirm the next round starts only after the prior round is complete, the native close action is ready, and one full second has elapsed; change ratio, levels, row span, and precision during the wait and confirm the next plan uses the updated profile
+- during a continuous close cooldown, make the native close action temporarily unavailable and confirm the cooldown restarts only after readiness returns; confirm Stop also aborts the cooldown immediately
 - cancel current-symbol orders, verify only Binance native confirmation opens
 - keep the native cancel-all dialog open for longer than the former decision deadline, verify the script remains in the dialog-tracking state, then cancel and confirm the original order count and temporary page state are restored
 - cancel the native cancel-all dialog through its secondary button, Escape, and backdrop; verify chart and account-order UI state restores immediately without waiting for order clearing
