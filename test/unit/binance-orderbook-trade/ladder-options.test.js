@@ -215,12 +215,12 @@ test('storage events accept six mode-scoped keys and reject legacy shared keys',
 });
 
 test('ladder execution and UI updates use one captured mode-symbol-precision context', () => {
-  assert.match(source, /getLadderLevels\(spec\.mode,\s*startSymbol,\s*startPrecision\)/);
-  assert.match(source, /getLadderStep\(spec\.mode,\s*startSymbol,\s*startPrecision\)/);
-  assert.match(source, /getLadderOpenPercent\(startSymbol,\s*startPrecision\)/);
-  assert.match(source, /getLadderClosePercent\(startSymbol,\s*startPrecision\)/);
-  assert.match(source, /spec\.mode === 'OPEN' \? getLadderOpenPercent\(startSymbol, startPrecision\) : null/);
-  assert.match(source, /spec\.mode === 'CLOSE' \? getLadderClosePercent\(startSymbol, startPrecision\) : null/);
+  assert.match(source, /const optionContext = readLadderOptionContext\(spec,\s*startSymbol,\s*startPrecision\)/);
+  assert.match(source, /levels: getLadderLevels\(spec\.mode,\s*symbol,\s*precision\)/);
+  assert.match(source, /ladderStep: getLadderStep\(spec\.mode,\s*symbol,\s*precision\)/);
+  assert.match(source, /getLadderOpenPercent\(symbol,\s*precision\)/);
+  assert.match(source, /getLadderClosePercent\(symbol,\s*precision\)/);
+  assert.match(source, /let percent = optionContext\.percent/);
   assert.match(source, /const optionContext = getPanelOptionContext\(\)/);
   assert.match(source, /setLadderLevels\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);
   assert.match(source, /setLadderStep\(value, optionContext\.mode, optionContext\.symbol, optionContext\.precision\)/);

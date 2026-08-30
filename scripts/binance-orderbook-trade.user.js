@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.161
+// @version      2.7.162
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -743,11 +743,6 @@
     const spec = LADDER_ACTION_SPECS[actionType];
     return spec ? { ...spec } : null;
   }
-  function getLadderPercentForMode(mode, openPercent, closePercent) {
-    if (mode === "OPEN") return openPercent;
-    if (mode === "CLOSE") return closePercent;
-    return null;
-  }
   function getUnavailableLadderQuantityMessage(mode, quantity, confirmedZeroOpenBalance = false) {
     if (mode !== "OPEN" && mode !== "CLOSE") {
       throw new Error(`未知阶梯数量模式：${mode}`);
@@ -981,6 +976,26 @@
   // src/binance-orderbook-trade/core/continuous-ladder.js
   var CONTINUOUS_LADDER_COOLDOWN_MS = 1e3;
   var CONTINUOUS_LADDER_READY_CHECK_MS = 50;
+  var CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS = 3e3;
+  var CONTINUOUS_LADDER_RECOVERY = Object.freeze({
+    input_unstable: {
+      cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS
+    },
+    controls_not_ready: {
+      cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS
+    },
+    market_data_not_ready: {
+      cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS
+    },
+    precision_changed: {
+      cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
+      reason: "价格精度已变化，下一轮按新精度继续"
+    },
+    options_changed: {
+      cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
+      reason: "比例、笔数或间距已变化，下一轮按新设置继续"
+    }
+  });
   var recordedRoundOutcomes = /* @__PURE__ */ new WeakSet();
   var CONTINUOUS_LADDER_PHASE_TEXT = Object.freeze({
     running: null,
@@ -1002,6 +1017,15 @@
       submittedOrders: 0,
       cancelledOrders: 0,
       lastRound: null
+    };
+  }
+  function resolveContinuousLadderRecovery(error) {
+    if (error?.safeNoSubmit !== true) return null;
+    const recovery = CONTINUOUS_LADDER_RECOVERY[error.continuousRecoveryKind];
+    if (!recovery) return null;
+    return {
+      cooldownMs: recovery.cooldownMs,
+      reason: recovery.reason || error.message
     };
   }
   function recordContinuousLadderRound(progress, outcome) {
@@ -2684,7 +2708,8 @@
     const CHART_ORDERS_MENU_TIMEOUT_MS = 1800;
     const CHART_ORDERS_MENU_POLL_MS = 50;
     const LADDER_MAKER_BUFFER_LEVELS = 1;
-    const LADDER_REPRICE_MAX_ATTEMPTS = 5;
+    const LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS = 5;
+    const LADDER_REPRICE_PAUSE_MS = 3e3;
     const LADDER_REPRICE_DELAY_MS = 180;
     const BINANCE_PLACE_ORDER_BAPI_PATH = "/bapi/futures/v1/private/future/order/place-order";
     const BINANCE_USER_POSITION_BAPI_PATH = "/bapi/futures/v6/private/future/user-data/user-position";
@@ -2937,6 +2962,12 @@
     function isLadderStoppedError(error) {
       return error?.name === "LadderStoppedError";
     }
+    function createContinuousRecoverableLadderError(kind, message) {
+      const error = new Error(message);
+      error.safeNoSubmit = true;
+      error.continuousRecoveryKind = kind;
+      return error;
+    }
     function getLadderOpenPercent(symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
       return loadModeSymbolPrecisionNumberOption(
         localStorage,
@@ -3049,6 +3080,21 @@
       if (!saved) return false;
       scheduleRenderPanel();
       return true;
+    }
+    function readLadderOptionContext(spec, symbol, precision) {
+      const percent = spec.mode === "OPEN" ? getLadderOpenPercent(symbol, precision) : getLadderClosePercent(symbol, precision);
+      return {
+        percent,
+        levels: getLadderLevels(spec.mode, symbol, precision),
+        ladderStep: getLadderStep(spec.mode, symbol, precision)
+      };
+    }
+    function areLadderOptionContextsEqual(left, right) {
+      return left.percent === right.percent && left.levels === right.levels && left.ladderStep === right.ladderStep;
+    }
+    function hasLadderOptionContextChanged(plan) {
+      const current = readLadderOptionContext(plan.spec, plan.symbol, plan.precision);
+      return !areLadderOptionContextsEqual(current, plan.optionContext);
     }
     function setLadderStatus(text, title = null) {
       ladderStatusText = String(text || "空闲");
@@ -4107,31 +4153,64 @@
       if (getCurrentSymbol() !== startSymbol) {
         throw new Error(`切换至${modeLabel}时交易对已变化，已停止`);
       }
-      if (!modeReady) throw new Error(`未能切换至${modeLabel}`);
+      if (!modeReady) {
+        throw createContinuousRecoverableLadderError(
+          "controls_not_ready",
+          `未能切换至${modeLabel}`
+        );
+      }
       const startPrecision = readCurrentOrderbookPrecisionValue();
-      if (!startPrecision) throw new Error("未识别价格精度");
+      if (!startPrecision) {
+        throw createContinuousRecoverableLadderError(
+          "market_data_not_ready",
+          "未识别价格精度"
+        );
+      }
       if (expectedContext?.precision && startPrecision !== expectedContext.precision) {
-        throw new Error("重挂前价格精度已变化，已停止");
+        throw createContinuousRecoverableLadderError(
+          "precision_changed",
+          "重挂前价格精度已变化，已停止"
+        );
       }
       const postOnlyReady = await ensurePostOnlyOrderType();
-      if (!postOnlyReady) throw new Error("只做 Maker 未生效，请刷新页面后重试");
-      const levels = getLadderLevels(spec.mode, startSymbol, startPrecision);
-      const ladderStep = getLadderStep(spec.mode, startSymbol, startPrecision);
+      if (!postOnlyReady) {
+        throw createContinuousRecoverableLadderError(
+          "controls_not_ready",
+          "只做 Maker 未生效，请刷新页面后重试"
+        );
+      }
+      const optionContext = readLadderOptionContext(spec, startSymbol, startPrecision);
+      const levels = optionContext.levels;
+      const ladderStep = optionContext.ladderStep;
       const prices = getBufferedMakerPrices(spec.priceSide, levels, ladderStep);
       if (prices.length < levels) {
-        throw new Error(`订单簿${spec.priceSide === "BID" ? "买盘" : "卖盘"}不足 ${levels} 档，档幅 ${ladderStep}`);
+        throw createContinuousRecoverableLadderError(
+          "market_data_not_ready",
+          `订单簿${spec.priceSide === "BID" ? "买盘" : "卖盘"}不足 ${levels} 档，档幅 ${ladderStep}`
+        );
       }
       const rules = await ensureRules(startSymbol);
       if (getCurrentSymbol() !== startSymbol) {
         throw new Error("读取交易规则时交易对已变化，已停止");
       }
       if (readCurrentOrderbookPrecisionValue() !== startPrecision) {
-        throw new Error("读取交易规则时价格精度已变化，已停止");
+        throw createContinuousRecoverableLadderError(
+          "precision_changed",
+          "读取交易规则时价格精度已变化，已停止"
+        );
       }
-      if (!rules) throw new Error("交易规则尚未就绪，请稍后重试");
+      if (!rules) {
+        throw createContinuousRecoverableLadderError(
+          "market_data_not_ready",
+          "交易规则尚未就绪，请稍后重试"
+        );
+      }
       const ruleContext = getQtyRuleContext(startSymbol, spec.mode, prices[0]);
       if (ruleContext.status !== "ready" || !ruleContext.stepSize || !ruleContext.baseMinQty) {
-        throw new Error("下单数量规则尚未就绪，请稍后重试");
+        throw createContinuousRecoverableLadderError(
+          "market_data_not_ready",
+          "下单数量规则尚未就绪，请稍后重试"
+        );
       }
       const minRequiredQtyByLevel = spec.mode === "OPEN" ? prices.map((price) => getQtyRuleContext(startSymbol, spec.mode, price).effectiveMinQty || ruleContext.baseMinQty) : prices.map(() => ruleContext.baseMinQty);
       let minRequiredQty = minRequiredQtyByLevel.filter(Boolean).reduce((maxQty, qty) => maxDecimalString(maxQty, qty), ruleContext.baseMinQty);
@@ -4144,10 +4223,22 @@
         throw new Error(`读取${quantityLabel}时下单模式已变化，已停止`);
       }
       if (readCurrentOrderbookPrecisionValue() !== startPrecision) {
-        throw new Error(`读取${quantityLabel}时价格精度已变化，已停止`);
+        throw createContinuousRecoverableLadderError(
+          "precision_changed",
+          `读取${quantityLabel}时价格精度已变化，已停止`
+        );
       }
       if (!isPostOnlyOrderTypeActive()) {
         throw new Error(`读取${quantityLabel}时只做 Maker 已失效，请刷新页面后重试`);
+      }
+      if (!areLadderOptionContextsEqual(
+        readLadderOptionContext(spec, startSymbol, startPrecision),
+        optionContext
+      )) {
+        throw createContinuousRecoverableLadderError(
+          "options_changed",
+          "读取下单数量时比例、笔数或间距已变化"
+        );
       }
       const baseQty = normalizeDecimalString(base?.qty ?? "");
       const unavailableQuantityMessage = getUnavailableLadderQuantityMessage(
@@ -4155,12 +4246,16 @@
         baseQty,
         base?.confirmedZeroOpenBalance === true
       );
-      if (unavailableQuantityMessage) throw new Error(unavailableQuantityMessage);
-      let percent = getLadderPercentForMode(
-        spec.mode,
-        spec.mode === "OPEN" ? getLadderOpenPercent(startSymbol, startPrecision) : null,
-        spec.mode === "CLOSE" ? getLadderClosePercent(startSymbol, startPrecision) : null
-      );
+      if (unavailableQuantityMessage) {
+        if (!baseQty) {
+          throw createContinuousRecoverableLadderError(
+            "market_data_not_ready",
+            unavailableQuantityMessage
+          );
+        }
+        throw new Error(unavailableQuantityMessage);
+      }
+      let percent = optionContext.percent;
       if (percent == null) throw new Error("未知阶梯模式");
       const totalQty = multiplyDecimalByRatio(baseQty, percent, 100);
       let allocation = allocateLadderQuantities(totalQty, levels, ruleContext.stepSize, minRequiredQty);
@@ -4202,6 +4297,7 @@
         spec,
         symbol: startSymbol,
         precision: startPrecision,
+        optionContext,
         percent,
         ladderStep,
         levels: allocation.actualLevels,
@@ -4251,7 +4347,12 @@
     function assertLadderMakerPrice(plan, price) {
       const oppositeSide = plan.spec.orderSide === "BUY" ? "ASK" : "BID";
       const oppositePrice = getBestOrderbookPrice(oppositeSide);
-      if (!oppositePrice) throw new Error("盘口已刷新，未读取到对手盘价格");
+      if (!oppositePrice) {
+        throw createContinuousRecoverableLadderError(
+          "market_data_not_ready",
+          "盘口已刷新，未读取到对手盘价格"
+        );
+      }
       const cmp = compareDecimalStrings(price, oppositePrice);
       if (cmp == null) throw new Error("盘口价格校验失败");
       if (plan.spec.orderSide === "BUY" && cmp >= 0) {
@@ -4289,7 +4390,10 @@
       if (remainingCount <= 0) throw new Error("没有待重定价的阶梯订单");
       const prices = getBufferedMakerPrices(plan.spec.priceSide, remainingCount, plan.ladderStep);
       if (prices.length !== remainingCount) {
-        throw new Error(`刷新后订单簿${plan.spec.priceSide === "BID" ? "买盘" : "卖盘"}不足 ${remainingCount} 档`);
+        throw createContinuousRecoverableLadderError(
+          "market_data_not_ready",
+          `刷新后订单簿${plan.spec.priceSide === "BID" ? "买盘" : "卖盘"}不足 ${remainingCount} 档`
+        );
       }
       const repricedOrders = repriceRemainingLadderOrders({
         orders: plan.orders,
@@ -4301,7 +4405,10 @@
           const order = repricedOrders[index];
           const ruleContext = getQtyRuleContext(plan.symbol, "OPEN", order.price);
           if (ruleContext.status !== "ready" || !ruleContext.effectiveMinQty) {
-            throw new Error("刷新盘口后最小下单量未就绪，已停止");
+            throw createContinuousRecoverableLadderError(
+              "market_data_not_ready",
+              "刷新盘口后最小下单量未就绪"
+            );
           }
           const comparison = compareDecimalStrings(order.qty, ruleContext.effectiveMinQty);
           if (comparison == null) throw new Error("刷新盘口后数量校验失败，已停止");
@@ -4317,7 +4424,16 @@
       if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("执行中交易对已变化，已停止");
       if (getActiveTradeMode() !== plan.spec.mode) throw new Error("执行中下单模式已变化，已停止");
       if (readCurrentOrderbookPrecisionValue() !== plan.precision) {
-        throw new Error("执行中价格精度已变化，已停止");
+        throw createContinuousRecoverableLadderError(
+          "precision_changed",
+          "执行中价格精度已变化，已停止"
+        );
+      }
+      if (hasLadderOptionContextChanged(plan)) {
+        throw createContinuousRecoverableLadderError(
+          "options_changed",
+          "执行中比例、笔数或间距已变化"
+        );
       }
       if (!isPostOnlyOrderTypeActive()) throw new Error("执行中只做 Maker 已失效，请刷新页面后重试");
     }
@@ -4367,7 +4483,12 @@
         maxWriteAttempts
       }) : setInputValueReact;
       const inputs = findTradeInputs();
-      if (!inputs) throw new Error("未能确定唯一的当前交易表单输入框");
+      if (!inputs) {
+        throw createContinuousRecoverableLadderError(
+          "controls_not_ready",
+          "未能确定唯一的当前交易表单输入框"
+        );
+      }
       const observationRoot = inputs.root;
       const readTradeState = createTradeInputStateReader({
         resolveInputs: findTradeInputs,
@@ -4400,7 +4521,10 @@
         priceLabel
       );
       assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || "", qtyLabel);
-      throw new Error("价格框或数量框未稳定，已停止提交");
+      throw createContinuousRecoverableLadderError(
+        "input_unstable",
+        "价格框或数量框未稳定"
+      );
     }
     function isSubmitButtonBusy(button) {
       if (!button) return false;
@@ -4422,12 +4546,21 @@
       if (button) return button;
       const currentButton = plan.spec.buttonGetter();
       if (!currentButton || !currentButton.isConnected || !isVisibleElement(currentButton)) {
-        throw new Error(`下单按钮 ${TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS} 秒内未渲染完成`);
+        throw createContinuousRecoverableLadderError(
+          "controls_not_ready",
+          `下单按钮 ${TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS} 秒内未渲染完成`
+        );
       }
       if (isSubmitButtonBusy(currentButton)) {
-        throw new Error(`下单按钮 ${TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS} 秒内未恢复可点击`);
+        throw createContinuousRecoverableLadderError(
+          "controls_not_ready",
+          `下单按钮 ${TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS} 秒内未恢复可点击`
+        );
       }
-      throw new Error(`下单按钮 ${TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS} 秒内未达到可点击状态`);
+      throw createContinuousRecoverableLadderError(
+        "controls_not_ready",
+        `下单按钮 ${TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS} 秒内未达到可点击状态`
+      );
     }
     function readVisibleOrderFeedbackEntries() {
       const selectors = [
@@ -4575,10 +4708,15 @@
     async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null) {
       const priceInput = findPriceInput();
       const qtyInput = findQtyInput();
-      if (!priceInput) throw new Error("未找到价格输入框");
-      if (!qtyInput) throw new Error("未找到数量输入框");
+      if (!priceInput) {
+        throw createContinuousRecoverableLadderError("controls_not_ready", "未找到价格输入框");
+      }
+      if (!qtyInput) {
+        throw createContinuousRecoverableLadderError("controls_not_ready", "未找到数量输入框");
+      }
       let done = 0;
       let repriceAttempts = 0;
+      let consecutiveRepriceAttempts = 0;
       let lastRepriceApiErrorCode = null;
       let previousAcknowledgedInputs = null;
       while (done < plan.orders.length) {
@@ -4597,8 +4735,18 @@
           assertLadderMakerPrice(plan, order.price);
           const currentPriceInput = findPriceInput();
           const currentQtyInput = findQtyInput();
-          if (!currentPriceInput) throw new Error("执行中价格输入框已消失，已停止");
-          if (!currentQtyInput) throw new Error("执行中数量输入框已消失，已停止");
+          if (!currentPriceInput) {
+            throw createContinuousRecoverableLadderError(
+              "controls_not_ready",
+              "执行中价格输入框已消失"
+            );
+          }
+          if (!currentQtyInput) {
+            throw createContinuousRecoverableLadderError(
+              "controls_not_ready",
+              "执行中数量输入框已消失"
+            );
+          }
           const synchronizedInputs = await syncTradeInputs(order.price, order.qty, {
             priceLabel: "计划价",
             qtyLabel: "计划量",
@@ -4611,6 +4759,7 @@
           assertLadderMakerPrice(plan, submittedPrice);
           const button = await waitForReadyLadderSubmitButton(plan);
           throwIfAborted(abortSignal);
+          assertLadderExecutionContext(plan);
           assertSubmittedPriceMatchesExpectedPrice(
             order.price,
             findPriceInput()?.value || "",
@@ -4652,20 +4801,24 @@
           if (isBinancePostOnlyMakerRejectCode(e?.binanceCode)) {
             lastRepriceApiErrorCode = e.binanceCode;
           }
-          if (repriceAttempts >= LADDER_REPRICE_MAX_ATTEMPTS) {
-            const codeText = lastRepriceApiErrorCode == null ? "" : `（错误码 ${lastRepriceApiErrorCode}）`;
-            throw new Error(`盘口连续移动，已自动刷新 ${repriceAttempts} 次${codeText}；已挂 ${done}/${plan.orders.length} 笔后停止`);
-          }
           repriceAttempts += 1;
-          const repriceDetail = `盘口已移动，刷新剩余 ${plan.orders.length - done} 档 (${repriceAttempts}/${LADDER_REPRICE_MAX_ATTEMPTS})`;
+          consecutiveRepriceAttempts += 1;
+          const shouldPause = consecutiveRepriceAttempts >= LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS;
+          const remainingLevels = plan.orders.length - done;
+          const repriceDetail = shouldPause ? `盘口持续移动，3s 后继续 · 剩余 ${remainingLevels} 档 · 已刷新 ${repriceAttempts} 次` : `盘口已移动，刷新剩余 ${remainingLevels} 档 · 已刷新 ${repriceAttempts} 次`;
           setExecutionStatus(`${plan.spec.label}：${repriceDetail}`, repriceDetail);
-          await delay(LADDER_REPRICE_DELAY_MS);
+          await waitForPromiseOrAbort(
+            delay(shouldPause ? LADDER_REPRICE_PAUSE_MS : LADDER_REPRICE_DELAY_MS),
+            abortSignal
+          );
           throwIfAborted(abortSignal);
           if (ladderStopRequested) break;
           refreshRemainingLadderOrders(plan, done);
+          if (shouldPause) consecutiveRepriceAttempts = 0;
           continue;
         }
         done++;
+        consecutiveRepriceAttempts = 0;
         recordLadderSubmittedOrder(progress);
         setExecutionStatus(`${plan.spec.label}已挂 ${done}/${plan.orders.length} 笔`, null);
         throwIfAborted(abortSignal);
@@ -4908,7 +5061,8 @@
           const outcome = await startLadder(actionType, continuousProgress);
           if (!outcome?.progress) return outcome;
           recordContinuousLadderRound(continuousProgress, outcome);
-          if (outcome.status !== "completed") {
+          const recovery = outcome.status === "completed" ? null : resolveContinuousLadderRecovery(outcome.error);
+          if (outcome.status !== "completed" && !recovery) {
             setContinuousLadderProgressStatus(
               spec.label,
               outcome.status,
@@ -4918,18 +5072,22 @@
             );
             return outcome;
           }
-          setContinuousLadderProgressStatus(spec.label, "running", continuousProgress);
+          if (!recovery) {
+            setContinuousLadderProgressStatus(spec.label, "running", continuousProgress);
+          }
           const readiness = await waitForContinuousLadderNextRound({
             readReadiness: () => readContinuousLadderReadiness(actionType, actionSymbol),
             delay,
             signal: abortController.signal,
+            cooldownMs: recovery?.cooldownMs,
             onWaitStateChange: ({ phase, cooldownMs }) => {
-              setLadderStatus(formatContinuousLadderWaitProgress(
+              const waitStatus = formatContinuousLadderWaitProgress(
                 spec.label,
                 continuousProgress,
                 phase,
                 cooldownMs
-              ));
+              );
+              setLadderStatus(recovery ? `${waitStatus} · ${recovery.reason}` : waitStatus);
             }
           });
           if (readiness.status === "stopped") {
@@ -4941,6 +5099,7 @@
             );
             return readiness;
           }
+          if (recovery) continue;
         }
       })();
       continuousLadderTask = executionTask.catch((e) => {

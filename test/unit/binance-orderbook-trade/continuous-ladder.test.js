@@ -4,12 +4,14 @@ import assert from 'node:assert/strict';
 import {
   CONTINUOUS_LADDER_COOLDOWN_MS,
   CONTINUOUS_LADDER_READY_CHECK_MS,
+  CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
   createContinuousLadderProgress,
   formatActiveContinuousLadderProgress,
   formatContinuousLadderProgress,
   formatContinuousLadderWaitProgress,
   formatContinuousLadderWaitReason,
   recordContinuousLadderRound,
+  resolveContinuousLadderRecovery,
   waitForContinuousLadderNextRound,
 } from '../../../src/binance-orderbook-trade/core/continuous-ladder.js';
 
@@ -144,6 +146,83 @@ test('continuous ladder progress rejects an invalid or duplicate round outcome',
   assert.throws(
     () => formatContinuousLadderProgress('阶梯平空', 'unknown', progress),
     /连续阶梯阶段无效/,
+  );
+});
+
+test('continuous ladder retries only explicitly safe transient failures', () => {
+  const inputUnstable = new Error('价格框或数量框未稳定');
+  inputUnstable.safeNoSubmit = true;
+  inputUnstable.continuousRecoveryKind = 'input_unstable';
+  assert.deepEqual(resolveContinuousLadderRecovery(inputUnstable), {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+    reason: '价格框或数量框未稳定',
+  });
+
+  const marketDataNotReady = new Error('盘口数据未就绪');
+  marketDataNotReady.safeNoSubmit = true;
+  marketDataNotReady.continuousRecoveryKind = 'market_data_not_ready';
+  assert.deepEqual(resolveContinuousLadderRecovery(marketDataNotReady), {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+    reason: '盘口数据未就绪',
+  });
+
+  const precisionChanged = new Error('价格精度已变化');
+  precisionChanged.safeNoSubmit = true;
+  precisionChanged.continuousRecoveryKind = 'precision_changed';
+  assert.deepEqual(resolveContinuousLadderRecovery(precisionChanged), {
+    cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
+    reason: '价格精度已变化，下一轮按新精度继续',
+  });
+
+  const optionsChanged = new Error('阶梯设置已变化');
+  optionsChanged.safeNoSubmit = true;
+  optionsChanged.continuousRecoveryKind = 'options_changed';
+  assert.deepEqual(resolveContinuousLadderRecovery(optionsChanged), {
+    cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
+    reason: '比例、笔数或间距已变化，下一轮按新设置继续',
+  });
+
+  const unknownOutcome = new Error('仍未确认订单结果');
+  unknownOutcome.safeNoSubmit = false;
+  unknownOutcome.continuousRecoveryKind = 'input_unstable';
+  assert.equal(resolveContinuousLadderRecovery(unknownOutcome), null);
+
+  const unsupported = new Error('未知错误');
+  unsupported.safeNoSubmit = true;
+  unsupported.continuousRecoveryKind = 'unknown';
+  assert.equal(resolveContinuousLadderRecovery(unsupported), null);
+});
+
+test('a settings change preserves the partial round before the next round uses new settings', () => {
+  const progress = createContinuousLadderProgress();
+  const optionsChanged = new Error('执行中比例、笔数或间距已变化');
+  optionsChanged.safeNoSubmit = true;
+  optionsChanged.continuousRecoveryKind = 'options_changed';
+  const outcome = {
+    status: 'failed',
+    error: optionsChanged,
+    progress: roundProgress({
+      submittedOrders: 2,
+      plannedOrders: 3,
+      currentPlanSubmittedOrders: 2,
+    }),
+  };
+
+  recordContinuousLadderRound(progress, outcome);
+  const recovery = resolveContinuousLadderRecovery(optionsChanged);
+
+  assert.deepEqual(recovery, {
+    cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
+    reason: '比例、笔数或间距已变化，下一轮按新设置继续',
+  });
+  assert.equal(
+    formatContinuousLadderWaitProgress(
+      '阶梯平空',
+      progress,
+      'cooldown',
+      recovery.cooldownMs,
+    ),
+    '连续阶梯平空 · 1s 后继续 · 0/1 轮 · 本轮 2/3 笔 · 累计 2 笔',
   );
 });
 
