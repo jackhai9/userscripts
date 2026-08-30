@@ -159,7 +159,7 @@ Continuous ladder trading is available only for close actions through `Option/Al
 
 Continuous-session feedback stays in the shared ladder status row and uses compact Chinese counters. `2/3 轮` means two rounds completed out of three started, `本轮 1/3 笔` reports the latest partial plan, and `累计 7 笔` reports all confirmed submissions across the session. Confirmed cancellations are appended only when greater than zero. Round outcomes must expose a detached progress snapshot so a terminal continuous summary cannot be overwritten by the latest single-round message.
 
-The active continuous-close control keeps a direction-specific stop action (`停止连续平多` / `停止连续平空`) throughout both execution and inter-round waiting. Before the native submit control is ready, the status places `等待按钮恢复` immediately after the continuous-state label. Only after the fixed cooldown actually begins may it show `1s 后继续` in that same priority position; this is a static duration label, not a countdown. The button must not temporarily revert to a ladder-start action between rounds.
+The active continuous-close control keeps a compact direction-specific stop action (`停止平多` / `停止平空`) on one line throughout both execution and inter-round waiting. Before the native submit control is ready, the status places `等待按钮恢复` immediately after the continuous-state label. Only after the fixed cooldown actually begins may it show `1s 后继续` in that same priority position; this is a static duration label, not a countdown. The button must not temporarily revert to a ladder-start action between rounds.
 
 When selecting account-order tabs, scope to the bottom account-orders tab group. Do not globally match `当前委托` or `Open Orders`.
 

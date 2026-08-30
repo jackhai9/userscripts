@@ -644,7 +644,9 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(actionButtonBody, /Option\/Alt \+ 单击：连续交易/);
   assert.doesNotMatch(source, /Continuous trading (?:stopped|failed)/);
   assert.match(executionButtonBody, /activeLadderActionType \|\| activeContinuousLadderActionType/);
-  assert.match(executionButtonBody, /PANEL_COPY\.action\.stopContinuousLadderByAction\[actionType\]/);
+  assert.match(executionButtonBody, /PANEL_COPY\.action\.stopLadderByAction\[actionType\]/);
+  assert.doesNotMatch(source, /stopContinuousLadderByAction/);
+  assert.match(executionButtonBody, /white-space:nowrap;overflow:hidden/);
   assert.match(controlSectionsBody, /!!ladderTask \|\| !!continuousLadderTask/);
 });
 
