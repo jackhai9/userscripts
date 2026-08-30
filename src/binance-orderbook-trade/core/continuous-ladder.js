@@ -9,11 +9,11 @@ export const CONTINUOUS_LADDER_READY_CHECK_MS = 50;
 
 const recordedRoundOutcomes = new WeakSet();
 const CONTINUOUS_LADDER_PHASE_TEXT = Object.freeze({
-  running: '连续中',
-  stopping: '连续停止中',
-  stopped: '连续已停止',
-  failed: '连续失败',
-  interrupted: '连续已中止',
+  running: null,
+  stopping: '停止中',
+  stopped: '已停止',
+  failed: '失败',
+  interrupted: '已中止',
 });
 
 function assertContinuousLadderProgress(progress) {
@@ -74,10 +74,13 @@ function buildContinuousLadderProgressParts(label, phase, progress) {
     throw new Error('Invalid continuous ladder label');
   }
   const phaseText = CONTINUOUS_LADDER_PHASE_TEXT[phase];
-  if (!phaseText) throw new Error('Invalid continuous ladder phase');
+  if (!Object.hasOwn(CONTINUOUS_LADDER_PHASE_TEXT, phase)) {
+    throw new Error('Invalid continuous ladder phase');
+  }
   assertContinuousLadderProgress(progress);
 
-  const parts = [`${label}${phaseText}`];
+  const parts = [`连续${label}`];
+  if (phaseText !== null) parts.push(phaseText);
   parts.push(progress.startedRounds === 0
     ? '0 轮'
     : `${progress.completedRounds}/${progress.startedRounds} 轮`);
@@ -91,6 +94,35 @@ function buildContinuousLadderProgressParts(label, phase, progress) {
   parts.push(`累计 ${progress.submittedOrders} 笔`);
   if (progress.cancelledOrders > 0) parts.push(`撤 ${progress.cancelledOrders} 笔`);
   return parts;
+}
+
+export function formatActiveContinuousLadderProgress(
+  label,
+  detail,
+  progress,
+  roundProgress,
+) {
+  if (typeof label !== 'string' || label.trim() === '') {
+    throw new Error('Invalid continuous ladder label');
+  }
+  if (detail !== null && (typeof detail !== 'string' || detail.trim() === '')) {
+    throw new Error('Invalid active continuous ladder detail');
+  }
+  assertContinuousLadderProgress(progress);
+  const round = snapshotLadderProgress(roundProgress);
+
+  const parts = [`连续${label}`];
+  if (detail !== null) parts.push(detail);
+  parts.push(`${progress.completedRounds}/${progress.startedRounds + 1} 轮`);
+  if (round.plannedOrders !== null) {
+    parts.push(`本轮 ${round.currentPlanSubmittedOrders}/${round.plannedOrders} 笔`);
+  } else if (round.submittedOrders > 0) {
+    parts.push(`本轮 ${round.submittedOrders} 笔`);
+  }
+  parts.push(`累计 ${progress.submittedOrders + round.submittedOrders} 笔`);
+  const cancelledOrders = progress.cancelledOrders + round.cancelledOrders;
+  if (cancelledOrders > 0) parts.push(`撤 ${cancelledOrders} 笔`);
+  return parts.join(' · ');
 }
 
 export function formatContinuousLadderProgress(label, phase, progress, reason = null) {
