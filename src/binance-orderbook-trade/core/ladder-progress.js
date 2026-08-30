@@ -17,19 +17,19 @@ function assertLadderProgress(progress) {
         )
     )
   ) {
-    throw new Error('Invalid ladder progress');
+    throw new Error('阶梯进度状态无效');
   }
 }
 
 function assertLadderLabel(label) {
   if (typeof label !== 'string' || label.trim() === '') {
-    throw new Error('Invalid ladder label');
+    throw new Error('阶梯动作名称无效');
   }
 }
 
 function assertLadderMessage(message) {
   if (typeof message !== 'string' || message.trim() === '') {
-    throw new Error('Invalid ladder progress message');
+    throw new Error('阶梯进度信息无效');
   }
 }
 
@@ -75,7 +75,7 @@ export function snapshotLadderProgress(progress) {
 export function setLadderPlannedOrders(progress, plannedOrders) {
   assertLadderProgress(progress);
   if (!Number.isInteger(plannedOrders) || plannedOrders <= 0) {
-    throw new Error('Invalid ladder planned orders');
+    throw new Error('阶梯计划笔数无效');
   }
   progress.plannedOrders = plannedOrders;
   progress.currentPlanSubmittedOrders = 0;
@@ -87,7 +87,7 @@ export function recordLadderSubmittedOrder(progress) {
     progress.plannedOrders !== null
     && progress.currentPlanSubmittedOrders >= progress.plannedOrders
   ) {
-    throw new Error('Ladder submitted orders exceed plan');
+    throw new Error('阶梯已挂笔数超过计划');
   }
   progress.submittedOrders += 1;
   if (progress.plannedOrders !== null) progress.currentPlanSubmittedOrders += 1;
@@ -126,16 +126,16 @@ export function formatCompletedLadderProgress(label, completedOrders, totalOrder
     || !Number.isInteger(totalOrders)
     || totalOrders < 0
   ) {
-    throw new Error('Invalid completed ladder total');
+    throw new Error('阶梯完成笔数无效');
   }
   if (completedOrders !== totalOrders) {
-    throw new Error('Completed ladder progress mismatch');
+    throw new Error('阶梯完成进度与计划不一致');
   }
   if (
     progress.plannedOrders !== totalOrders
     || progress.currentPlanSubmittedOrders !== completedOrders
   ) {
-    throw new Error('Completed ladder progress mismatch');
+    throw new Error('阶梯完成进度与计划不一致');
   }
   const cancelledText = progress.cancelledOrders > 0
     ? ` · 已撤 ${progress.cancelledOrders} 笔`

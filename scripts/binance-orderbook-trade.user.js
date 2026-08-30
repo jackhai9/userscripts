@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.160
+// @version      2.7.161
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -171,7 +171,7 @@
   function formatPrecisionRefreshTooltip(tradeCount) {
     const count = Number(tradeCount);
     if (!Number.isInteger(count) || count <= 1) {
-      throw new Error(`Invalid precision trade count: ${tradeCount}`);
+      throw new Error(`价格精度成交样本数无效：${tradeCount}`);
     }
     return `优先根据最新 ${count} 条成交价；价格变化不足时自动扩大范围，重新计算推荐精度。`;
   }
@@ -377,12 +377,12 @@
     if (typeof value === "string" && /^-?(?:\d+\.?\d*|\.\d+)$/.test(value.trim())) {
       return Number(value);
     }
-    throw new Error(`invalid position amount: ${String(value)}`);
+    throw new Error(`持仓数量无效：${String(value)}`);
   }
   function resolveSymbolPositionStatus(payload, symbol) {
-    if (payload?.success !== true) throw new Error("position response was unsuccessful");
-    if (!Array.isArray(payload.data)) throw new Error("position response data must be an array");
-    if (!symbol) throw new Error("position response requires a symbol");
+    if (payload?.success !== true) throw new Error("持仓接口返回失败");
+    if (!Array.isArray(payload.data)) throw new Error("持仓接口数据格式异常");
+    if (!symbol) throw new Error("持仓接口缺少交易对");
     const positions = payload.data.filter((position) => position?.symbol === symbol);
     const hasPosition = positions.some((position) => parsePositionAmount(position.positionAmount) !== 0);
     return {
@@ -392,9 +392,9 @@
   }
   function observeAutoOpenLeveragePositionState(previousState, observation) {
     const { symbol, status } = observation;
-    if (!symbol) throw new Error("auto leverage observation requires a symbol");
+    if (!symbol) throw new Error("自动杠杆检查缺少交易对");
     if (!POSITION_STATUSES.has(status)) {
-      throw new Error(`invalid auto leverage position status: ${status}`);
+      throw new Error(`自动杠杆持仓状态无效：${status}`);
     }
     const isSameSymbol = previousState?.symbol === symbol;
     const previousKnownStatus = isSameSymbol ? previousState.lastKnownStatus : null;
@@ -412,7 +412,7 @@
     return result;
   }
   function parseDecimalString(value) {
-    const raw = String(value || "").replace(/,/g, "").trim();
+    const raw = String(value ?? "").replace(/,/g, "").trim();
     if (!/^\d+(\.\d+)?$/.test(raw)) return null;
     const [intPart, fracPart = ""] = raw.split(".");
     return {
@@ -531,19 +531,19 @@
   function getOrderbookPrecisionShortcutOptions(options, limit = 4) {
     const normalizedLimit = Number(limit);
     if (!Number.isInteger(normalizedLimit) || normalizedLimit < 1) {
-      throw new Error(`Invalid orderbook precision shortcut limit: ${limit}`);
+      throw new Error(`价格精度快捷项数量无效：${limit}`);
     }
     return Array.from(new Set(sortedPositiveDecimals(options))).slice(0, normalizedLimit);
   }
   function formatOrderbookPrecisionShortcutLabel(value) {
     const normalized = normalizeDecimalString(value);
     if (!normalized || !isPositiveDecimalString(normalized)) {
-      throw new Error(`Invalid orderbook precision shortcut value: ${value}`);
+      throw new Error(`价格精度快捷值无效：${value}`);
     }
     if (normalized.length <= 5) return normalized;
     const numeric = Number(normalized);
     if (!Number.isFinite(numeric)) {
-      throw new Error(`Orderbook precision shortcut value is not finite: ${value}`);
+      throw new Error(`价格精度快捷值不是有限数值：${value}`);
     }
     return numeric.toExponential().replace("e+", "e");
   }
@@ -620,16 +620,16 @@
     minBucketShare = 0.25
   }) {
     if (!Array.isArray(prices)) {
-      throw new Error("Precision trade prices must be an array");
+      throw new Error("价格精度成交价样本必须为数组");
     }
     if (!Number.isInteger(initialLimit) || initialLimit < 2) {
-      throw new Error(`Invalid initial precision trade limit: ${initialLimit}`);
+      throw new Error(`价格精度初始样本数无效：${initialLimit}`);
     }
     if (!Number.isInteger(expansionStep) || expansionStep < 1) {
-      throw new Error(`Invalid precision trade expansion step: ${expansionStep}`);
+      throw new Error(`价格精度样本扩展步长无效：${expansionStep}`);
     }
     if (!Number.isInteger(minSamples) || minSamples < 1) {
-      throw new Error(`Invalid minimum precision sample count: ${minSamples}`);
+      throw new Error(`价格精度最小样本数无效：${minSamples}`);
     }
     let usedCount = Math.min(initialLimit, prices.length);
     let samples = [];
@@ -747,6 +747,19 @@
     if (mode === "OPEN") return openPercent;
     if (mode === "CLOSE") return closePercent;
     return null;
+  }
+  function getUnavailableLadderQuantityMessage(mode, quantity, confirmedZeroOpenBalance = false) {
+    if (mode !== "OPEN" && mode !== "CLOSE") {
+      throw new Error(`未知阶梯数量模式：${mode}`);
+    }
+    const parsed = parseDecimalString(quantity);
+    if (parsed?.digits > 0n) return null;
+    if (mode === "OPEN") {
+      if (!parsed) return "未读取到可开数量";
+      return confirmedZeroOpenBalance ? "可用余额不足" : "当前可开数量为 0";
+    }
+    if (!parsed) return "未读取到可平数量";
+    return "当前方向没有可平仓位";
   }
   function pow103(exp) {
     let result = 1n;
@@ -868,17 +881,17 @@
   // src/binance-orderbook-trade/core/ladder-progress.js
   function assertLadderProgress(progress) {
     if (!progress || !Number.isInteger(progress.submittedOrders) || progress.submittedOrders < 0 || !Number.isInteger(progress.cancelledOrders) || progress.cancelledOrders < 0 || !Number.isInteger(progress.currentPlanSubmittedOrders) || progress.currentPlanSubmittedOrders < 0 || (progress.plannedOrders === null ? progress.currentPlanSubmittedOrders !== 0 : !(Number.isInteger(progress.plannedOrders) && progress.plannedOrders > 0 && progress.currentPlanSubmittedOrders <= progress.plannedOrders))) {
-      throw new Error("Invalid ladder progress");
+      throw new Error("阶梯进度状态无效");
     }
   }
   function assertLadderLabel(label) {
     if (typeof label !== "string" || label.trim() === "") {
-      throw new Error("Invalid ladder label");
+      throw new Error("阶梯动作名称无效");
     }
   }
   function assertLadderMessage(message) {
     if (typeof message !== "string" || message.trim() === "") {
-      throw new Error("Invalid ladder progress message");
+      throw new Error("阶梯进度信息无效");
     }
   }
   function formatLadderProgressCounts(progress) {
@@ -916,7 +929,7 @@
   function setLadderPlannedOrders(progress, plannedOrders) {
     assertLadderProgress(progress);
     if (!Number.isInteger(plannedOrders) || plannedOrders <= 0) {
-      throw new Error("Invalid ladder planned orders");
+      throw new Error("阶梯计划笔数无效");
     }
     progress.plannedOrders = plannedOrders;
     progress.currentPlanSubmittedOrders = 0;
@@ -924,7 +937,7 @@
   function recordLadderSubmittedOrder(progress) {
     assertLadderProgress(progress);
     if (progress.plannedOrders !== null && progress.currentPlanSubmittedOrders >= progress.plannedOrders) {
-      throw new Error("Ladder submitted orders exceed plan");
+      throw new Error("阶梯已挂笔数超过计划");
     }
     progress.submittedOrders += 1;
     if (progress.plannedOrders !== null) progress.currentPlanSubmittedOrders += 1;
@@ -953,13 +966,13 @@
     assertLadderLabel(label);
     assertLadderProgress(progress);
     if (!Number.isInteger(completedOrders) || completedOrders < 0 || !Number.isInteger(totalOrders) || totalOrders < 0) {
-      throw new Error("Invalid completed ladder total");
+      throw new Error("阶梯完成笔数无效");
     }
     if (completedOrders !== totalOrders) {
-      throw new Error("Completed ladder progress mismatch");
+      throw new Error("阶梯完成进度与计划不一致");
     }
     if (progress.plannedOrders !== totalOrders || progress.currentPlanSubmittedOrders !== completedOrders) {
-      throw new Error("Completed ladder progress mismatch");
+      throw new Error("阶梯完成进度与计划不一致");
     }
     const cancelledText = progress.cancelledOrders > 0 ? ` · 已撤 ${progress.cancelledOrders} 笔` : "";
     return `${label}已完成 · 已挂 ${completedOrders}/${totalOrders} 笔${cancelledText}`;
@@ -978,7 +991,7 @@
   });
   function assertContinuousLadderProgress(progress) {
     if (!progress || !Number.isInteger(progress.startedRounds) || progress.startedRounds < 0 || !Number.isInteger(progress.completedRounds) || progress.completedRounds < 0 || progress.completedRounds > progress.startedRounds || !Number.isInteger(progress.submittedOrders) || progress.submittedOrders < 0 || !Number.isInteger(progress.cancelledOrders) || progress.cancelledOrders < 0 || progress.startedRounds === 0 !== (progress.lastRound === null)) {
-      throw new Error("Invalid continuous ladder progress");
+      throw new Error("连续阶梯进度状态无效");
     }
     if (progress.lastRound !== null) snapshotLadderProgress(progress.lastRound);
   }
@@ -994,13 +1007,13 @@
   function recordContinuousLadderRound(progress, outcome) {
     assertContinuousLadderProgress(progress);
     if (!outcome || typeof outcome !== "object") {
-      throw new Error("Invalid continuous ladder round outcome");
+      throw new Error("连续阶梯本轮结果无效");
     }
     if (recordedRoundOutcomes.has(outcome)) {
-      throw new Error("Continuous ladder round was already recorded");
+      throw new Error("连续阶梯本轮结果已记录");
     }
     if (!["completed", "stopped", "failed", "interrupted"].includes(outcome.status)) {
-      throw new Error("Invalid continuous ladder round outcome");
+      throw new Error("连续阶梯本轮结果无效");
     }
     const roundProgress = snapshotLadderProgress(outcome.progress);
     progress.startedRounds += 1;
@@ -1016,11 +1029,11 @@
   }
   function buildContinuousLadderProgressParts(label, phase, progress) {
     if (typeof label !== "string" || label.trim() === "") {
-      throw new Error("Invalid continuous ladder label");
+      throw new Error("连续阶梯动作名称无效");
     }
     const phaseText = CONTINUOUS_LADDER_PHASE_TEXT[phase];
     if (!Object.hasOwn(CONTINUOUS_LADDER_PHASE_TEXT, phase)) {
-      throw new Error("Invalid continuous ladder phase");
+      throw new Error("连续阶梯阶段无效");
     }
     assertContinuousLadderProgress(progress);
     const parts = [`连续${label}`];
@@ -1039,10 +1052,10 @@
   }
   function formatActiveContinuousLadderProgress(label, detail, progress, roundProgress) {
     if (typeof label !== "string" || label.trim() === "") {
-      throw new Error("Invalid continuous ladder label");
+      throw new Error("连续阶梯动作名称无效");
     }
     if (detail !== null && (typeof detail !== "string" || detail.trim() === "")) {
-      throw new Error("Invalid active continuous ladder detail");
+      throw new Error("连续阶梯当前进度信息无效");
     }
     assertContinuousLadderProgress(progress);
     const round = snapshotLadderProgress(roundProgress);
@@ -1061,7 +1074,7 @@
   }
   function formatContinuousLadderProgress(label, phase, progress, reason = null) {
     if (reason !== null && (typeof reason !== "string" || reason.trim() === "")) {
-      throw new Error("Invalid continuous ladder reason");
+      throw new Error("连续阶梯停止原因无效");
     }
     const parts = buildContinuousLadderProgressParts(label, phase, progress);
     if (reason !== null) parts.push(reason);
@@ -1069,10 +1082,10 @@
   }
   function formatContinuousLadderWaitReason(phase, cooldownMs) {
     if (!Number.isFinite(cooldownMs) || cooldownMs < 0) {
-      throw new Error("Invalid continuous ladder cooldown");
+      throw new Error("连续阶梯轮间等待时间无效");
     }
     if (phase === "waiting_ready") return "等待按钮恢复";
-    if (phase !== "cooldown") throw new Error("Invalid continuous ladder wait phase");
+    if (phase !== "cooldown") throw new Error("连续阶梯等待阶段无效");
     const duration = cooldownMs % 1e3 === 0 ? `${cooldownMs / 1e3}s` : `${cooldownMs}ms`;
     return `${duration} 后继续`;
   }
@@ -1083,7 +1096,7 @@
   }
   function assertReadinessState(state) {
     if (!["ready", "waiting", "stopped"].includes(state?.status)) {
-      throw new Error("Invalid continuous ladder readiness state");
+      throw new Error("连续阶梯按钮就绪状态无效");
     }
     return state;
   }
@@ -1117,10 +1130,10 @@
     onWaitStateChange = () => {
     }
   }) {
-    if (!(cooldownMs >= 0)) throw new Error("Invalid continuous ladder cooldown");
-    if (!(readyCheckMs > 0)) throw new Error("Invalid continuous ladder readiness interval");
+    if (!(cooldownMs >= 0)) throw new Error("连续阶梯轮间等待时间无效");
+    if (!(readyCheckMs > 0)) throw new Error("连续阶梯按钮检查间隔无效");
     if (typeof onWaitStateChange !== "function") {
-      throw new Error("Invalid continuous ladder wait-state callback");
+      throw new Error("连续阶梯等待状态回调无效");
     }
     let waitingAlreadyReported = false;
     while (true) {
@@ -1149,13 +1162,13 @@
   var STATUS_QUOTE_ASSETS = Object.freeze(["USDT", "USDC"]);
   function formatStatusBaseAsset(symbol) {
     if (typeof symbol !== "string") {
-      throw new Error(`Unsupported futures status symbol: ${symbol}`);
+      throw new Error(`不支持的合约状态交易对：${symbol}`);
     }
     const normalized = symbol.trim().toUpperCase();
     const quoteAsset = STATUS_QUOTE_ASSETS.find((candidate) => normalized.endsWith(candidate));
     const baseAsset = quoteAsset ? normalized.slice(0, -quoteAsset.length) : "";
     if (!baseAsset) {
-      throw new Error(`Unsupported futures status symbol: ${symbol}`);
+      throw new Error(`不支持的合约状态交易对：${symbol}`);
     }
     return baseAsset;
   }
@@ -1554,10 +1567,10 @@
   }
   function createBoundedInputWriter({ writeValue, maxWriteAttempts }) {
     if (typeof writeValue !== "function") {
-      throw new Error("Bounded input writer dependency is invalid");
+      throw new Error("输入框写入依赖异常");
     }
     if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
-      throw new Error("Trade input write attempts must be a positive integer");
+      throw new Error("输入框写入次数必须为正整数");
     }
     const attemptsByInput = /* @__PURE__ */ new WeakMap();
     return (input, value) => {
@@ -1576,7 +1589,7 @@
     compareValues
   }) {
     if (typeof compareValues !== "function") {
-      throw new Error("Trade input recovery comparison dependency is invalid");
+      throw new Error("输入框恢复校验依赖异常");
     }
     const isScriptOwnedOrEmpty = (value) => value === null || previousSubmittedValue != null && compareValues(previousSubmittedValue, value) === 0;
     return isScriptOwnedOrEmpty(preWriteValue) && isScriptOwnedOrEmpty(rollbackValue) && isScriptOwnedOrEmpty(submittedValue);
@@ -1599,25 +1612,25 @@
     readNowMs = Date.now
   }) {
     if (typeof resolveInputs !== "function" || typeof normalizeValue !== "function" || typeof compareValues !== "function" || typeof writeValue !== "function" || typeof isRecoveryWriteAllowed !== "function" || typeof readNowMs !== "function") {
-      throw new Error("Trade input synchronizer dependencies are invalid");
+      throw new Error("交易输入框同步依赖异常");
     }
     if (!Number.isInteger(requiredStableMismatchFrames) || requiredStableMismatchFrames < 1) {
-      throw new Error("Trade input rollback stability must be a positive integer");
+      throw new Error("输入框回退稳定帧数必须为正整数");
     }
     if (!Number.isInteger(requiredStableMatchFrames) || requiredStableMatchFrames < 1) {
-      throw new Error("Trade input accepted stability must be a positive integer");
+      throw new Error("输入框写入稳定帧数必须为正整数");
     }
     if (!Number.isFinite(requiredStableMismatchMs) || requiredStableMismatchMs < 0) {
-      throw new Error("Trade input rollback stability duration must be a non-negative number");
+      throw new Error("输入框回退稳定时间不能为负数");
     }
     if (!Number.isFinite(requiredStableMatchMs) || requiredStableMatchMs < 0) {
-      throw new Error("Trade input accepted stability duration must be a non-negative number");
+      throw new Error("输入框写入稳定时间不能为负数");
     }
     if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
-      throw new Error("Trade input write attempts must be a positive integer");
+      throw new Error("输入框写入次数必须为正整数");
     }
     if (typeof recoverProvisionalMatchRollback !== "boolean") {
-      throw new Error("Provisional trade input recovery flag must be boolean");
+      throw new Error("输入框临时恢复标记必须为布尔值");
     }
     const createSyncSlot = (field) => {
       let root = null;
@@ -1845,10 +1858,10 @@
   function waitForTradeFormFrameState(observationRoot, readState, timeoutMs, requiredStableFrames = 2) {
     const view = observationRoot?.ownerDocument?.defaultView;
     if (!view || typeof view.requestAnimationFrame !== "function" || typeof view.cancelAnimationFrame !== "function") {
-      throw new Error("Trade form frame scheduler is unavailable");
+      throw new Error("交易表单帧调度器不可用");
     }
     if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
-      throw new Error("requiredStableFrames must be a positive integer");
+      throw new Error("稳定帧数必须为正整数");
     }
     return new Promise((resolve) => {
       let settled = false;
@@ -1886,13 +1899,13 @@
   function waitForTradeActionButtonFrameState(observationRoot, findButton, isVisibleElement, timeoutMs, requiredStableFrames = 2) {
     const view = observationRoot?.ownerDocument?.defaultView || observationRoot?.defaultView;
     if (!view || typeof view.requestAnimationFrame !== "function" || typeof view.cancelAnimationFrame !== "function") {
-      throw new Error("Trade action button frame scheduler is unavailable");
+      throw new Error("下单按钮帧调度器不可用");
     }
     if (typeof findButton !== "function" || typeof isVisibleElement !== "function") {
-      throw new Error("Trade action button resolver is unavailable");
+      throw new Error("下单按钮定位器不可用");
     }
     if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
-      throw new Error("requiredStableFrames must be a positive integer");
+      throw new Error("稳定帧数必须为正整数");
     }
     return new Promise((resolve) => {
       let settled = false;
@@ -2035,14 +2048,14 @@
   }
   function repriceRemainingLadderOrders({ orders, completedCount, prices }) {
     if (!Array.isArray(orders) || !Number.isInteger(completedCount) || completedCount < 0 || completedCount > orders.length) {
-      throw new Error("Invalid completed ladder count");
+      throw new Error("已完成阶梯订单数无效");
     }
     const remainingCount = orders.length - completedCount;
     if (!Array.isArray(prices) || prices.length !== remainingCount) {
-      throw new Error(`Expected ${remainingCount} replacement prices`);
+      throw new Error(`重定价数量不一致：预期 ${remainingCount} 个价格`);
     }
     if (prices.some((price) => !isPositiveDecimalString(normalizeDecimalString(price)))) {
-      throw new Error("Invalid replacement ladder price");
+      throw new Error("阶梯重定价价格无效");
     }
     return orders.map((order, index) => index < completedCount ? { ...order } : { ...order, price: normalizeDecimalString(prices[index - completedCount]) });
   }
@@ -2076,10 +2089,10 @@
   }
   function modeSymbolPrecisionOptionStorageKey(modeKeys, mode, symbol, precision) {
     if (mode !== "OPEN" && mode !== "CLOSE") {
-      throw new Error(`Unknown trade mode: ${mode}`);
+      throw new Error(`未知交易模式：${mode}`);
     }
     const baseKey = modeKeys[mode];
-    if (!baseKey) throw new Error(`Missing storage key for trade mode: ${mode}`);
+    if (!baseKey) throw new Error(`交易模式缺少存储键：${mode}`);
     const normalizedSymbol = String(symbol || "").toUpperCase();
     const normalizedPrecision = normalizePrecisionScopeValue(precision);
     return normalizedSymbol && normalizedPrecision ? `${baseKey}:${normalizedSymbol}:${normalizedPrecision}` : null;
@@ -2095,7 +2108,7 @@
   function migrateModeSymbolPrecisionNumberOption(storage, modeKeys, mode, symbol, precision, retiredValue, replacementValue, options) {
     const numericReplacement = Number(replacementValue);
     if (!options.includes(numericReplacement)) {
-      throw new Error(`Invalid replacement option: ${replacementValue}`);
+      throw new Error(`替换选项无效：${replacementValue}`);
     }
     const storageKey = modeSymbolPrecisionOptionStorageKey(modeKeys, mode, symbol, precision);
     if (!storageKey) return false;
@@ -2125,12 +2138,12 @@
   // src/binance-orderbook-trade/core/chart-orders-recovery.js
   var CHART_ORDERS_RECOVERY_STORAGE_KEY = "binance-orderbook-trade:chart-orders-recovery:v2";
   function createChartOrdersRecoveryRecord(nowMs) {
-    if (!Number.isFinite(nowMs)) throw new Error("Chart orders recovery timestamp is invalid");
+    if (!Number.isFinite(nowMs)) throw new Error("图表委托线恢复时间无效");
     return JSON.stringify({ version: 2, originalChecked: true, createdAtMs: nowMs });
   }
   function parseChartOrdersRecoveryRecord(rawValue, nowMs) {
     if (rawValue === null) return { status: "missing", record: null };
-    if (!Number.isFinite(nowMs)) throw new Error("Chart orders recovery current time is invalid");
+    if (!Number.isFinite(nowMs)) throw new Error("图表委托线恢复当前时间无效");
     let record;
     try {
       record = JSON.parse(rawValue);
@@ -2148,18 +2161,18 @@
   var IGNORED_DRAWING_EVENT_TYPES = /* @__PURE__ */ new Set(["click", "move"]);
   function validateTradingViewApi(api) {
     if (!api || typeof api !== "object") {
-      throw new Error("TradingView API is unavailable");
+      throw new Error("图表接口不可用");
     }
     if (typeof api.saveChart !== "function") {
-      throw new Error("TradingView saveChart API is unavailable");
+      throw new Error("图表保存接口不可用");
     }
     if (typeof api.subscribe !== "function" || typeof api.unsubscribe !== "function") {
-      throw new Error("TradingView drawing-event subscription API is unavailable");
+      throw new Error("图表事件接口不可用");
     }
   }
   function restoreSaveChartMethod(api, wrapper, originalSaveChart, originalDescriptor) {
     if (api.saveChart !== wrapper) {
-      throw new Error("TradingView saveChart API changed during save coalescing");
+      throw new Error("图表保存接口在操作期间发生变化");
     }
     if (originalDescriptor) {
       Object.defineProperty(api, "saveChart", originalDescriptor);
@@ -2167,7 +2180,7 @@
       delete api.saveChart;
     }
     if (api.saveChart !== originalSaveChart) {
-      throw new Error("TradingView saveChart API was not restored");
+      throw new Error("图表保存接口未能恢复");
     }
   }
   async function coalesceTradingViewDrawingSaves(api, action, {
@@ -2178,15 +2191,15 @@
     clearTimeoutFn = clearTimeout
   } = {}) {
     validateTradingViewApi(api);
-    if (typeof action !== "function") throw new Error("Chart action is unavailable");
+    if (typeof action !== "function") throw new Error("图表操作不可用");
     if (!Number.isFinite(eventDiscoveryTimeoutMs) || eventDiscoveryTimeoutMs < 0) {
-      throw new Error("TradingView drawing-event discovery timeout is invalid");
+      throw new Error("图表事件等待时间无效");
     }
     if (!Number.isFinite(settleQuietMs) || settleQuietMs <= 0) {
-      throw new Error("TradingView drawing-save quiet window is invalid");
+      throw new Error("图表保存稳定等待时间无效");
     }
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      throw new Error("TradingView save coalescing timeout is invalid");
+      throw new Error("图表保存超时时间无效");
     }
     const originalSaveChart = api.saveChart;
     const originalDescriptor = Object.getOwnPropertyDescriptor(api, "saveChart");
@@ -2237,7 +2250,7 @@
     try {
       api.saveChart = saveChartWrapper;
       if (api.saveChart !== saveChartWrapper) {
-        throw new Error("TradingView saveChart API is not writable");
+        throw new Error("图表保存接口无法临时接管");
       }
     } catch (error) {
       api.unsubscribe("drawing_event", handleDrawingEvent);
@@ -2260,12 +2273,12 @@
         waitTimeout = setTimeoutFn(() => {
           if (saveRequestCount < drawingEventCount) {
             settleReject(new Error(
-              `Expected ${drawingEventCount} TradingView saveChart requests, received ${saveRequestCount}`
+              `图表保存请求数量不一致：预期 ${drawingEventCount}，实际 ${saveRequestCount}`
             ));
             return;
           }
           settleReject(new Error(
-            `TradingView drawing-save burst did not settle within ${timeoutMs}ms`
+            `图表保存未在 ${timeoutMs} 毫秒内完成`
           ));
         }, timeoutMs);
         await burstSettled;
@@ -2328,11 +2341,11 @@
     const buttons = Array.from(dialog.querySelectorAll("button")).filter(isVisibleElement);
     if (!buttons.length) return null;
     if (buttons.length !== 2) {
-      throw new Error(`Expected two Binance cancel-all dialog buttons, found ${buttons.length}`);
+      throw new Error(`撤单确认弹窗按钮数量异常：${buttons.length}`);
     }
     const primaryButtons = buttons.filter((button) => button.matches(PRIMARY_BUTTON_SELECTOR));
     if (primaryButtons.length !== 1) {
-      throw new Error(`Expected one Binance cancel-all primary button, found ${primaryButtons.length}`);
+      throw new Error(`撤单确认按钮数量异常：${primaryButtons.length}`);
     }
     const confirmButton = primaryButtons[0];
     const cancelButton = buttons.find((button) => button !== confirmButton);
@@ -2347,7 +2360,7 @@
       if (!existing) actionPairs.push(contract);
     }
     if (actionPairs.length !== 1) {
-      throw new Error(`Expected one Binance cancel-all dialog action pair, found ${actionPairs.length}`);
+      throw new Error(`撤单确认弹窗操作区域数量异常：${actionPairs.length}`);
     }
     return contracts.reduce((innermost, contract) => innermost.dialog.contains(contract.dialog) ? contract : innermost);
   }
@@ -2490,13 +2503,13 @@
     const chartRoots = Array.from(document2.querySelectorAll(CHART_ROOT_SELECTOR)).filter(hasVisibleBox);
     if (!chartRoots.length) return null;
     if (chartRoots.length > 1) {
-      throw new Error(`Expected one visible Binance chart root, found ${chartRoots.length}`);
+      throw new Error(`可见图表区域数量异常：${chartRoots.length}`);
     }
     const chartRoot = chartRoots[0];
     const tradingViewApis = Array.from(chartRoot.querySelectorAll("iframe")).map((frame) => frame.contentWindow?.tradingViewApi).filter(Boolean);
     if (!tradingViewApis.length) return null;
     if (tradingViewApis.length > 1) {
-      throw new Error(`Expected one Binance TradingView API, found ${tradingViewApis.length}`);
+      throw new Error(`图表接口数量异常：${tradingViewApis.length}`);
     }
     return { chartRoot, tradingViewApi: tradingViewApis[0] };
   }
@@ -2526,7 +2539,7 @@
     });
     if (!toolbars.length) return null;
     if (toolbars.length > 1) {
-      throw new Error(`Expected one Binance chart toolbar, found ${toolbars.length}`);
+      throw new Error(`图表工具栏数量异常：${toolbars.length}`);
     }
     const toolbar = toolbars[0];
     const trigger = toolbar.children[toolbar.children.length - 2];
@@ -2534,12 +2547,10 @@
       trigger.querySelectorAll(".bn-tooltips-ele[aria-describedby]")
     );
     if (popoverReferences.length !== 1) {
-      throw new Error(
-        `Expected one Binance chart orders popover reference, found ${popoverReferences.length}`
-      );
+      throw new Error(`图表“显示当前委托”菜单入口数量异常：${popoverReferences.length}`);
     }
     const popoverId = popoverReferences[0].getAttribute("aria-describedby");
-    if (!popoverId) throw new Error("Binance chart orders popover id is unavailable");
+    if (!popoverId) throw new Error("图表“显示当前委托”菜单标识缺失");
     return {
       chartRoot,
       tradingViewApi,
@@ -2550,19 +2561,19 @@
   }
   function getBinanceChartOrdersTarget(document2) {
     const target = findBinanceChartOrdersTarget(document2);
-    if (!target) throw new Error("Binance chart orders target is unavailable");
+    if (!target) throw new Error("未找到图表“显示当前委托”控件");
     return target;
   }
   function assertSameBinanceChartOrdersTarget(capturedTarget, currentTarget) {
     if (!capturedTarget || !currentTarget) {
-      throw new Error("Binance chart orders target is unavailable");
+      throw new Error("未找到图表“显示当前委托”控件");
     }
     if (capturedTarget.chartRoot !== currentTarget.chartRoot || capturedTarget.tradingViewApi !== currentTarget.tradingViewApi || capturedTarget.toolbar !== currentTarget.toolbar || capturedTarget.trigger !== currentTarget.trigger || capturedTarget.popoverId !== currentTarget.popoverId) {
-      throw new Error("Binance chart orders target changed");
+      throw new Error("图表“显示当前委托”控件已变化");
     }
   }
   function findActiveBinanceChartOrdersPopover(document2, target, isVisibleElement) {
-    if (!target?.popoverId) throw new Error("Binance chart orders target is unavailable");
+    if (!target?.popoverId) throw new Error("未找到图表“显示当前委托”控件");
     const popover = document2.getElementById(target.popoverId);
     if (!popover || !popover.matches(ACTIVE_POPOVER_SELECTOR) || !isVisibleElement(popover)) {
       return null;
@@ -2570,12 +2581,12 @@
     const checkboxes = Array.from(popover.querySelectorAll('[role="checkbox"]')).filter(isVisibleElement).filter((checkbox2) => OPEN_ORDERS_LABEL_PATTERN.test(normalizeLabel(checkbox2.textContent)));
     if (!checkboxes.length) return null;
     if (checkboxes.length > 1) {
-      throw new Error(`Expected one Binance chart OpenOrders checkbox, found ${checkboxes.length}`);
+      throw new Error(`图表“显示当前委托”选项数量异常：${checkboxes.length}`);
     }
     const checkbox = checkboxes[0];
     const checkedValue = checkbox.getAttribute("aria-checked");
     if (checkedValue !== "true" && checkedValue !== "false") {
-      throw new Error(`Binance chart OpenOrders state is ${checkedValue}`);
+      throw new Error(`图表“显示当前委托”状态异常：${checkedValue}`);
     }
     return { popover, checkbox, checked: checkedValue === "true" };
   }
@@ -3332,7 +3343,7 @@
     }
     async function waitForLadderSubmitResponseObservations(captureId, timeoutMs) {
       const capture = activeLadderSubmitCapture?.captureId === captureId ? activeLadderSubmitCapture : null;
-      if (!capture) throw new Error("下单响应捕获上下文丢失");
+      if (!capture) throw new Error("下单结果跟踪状态异常，已停止");
       const observations = capture.responseObservations.slice();
       if (observations.length > 0 && timeoutMs > 0) {
         await Promise.race([
@@ -3344,12 +3355,12 @@
     }
     function readLadderSubmitApiErrors(captureId) {
       const capture = activeLadderSubmitCapture?.captureId === captureId ? activeLadderSubmitCapture : null;
-      if (!capture) throw new Error("下单响应捕获上下文丢失");
+      if (!capture) throw new Error("下单结果跟踪状态异常，已停止");
       return capture.apiErrors.slice();
     }
     function readLadderSubmitApiSuccesses(captureId) {
       const capture = activeLadderSubmitCapture?.captureId === captureId ? activeLadderSubmitCapture : null;
-      if (!capture) throw new Error("下单响应捕获上下文丢失");
+      if (!capture) throw new Error("下单结果跟踪状态异常，已停止");
       return capture.apiSuccesses.slice();
     }
     (function installFetchInterceptor() {
@@ -3381,7 +3392,7 @@
     }
     async function adjustLeverageApi(symbol, leverage) {
       if (!cachedBncHeaders) {
-        throw new Error("bapi header 尚未缓存");
+        throw new Error("币安请求头尚未就绪");
       }
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 5e3);
@@ -3396,7 +3407,7 @@
             signal: controller.signal
           }
         );
-        if (!resp.ok) throw new Error(`adjustLeverage HTTP ${resp.status}`);
+        if (!resp.ok) throw new Error(`杠杆调整接口异常：HTTP ${resp.status}`);
         const data = await resp.json();
         if (!data.success) throw new Error(data.message || `code=${data.code}`);
         return data;
@@ -3471,7 +3482,7 @@
       const key = orderbookPrecisionSamplesKey(symbol);
       if (!key) return [];
       if (!Array.isArray(samples)) {
-        throw new Error("Invalid latest trade movement snapshot");
+        throw new Error("最新成交价样本状态异常");
       }
       const normalizedSamples = samples.map((sample) => normalizeDecimalString(sample)).filter((sample) => sample && isPositiveDecimalString(sample));
       localStorage.setItem(key, JSON.stringify(normalizedSamples));
@@ -3673,7 +3684,7 @@
       const selected = value === current;
       const recommended = value === recommendation;
       const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : "";
-      const title = disabled ? "缩放调整暂不可用" : selected && recommended ? `当前且推荐的价格精度 ${value}` : selected ? `当前价格精度 ${value}` : recommended ? `推荐价格精度 ${value}` : `切换到价格精度 ${value}`;
+      const title = disabled ? "价格精度暂不可调整" : selected && recommended ? `当前且推荐的价格精度 ${value}` : selected ? `当前价格精度 ${value}` : recommended ? `推荐价格精度 ${value}` : `切换到价格精度 ${value}`;
       const activeStyle = selected ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};` : NEUTRAL_CONTROL_STYLE;
       const recommendationMarker = recommended ? '<span aria-hidden="true" style="position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--color-PrimaryYellow);box-shadow:0 0 0 1px #fff;"></span>' : "";
       return `<button type="button" data-orderbook-precision-value="${value}"${disabledAttrs} aria-pressed="${selected}" aria-label="切换价格精度到 ${value}${recommended ? "，推荐档位" : ""}" title="${title}" style="position:relative;box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:30px;white-space:nowrap;overflow:hidden;cursor:pointer;${activeStyle}">${recommendationMarker}${formatOrderbookPrecisionShortcutLabel(value)}</button>`;
@@ -3705,7 +3716,7 @@
     }
     function showOrderbookPrecisionRefreshFeedback(symbol, state) {
       if (!["success", "retry"].includes(state)) {
-        throw new Error(`Invalid orderbook precision refresh feedback state: ${state}`);
+        throw new Error(`价格精度刷新反馈状态异常：${state}`);
       }
       if (orderbookPrecisionRefreshFeedbackTimer !== null) {
         window.clearTimeout(orderbookPrecisionRefreshFeedbackTimer);
@@ -3796,14 +3807,14 @@
             closed = await closeOrderbookPrecisionOptions(trigger.element, cleanupPrecision, true);
           }
         }
-        if (!closed) return { status: "无法关闭原生缩放下拉" };
+        if (!closed) return { status: "无法关闭价格精度下拉" };
         if (snapshot) return snapshot;
         if (Date.now() >= deadline) break;
         await delay(ORDERBOOK_PRECISION_READY_POLL_MS);
       }
       if (!isCurrentObservedSymbol(symbol)) return null;
       return {
-        status: lastPrecision ? `未找到当前缩放 ${lastPrecision} 的原生档位` : "订单簿尚未就绪"
+        status: lastPrecision ? `未找到当前价格精度 ${lastPrecision} 的选项` : "订单簿尚未就绪"
       };
     }
     async function runLoadOrderbookPrecisionOptions() {
@@ -3834,7 +3845,7 @@
       if (!isCurrentObservedSymbol(symbol)) return false;
       const trigger = findOrderbookPrecisionTrigger();
       if (!symbol || !trigger?.element) {
-        orderbookPrecisionState = { ...orderbookPrecisionState, status: "未定位到缩放下拉" };
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: "未找到价格精度下拉" };
         scheduleRenderPanel();
         return false;
       }
@@ -3844,7 +3855,7 @@
       if (!isCurrentObservedSymbol(symbol) || readCurrentOrderbookPrecisionValue() !== startPrecision) return false;
       const values = readVisibleOrderbookPrecisionOptionValues(trigger.element);
       if (!options.length || !values.includes(startPrecision)) {
-        orderbookPrecisionState = { ...orderbookPrecisionState, status: "读取原生缩放档位失败" };
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: "读取价格精度选项失败" };
         scheduleRenderPanel();
         return false;
       }
@@ -3859,7 +3870,7 @@
         nativeOptionsStatus: null
       };
       if (!options.length || !shortcutOptions.includes(targetPrecision)) {
-        orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到快捷缩放 ${targetPrecision}` };
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到快捷精度 ${targetPrecision}` };
         scheduleRenderPanel();
         return false;
       }
@@ -3871,7 +3882,7 @@
       });
       if (!selected) {
         if (isCurrentObservedSymbol(symbol)) {
-          orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到 ${targetPrecision} 档切换结果` };
+          orderbookPrecisionState = { ...orderbookPrecisionState, status: `价格精度未切换到 ${targetPrecision}` };
           scheduleRenderPanel();
         }
         return false;
@@ -3895,7 +3906,7 @@
     function selectOrderbookPrecision(value) {
       const targetPrecision = normalizeDecimalString(value);
       if (!targetPrecision || !isPositiveDecimalString(targetPrecision)) {
-        throw new Error(`无效的订单簿缩放快捷值: ${value}`);
+        throw new Error(`无效的价格精度快捷值: ${value}`);
       }
       return runOrderbookPrecisionSelectionTask(() => runSelectOrderbookPrecision(targetPrecision));
     }
@@ -3918,7 +3929,7 @@
           if (isCurrentObservedSymbol(symbol)) {
             orderbookPrecisionState = {
               ...orderbookPrecisionState,
-              nativeOptionsStatus: "读取原生缩放档位失败"
+              nativeOptionsStatus: "读取价格精度选项失败"
             };
             scheduleRenderPanel();
           }
@@ -3937,7 +3948,7 @@
         orderbookPrecisionState = {
           ...orderbookPrecisionState,
           symbol,
-          status: "未定位当前交易对"
+          status: "未识别当前交易对"
         };
         scheduleRenderPanel();
         return;
@@ -4049,6 +4060,10 @@
         const qty = spec.side === "LONG" ? longQty : shortQty;
         return { qty, qtySource };
       };
+      const classifyUnavailableQuantity = (quantity) => ({
+        ...quantity,
+        confirmedZeroOpenBalance: isConfirmedZeroOpenBalance(quantity.qty)
+      });
       const mutationRoot = getTradeMutationRoot();
       const ready = await waitForTradeFormMutationState(
         mutationRoot,
@@ -4056,13 +4071,14 @@
           const quantity = readQuantity();
           const { qty } = quantity;
           if (qty != null && isPositiveDecimalString(String(qty))) {
-            return quantity;
+            return { ...quantity, confirmedZeroOpenBalance: false };
           }
-          return isConfirmedZeroOpenBalance(qty) ? quantity : null;
+          const classified = classifyUnavailableQuantity(quantity);
+          return classified.confirmedZeroOpenBalance ? classified : null;
         },
         LADDER_OPEN_QTY_READY_TIMEOUT_MS
       );
-      return ready || readQuantity();
+      return ready || classifyUnavailableQuantity(readQuantity());
     }
     function readCloseBaseQtyForLadder(spec) {
       const symbol = getCurrentSymbol();
@@ -4086,15 +4102,19 @@
       if (expectedContext?.mode && spec.mode !== expectedContext.mode) {
         throw new Error("重挂前开仓/平仓模式已变化，已停止");
       }
+      const modeLabel = spec.mode === "OPEN" ? "开仓" : "平仓";
       const modeReady = await activateTradeMode(spec.mode);
-      if (!modeReady || getCurrentSymbol() !== startSymbol) throw new Error("切换开仓/平仓失败或交易对已变化");
+      if (getCurrentSymbol() !== startSymbol) {
+        throw new Error(`切换至${modeLabel}时交易对已变化，已停止`);
+      }
+      if (!modeReady) throw new Error(`未能切换至${modeLabel}`);
       const startPrecision = readCurrentOrderbookPrecisionValue();
-      if (!startPrecision) throw new Error("未识别订单簿缩放值");
+      if (!startPrecision) throw new Error("未识别价格精度");
       if (expectedContext?.precision && startPrecision !== expectedContext.precision) {
-        throw new Error("重挂前订单簿缩放值已变化，已停止");
+        throw new Error("重挂前价格精度已变化，已停止");
       }
       const postOnlyReady = await ensurePostOnlyOrderType();
-      if (!postOnlyReady) throw new Error("请刷新页面让只做Maker (Post Only) 生效后重试，脚本不会用普通限价继续");
+      if (!postOnlyReady) throw new Error("只做 Maker 未生效，请刷新页面后重试");
       const levels = getLadderLevels(spec.mode, startSymbol, startPrecision);
       const ladderStep = getLadderStep(spec.mode, startSymbol, startPrecision);
       const prices = getBufferedMakerPrices(spec.priceSide, levels, ladderStep);
@@ -4102,23 +4122,40 @@
         throw new Error(`订单簿${spec.priceSide === "BID" ? "买盘" : "卖盘"}不足 ${levels} 档，档幅 ${ladderStep}`);
       }
       const rules = await ensureRules(startSymbol);
-      if (!rules || getCurrentSymbol() !== startSymbol || readCurrentOrderbookPrecisionValue() !== startPrecision) {
-        throw new Error("交易规则未就绪或交易上下文已变化");
+      if (getCurrentSymbol() !== startSymbol) {
+        throw new Error("读取交易规则时交易对已变化，已停止");
       }
+      if (readCurrentOrderbookPrecisionValue() !== startPrecision) {
+        throw new Error("读取交易规则时价格精度已变化，已停止");
+      }
+      if (!rules) throw new Error("交易规则尚未就绪，请稍后重试");
       const ruleContext = getQtyRuleContext(startSymbol, spec.mode, prices[0]);
       if (ruleContext.status !== "ready" || !ruleContext.stepSize || !ruleContext.baseMinQty) {
-        throw new Error("数量步进/最小量未就绪");
+        throw new Error("下单数量规则尚未就绪，请稍后重试");
       }
       const minRequiredQtyByLevel = spec.mode === "OPEN" ? prices.map((price) => getQtyRuleContext(startSymbol, spec.mode, price).effectiveMinQty || ruleContext.baseMinQty) : prices.map(() => ruleContext.baseMinQty);
       let minRequiredQty = minRequiredQtyByLevel.filter(Boolean).reduce((maxQty, qty) => maxDecimalString(maxQty, qty), ruleContext.baseMinQty);
       const base = spec.mode === "OPEN" ? await readOpenBaseQtyForLadder(spec, prices[0]) : readCloseBaseQtyForLadder(spec);
-      if (getCurrentSymbol() !== startSymbol || getActiveTradeMode() !== spec.mode || readCurrentOrderbookPrecisionValue() !== startPrecision || !isPostOnlyOrderTypeActive()) {
-        throw new Error("读取可用数量后交易上下文已变化，已停止");
+      const quantityLabel = spec.mode === "OPEN" ? "可开数量" : "可平数量";
+      if (getCurrentSymbol() !== startSymbol) {
+        throw new Error(`读取${quantityLabel}时交易对已变化，已停止`);
       }
-      const baseQty = normalizeDecimalString(base?.qty || "");
-      if (!baseQty || !isPositiveDecimalString(baseQty)) {
-        throw new Error(`未读取到可用${spec.mode === "OPEN" ? "可开" : "可平"}数量`);
+      if (getActiveTradeMode() !== spec.mode) {
+        throw new Error(`读取${quantityLabel}时下单模式已变化，已停止`);
       }
+      if (readCurrentOrderbookPrecisionValue() !== startPrecision) {
+        throw new Error(`读取${quantityLabel}时价格精度已变化，已停止`);
+      }
+      if (!isPostOnlyOrderTypeActive()) {
+        throw new Error(`读取${quantityLabel}时只做 Maker 已失效，请刷新页面后重试`);
+      }
+      const baseQty = normalizeDecimalString(base?.qty ?? "");
+      const unavailableQuantityMessage = getUnavailableLadderQuantityMessage(
+        spec.mode,
+        baseQty,
+        base?.confirmedZeroOpenBalance === true
+      );
+      if (unavailableQuantityMessage) throw new Error(unavailableQuantityMessage);
       let percent = getLadderPercentForMode(
         spec.mode,
         spec.mode === "OPEN" ? getLadderOpenPercent(startSymbol, startPrecision) : null,
@@ -4199,7 +4236,7 @@
       const minimumText = minimumPercent ? `至少需要${percentLabel} ${minimumPercent}% 才能保持当前档位。` : "";
       const maxText = maxAutoFitPercent ? `自动上限 ${maxAutoFitPercent}%。` : "";
       const levelsText = levels ? `当前档位 ${levels} 档。` : "";
-      const replacementText = mode === "OPEN" ? "脚本只会尝试替换当前币同向开仓基础单，不会自动全撤。" : "脚本不会自动撤单。";
+      const replacementText = mode === "OPEN" ? "脚本只会尝试替换当前交易对的同向开仓基础单，不会自动全撤。" : "脚本不会自动撤单。";
       error.statusTitle = `当前${percentLabel} ${percent}%，目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；${levelsText}${minimumText}${maxText}已尝试自动提高比例和自动降档；${replacementText}`;
       if (mode === "OPEN" && spec && symbol && precision && replacementTotalQty && isPositiveDecimalString(replacementTotalQty)) {
         error.openOrdersReplacementPlan = {
@@ -4277,12 +4314,12 @@
       return remainingCount;
     }
     function assertLadderExecutionContext(plan) {
-      if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("执行中交易对变化，已停止");
-      if (getActiveTradeMode() !== plan.spec.mode) throw new Error("执行中开仓/平仓模式变化，已停止");
+      if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("执行中交易对已变化，已停止");
+      if (getActiveTradeMode() !== plan.spec.mode) throw new Error("执行中下单模式已变化，已停止");
       if (readCurrentOrderbookPrecisionValue() !== plan.precision) {
-        throw new Error("执行中订单簿缩放值变化，已停止");
+        throw new Error("执行中价格精度已变化，已停止");
       }
-      if (!isPostOnlyOrderTypeActive()) throw new Error("执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试");
+      if (!isPostOnlyOrderTypeActive()) throw new Error("执行中只做 Maker 已失效，请刷新页面后重试");
     }
     function assertSubmittedPriceMatchesExpectedPrice(expectedPrice, submittedPrice, expectedLabel = "点击价") {
       const expected = normalizeDecimalString(expectedPrice);
@@ -4330,7 +4367,7 @@
         maxWriteAttempts
       }) : setInputValueReact;
       const inputs = findTradeInputs();
-      if (!inputs) throw new Error("未找到唯一的当前交易表单输入框");
+      if (!inputs) throw new Error("未能确定唯一的当前交易表单输入框");
       const observationRoot = inputs.root;
       const readTradeState = createTradeInputStateReader({
         resolveInputs: findTradeInputs,
@@ -4363,7 +4400,7 @@
         priceLabel
       );
       assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || "", qtyLabel);
-      throw new Error("价格和数量状态未稳定，已停止提交");
+      throw new Error("价格框或数量框未稳定，已停止提交");
     }
     function isSubmitButtonBusy(button) {
       if (!button) return false;
@@ -4433,7 +4470,7 @@
     }
     function waitForOrderSubmitStartOrFailureFeedback(submitCaptureId, previousFeedbackSnapshot, timeoutMs) {
       const capture = activeLadderSubmitCapture?.captureId === submitCaptureId ? activeLadderSubmitCapture : null;
-      if (!capture) throw new Error("下单响应捕获上下文丢失");
+      if (!capture) throw new Error("下单结果跟踪状态异常，已停止");
       return new Promise((resolve) => {
         let settled = false;
         const finish = (result) => {
@@ -4532,13 +4569,14 @@
         throw new Error(`${failureActivity.message}（${diagnostic}）`);
       }
       if (capturedApiSuccesses.length === 1) return;
-      const settleHint = sawBusy ? "按钮已恢复但未捕获当前下单 API 成功响应" : "未捕获当前下单 API 成功响应";
-      throw new Error(`未收到明确${label}成功反馈（${settleHint}），已停止；请核对当前委托/历史成交`);
+      const settleHint = sawBusy ? "下单按钮已恢复，但仍未确认订单结果" : "仍未确认订单结果";
+      throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
     }
     async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null) {
       const priceInput = findPriceInput();
       const qtyInput = findQtyInput();
-      if (!priceInput || !qtyInput) throw new Error("未找到价格或数量输入框");
+      if (!priceInput) throw new Error("未找到价格输入框");
+      if (!qtyInput) throw new Error("未找到数量输入框");
       let done = 0;
       let repriceAttempts = 0;
       let lastRepriceApiErrorCode = null;
@@ -4549,7 +4587,7 @@
         const order = plan.orders[done];
         try {
           assertLadderExecutionContext(plan);
-          if (!await ensurePostOnlyOrderType()) throw new Error("执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试");
+          if (!await ensurePostOnlyOrderType()) throw new Error("执行中只做 Maker 已失效，请刷新页面后重试");
           throwIfAborted(abortSignal);
           assertLadderExecutionContext(plan);
           assertLadderMakerPrice(plan, order.price);
@@ -4559,7 +4597,8 @@
           assertLadderMakerPrice(plan, order.price);
           const currentPriceInput = findPriceInput();
           const currentQtyInput = findQtyInput();
-          if (!currentPriceInput || !currentQtyInput) throw new Error("执行中价格或数量输入框丢失");
+          if (!currentPriceInput) throw new Error("执行中价格输入框已消失，已停止");
+          if (!currentQtyInput) throw new Error("执行中数量输入框已消失，已停止");
           const synchronizedInputs = await syncTradeInputs(order.price, order.qty, {
             priceLabel: "计划价",
             qtyLabel: "计划量",
@@ -4655,8 +4694,8 @@
       }
       if (cancelCurrentSymbolOpenOrdersTask) {
         setStartStatus(
-          `${spec.label}尚未开始：撤本币挂单处理中`,
-          "尚未开始 · 撤本币挂单处理中"
+          `${spec.label}尚未开始：撤单处理中`,
+          "尚未开始 · 撤单处理中"
         );
         return { status: "not_started" };
       }
@@ -5192,7 +5231,7 @@
       let lastStatus = currentRoot ? "symbol_filter_not_confirmed" : "scope_not_found";
       const observationRoot = getAccountOrdersObservationRoot() || document.body;
       const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
-      if (!mutationSignal) throw new Error("Account-orders observer root is unavailable");
+      if (!mutationSignal) throw new Error("当前委托状态无法观察，已停止");
       try {
         while (true) {
           const observedVersion = mutationSignal.version;
@@ -5427,7 +5466,7 @@
         if (!accountSignal || !dialogSignal) {
           accountSignal?.dispose();
           dialogSignal?.dispose();
-          throw new Error("Row-cancellation observer root is unavailable");
+          throw new Error("撤单结果无法观察，已停止");
         }
         try {
           const observedAccountVersion = accountSignal.version;
@@ -5456,7 +5495,7 @@
       const deadline = Date.now() + LADDER_REPLACE_ROW_SETTLE_MS;
       const observationRoot = getAccountOrdersObservationRoot() || document.body;
       const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
-      if (!mutationSignal) throw new Error("Account-orders observer root is unavailable");
+      if (!mutationSignal) throw new Error("当前委托状态无法观察，已停止");
       try {
         while (true) {
           throwIfAborted(abortSignal);
@@ -5481,7 +5520,7 @@
       const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
       const observationRoot = getAccountOrdersObservationRoot() || document.body;
       const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
-      if (!mutationSignal) throw new Error("Account-orders observer root is unavailable");
+      if (!mutationSignal) throw new Error("当前委托状态无法观察，已停止");
       try {
         while (true) {
           throwIfAborted(abortSignal);
@@ -5509,7 +5548,7 @@
       let currentRoot = root;
       while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
         throwIfAborted(abortSignal);
-        if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("逐行撤单前交易对已变化");
+        if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("撤销待替换挂单前交易对已变化");
         const remainingQty = subtractDecimalStrings(plan.totalQty, cancelQty);
         const refreshedRoot = getActiveOpenOrdersScope2();
         if (refreshedRoot) currentRoot = refreshedRoot;
@@ -5520,18 +5559,18 @@
           { allowPartial: true }
         )[0];
         if (!row) {
-          throw new Error("当前币可撤挂单数量不足，已停止重挂");
+          throw new Error("同向可撤挂单数量不足，已停止重新挂单");
         }
         currentRoot = row.root || currentRoot;
         const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
         if (!row.cancelButton?.isConnected || !isVisibleElement(row.cancelButton)) {
           if (previousKeyCount === 0) continue;
-          throw new Error("当前币挂单撤单入口已失效，已停止重挂");
+          throw new Error("待替换挂单的撤单按钮已失效，已停止重新挂单");
         }
         const dialogsBefore = new Set(getVisibleDialogs());
         throwIfAborted(abortSignal);
         if (!clickDomTarget(row.cancelButton)) {
-          throw new Error("当前币挂单撤单入口点击失败，已停止重挂");
+          throw new Error("待替换挂单的撤单按钮点击失败，已停止重新挂单");
         }
         waitForTradeUiMutation({ timeoutMs: 800 });
         const outcome = await waitForOpenOrderRowCancellationOutcome(
@@ -5542,10 +5581,10 @@
           abortSignal
         );
         if (outcome.status === "symbol_changed") {
-          throw new Error("逐行撤单时交易对已变化");
+          throw new Error("撤销待替换挂单时交易对已变化");
         }
         if (outcome.status === "timeout") {
-          throw new Error("当前币挂单仍存在，已停止重挂");
+          throw new Error("待替换挂单仍存在，已停止重新挂单");
         }
         if (outcome.status === "dialog_open") {
           const { dialog } = outcome;
@@ -5569,7 +5608,7 @@
             previousKeyCount,
             abortSignal
           )) {
-            throw new Error("当前币挂单仍存在，已停止重挂");
+            throw new Error("待替换挂单仍存在，已停止重新挂单");
           }
         }
         throwIfAborted(abortSignal);
@@ -5579,7 +5618,7 @@
           previousKeyCount,
           abortSignal
         )) {
-          throw new Error("当前币挂单状态不稳定，已停止重挂");
+          throw new Error("待替换挂单状态未稳定，已停止重新挂单");
         }
         cancelQty = addDecimalStrings(cancelQty, row.qty);
         recordLadderCancelledOrder(progress);
@@ -5674,7 +5713,7 @@
     function createBinanceCancelAllDialogDecisionWatcher() {
       const lifecycleController = new AbortController();
       const dialogSignal = createDialogMutationSignal(document);
-      if (!dialogSignal) throw new Error("Cancel-all dialog observer root is unavailable");
+      if (!dialogSignal) throw new Error("撤单确认弹窗状态无法观察，已停止");
       const watcher = {
         action: null,
         error: null,
@@ -5818,7 +5857,7 @@
       if (current && (expectedChecked === null || current.checked === expectedChecked)) {
         return current;
       }
-      throw new Error(expectedChecked === null ? "Binance chart OpenOrders popover did not open" : `Binance chart OpenOrders state did not become ${expectedChecked}`);
+      throw new Error(expectedChecked === null ? "图表“显示当前委托”菜单未打开" : `图表“显示当前委托”未切换为${expectedChecked ? "显示" : "隐藏"}`);
     }
     async function openBinanceChartOrdersPopover(target) {
       const currentTarget = getBinanceChartOrdersTarget2();
@@ -5867,12 +5906,12 @@
         currentTarget,
         isVisibleElement
       )) {
-        throw new Error("Binance chart OpenOrders popover did not close");
+        throw new Error("图表“显示当前委托”菜单未关闭");
       }
     }
     async function toggleBinanceChartOrdersWithCoalescedSave(target, checkbox, expectedChecked, expectDrawingEvents) {
       if (typeof expectDrawingEvents !== "boolean") {
-        throw new Error("Chart orders drawing-event expectation is invalid");
+        throw new Error("图表委托线保存参数异常");
       }
       let popoverCloseOutcomePromise = null;
       const coalescingOutcome = await coalesceTradingViewDrawingSaves(
@@ -5918,7 +5957,7 @@
     }
     async function restoreBinanceChartOrdersAfterBulkCancel(target, state, expectDrawingEvents) {
       if (typeof expectDrawingEvents !== "boolean") {
-        throw new Error("Chart orders drawing-event expectation is invalid");
+        throw new Error("图表委托线保存参数异常");
       }
       assertSameBinanceChartOrdersTarget(target, getBinanceChartOrdersTarget2());
       const current = await openBinanceChartOrdersPopover(target);
@@ -5984,7 +6023,7 @@
         return { ok: false, status: "symbol_changing", message };
       }
       if (getOpenOrdersTabCount() === 0) {
-        setLadderStatus("当前币无挂单");
+        setLadderStatus("当前交易对无挂单");
         return { ok: true, status: "no_orders" };
       }
       const previousAccountOrdersTabIdentity = getAccountOrdersTabIdentity2(findSelectedAccountOrdersTab2());
@@ -5999,56 +6038,61 @@
       let successStatusMessage = null;
       try {
         const tabReady = await activateOpenOrdersTab();
-        if (!tabReady || !isCurrentObservedSymbol(symbol)) {
-          const message = "当前委托页未就绪或交易对已变化";
+        if (!isCurrentObservedSymbol(symbol)) {
+          const message = "打开当前委托时交易对已变化";
+          setLadderStatus(message);
+          return { ok: false, status: "symbol_changed", message };
+        }
+        if (!tabReady) {
+          const message = "未能打开当前委托";
           setLadderStatus(message);
           return { ok: false, status: "tab_not_ready", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope();
         if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-          const message = "未定位到当前委托面板";
+          const message = "未找到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
         const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
         previousOpenOrdersSubTabIdentity = basicSubTabState.previousSubTabIdentity;
         if (!basicSubTabState.ready || !isCurrentObservedSymbol(symbol)) {
-          const message = "未定位到当前委托基础单";
+          const message = "未找到当前委托基础单";
           setLadderStatus(message);
           return { ok: false, status: "basic_tab_not_ready", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope();
         if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-          const message = "未定位到当前委托面板";
+          const message = "未找到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
         const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
         symbolFilterOriginalChecked = symbolFilter.originalChecked;
         if (!symbolFilter.ok || !isCurrentObservedSymbol(symbol)) {
-          const message = "未确认只显示当前币挂单";
+          const message = "未确认仅显示当前交易对挂单";
           setLadderStatus(message);
           return { ok: false, status: "symbol_filter_not_confirmed", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope();
         if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-          const message = "未定位到当前委托面板";
+          const message = "未找到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
         const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(symbol);
         if (!isCurrentObservedSymbol(symbol)) {
-          const message = "读取当前币挂单时交易对已变化";
+          const message = "读取挂单时交易对已变化";
           setLadderStatus(message);
           return { ok: false, status: "symbol_changed", message };
         }
         if (!openOrdersEvidence.hasOrders) {
-          setLadderStatus("当前币无挂单");
+          setLadderStatus("当前交易对无挂单");
           return { ok: true, status: "no_orders" };
         }
         let cancelAllButton = openOrdersEvidence.cancelAllButton;
         if (!cancelAllButton) {
-          const message = "未找到当前委托全撤按钮";
+          const message = "未找到当前委托的全撤按钮";
           setLadderStatus(message);
           return { ok: false, status: "cancel_button_not_found", message };
         }
@@ -6064,29 +6108,29 @@
           await hideBinanceChartOrdersForBulkCancel(chartOrdersTarget, chartOrdersState);
         } catch (e) {
           emit("ERR", "撤单前隐藏图表当前委托失败", e);
-          const message = "未能确认图表当前委托已隐藏，未打开撤单确认框";
+          const message = "未能准备撤单页面，未打开确认弹窗";
           setLadderStatus(message);
           return { ok: false, status: "chart_orders_not_hidden", message };
         }
         if (!isCurrentObservedSymbol(symbol)) {
-          const message = "隐藏图表当前委托后交易对已变化";
+          const message = "准备撤单时交易对已变化";
           setLadderStatus(message);
           return { ok: false, status: "symbol_changed", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope();
         if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-          const message = "隐藏图表当前委托后，未定位到当前委托面板";
+          const message = "准备撤单时未找到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
         if (!isOpenOrdersScopeConfirmedForSymbol(openOrdersScope, symbol)) {
-          const message = "隐藏图表当前委托后，未确认只显示当前币挂单";
+          const message = "准备撤单时未确认仅显示当前交易对挂单";
           setLadderStatus(message);
           return { ok: false, status: "symbol_filter_not_confirmed", message };
         }
         cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope);
         if (!cancelAllButton) {
-          const message = "隐藏图表当前委托后，未找到当前委托全撤按钮";
+          const message = "准备撤单时未找到全撤按钮";
           setLadderStatus(message);
           return { ok: false, status: "cancel_button_not_found", message };
         }
@@ -6132,10 +6176,10 @@
           return { ok: false, status: "cancelled", message };
         }
         waitForTradeUiMutation({ timeoutMs: 800 });
-        setLadderStatus("已确认撤单，等待当前币挂单清空");
+        setLadderStatus("撤单已确认，等待挂单清空");
         openOrdersScope = await waitForActiveOpenOrdersScope();
         if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-          const message = "未定位到当前委托面板";
+          const message = "未找到当前委托面板";
           setLadderStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
@@ -6148,21 +6192,21 @@
             return { ok: false, status: "symbol_changed", message: message2 };
           }
           if (clearResult.status === "scope_not_found") {
-            const message2 = "等待撤单完成时未定位到当前委托面板";
+            const message2 = "等待撤单完成时未找到当前委托面板";
             setLadderStatus(message2);
             return { ok: false, status: "scope_not_found", message: message2 };
           }
           if (clearResult.status === "symbol_filter_not_confirmed") {
-            const message2 = "等待撤单完成时未确认只显示当前币挂单";
+            const message2 = "等待撤单完成时未确认仅显示当前交易对挂单";
             setLadderStatus(message2);
             return { ok: false, status: "symbol_filter_not_confirmed", message: message2 };
           }
-          const message = waitUntilCleared ? "当前币挂单仍存在，已停止重挂" : "当前币挂单仍存在，撤单流程未完成";
+          const message = waitUntilCleared ? "当前交易对挂单仍存在，已停止重新挂单" : "当前交易对挂单仍存在，撤单未完成";
           setLadderStatus(message);
           return { ok: false, status: "not_cleared", message };
         }
         chartOrdersDefinitivelyCleared = clearResult.definitivelyCleared === true;
-        successStatusMessage = waitUntilCleared ? "当前币挂单已撤，继续重挂" : "撤单流程结束，已恢复筛选状态";
+        successStatusMessage = waitUntilCleared ? "原挂单已撤，继续阶梯挂单" : "撤单已完成";
         return { ok: true, status: "cleared" };
       } finally {
         let temporaryUiRestoreSucceeded = true;
@@ -6256,7 +6300,7 @@
       };
       const symbol = getCurrentSymbol();
       if (!isCurrentObservedSymbol(symbol) || symbol !== plan?.symbol) {
-        const message = "逐行撤单前交易对已变化";
+        const message = "撤销待替换挂单前交易对已变化";
         setPlanStepStatus(message);
         return { ok: false, status: "symbol_changed", message };
       }
@@ -6269,15 +6313,20 @@
         setPlanStepStatus("查找当前委托");
         const tabReady = await activateOpenOrdersTab(abortSignal);
         throwIfAborted(abortSignal);
-        if (!tabReady || !isCurrentObservedSymbol(symbol)) {
-          const message = "当前委托页未就绪或交易对已变化";
+        if (!isCurrentObservedSymbol(symbol)) {
+          const message = "打开当前委托时交易对已变化";
+          setPlanStepStatus(message);
+          return { ok: false, status: "symbol_changed", message };
+        }
+        if (!tabReady) {
+          const message = "未能打开当前委托";
           setPlanStepStatus(message);
           return { ok: false, status: "tab_not_ready", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
         throwIfAborted(abortSignal);
         if (!openOrdersScope) {
-          const message = "未定位到当前委托面板";
+          const message = "未找到当前委托面板";
           setPlanStepStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
@@ -6290,14 +6339,14 @@
         );
         throwIfAborted(abortSignal);
         if (!basicSubTabState.ready) {
-          const message = "未定位到当前委托基础单";
+          const message = "未找到当前委托基础单";
           setPlanStepStatus(message);
           return { ok: false, status: "basic_tab_not_ready", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
         throwIfAborted(abortSignal);
         if (!openOrdersScope) {
-          const message = "未定位到当前委托面板";
+          const message = "未找到当前委托面板";
           setPlanStepStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
@@ -6311,14 +6360,14 @@
         );
         throwIfAborted(abortSignal);
         if (!symbolFilter.ok) {
-          const message = "未确认只显示当前币挂单";
+          const message = "未确认仅显示当前交易对挂单";
           setPlanStepStatus(message);
           return { ok: false, status: "symbol_filter_not_confirmed", message };
         }
         openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
         throwIfAborted(abortSignal);
         if (!openOrdersScope) {
-          const message = "未定位到当前委托面板";
+          const message = "未找到当前委托面板";
           setPlanStepStatus(message);
           return { ok: false, status: "scope_not_found", message };
         }
@@ -6331,17 +6380,17 @@
         throwIfAborted(abortSignal);
         if (!rows.length) {
           const directionLabel = getPlanDirectionLabel(plan);
-          const message = `未定位到当前币的${directionLabel || ""}可撤基础单`;
+          const message = `未找到${directionLabel || ""}方向的可撤基础单`;
           setPlanStepStatus(message);
           return { ok: false, status: "rows_not_found", message };
         }
         const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
         if (!rowsToCancel.length) {
-          const message = "未选中当前币待撤挂单";
+          const message = "未选中待替换挂单";
           setPlanStepStatus(message);
           return { ok: false, status: "rows_not_selected", message };
         }
-        setPlanStepStatus(`撤销 ${rowsToCancel.length} 笔当前币挂单`);
+        setPlanStepStatus(`撤销 ${rowsToCancel.length} 笔同向挂单`);
         await cancelOpenOrderRowsForPlan(
           openOrdersScope,
           plan,
@@ -6350,12 +6399,12 @@
           abortSignal
         );
         throwIfAborted(abortSignal);
-        setPlanStepStatus("当前币挂单已替换，继续重挂");
+        setPlanStepStatus("原挂单已撤，继续阶梯挂单");
         return { ok: true, status: "rows_cleared" };
       } catch (e) {
         if (isLadderStoppedError(e)) throw e;
         if (e?.name === "DialogNotClosedError") restoreTemporaryUiState = false;
-        const message = e?.message || "当前币挂单逐行撤销失败，已停止重挂";
+        const message = e?.message || "待替换挂单撤销失败，已停止重新挂单";
         setPlanStepStatus(message);
         const status = e?.name === "DialogNotClosedError" ? "dialog_not_closed" : "row_cancel_failed";
         return { ok: false, status, message };
@@ -6404,9 +6453,9 @@
     }
     function formatOpenOrdersReplacementDetail(plan) {
       if (plan?.spec?.mode === "OPEN") {
-        return "同向开仓挂单可能占用可开数量，准备替换";
+        return "同向开仓挂单可能占用可开数量，准备撤销后重新挂单";
       }
-      return "当前挂单占用可平数量，准备替换";
+      return "同向平仓挂单占用可平数量，准备撤销后重新挂单";
     }
     function formatOpenOrdersReplacementStatus(plan) {
       return `${plan.spec.label}：${formatOpenOrdersReplacementDetail(plan)}`;
@@ -6451,7 +6500,7 @@
             abortSignal
           );
           throwIfAborted(abortSignal);
-          if (!result?.ok) throw new Error(result.message || "当前币挂单未替换，已停止重挂");
+          if (!result?.ok) throw new Error(result.message || "原挂单未完成替换，已停止重新挂单");
         }
       }
       throw new Error("阶梯重挂流程异常");
@@ -6576,7 +6625,7 @@
     function isConfirmedZeroOpenBalance(qty) {
       const available = readTradeAvailableBalance(getTradeMutationRoot(), { isVisibleElement });
       const normalizedQty = normalizeDecimalString(String(qty ?? ""));
-      const normalizedBalance = normalizeDecimalString(available?.amount || "");
+      const normalizedBalance = normalizeDecimalString(available?.amount ?? "");
       return normalizedQty !== null && normalizedBalance !== null && compareDecimalStrings(normalizedQty, "0") === 0 && compareDecimalStrings(normalizedBalance, "0") === 0;
     }
     function loadCloseSide(symbol = getCurrentSymbol()) {
@@ -6714,7 +6763,7 @@
       return Boolean(cachedBncHeaders && isCurrentObservedSymbol(symbol));
     }
     async function fetchCurrentSymbolPositionState(symbol) {
-      if (!cachedBncHeaders) throw new Error("bapi header 尚未缓存");
+      if (!cachedBncHeaders) throw new Error("币安请求头尚未就绪");
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 5e3);
       try {
@@ -6725,7 +6774,7 @@
           credentials: "include",
           signal: controller.signal
         });
-        if (!resp.ok) throw new Error(`user-position HTTP ${resp.status}`);
+        if (!resp.ok) throw new Error(`持仓接口异常：HTTP ${resp.status}`);
         const payload = await resp.json();
         return {
           ...resolveSymbolPositionStatus(payload, symbol),
@@ -7312,7 +7361,7 @@
       let finalText = "";
       let constraintText = "";
       if (!precisionReady) {
-        finalText = "等待订单簿缩放值";
+        finalText = "等待价格精度";
       } else if (!modeReady) {
         finalText = "等待开仓/平仓状态";
       } else if (rulesPending || !effectiveMinQty) {
@@ -7375,7 +7424,7 @@
           hintTitle = `平仓模式：双向持仓时单击订单簿价格后将${CFG.SAFE_MODE ? "填数量" : action}`;
         } else {
           hintText = "暂无可平仓位";
-          hintTitle = "平仓模式：当前币种暂无可平仓位";
+          hintTitle = "平仓模式：当前交易对暂无可平仓位";
         }
         if (hintEl.textContent !== hintText) hintEl.textContent = hintText;
         if (hintEl.title !== hintTitle) hintEl.title = hintTitle;
@@ -7957,7 +8006,7 @@
     function resolveTargetQty(tradeMode, priceOverride) {
       const symbol = getCurrentSymbol();
       const precision = readCurrentOrderbookPrecisionValue();
-      if (!precision) throw new Error("未识别订单簿缩放值");
+      if (!precision) throw new Error("未识别价格精度");
       const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
       if (qtyRuleContext.status !== "ready" || !qtyRuleContext.effectiveMinQty) {
         if (symbol && !rulesCache[symbol]) ensureRules(symbol);
@@ -8052,7 +8101,7 @@
             throw new Error("开仓/平仓模式已变化，已停止提交");
           }
           if (readCurrentOrderbookPrecisionValue() !== qtyPlan.precision) {
-            throw new Error("订单簿缩放值已变化，已停止提交");
+            throw new Error("价格精度已变化，已停止提交");
           }
           const currentAction = resolveTradeAction();
           if (!currentAction || currentAction.mode !== action.mode || currentAction.side !== action.side || !currentAction.button || currentAction.button.disabled || currentAction.button.getAttribute("aria-disabled") === "true") {

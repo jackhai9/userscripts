@@ -6,6 +6,7 @@ import {
   fitLadderPlanForMinimumQty,
   getLadderActionSpec,
   getLadderPercentForMode,
+  getUnavailableLadderQuantityMessage,
 } from '../../../src/binance-orderbook-trade/core/ladder-plan.js';
 
 test('maps open and close ladder actions to order direction specs', () => {
@@ -44,6 +45,23 @@ test('rejects unknown ladder actions and resolves percent source by mode', () =>
   assert.equal(getLadderPercentForMode('OPEN', 30, 50), 30);
   assert.equal(getLadderPercentForMode('CLOSE', 30, 50), 50);
   assert.equal(getLadderPercentForMode('UNKNOWN', 30, 50), null);
+});
+
+test('unavailable ladder quantity messages preserve the observed failure reason', () => {
+  assert.equal(getUnavailableLadderQuantityMessage('OPEN', null), '未读取到可开数量');
+  assert.equal(getUnavailableLadderQuantityMessage('OPEN', '0'), '当前可开数量为 0');
+  assert.equal(
+    getUnavailableLadderQuantityMessage('OPEN', 0, true),
+    '可用余额不足',
+  );
+  assert.equal(getUnavailableLadderQuantityMessage('OPEN', '1.25'), null);
+  assert.equal(getUnavailableLadderQuantityMessage('CLOSE', null), '未读取到可平数量');
+  assert.equal(getUnavailableLadderQuantityMessage('CLOSE', '0'), '当前方向没有可平仓位');
+  assert.equal(getUnavailableLadderQuantityMessage('CLOSE', '1.25'), null);
+  assert.throws(
+    () => getUnavailableLadderQuantityMessage('UNKNOWN', '0'),
+    /未知阶梯数量模式/,
+  );
 });
 
 test('auto-fits ladder percent before reducing requested levels', () => {

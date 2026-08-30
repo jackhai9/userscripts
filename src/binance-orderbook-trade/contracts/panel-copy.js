@@ -47,7 +47,7 @@ export const PANEL_COPY = Object.freeze({
 export function formatPrecisionRefreshTooltip(tradeCount) {
   const count = Number(tradeCount);
   if (!Number.isInteger(count) || count <= 1) {
-    throw new Error(`Invalid precision trade count: ${tradeCount}`);
+    throw new Error(`价格精度成交样本数无效：${tradeCount}`);
   }
   return `优先根据最新 ${count} 条成交价；价格变化不足时自动扩大范围，重新计算推荐精度。`;
 }

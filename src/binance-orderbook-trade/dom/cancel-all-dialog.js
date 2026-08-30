@@ -32,11 +32,11 @@ function getDialogContract(dialog, isVisibleElement) {
   const buttons = Array.from(dialog.querySelectorAll('button')).filter(isVisibleElement);
   if (!buttons.length) return null;
   if (buttons.length !== 2) {
-    throw new Error(`Expected two Binance cancel-all dialog buttons, found ${buttons.length}`);
+    throw new Error(`撤单确认弹窗按钮数量异常：${buttons.length}`);
   }
   const primaryButtons = buttons.filter((button) => button.matches(PRIMARY_BUTTON_SELECTOR));
   if (primaryButtons.length !== 1) {
-    throw new Error(`Expected one Binance cancel-all primary button, found ${primaryButtons.length}`);
+    throw new Error(`撤单确认按钮数量异常：${primaryButtons.length}`);
   }
   const confirmButton = primaryButtons[0];
   const cancelButton = buttons.find((button) => button !== confirmButton);
@@ -58,7 +58,7 @@ export function findBinanceCancelAllDialog(document, isVisibleElement) {
     if (!existing) actionPairs.push(contract);
   }
   if (actionPairs.length !== 1) {
-    throw new Error(`Expected one Binance cancel-all dialog action pair, found ${actionPairs.length}`);
+    throw new Error(`撤单确认弹窗操作区域数量异常：${actionPairs.length}`);
   }
 
   return contracts.reduce((innermost, contract) => (

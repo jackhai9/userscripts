@@ -58,10 +58,10 @@ test('valid recovery records do not expire before the hidden chart state is rest
 });
 
 test('recovery records reject extra fields and invalid timestamps', () => {
-  assert.throws(() => createChartOrdersRecoveryRecord(Number.NaN), /timestamp is invalid/);
+  assert.throws(() => createChartOrdersRecoveryRecord(Number.NaN), /图表委托线恢复时间无效/);
   assert.throws(
     () => parseChartOrdersRecoveryRecord('{}', Number.NaN),
-    /current time is invalid/,
+    /图表委托线恢复当前时间无效/,
   );
   assert.deepEqual(parseChartOrdersRecoveryRecord(JSON.stringify({
     version: 2,

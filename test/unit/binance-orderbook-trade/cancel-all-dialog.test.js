@@ -88,7 +88,7 @@ test('ignores unrelated dialogs and rejects invalid cancel-all button contracts'
   }));
   assert.throws(
     () => findBinanceCancelAllDialog(extraButtonDom.window.document, isVisibleElement),
-    /Expected two Binance cancel-all dialog buttons, found 3/,
+    /撤单确认弹窗按钮数量异常：3/,
   );
 });
 
@@ -96,7 +96,7 @@ test('rejects multiple semantic cancel-all dialogs with distinct action pairs', 
   const dom = loadFixtureDom(`${createDialogMarkup()}${createDialogMarkup()}`);
   assert.throws(
     () => findBinanceCancelAllDialog(dom.window.document, isVisibleElement),
-    /Expected one Binance cancel-all dialog action pair, found 2/,
+    /撤单确认弹窗操作区域数量异常：2/,
   );
 });
 

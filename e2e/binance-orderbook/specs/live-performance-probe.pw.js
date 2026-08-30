@@ -33,7 +33,7 @@ test('live probe captures a no-order run and destroys every listener', async ({ 
   const firstFeedback = snapshot.events.find((event) => event.kind === 'first-feedback');
   expect(snapshot.finishedAtMonotonicMs - snapshot.startedAtMonotonicMs - firstFeedback.atMs)
     .toBeLessThan(50);
-  expect(snapshot.lastSemanticState.statusText).toBe('当前币无挂单');
+  expect(snapshot.lastSemanticState.statusText).toBe('当前交易对无挂单');
 
   const finishedEventCount = snapshot.events.length;
   await page.evaluate(() => {
@@ -102,7 +102,7 @@ test('live completion waits for confirmed cancellation cleanup', async ({ page }
 
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
   expect(snapshot.events.find((event) => event.kind === 'dialog-action')?.detail?.primary).toBe(true);
-  expect(snapshot.lastSemanticState.statusText).toBe('撤单流程结束，已恢复筛选状态');
+  expect(snapshot.lastSemanticState.statusText).toBe('撤单已完成');
   await destroyLivePerformanceProbe(page);
 });
 

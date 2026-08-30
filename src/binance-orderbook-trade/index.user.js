@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.160
+// @version      2.7.161
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -75,6 +75,7 @@ import {
   fitLadderPlanForMinimumQty,
   getLadderActionSpec as getLadderActionSpecData,
   getLadderPercentForMode,
+  getUnavailableLadderQuantityMessage,
 } from './core/ladder-plan.js';
 import { keepInteractionFeedbackVisible } from './core/interaction-feedback.js';
 import {
@@ -1112,7 +1113,7 @@ import {
     const capture = activeLadderSubmitCapture?.captureId === captureId
       ? activeLadderSubmitCapture
       : null;
-    if (!capture) throw new Error('下单响应捕获上下文丢失');
+    if (!capture) throw new Error('下单结果跟踪状态异常，已停止');
     const observations = capture.responseObservations.slice();
     if (observations.length > 0 && timeoutMs > 0) {
       await Promise.race([
@@ -1127,7 +1128,7 @@ import {
     const capture = activeLadderSubmitCapture?.captureId === captureId
       ? activeLadderSubmitCapture
       : null;
-    if (!capture) throw new Error('下单响应捕获上下文丢失');
+    if (!capture) throw new Error('下单结果跟踪状态异常，已停止');
     return capture.apiErrors.slice();
   }
 
@@ -1135,7 +1136,7 @@ import {
     const capture = activeLadderSubmitCapture?.captureId === captureId
       ? activeLadderSubmitCapture
       : null;
-    if (!capture) throw new Error('下单响应捕获上下文丢失');
+    if (!capture) throw new Error('下单结果跟踪状态异常，已停止');
     return capture.apiSuccesses.slice();
   }
 
@@ -1173,7 +1174,7 @@ import {
 
   async function adjustLeverageApi(symbol, leverage) {
     if (!cachedBncHeaders) {
-      throw new Error('bapi header 尚未缓存');
+      throw new Error('币安请求头尚未就绪');
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 5000);
@@ -1188,7 +1189,7 @@ import {
           signal: controller.signal,
         }
       );
-      if (!resp.ok) throw new Error(`adjustLeverage HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(`杠杆调整接口异常：HTTP ${resp.status}`);
       const data = await resp.json();
       if (!data.success) throw new Error(data.message || `code=${data.code}`);
       return data;
@@ -1286,7 +1287,7 @@ import {
     const key = orderbookPrecisionSamplesKey(symbol);
     if (!key) return [];
     if (!Array.isArray(samples)) {
-      throw new Error('Invalid latest trade movement snapshot');
+      throw new Error('最新成交价样本状态异常');
     }
     const normalizedSamples = samples
       .map((sample) => normalizeDecimalString(sample))
@@ -1534,7 +1535,7 @@ import {
     const recommended = value === recommendation;
     const disabledAttrs = disabled ? ' disabled aria-disabled="true"' : '';
     const title = disabled
-      ? '缩放调整暂不可用'
+      ? '价格精度暂不可调整'
       : selected && recommended
         ? `当前且推荐的价格精度 ${value}`
         : selected
@@ -1588,7 +1589,7 @@ import {
 
   function showOrderbookPrecisionRefreshFeedback(symbol, state) {
     if (!['success', 'retry'].includes(state)) {
-      throw new Error(`Invalid orderbook precision refresh feedback state: ${state}`);
+      throw new Error(`价格精度刷新反馈状态异常：${state}`);
     }
     if (orderbookPrecisionRefreshFeedbackTimer !== null) {
       window.clearTimeout(orderbookPrecisionRefreshFeedbackTimer);
@@ -1707,7 +1708,7 @@ import {
           closed = await closeOrderbookPrecisionOptions(trigger.element, cleanupPrecision, true);
         }
       }
-      if (!closed) return { status: '无法关闭原生缩放下拉' };
+      if (!closed) return { status: '无法关闭价格精度下拉' };
       if (snapshot) return snapshot;
       if (Date.now() >= deadline) break;
       await delay(ORDERBOOK_PRECISION_READY_POLL_MS);
@@ -1715,7 +1716,7 @@ import {
     if (!isCurrentObservedSymbol(symbol)) return null;
     return {
       status: lastPrecision
-        ? `未找到当前缩放 ${lastPrecision} 的原生档位`
+        ? `未找到当前价格精度 ${lastPrecision} 的选项`
         : '订单簿尚未就绪',
     };
   }
@@ -1749,7 +1750,7 @@ import {
     if (!isCurrentObservedSymbol(symbol)) return false;
     const trigger = findOrderbookPrecisionTrigger();
     if (!symbol || !trigger?.element) {
-      orderbookPrecisionState = { ...orderbookPrecisionState, status: '未定位到缩放下拉' };
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: '未找到价格精度下拉' };
       scheduleRenderPanel();
       return false;
     }
@@ -1759,7 +1760,7 @@ import {
     if (!isCurrentObservedSymbol(symbol) || readCurrentOrderbookPrecisionValue() !== startPrecision) return false;
     const values = readVisibleOrderbookPrecisionOptionValues(trigger.element);
     if (!options.length || !values.includes(startPrecision)) {
-      orderbookPrecisionState = { ...orderbookPrecisionState, status: '读取原生缩放档位失败' };
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: '读取价格精度选项失败' };
       scheduleRenderPanel();
       return false;
     }
@@ -1774,7 +1775,7 @@ import {
       nativeOptionsStatus: null,
     };
     if (!options.length || !shortcutOptions.includes(targetPrecision)) {
-      orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到快捷缩放 ${targetPrecision}` };
+      orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到快捷精度 ${targetPrecision}` };
       scheduleRenderPanel();
       return false;
     }
@@ -1787,7 +1788,7 @@ import {
     });
     if (!selected) {
       if (isCurrentObservedSymbol(symbol)) {
-        orderbookPrecisionState = { ...orderbookPrecisionState, status: `未找到 ${targetPrecision} 档切换结果` };
+        orderbookPrecisionState = { ...orderbookPrecisionState, status: `价格精度未切换到 ${targetPrecision}` };
         scheduleRenderPanel();
       }
       return false;
@@ -1813,7 +1814,7 @@ import {
   function selectOrderbookPrecision(value) {
     const targetPrecision = normalizeDecimalString(value);
     if (!targetPrecision || !isPositiveDecimalString(targetPrecision)) {
-      throw new Error(`无效的订单簿缩放快捷值: ${value}`);
+      throw new Error(`无效的价格精度快捷值: ${value}`);
     }
     return runOrderbookPrecisionSelectionTask(() => runSelectOrderbookPrecision(targetPrecision));
   }
@@ -1844,7 +1845,7 @@ import {
         if (isCurrentObservedSymbol(symbol)) {
           orderbookPrecisionState = {
             ...orderbookPrecisionState,
-            nativeOptionsStatus: '读取原生缩放档位失败',
+            nativeOptionsStatus: '读取价格精度选项失败',
           };
           scheduleRenderPanel();
         }
@@ -1867,7 +1868,7 @@ import {
       orderbookPrecisionState = {
         ...orderbookPrecisionState,
         symbol,
-        status: '未定位当前交易对',
+        status: '未识别当前交易对',
       };
       scheduleRenderPanel();
       return;
@@ -1988,6 +1989,10 @@ import {
       const qty = spec.side === 'LONG' ? longQty : shortQty;
       return { qty, qtySource };
     };
+    const classifyUnavailableQuantity = (quantity) => ({
+      ...quantity,
+      confirmedZeroOpenBalance: isConfirmedZeroOpenBalance(quantity.qty),
+    });
     const mutationRoot = getTradeMutationRoot();
     const ready = await waitForTradeFormMutationState(
       mutationRoot,
@@ -1995,14 +2000,15 @@ import {
         const quantity = readQuantity();
         const { qty } = quantity;
         if (qty != null && isPositiveDecimalString(String(qty))) {
-          return quantity;
+          return { ...quantity, confirmedZeroOpenBalance: false };
         }
-        return isConfirmedZeroOpenBalance(qty) ? quantity : null;
+        const classified = classifyUnavailableQuantity(quantity);
+        return classified.confirmedZeroOpenBalance ? classified : null;
       },
       LADDER_OPEN_QTY_READY_TIMEOUT_MS,
     );
 
-    return ready || readQuantity();
+    return ready || classifyUnavailableQuantity(readQuantity());
   }
 
   function readCloseBaseQtyForLadder(spec) {
@@ -2030,16 +2036,20 @@ import {
       throw new Error('重挂前开仓/平仓模式已变化，已停止');
     }
 
+    const modeLabel = spec.mode === 'OPEN' ? '开仓' : '平仓';
     const modeReady = await activateTradeMode(spec.mode);
-    if (!modeReady || getCurrentSymbol() !== startSymbol) throw new Error('切换开仓/平仓失败或交易对已变化');
+    if (getCurrentSymbol() !== startSymbol) {
+      throw new Error(`切换至${modeLabel}时交易对已变化，已停止`);
+    }
+    if (!modeReady) throw new Error(`未能切换至${modeLabel}`);
     const startPrecision = readCurrentOrderbookPrecisionValue();
-    if (!startPrecision) throw new Error('未识别订单簿缩放值');
+    if (!startPrecision) throw new Error('未识别价格精度');
     if (expectedContext?.precision && startPrecision !== expectedContext.precision) {
-      throw new Error('重挂前订单簿缩放值已变化，已停止');
+      throw new Error('重挂前价格精度已变化，已停止');
     }
 
     const postOnlyReady = await ensurePostOnlyOrderType();
-    if (!postOnlyReady) throw new Error('请刷新页面让只做Maker (Post Only) 生效后重试，脚本不会用普通限价继续');
+    if (!postOnlyReady) throw new Error('只做 Maker 未生效，请刷新页面后重试');
 
     const levels = getLadderLevels(spec.mode, startSymbol, startPrecision);
     const ladderStep = getLadderStep(spec.mode, startSymbol, startPrecision);
@@ -2049,17 +2059,17 @@ import {
     }
 
     const rules = await ensureRules(startSymbol);
-    if (
-      !rules ||
-      getCurrentSymbol() !== startSymbol ||
-      readCurrentOrderbookPrecisionValue() !== startPrecision
-    ) {
-      throw new Error('交易规则未就绪或交易上下文已变化');
+    if (getCurrentSymbol() !== startSymbol) {
+      throw new Error('读取交易规则时交易对已变化，已停止');
     }
+    if (readCurrentOrderbookPrecisionValue() !== startPrecision) {
+      throw new Error('读取交易规则时价格精度已变化，已停止');
+    }
+    if (!rules) throw new Error('交易规则尚未就绪，请稍后重试');
 
     const ruleContext = getQtyRuleContext(startSymbol, spec.mode, prices[0]);
     if (ruleContext.status !== 'ready' || !ruleContext.stepSize || !ruleContext.baseMinQty) {
-      throw new Error('数量步进/最小量未就绪');
+      throw new Error('下单数量规则尚未就绪，请稍后重试');
     }
     const minRequiredQtyByLevel = spec.mode === 'OPEN'
       ? prices.map((price) => getQtyRuleContext(startSymbol, spec.mode, price).effectiveMinQty || ruleContext.baseMinQty)
@@ -2071,18 +2081,26 @@ import {
     const base = spec.mode === 'OPEN'
       ? await readOpenBaseQtyForLadder(spec, prices[0])
       : readCloseBaseQtyForLadder(spec);
-    if (
-      getCurrentSymbol() !== startSymbol ||
-      getActiveTradeMode() !== spec.mode ||
-      readCurrentOrderbookPrecisionValue() !== startPrecision ||
-      !isPostOnlyOrderTypeActive()
-    ) {
-      throw new Error('读取可用数量后交易上下文已变化，已停止');
+    const quantityLabel = spec.mode === 'OPEN' ? '可开数量' : '可平数量';
+    if (getCurrentSymbol() !== startSymbol) {
+      throw new Error(`读取${quantityLabel}时交易对已变化，已停止`);
     }
-    const baseQty = normalizeDecimalString(base?.qty || '');
-    if (!baseQty || !isPositiveDecimalString(baseQty)) {
-      throw new Error(`未读取到可用${spec.mode === 'OPEN' ? '可开' : '可平'}数量`);
+    if (getActiveTradeMode() !== spec.mode) {
+      throw new Error(`读取${quantityLabel}时下单模式已变化，已停止`);
     }
+    if (readCurrentOrderbookPrecisionValue() !== startPrecision) {
+      throw new Error(`读取${quantityLabel}时价格精度已变化，已停止`);
+    }
+    if (!isPostOnlyOrderTypeActive()) {
+      throw new Error(`读取${quantityLabel}时只做 Maker 已失效，请刷新页面后重试`);
+    }
+    const baseQty = normalizeDecimalString(base?.qty ?? '');
+    const unavailableQuantityMessage = getUnavailableLadderQuantityMessage(
+      spec.mode,
+      baseQty,
+      base?.confirmedZeroOpenBalance === true,
+    );
+    if (unavailableQuantityMessage) throw new Error(unavailableQuantityMessage);
 
     let percent = getLadderPercentForMode(
       spec.mode,
@@ -2169,7 +2187,7 @@ import {
     const maxText = maxAutoFitPercent ? `自动上限 ${maxAutoFitPercent}%。` : '';
     const levelsText = levels ? `当前档位 ${levels} 档。` : '';
     const replacementText = mode === 'OPEN'
-      ? '脚本只会尝试替换当前币同向开仓基础单，不会自动全撤。'
+      ? '脚本只会尝试替换当前交易对的同向开仓基础单，不会自动全撤。'
       : '脚本不会自动撤单。';
     error.statusTitle = `当前${percentLabel} ${percent}%，目标数量小于最小下单量 ${minRequiredQty}，无法阶梯${actionLabel}；${levelsText}${minimumText}${maxText}已尝试自动提高比例和自动降档；${replacementText}`;
     if (
@@ -2264,12 +2282,12 @@ import {
   }
 
   function assertLadderExecutionContext(plan) {
-    if (!isCurrentObservedSymbol(plan.symbol)) throw new Error('执行中交易对变化，已停止');
-    if (getActiveTradeMode() !== plan.spec.mode) throw new Error('执行中开仓/平仓模式变化，已停止');
+    if (!isCurrentObservedSymbol(plan.symbol)) throw new Error('执行中交易对已变化，已停止');
+    if (getActiveTradeMode() !== plan.spec.mode) throw new Error('执行中下单模式已变化，已停止');
     if (readCurrentOrderbookPrecisionValue() !== plan.precision) {
-      throw new Error('执行中订单簿缩放值变化，已停止');
+      throw new Error('执行中价格精度已变化，已停止');
     }
-    if (!isPostOnlyOrderTypeActive()) throw new Error('执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试');
+    if (!isPostOnlyOrderTypeActive()) throw new Error('执行中只做 Maker 已失效，请刷新页面后重试');
   }
 
   function assertSubmittedPriceMatchesExpectedPrice(expectedPrice, submittedPrice, expectedLabel = '点击价') {
@@ -2334,7 +2352,7 @@ import {
       })
       : setInputValueReact;
     const inputs = findTradeInputs();
-    if (!inputs) throw new Error('未找到唯一的当前交易表单输入框');
+    if (!inputs) throw new Error('未能确定唯一的当前交易表单输入框');
 
     const observationRoot = inputs.root;
     const readTradeState = createTradeInputStateReader({
@@ -2371,7 +2389,7 @@ import {
       priceLabel,
     );
     assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || '', qtyLabel);
-    throw new Error('价格和数量状态未稳定，已停止提交');
+    throw new Error('价格框或数量框未稳定，已停止提交');
   }
 
   function isSubmitButtonBusy(button) {
@@ -2462,7 +2480,7 @@ import {
     const capture = activeLadderSubmitCapture?.captureId === submitCaptureId
       ? activeLadderSubmitCapture
       : null;
-    if (!capture) throw new Error('下单响应捕获上下文丢失');
+    if (!capture) throw new Error('下单结果跟踪状态异常，已停止');
 
     return new Promise((resolve) => {
       let settled = false;
@@ -2582,14 +2600,15 @@ import {
     }
     if (capturedApiSuccesses.length === 1) return;
 
-    const settleHint = sawBusy ? '按钮已恢复但未捕获当前下单 API 成功响应' : '未捕获当前下单 API 成功响应';
-    throw new Error(`未收到明确${label}成功反馈（${settleHint}），已停止；请核对当前委托/历史成交`);
+    const settleHint = sawBusy ? '下单按钮已恢复，但仍未确认订单结果' : '仍未确认订单结果';
+    throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
   }
 
   async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null) {
     const priceInput = findPriceInput();
     const qtyInput = findQtyInput();
-    if (!priceInput || !qtyInput) throw new Error('未找到价格或数量输入框');
+    if (!priceInput) throw new Error('未找到价格输入框');
+    if (!qtyInput) throw new Error('未找到数量输入框');
 
     let done = 0;
     let repriceAttempts = 0;
@@ -2601,7 +2620,7 @@ import {
       const order = plan.orders[done];
       try {
         assertLadderExecutionContext(plan);
-        if (!(await ensurePostOnlyOrderType())) throw new Error('执行中只做Maker (Post Only) 状态丢失，请刷新页面后重试');
+        if (!(await ensurePostOnlyOrderType())) throw new Error('执行中只做 Maker 已失效，请刷新页面后重试');
         throwIfAborted(abortSignal);
         assertLadderExecutionContext(plan);
         assertLadderMakerPrice(plan, order.price);
@@ -2613,7 +2632,8 @@ import {
 
         const currentPriceInput = findPriceInput();
         const currentQtyInput = findQtyInput();
-        if (!currentPriceInput || !currentQtyInput) throw new Error('执行中价格或数量输入框丢失');
+        if (!currentPriceInput) throw new Error('执行中价格输入框已消失，已停止');
+        if (!currentQtyInput) throw new Error('执行中数量输入框已消失，已停止');
 
         const synchronizedInputs = await syncTradeInputs(order.price, order.qty, {
           priceLabel: '计划价',
@@ -2715,8 +2735,8 @@ import {
     }
     if (cancelCurrentSymbolOpenOrdersTask) {
       setStartStatus(
-        `${spec.label}尚未开始：撤本币挂单处理中`,
-        '尚未开始 · 撤本币挂单处理中',
+        `${spec.label}尚未开始：撤单处理中`,
+        '尚未开始 · 撤单处理中',
       );
       return { status: 'not_started' };
     }
@@ -3339,7 +3359,7 @@ import {
     let lastStatus = currentRoot ? 'symbol_filter_not_confirmed' : 'scope_not_found';
     const observationRoot = getAccountOrdersObservationRoot() || document.body;
     const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
-    if (!mutationSignal) throw new Error('Account-orders observer root is unavailable');
+    if (!mutationSignal) throw new Error('当前委托状态无法观察，已停止');
 
     try {
       while (true) {
@@ -3621,7 +3641,7 @@ import {
       if (!accountSignal || !dialogSignal) {
         accountSignal?.dispose();
         dialogSignal?.dispose();
-        throw new Error('Row-cancellation observer root is unavailable');
+        throw new Error('撤单结果无法观察，已停止');
       }
 
       try {
@@ -3657,7 +3677,7 @@ import {
     const deadline = Date.now() + LADDER_REPLACE_ROW_SETTLE_MS;
     const observationRoot = getAccountOrdersObservationRoot() || document.body;
     const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
-    if (!mutationSignal) throw new Error('Account-orders observer root is unavailable');
+    if (!mutationSignal) throw new Error('当前委托状态无法观察，已停止');
 
     try {
       while (true) {
@@ -3689,7 +3709,7 @@ import {
     const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
     const observationRoot = getAccountOrdersObservationRoot() || document.body;
     const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
-    if (!mutationSignal) throw new Error('Account-orders observer root is unavailable');
+    if (!mutationSignal) throw new Error('当前委托状态无法观察，已停止');
 
     try {
       while (true) {
@@ -3725,7 +3745,7 @@ import {
     let currentRoot = root;
     while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
       throwIfAborted(abortSignal);
-      if (!isCurrentObservedSymbol(plan.symbol)) throw new Error('逐行撤单前交易对已变化');
+      if (!isCurrentObservedSymbol(plan.symbol)) throw new Error('撤销待替换挂单前交易对已变化');
       const remainingQty = subtractDecimalStrings(plan.totalQty, cancelQty);
       const refreshedRoot = getActiveOpenOrdersScope();
       if (refreshedRoot) currentRoot = refreshedRoot;
@@ -3736,18 +3756,18 @@ import {
         { allowPartial: true }
       )[0];
       if (!row) {
-        throw new Error('当前币可撤挂单数量不足，已停止重挂');
+        throw new Error('同向可撤挂单数量不足，已停止重新挂单');
       }
       currentRoot = row.root || currentRoot;
       const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
       if (!row.cancelButton?.isConnected || !isVisibleElement(row.cancelButton)) {
         if (previousKeyCount === 0) continue;
-        throw new Error('当前币挂单撤单入口已失效，已停止重挂');
+        throw new Error('待替换挂单的撤单按钮已失效，已停止重新挂单');
       }
       const dialogsBefore = new Set(getVisibleDialogs());
       throwIfAborted(abortSignal);
       if (!clickDomTarget(row.cancelButton)) {
-        throw new Error('当前币挂单撤单入口点击失败，已停止重挂');
+        throw new Error('待替换挂单的撤单按钮点击失败，已停止重新挂单');
       }
       waitForTradeUiMutation({ timeoutMs: 800 });
       const outcome = await waitForOpenOrderRowCancellationOutcome(
@@ -3758,10 +3778,10 @@ import {
         abortSignal,
       );
       if (outcome.status === 'symbol_changed') {
-        throw new Error('逐行撤单时交易对已变化');
+        throw new Error('撤销待替换挂单时交易对已变化');
       }
       if (outcome.status === 'timeout') {
-        throw new Error('当前币挂单仍存在，已停止重挂');
+        throw new Error('待替换挂单仍存在，已停止重新挂单');
       }
       if (outcome.status === 'dialog_open') {
         const { dialog } = outcome;
@@ -3785,7 +3805,7 @@ import {
           previousKeyCount,
           abortSignal,
         ))) {
-          throw new Error('当前币挂单仍存在，已停止重挂');
+          throw new Error('待替换挂单仍存在，已停止重新挂单');
         }
       }
       throwIfAborted(abortSignal);
@@ -3795,7 +3815,7 @@ import {
         previousKeyCount,
         abortSignal,
       ))) {
-        throw new Error('当前币挂单状态不稳定，已停止重挂');
+        throw new Error('待替换挂单状态未稳定，已停止重新挂单');
       }
       cancelQty = addDecimalStrings(cancelQty, row.qty);
       recordLadderCancelledOrder(progress);
@@ -3907,7 +3927,7 @@ import {
   function createBinanceCancelAllDialogDecisionWatcher() {
     const lifecycleController = new AbortController();
     const dialogSignal = createDialogMutationSignal(document);
-    if (!dialogSignal) throw new Error('Cancel-all dialog observer root is unavailable');
+    if (!dialogSignal) throw new Error('撤单确认弹窗状态无法观察，已停止');
     const watcher = {
       action: null,
       error: null,
@@ -4066,8 +4086,8 @@ import {
       return current;
     }
     throw new Error(expectedChecked === null
-      ? 'Binance chart OpenOrders popover did not open'
-      : `Binance chart OpenOrders state did not become ${expectedChecked}`);
+      ? '图表“显示当前委托”菜单未打开'
+      : `图表“显示当前委托”未切换为${expectedChecked ? '显示' : '隐藏'}`);
   }
 
   async function openBinanceChartOrdersPopover(target) {
@@ -4120,7 +4140,7 @@ import {
       currentTarget,
       isVisibleElement,
     )) {
-      throw new Error('Binance chart OpenOrders popover did not close');
+      throw new Error('图表“显示当前委托”菜单未关闭');
     }
   }
 
@@ -4131,7 +4151,7 @@ import {
     expectDrawingEvents,
   ) {
     if (typeof expectDrawingEvents !== 'boolean') {
-      throw new Error('Chart orders drawing-event expectation is invalid');
+      throw new Error('图表委托线保存参数异常');
     }
     let popoverCloseOutcomePromise = null;
     const coalescingOutcome = await coalesceTradingViewDrawingSaves(
@@ -4188,7 +4208,7 @@ import {
     expectDrawingEvents,
   ) {
     if (typeof expectDrawingEvents !== 'boolean') {
-      throw new Error('Chart orders drawing-event expectation is invalid');
+      throw new Error('图表委托线保存参数异常');
     }
     assertSameBinanceChartOrdersTarget(target, getBinanceChartOrdersTarget());
     const current = await openBinanceChartOrdersPopover(target);
@@ -4265,7 +4285,7 @@ import {
       return { ok: false, status: 'symbol_changing', message };
     }
     if (getOpenOrdersTabCount() === 0) {
-      setLadderStatus('当前币无挂单');
+      setLadderStatus('当前交易对无挂单');
       return { ok: true, status: 'no_orders' };
     }
 
@@ -4282,57 +4302,62 @@ import {
 
     try {
       const tabReady = await activateOpenOrdersTab();
-      if (!tabReady || !isCurrentObservedSymbol(symbol)) {
-        const message = '当前委托页未就绪或交易对已变化';
+      if (!isCurrentObservedSymbol(symbol)) {
+        const message = '打开当前委托时交易对已变化';
+        setLadderStatus(message);
+        return { ok: false, status: 'symbol_changed', message };
+      }
+      if (!tabReady) {
+        const message = '未能打开当前委托';
         setLadderStatus(message);
         return { ok: false, status: 'tab_not_ready', message };
       }
       openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-        const message = '未定位到当前委托面板';
+        const message = '未找到当前委托面板';
         setLadderStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
       const basicSubTabState = await activateOpenOrdersBasicSubTab(openOrdersScope);
       previousOpenOrdersSubTabIdentity = basicSubTabState.previousSubTabIdentity;
       if (!basicSubTabState.ready || !isCurrentObservedSymbol(symbol)) {
-        const message = '未定位到当前委托基础单';
+        const message = '未找到当前委托基础单';
         setLadderStatus(message);
         return { ok: false, status: 'basic_tab_not_ready', message };
       }
       openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-        const message = '未定位到当前委托面板';
+        const message = '未找到当前委托面板';
         setLadderStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
       const symbolFilter = await ensureOpenOrdersLimitedToCurrentSymbol(openOrdersScope, symbol);
       symbolFilterOriginalChecked = symbolFilter.originalChecked;
       if (!symbolFilter.ok || !isCurrentObservedSymbol(symbol)) {
-        const message = '未确认只显示当前币挂单';
+        const message = '未确认仅显示当前交易对挂单';
         setLadderStatus(message);
         return { ok: false, status: 'symbol_filter_not_confirmed', message };
       }
       openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-        const message = '未定位到当前委托面板';
+        const message = '未找到当前委托面板';
         setLadderStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
       const openOrdersEvidence = await waitForCurrentSymbolOpenOrders(symbol);
       if (!isCurrentObservedSymbol(symbol)) {
-        const message = '读取当前币挂单时交易对已变化';
+        const message = '读取挂单时交易对已变化';
         setLadderStatus(message);
         return { ok: false, status: 'symbol_changed', message };
       }
       if (!openOrdersEvidence.hasOrders) {
-        setLadderStatus('当前币无挂单');
+        setLadderStatus('当前交易对无挂单');
         return { ok: true, status: 'no_orders' };
       }
 
       let cancelAllButton = openOrdersEvidence.cancelAllButton;
       if (!cancelAllButton) {
-        const message = '未找到当前委托全撤按钮';
+        const message = '未找到当前委托的全撤按钮';
         setLadderStatus(message);
         return { ok: false, status: 'cancel_button_not_found', message };
       }
@@ -4351,31 +4376,31 @@ import {
         await hideBinanceChartOrdersForBulkCancel(chartOrdersTarget, chartOrdersState);
       } catch (e) {
         emit('ERR', '撤单前隐藏图表当前委托失败', e);
-        const message = '未能确认图表当前委托已隐藏，未打开撤单确认框';
+        const message = '未能准备撤单页面，未打开确认弹窗';
         setLadderStatus(message);
         return { ok: false, status: 'chart_orders_not_hidden', message };
       }
 
       if (!isCurrentObservedSymbol(symbol)) {
-        const message = '隐藏图表当前委托后交易对已变化';
+        const message = '准备撤单时交易对已变化';
         setLadderStatus(message);
         return { ok: false, status: 'symbol_changed', message };
       }
 
       openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-        const message = '隐藏图表当前委托后，未定位到当前委托面板';
+        const message = '准备撤单时未找到当前委托面板';
         setLadderStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
       if (!isOpenOrdersScopeConfirmedForSymbol(openOrdersScope, symbol)) {
-        const message = '隐藏图表当前委托后，未确认只显示当前币挂单';
+        const message = '准备撤单时未确认仅显示当前交易对挂单';
         setLadderStatus(message);
         return { ok: false, status: 'symbol_filter_not_confirmed', message };
       }
       cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope);
       if (!cancelAllButton) {
-        const message = '隐藏图表当前委托后，未找到当前委托全撤按钮';
+        const message = '准备撤单时未找到全撤按钮';
         setLadderStatus(message);
         return { ok: false, status: 'cancel_button_not_found', message };
       }
@@ -4422,11 +4447,11 @@ import {
         return { ok: false, status: 'cancelled', message };
       }
       waitForTradeUiMutation({ timeoutMs: 800 });
-      setLadderStatus('已确认撤单，等待当前币挂单清空');
+      setLadderStatus('撤单已确认，等待挂单清空');
 
       openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
-        const message = '未定位到当前委托面板';
+        const message = '未找到当前委托面板';
         setLadderStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
@@ -4439,25 +4464,25 @@ import {
           return { ok: false, status: 'symbol_changed', message };
         }
         if (clearResult.status === 'scope_not_found') {
-          const message = '等待撤单完成时未定位到当前委托面板';
+          const message = '等待撤单完成时未找到当前委托面板';
           setLadderStatus(message);
           return { ok: false, status: 'scope_not_found', message };
         }
         if (clearResult.status === 'symbol_filter_not_confirmed') {
-          const message = '等待撤单完成时未确认只显示当前币挂单';
+          const message = '等待撤单完成时未确认仅显示当前交易对挂单';
           setLadderStatus(message);
           return { ok: false, status: 'symbol_filter_not_confirmed', message };
         }
         const message = waitUntilCleared
-          ? '当前币挂单仍存在，已停止重挂'
-          : '当前币挂单仍存在，撤单流程未完成';
+          ? '当前交易对挂单仍存在，已停止重新挂单'
+          : '当前交易对挂单仍存在，撤单未完成';
         setLadderStatus(message);
         return { ok: false, status: 'not_cleared', message };
       }
       chartOrdersDefinitivelyCleared = clearResult.definitivelyCleared === true;
       successStatusMessage = waitUntilCleared
-        ? '当前币挂单已撤，继续重挂'
-        : '撤单流程结束，已恢复筛选状态';
+        ? '原挂单已撤，继续阶梯挂单'
+        : '撤单已完成';
       return { ok: true, status: 'cleared' };
     } finally {
       let temporaryUiRestoreSucceeded = true;
@@ -4573,7 +4598,7 @@ import {
     };
     const symbol = getCurrentSymbol();
     if (!isCurrentObservedSymbol(symbol) || symbol !== plan?.symbol) {
-      const message = '逐行撤单前交易对已变化';
+      const message = '撤销待替换挂单前交易对已变化';
       setPlanStepStatus(message);
       return { ok: false, status: 'symbol_changed', message };
     }
@@ -4588,8 +4613,13 @@ import {
       setPlanStepStatus('查找当前委托');
       const tabReady = await activateOpenOrdersTab(abortSignal);
       throwIfAborted(abortSignal);
-      if (!tabReady || !isCurrentObservedSymbol(symbol)) {
-        const message = '当前委托页未就绪或交易对已变化';
+      if (!isCurrentObservedSymbol(symbol)) {
+        const message = '打开当前委托时交易对已变化';
+        setPlanStepStatus(message);
+        return { ok: false, status: 'symbol_changed', message };
+      }
+      if (!tabReady) {
+        const message = '未能打开当前委托';
         setPlanStepStatus(message);
         return { ok: false, status: 'tab_not_ready', message };
       }
@@ -4597,7 +4627,7 @@ import {
       openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
       throwIfAborted(abortSignal);
       if (!openOrdersScope) {
-        const message = '未定位到当前委托面板';
+        const message = '未找到当前委托面板';
         setPlanStepStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
@@ -4611,7 +4641,7 @@ import {
       );
       throwIfAborted(abortSignal);
       if (!basicSubTabState.ready) {
-        const message = '未定位到当前委托基础单';
+        const message = '未找到当前委托基础单';
         setPlanStepStatus(message);
         return { ok: false, status: 'basic_tab_not_ready', message };
       }
@@ -4619,7 +4649,7 @@ import {
       openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
       throwIfAborted(abortSignal);
       if (!openOrdersScope) {
-        const message = '未定位到当前委托面板';
+        const message = '未找到当前委托面板';
         setPlanStepStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
@@ -4634,7 +4664,7 @@ import {
       );
       throwIfAborted(abortSignal);
       if (!symbolFilter.ok) {
-        const message = '未确认只显示当前币挂单';
+        const message = '未确认仅显示当前交易对挂单';
         setPlanStepStatus(message);
         return { ok: false, status: 'symbol_filter_not_confirmed', message };
       }
@@ -4642,7 +4672,7 @@ import {
       openOrdersScope = await waitForActiveOpenOrdersScope(abortSignal);
       throwIfAborted(abortSignal);
       if (!openOrdersScope) {
-        const message = '未定位到当前委托面板';
+        const message = '未找到当前委托面板';
         setPlanStepStatus(message);
         return { ok: false, status: 'scope_not_found', message };
       }
@@ -4656,19 +4686,19 @@ import {
       throwIfAborted(abortSignal);
       if (!rows.length) {
         const directionLabel = getPlanDirectionLabel(plan);
-        const message = `未定位到当前币的${directionLabel || ''}可撤基础单`;
+        const message = `未找到${directionLabel || ''}方向的可撤基础单`;
         setPlanStepStatus(message);
         return { ok: false, status: 'rows_not_found', message };
       }
 
       const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
       if (!rowsToCancel.length) {
-        const message = '未选中当前币待撤挂单';
+        const message = '未选中待替换挂单';
         setPlanStepStatus(message);
         return { ok: false, status: 'rows_not_selected', message };
       }
 
-      setPlanStepStatus(`撤销 ${rowsToCancel.length} 笔当前币挂单`);
+      setPlanStepStatus(`撤销 ${rowsToCancel.length} 笔同向挂单`);
       await cancelOpenOrderRowsForPlan(
         openOrdersScope,
         plan,
@@ -4677,12 +4707,12 @@ import {
         abortSignal,
       );
       throwIfAborted(abortSignal);
-      setPlanStepStatus('当前币挂单已替换，继续重挂');
+      setPlanStepStatus('原挂单已撤，继续阶梯挂单');
       return { ok: true, status: 'rows_cleared' };
     } catch (e) {
       if (isLadderStoppedError(e)) throw e;
       if (e?.name === 'DialogNotClosedError') restoreTemporaryUiState = false;
-      const message = e?.message || '当前币挂单逐行撤销失败，已停止重挂';
+      const message = e?.message || '待替换挂单撤销失败，已停止重新挂单';
       setPlanStepStatus(message);
       const status = e?.name === 'DialogNotClosedError' ? 'dialog_not_closed' : 'row_cancel_failed';
       return { ok: false, status, message };
@@ -4748,9 +4778,9 @@ import {
 
   function formatOpenOrdersReplacementDetail(plan) {
     if (plan?.spec?.mode === 'OPEN') {
-      return '同向开仓挂单可能占用可开数量，准备替换';
+      return '同向开仓挂单可能占用可开数量，准备撤销后重新挂单';
     }
-    return '当前挂单占用可平数量，准备替换';
+    return '同向平仓挂单占用可平数量，准备撤销后重新挂单';
   }
 
   function formatOpenOrdersReplacementStatus(plan) {
@@ -4803,7 +4833,7 @@ import {
           abortSignal,
         );
         throwIfAborted(abortSignal);
-        if (!result?.ok) throw new Error(result.message || '当前币挂单未替换，已停止重挂');
+        if (!result?.ok) throw new Error(result.message || '原挂单未完成替换，已停止重新挂单');
       }
     }
     throw new Error('阶梯重挂流程异常');
@@ -4940,7 +4970,7 @@ import {
   function isConfirmedZeroOpenBalance(qty) {
     const available = readTradeAvailableBalance(getTradeMutationRoot(), { isVisibleElement });
     const normalizedQty = normalizeDecimalString(String(qty ?? ''));
-    const normalizedBalance = normalizeDecimalString(available?.amount || '');
+    const normalizedBalance = normalizeDecimalString(available?.amount ?? '');
     return (
       normalizedQty !== null
       && normalizedBalance !== null
@@ -5117,7 +5147,7 @@ import {
   }
 
   async function fetchCurrentSymbolPositionState(symbol) {
-    if (!cachedBncHeaders) throw new Error('bapi header 尚未缓存');
+    if (!cachedBncHeaders) throw new Error('币安请求头尚未就绪');
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 5000);
     try {
@@ -5128,7 +5158,7 @@ import {
         credentials: 'include',
         signal: controller.signal,
       });
-      if (!resp.ok) throw new Error(`user-position HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(`持仓接口异常：HTTP ${resp.status}`);
       const payload = await resp.json();
       return {
         ...resolveSymbolPositionStatus(payload, symbol),
@@ -5812,7 +5842,7 @@ import {
     let finalText = '';
     let constraintText = '';
     if (!precisionReady) {
-      finalText = '等待订单簿缩放值';
+      finalText = '等待价格精度';
     } else if (!modeReady) {
       finalText = '等待开仓/平仓状态';
     } else if (rulesPending || !effectiveMinQty) {
@@ -5877,7 +5907,7 @@ import {
         hintTitle = `平仓模式：双向持仓时单击订单簿价格后将${CFG.SAFE_MODE ? '填数量' : action}`;
       } else {
         hintText = '暂无可平仓位';
-        hintTitle = '平仓模式：当前币种暂无可平仓位';
+        hintTitle = '平仓模式：当前交易对暂无可平仓位';
       }
       if (hintEl.textContent !== hintText) hintEl.textContent = hintText;
       if (hintEl.title !== hintTitle) hintEl.title = hintTitle;
@@ -6548,7 +6578,7 @@ import {
   function resolveTargetQty(tradeMode, priceOverride) {
     const symbol = getCurrentSymbol();
     const precision = readCurrentOrderbookPrecisionValue();
-    if (!precision) throw new Error('未识别订单簿缩放值');
+    if (!precision) throw new Error('未识别价格精度');
     const qtyRuleContext = getQtyRuleContext(symbol, tradeMode, priceOverride);
     if (qtyRuleContext.status !== 'ready' || !qtyRuleContext.effectiveMinQty) {
       // 规则未就绪时触发加载，下次点击即可命中缓存
@@ -6653,7 +6683,7 @@ import {
           throw new Error('开仓/平仓模式已变化，已停止提交');
         }
         if (readCurrentOrderbookPrecisionValue() !== qtyPlan.precision) {
-          throw new Error('订单簿缩放值已变化，已停止提交');
+          throw new Error('价格精度已变化，已停止提交');
         }
         const currentAction = resolveTradeAction();
         if (

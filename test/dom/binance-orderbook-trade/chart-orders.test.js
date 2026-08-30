@@ -103,7 +103,7 @@ test('find waits for a visible complete and unambiguous chart contract', () => {
   incomplete.dom.window.document.querySelector('[aria-describedby]').removeAttribute('aria-describedby');
   assert.throws(
     () => getBinanceChartOrdersTarget(incomplete.dom.window.document),
-    /Expected one Binance chart orders popover reference, found 0/,
+    /图表“显示当前委托”菜单入口数量异常：0/,
   );
 
   const first = loadChartTarget();
@@ -112,7 +112,7 @@ test('find waits for a visible complete and unambiguous chart contract', () => {
   first.dom.window.document.body.append(duplicateRoot.firstElementChild);
   assert.throws(
     () => getBinanceChartOrdersTarget(first.dom.window.document),
-    /Expected one visible Binance chart root, found 2/,
+    /可见图表区域数量异常：2/,
   );
 });
 
@@ -161,7 +161,7 @@ test('invalid or duplicate Open Orders checkboxes fail explicitly', () => {
       getBinanceChartOrdersTarget(invalid.dom.window.document),
       isVisibleElement,
     ),
-    /OpenOrders state is mixed/,
+    /图表“显示当前委托”状态异常：mixed/,
   );
 
   const duplicate = loadChartTarget();
@@ -175,7 +175,7 @@ test('invalid or duplicate Open Orders checkboxes fail explicitly', () => {
       getBinanceChartOrdersTarget(duplicate.dom.window.document),
       isVisibleElement,
     ),
-    /Expected one Binance chart OpenOrders checkbox, found 2/,
+    /图表“显示当前委托”选项数量异常：2/,
   );
 });
 
@@ -187,27 +187,27 @@ test('rejects a replaced chart root toolbar trigger or runtime', () => {
 
   assert.throws(
     () => assertSameBinanceChartOrdersTarget(oldTarget, newTarget),
-    /Binance chart orders target changed/,
+    /图表“显示当前委托”控件已变化/,
   );
   assert.throws(
     () => assertSameBinanceChartOrdersTarget(oldTarget, {
       ...oldTarget,
       toolbar: newTarget.toolbar,
     }),
-    /Binance chart orders target changed/,
+    /图表“显示当前委托”控件已变化/,
   );
   assert.throws(
     () => assertSameBinanceChartOrdersTarget(oldTarget, {
       ...oldTarget,
       trigger: newTarget.trigger,
     }),
-    /Binance chart orders target changed/,
+    /图表“显示当前委托”控件已变化/,
   );
   assert.throws(
     () => assertSameBinanceChartOrdersTarget(oldTarget, {
       ...oldTarget,
       tradingViewApi: newTarget.tradingViewApi,
     }),
-    /Binance chart orders target changed/,
+    /图表“显示当前委托”控件已变化/,
   );
 });

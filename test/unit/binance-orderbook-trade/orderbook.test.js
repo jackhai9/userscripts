@@ -81,10 +81,10 @@ test('remaining ladder repricing rejects incomplete or invalid progress', () => 
     orders,
     completedCount: 1,
     prices: [],
-  }), /Expected 1 replacement prices/);
+  }), /重定价数量不一致：预期 1 个价格/);
   assert.throws(() => repriceRemainingLadderOrders({
     orders,
     completedCount: 3,
     prices: [],
-  }), /Invalid completed ladder count/);
+  }), /已完成阶梯订单数无效/);
 });

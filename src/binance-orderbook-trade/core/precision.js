@@ -13,7 +13,7 @@ import {
  */
 export function getOrderbookPrecisionDecadeTarget(options, current, direction) {
   if (direction !== 'DECREASE' && direction !== 'INCREASE') {
-    throw new Error(`Unsupported orderbook precision direction: ${direction}`);
+    throw new Error(`不支持的价格精度方向：${direction}`);
   }
   const normalizedCurrent = normalizeDecimalString(current);
   if (!normalizedCurrent || !isPositiveDecimalString(normalizedCurrent)) return null;
@@ -31,7 +31,7 @@ export function getOrderbookPrecisionDecadeTarget(options, current, direction) {
 export function getOrderbookPrecisionShortcutOptions(options, limit = 4) {
   const normalizedLimit = Number(limit);
   if (!Number.isInteger(normalizedLimit) || normalizedLimit < 1) {
-    throw new Error(`Invalid orderbook precision shortcut limit: ${limit}`);
+    throw new Error(`价格精度快捷项数量无效：${limit}`);
   }
   return Array.from(new Set(sortedPositiveDecimals(options))).slice(0, normalizedLimit);
 }
@@ -39,12 +39,12 @@ export function getOrderbookPrecisionShortcutOptions(options, limit = 4) {
 export function formatOrderbookPrecisionShortcutLabel(value) {
   const normalized = normalizeDecimalString(value);
   if (!normalized || !isPositiveDecimalString(normalized)) {
-    throw new Error(`Invalid orderbook precision shortcut value: ${value}`);
+    throw new Error(`价格精度快捷值无效：${value}`);
   }
   if (normalized.length <= 5) return normalized;
   const numeric = Number(normalized);
   if (!Number.isFinite(numeric)) {
-    throw new Error(`Orderbook precision shortcut value is not finite: ${value}`);
+    throw new Error(`价格精度快捷值不是有限数值：${value}`);
   }
   return numeric.toExponential().replace('e+', 'e');
 }
@@ -135,16 +135,16 @@ export function recommendOrderbookPrecisionWithExpandingWindow({
   minBucketShare = 0.25,
 }) {
   if (!Array.isArray(prices)) {
-    throw new Error('Precision trade prices must be an array');
+    throw new Error('价格精度成交价样本必须为数组');
   }
   if (!Number.isInteger(initialLimit) || initialLimit < 2) {
-    throw new Error(`Invalid initial precision trade limit: ${initialLimit}`);
+    throw new Error(`价格精度初始样本数无效：${initialLimit}`);
   }
   if (!Number.isInteger(expansionStep) || expansionStep < 1) {
-    throw new Error(`Invalid precision trade expansion step: ${expansionStep}`);
+    throw new Error(`价格精度样本扩展步长无效：${expansionStep}`);
   }
   if (!Number.isInteger(minSamples) || minSamples < 1) {
-    throw new Error(`Invalid minimum precision sample count: ${minSamples}`);
+    throw new Error(`价格精度最小样本数无效：${minSamples}`);
   }
 
   let usedCount = Math.min(initialLimit, prices.length);

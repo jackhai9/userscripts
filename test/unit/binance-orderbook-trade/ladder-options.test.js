@@ -102,7 +102,7 @@ test('retired option migration rejects an unsupported replacement', () => {
       0.3,
       [1, 5, 10],
     ),
-    /Invalid replacement option: 0\.3/,
+    /替换选项无效：0\.3/,
   );
 });
 
@@ -177,7 +177,7 @@ test('quantity multiplier keys share the symbol-mode-precision identity', () => 
 test('ladder option persistence rejects unknown mode and skips incomplete context', () => {
   const storage = createStorage();
 
-  assert.throws(() => modeSymbolPrecisionOptionStorageKey(MODE_KEYS, 'UNKNOWN', 'BTCUSDT', '0.01'), /Unknown trade mode/);
+  assert.throws(() => modeSymbolPrecisionOptionStorageKey(MODE_KEYS, 'UNKNOWN', 'BTCUSDT', '0.01'), /未知交易模式/);
   assert.equal(modeSymbolPrecisionOptionStorageKey(MODE_KEYS, 'OPEN', '', '0.01'), null);
   assert.equal(modeSymbolPrecisionOptionStorageKey(MODE_KEYS, 'OPEN', 'BTCUSDT', ''), null);
   assert.equal(loadModeSymbolPrecisionNumberOption(storage, MODE_KEYS, 'OPEN', '', '0.01', [3, 5, 7, 9], 5), null);

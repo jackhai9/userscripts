@@ -30,7 +30,7 @@ function assertContinuousLadderProgress(progress) {
     || progress.cancelledOrders < 0
     || (progress.startedRounds === 0) !== (progress.lastRound === null)
   ) {
-    throw new Error('Invalid continuous ladder progress');
+    throw new Error('连续阶梯进度状态无效');
   }
   if (progress.lastRound !== null) snapshotLadderProgress(progress.lastRound);
 }
@@ -48,13 +48,13 @@ export function createContinuousLadderProgress() {
 export function recordContinuousLadderRound(progress, outcome) {
   assertContinuousLadderProgress(progress);
   if (!outcome || typeof outcome !== 'object') {
-    throw new Error('Invalid continuous ladder round outcome');
+    throw new Error('连续阶梯本轮结果无效');
   }
   if (recordedRoundOutcomes.has(outcome)) {
-    throw new Error('Continuous ladder round was already recorded');
+    throw new Error('连续阶梯本轮结果已记录');
   }
   if (!['completed', 'stopped', 'failed', 'interrupted'].includes(outcome.status)) {
-    throw new Error('Invalid continuous ladder round outcome');
+    throw new Error('连续阶梯本轮结果无效');
   }
   const roundProgress = snapshotLadderProgress(outcome.progress);
   progress.startedRounds += 1;
@@ -71,11 +71,11 @@ export function recordContinuousLadderRound(progress, outcome) {
 
 function buildContinuousLadderProgressParts(label, phase, progress) {
   if (typeof label !== 'string' || label.trim() === '') {
-    throw new Error('Invalid continuous ladder label');
+    throw new Error('连续阶梯动作名称无效');
   }
   const phaseText = CONTINUOUS_LADDER_PHASE_TEXT[phase];
   if (!Object.hasOwn(CONTINUOUS_LADDER_PHASE_TEXT, phase)) {
-    throw new Error('Invalid continuous ladder phase');
+    throw new Error('连续阶梯阶段无效');
   }
   assertContinuousLadderProgress(progress);
 
@@ -103,10 +103,10 @@ export function formatActiveContinuousLadderProgress(
   roundProgress,
 ) {
   if (typeof label !== 'string' || label.trim() === '') {
-    throw new Error('Invalid continuous ladder label');
+    throw new Error('连续阶梯动作名称无效');
   }
   if (detail !== null && (typeof detail !== 'string' || detail.trim() === '')) {
-    throw new Error('Invalid active continuous ladder detail');
+    throw new Error('连续阶梯当前进度信息无效');
   }
   assertContinuousLadderProgress(progress);
   const round = snapshotLadderProgress(roundProgress);
@@ -127,7 +127,7 @@ export function formatActiveContinuousLadderProgress(
 
 export function formatContinuousLadderProgress(label, phase, progress, reason = null) {
   if (reason !== null && (typeof reason !== 'string' || reason.trim() === '')) {
-    throw new Error('Invalid continuous ladder reason');
+    throw new Error('连续阶梯停止原因无效');
   }
   const parts = buildContinuousLadderProgressParts(label, phase, progress);
   if (reason !== null) parts.push(reason);
@@ -136,10 +136,10 @@ export function formatContinuousLadderProgress(label, phase, progress, reason = 
 
 export function formatContinuousLadderWaitReason(phase, cooldownMs) {
   if (!Number.isFinite(cooldownMs) || cooldownMs < 0) {
-    throw new Error('Invalid continuous ladder cooldown');
+    throw new Error('连续阶梯轮间等待时间无效');
   }
   if (phase === 'waiting_ready') return '等待按钮恢复';
-  if (phase !== 'cooldown') throw new Error('Invalid continuous ladder wait phase');
+  if (phase !== 'cooldown') throw new Error('连续阶梯等待阶段无效');
   const duration = cooldownMs % 1000 === 0
     ? `${cooldownMs / 1000}s`
     : `${cooldownMs}ms`;
@@ -154,7 +154,7 @@ export function formatContinuousLadderWaitProgress(label, progress, phase, coold
 
 function assertReadinessState(state) {
   if (!['ready', 'waiting', 'stopped'].includes(state?.status)) {
-    throw new Error('Invalid continuous ladder readiness state');
+    throw new Error('连续阶梯按钮就绪状态无效');
   }
   return state;
 }
@@ -193,10 +193,10 @@ export async function waitForContinuousLadderNextRound({
   readyCheckMs = CONTINUOUS_LADDER_READY_CHECK_MS,
   onWaitStateChange = () => {},
 }) {
-  if (!(cooldownMs >= 0)) throw new Error('Invalid continuous ladder cooldown');
-  if (!(readyCheckMs > 0)) throw new Error('Invalid continuous ladder readiness interval');
+  if (!(cooldownMs >= 0)) throw new Error('连续阶梯轮间等待时间无效');
+  if (!(readyCheckMs > 0)) throw new Error('连续阶梯按钮检查间隔无效');
   if (typeof onWaitStateChange !== 'function') {
-    throw new Error('Invalid continuous ladder wait-state callback');
+    throw new Error('连续阶梯等待状态回调无效');
   }
 
   let waitingAlreadyReported = false;

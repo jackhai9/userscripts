@@ -58,5 +58,5 @@ test('precision refresh tooltip describes the latest trade snapshot without call
     '优先根据最新 10 条成交价；价格变化不足时自动扩大范围，重新计算推荐精度。',
   );
   assert.doesNotMatch(formatPrecisionRefreshTooltip(10), /最小值/);
-  assert.throws(() => formatPrecisionRefreshTooltip(1), /Invalid precision trade count/);
+  assert.throws(() => formatPrecisionRefreshTooltip(1), /价格精度成交样本数无效/);
 });

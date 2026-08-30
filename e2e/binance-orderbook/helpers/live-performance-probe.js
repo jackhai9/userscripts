@@ -119,7 +119,7 @@ export function waitForBinanceLivePerformanceCompletion(options = {}) {
 
     if (kind === 'no-orders') {
       if (hasEvent(snapshot, 'dialog-visible') || hasEvent(snapshot, 'dialog-action')) return false;
-      return state.cancelButtonText === '无挂单' || /当前币无挂单/.test(state.statusText);
+      return state.cancelButtonText === '无挂单' || /当前交易对无挂单/.test(state.statusText);
     }
 
     const dialogActions = snapshot.events.filter((event) => event.kind === 'dialog-action');
@@ -128,7 +128,7 @@ export function waitForBinanceLivePerformanceCompletion(options = {}) {
     if (dialogActions[0].detail?.primary !== expectsPrimary) return false;
     return kind === 'dialog-cancel'
       ? state.statusText === '撤单已取消'
-      : /撤单流程结束.*已恢复筛选状态/.test(state.statusText);
+      : state.statusText === '撤单已完成';
   };
 
   return new Promise((resolve, reject) => {

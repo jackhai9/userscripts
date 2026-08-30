@@ -45,7 +45,7 @@ test('selects only an exact native decade precision target', () => {
 test('rejects unsupported precision adjustment directions', () => {
   assert.throws(
     () => getOrderbookPrecisionDecadeTarget(['0.01', '0.1'], '0.01', 'NEXT'),
-    /Unsupported orderbook precision direction/,
+    /不支持的价格精度方向/,
   );
 });
 

@@ -214,7 +214,7 @@ test('times out when drawing events do not produce matching save requests', asyn
       () => api.emit('drawing_event', 'order-1', 'remove'),
       { timeoutMs: 10 },
     ),
-    /Expected 1 TradingView saveChart requests, received 0/,
+    /图表保存请求数量不一致：预期 1，实际 0/,
   );
 
   assert.equal(api.saveChart, originalSaveChart);
