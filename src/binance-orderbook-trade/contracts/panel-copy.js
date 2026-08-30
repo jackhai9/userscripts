@@ -29,10 +29,6 @@ export const PANEL_COPY = Object.freeze({
       CLOSE_LONG: '停止平多',
       CLOSE_SHORT: '停止平空',
     }),
-    stopContinuousLadderByAction: freezeCopy({
-      CLOSE_LONG: '停止连续平多',
-      CLOSE_SHORT: '停止连续平空',
-    }),
   }),
   status: freezeCopy({
     precisionUpdated: '精度推荐已更新',
