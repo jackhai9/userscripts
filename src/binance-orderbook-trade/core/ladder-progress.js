@@ -62,6 +62,16 @@ export function createLadderProgress() {
   };
 }
 
+export function snapshotLadderProgress(progress) {
+  assertLadderProgress(progress);
+  return {
+    submittedOrders: progress.submittedOrders,
+    cancelledOrders: progress.cancelledOrders,
+    plannedOrders: progress.plannedOrders,
+    currentPlanSubmittedOrders: progress.currentPlanSubmittedOrders,
+  };
+}
+
 export function setLadderPlannedOrders(progress, plannedOrders) {
   assertLadderProgress(progress);
   if (!Number.isInteger(plannedOrders) || plannedOrders <= 0) {

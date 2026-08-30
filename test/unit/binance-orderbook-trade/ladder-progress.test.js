@@ -10,7 +10,24 @@ import {
   recordLadderCancelledOrder,
   recordLadderSubmittedOrder,
   setLadderPlannedOrders,
+  snapshotLadderProgress,
 } from '../../../src/binance-orderbook-trade/core/ladder-progress.js';
+
+test('ladder progress snapshot is detached from later mutations', () => {
+  const progress = createLadderProgress();
+  setLadderPlannedOrders(progress, 2);
+  recordLadderSubmittedOrder(progress);
+
+  const snapshot = snapshotLadderProgress(progress);
+  recordLadderSubmittedOrder(progress);
+
+  assert.deepEqual(snapshot, {
+    submittedOrders: 1,
+    cancelledOrders: 0,
+    plannedOrders: 2,
+    currentPlanSubmittedOrders: 1,
+  });
+});
 
 test('stopped ladder status reports confirmed submitted and cancelled orders', () => {
   const progress = createLadderProgress();

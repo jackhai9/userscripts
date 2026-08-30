@@ -625,7 +625,8 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(continuousBody, /spec\.mode !== 'CLOSE'\) return startLadder\(actionType\)/);
   assert.match(continuousBody, /while \(true\)/);
   assert.match(continuousBody, /await startLadder\(actionType, true\)/);
-  assert.match(continuousBody, /outcome\?\.status !== 'completed'/);
+  assert.match(continuousBody, /recordContinuousLadderRound\(continuousProgress, outcome\)/);
+  assert.match(continuousBody, /setContinuousLadderProgressStatus\(/);
   assert.match(continuousBody, /await waitForContinuousLadderNextRound\(/);
   assert.match(continuousBody, /readContinuousLadderReadiness\(actionType, actionSymbol\)/);
 
@@ -638,7 +639,8 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(readinessBody, /isSubmitButtonBusy\(button\)/);
 
   assert.match(stopBody, /continuousLadderAbortController\.abort\(stoppedError\)/);
-  assert.match(actionButtonBody, /Option\/Alt \+ click: continuous trading/);
+  assert.match(actionButtonBody, /Option\/Alt \+ 单击：连续交易/);
+  assert.doesNotMatch(source, /Continuous trading (?:stopped|failed)/);
   assert.match(executionButtonBody, /activeLadderActionType \|\| activeContinuousLadderActionType/);
   assert.match(controlSectionsBody, /!!ladderTask \|\| !!continuousLadderTask/);
 });
@@ -866,7 +868,7 @@ test('ladder task statuses name the active action and observed outcome', () => {
   assert.match(startBody, /`\$\{spec\.label\}尚未开始：仓位确认中`/);
   assert.match(startBody, /formatInterruptedLadderProgress\(\s*spec\.label,\s*'交易对已切换',\s*progress/);
   assert.match(startBody, /formatFailedLadderProgress\(spec\.label,\s*failureMessage,\s*progress\)/);
-  assert.match(stopBody, /`\$\{activeSpec\.label\}停止中`/);
+  assert.match(stopBody, /`\$\{activeSpec\.label\}\$\{continuousLadderTask \? '连续' : ''\}停止中`/);
   assert.match(cancelPlanBody, /setPlanStepStatus\(`撤销 \$\{rowsToCancel\.length\} 笔当前币挂单`\)/);
   assert.match(planStatusBody, /`\$\{plan\.spec\.label\}计划：\$\{plan\.percent\}% \/ \$\{levelText\} \/ 幅\$\{plan\.ladderStep\}`/);
   assert.doesNotMatch(planStatusBody, /%\/|\/幅/);
