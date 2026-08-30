@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.164
+// @version      2.7.165
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -53,6 +53,15 @@ import {
   resolveSymbolPositionSideStatus,
   resolveSymbolPositionStatus,
 } from './core/auto-open-leverage.js';
+import {
+  applyUsdtTransferToBalances,
+  areUsdtBalancesEqual,
+  buildUsdtRebalancePlan,
+  parseUsdtWalletBalances,
+  resolveAllFuturesPositionStatus,
+  USDT_REBALANCE_ACCOUNTS,
+  withFuturesTransferableBalance,
+} from './core/usdt-rebalance.js';
 import {
   addDecimalStrings,
   ceilQtyByNotional,
@@ -244,6 +253,8 @@ import {
   const SIDE_SHORT_ID = 'jh-binance-close-side-short';
   const LADDER_BODY_ID = 'jh-binance-ladder-body';
   const LADDER_STATUS_ID = 'jh-binance-ladder-status';
+  const LADDER_STATUS_TEXT_ID = 'jh-binance-ladder-status-text';
+  const USDT_REBALANCE_ACTION_ID = 'jh-binance-usdt-rebalance-action';
   const MULTIPLIER_PRESS_FEEDBACK_ATTR = 'data-jh-press-feedback';
   const ORDERBOOK_PRECISION_RECOMMENDATION_ID = 'jh-binance-orderbook-precision-recommendation';
   const DEFAULT_MULTIPLIER = '1';
@@ -301,6 +312,12 @@ import {
   const LADDER_REPRICE_DELAY_MS = 180;
   const BINANCE_PLACE_ORDER_BAPI_PATH = '/bapi/futures/v1/private/future/order/place-order';
   const BINANCE_USER_POSITION_BAPI_PATH = '/bapi/futures/v6/private/future/user-data/user-position';
+  const BINANCE_WALLET_BALANCE_BAPI_PATH = '/bapi/asset/v2/private/asset-service/wallet/balance?needBalanceDetail=true&quoteAsset=USDT';
+  const BINANCE_FUTURES_MAX_WITHDRAW_BAPI_PATH = '/bapi/futures/v1/private/future/user-data/getMaxWithdrawAmount';
+  const BINANCE_WALLET_TRANSFER_BAPI_PATH = '/bapi/asset/v1/private/asset-service/wallet/transfer';
+  const USDT_REBALANCE_FLAT_STABLE_MS = 3000;
+  const USDT_REBALANCE_REQUEST_TIMEOUT_MS = 5000;
+  const USDT_REBALANCE_BALANCE_POLL_MS = 1000;
   const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
   const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
   const TRADE_INPUT_SYNC_STABLE_FRAMES = 2;
@@ -371,6 +388,7 @@ import {
   let accountPositionObserver = null;
   let accountPositionObserverRoot = null;
   let lastObservedAccountPositionCount = null;
+  let lastObservedAccountOpenOrdersCount = null;
   let lastObservedAccountPositionState = null;
   let lastConfirmedCloseState = null;  // 第三层：已确认的稳定缓存（仅 CLOSE 模式下写入）
   let lastDisplayCloseState = null;   // 第二层：仅供脚本面板展示的缓存态
@@ -403,6 +421,11 @@ import {
   let ladderStopRequested = false;
   let ladderStatusText = '空闲';
   let ladderStatusTitle = '空闲';
+  let usdtRebalanceEligibilityTimer = 0;
+  let usdtRebalanceEligibilityEpoch = 0;
+  let usdtRebalanceEligibilityTask = null;
+  let usdtRebalanceEligible = false;
+  let usdtRebalanceTask = null;
   let ladderPanelBodySignature = '';
   let panelPositionInvalidated = true;
   let panelObservedSize = '';
@@ -771,7 +794,7 @@ import {
     ladderStatusText = String(text || '空闲');
     const statusTitle = String(title || ladderStatusText);
     ladderStatusTitle = statusTitle;
-    const statusEl = document.getElementById(LADDER_STATUS_ID);
+    const statusEl = document.getElementById(LADDER_STATUS_TEXT_ID);
     if (statusEl) {
       if (statusEl.textContent !== ladderStatusText) statusEl.textContent = ladderStatusText;
       if (statusEl.title !== statusTitle) statusEl.title = statusTitle;
@@ -2961,6 +2984,7 @@ import {
       }
       setLadderStatus(singleStatus);
     };
+    invalidateUsdtRebalanceEligibility();
     ladderAbortController = abortController;
     activeLadderActionType = actionType;
     if (continuousSession) activeContinuousLadderRoundProgress = progress;
@@ -4816,6 +4840,7 @@ import {
     }
     clearCancelNoOrdersFeedback();
     cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
+    invalidateUsdtRebalanceEligibility();
     const task = runCancelCurrentSymbolOpenOrders(options);
     cancelCurrentSymbolOpenOrdersTask = task;
     scheduleRenderPanel();
@@ -5445,6 +5470,171 @@ import {
     }
   }
 
+  async function fetchUsdtRebalanceBapi(path, options = {}) {
+    if (!cachedBncHeaders) throw new Error('币安请求头尚未就绪');
+    const method = options.method || 'GET';
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => controller.abort(),
+      USDT_REBALANCE_REQUEST_TIMEOUT_MS,
+    );
+    try {
+      const request = {
+        method,
+        headers: getBncHeaders(),
+        credentials: 'include',
+        signal: controller.signal,
+      };
+      if (Object.hasOwn(options, 'body')) request.body = JSON.stringify(options.body);
+      const response = await fetch(`${window.location.origin}${path}`, request);
+      if (response.status === 401) throw new Error('Binance 登录态已失效');
+      if (!response.ok) throw new Error(`${options.label || 'Binance 接口'}异常：HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  async function readCurrentUsdtRebalanceBalances() {
+    const [walletPayload, futuresPayload] = await Promise.all([
+      fetchUsdtRebalanceBapi(BINANCE_WALLET_BALANCE_BAPI_PATH, {
+        label: '钱包余额接口',
+      }),
+      fetchUsdtRebalanceBapi(BINANCE_FUTURES_MAX_WITHDRAW_BAPI_PATH, {
+        method: 'POST',
+        body: { assetName: 'USDT' },
+        label: 'U本位可划转余额接口',
+      }),
+    ]);
+    return withFuturesTransferableBalance(
+      parseUsdtWalletBalances(walletPayload),
+      futuresPayload,
+    );
+  }
+
+  async function assertUsdtRebalanceTradingState() {
+    if (!isFuturesTradingPage() || document.hidden) throw new Error('当前不在可操作的合约页面');
+    if (ladderTask || continuousLadderTask || singleOrderTask || cancelCurrentSymbolOpenOrdersTask) {
+      throw new Error('当前仍有交易任务运行');
+    }
+    const positionCount = readAccountPositionCount();
+    if (positionCount == null) throw new Error('未读取到全账户持仓数量');
+    if (positionCount !== 0) throw new Error('全账户仍有持仓');
+    const openOrdersCount = getOpenOrdersTabCount();
+    if (openOrdersCount == null) throw new Error('未读取到全账户当前委托数量');
+    if (openOrdersCount !== 0) throw new Error('全账户仍有当前委托');
+    const positionState = resolveAllFuturesPositionStatus(await fetchCurrentPositionsPayload());
+    if (positionState.status !== 'flat') throw new Error('全账户仍有持仓');
+  }
+
+  function formatUsdtRebalanceConfirmation(plan) {
+    const accountText = (balances) => [
+      `资金 ${balances.FUNDING}`,
+      `现货 ${balances.MAIN}`,
+      `U本位 ${balances.UMFUTURE}`,
+    ].join(' / ');
+    const transferText = plan.transfers.map((transfer, index) => {
+      const from = USDT_REBALANCE_ACCOUNTS[transfer.from].label;
+      const to = USDT_REBALANCE_ACCOUNTS[transfer.to].label;
+      return `${index + 1}. ${from} → ${to}：${transfer.amount} USDT`;
+    }).join('\n');
+    return [
+      '将全部可划转 USDT 调整为 资金 50% / 现货 40% / U本位 10%',
+      `当前：${accountText(plan.before)}`,
+      `目标：${accountText(plan.targets)}`,
+      transferText,
+      `确认执行 ${plan.transfers.length} 笔划转？`,
+    ].filter(Boolean).join('\n\n');
+  }
+
+  async function submitUsdtRebalanceTransfer(transfer) {
+    const payload = await fetchUsdtRebalanceBapi(BINANCE_WALLET_TRANSFER_BAPI_PATH, {
+      method: 'POST',
+      body: {
+        asset: 'USDT',
+        amount: transfer.amount,
+        kindType: transfer.kindType,
+      },
+      label: 'USDT 划转接口',
+    });
+    if (payload?.success !== true) throw new Error(payload?.message || 'USDT 划转失败');
+    return payload;
+  }
+
+  async function waitForUsdtRebalanceBalances(expectedBalances) {
+    const deadline = Date.now() + USDT_REBALANCE_REQUEST_TIMEOUT_MS;
+    while (true) {
+      const actualBalances = await readCurrentUsdtRebalanceBalances();
+      if (areUsdtBalancesEqual(actualBalances, expectedBalances)) return actualBalances;
+      if (Date.now() >= deadline) throw new Error('划转后账户余额未及时更新');
+      await delay(USDT_REBALANCE_BALANCE_POLL_MS);
+    }
+  }
+
+  async function runUsdtRebalance() {
+    let plan = null;
+    let completed = 0;
+    setLadderStatus('正在读取再平衡计划');
+    try {
+      await assertUsdtRebalanceTradingState();
+      const initialBalances = await readCurrentUsdtRebalanceBalances();
+      plan = buildUsdtRebalancePlan(initialBalances);
+      if (plan.transfers.length === 0) {
+        usdtRebalanceEligible = false;
+        setLadderStatus('USDT 已按 5:4:1 分配');
+        return { status: 'already_balanced', plan };
+      }
+      if (!window.confirm(formatUsdtRebalanceConfirmation(plan))) {
+        setLadderStatus('再平衡已取消');
+        return { status: 'cancelled', plan };
+      }
+
+      let expectedBalances = initialBalances;
+      for (const transfer of plan.transfers) {
+        await assertUsdtRebalanceTradingState();
+        const currentBalances = await readCurrentUsdtRebalanceBalances();
+        if (!areUsdtBalancesEqual(currentBalances, expectedBalances)) {
+          throw new Error('账户余额已变化，已停止再平衡');
+        }
+        setLadderStatus(`再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`);
+        await submitUsdtRebalanceTransfer(transfer);
+        completed += 1;
+        expectedBalances = applyUsdtTransferToBalances(expectedBalances, transfer);
+        await waitForUsdtRebalanceBalances(expectedBalances);
+      }
+      usdtRebalanceEligible = false;
+      setLadderStatus(`再平衡已完成 · ${completed}/${plan.transfers.length} 笔`);
+      return { status: 'completed', plan, completed };
+    } catch (error) {
+      const message = error?.name === 'AbortError'
+        ? 'Binance 请求超时'
+        : (error?.message || String(error));
+      const prefix = completed > 0 && plan
+        ? `再平衡部分完成 · ${completed}/${plan.transfers.length} 笔`
+        : '再平衡失败';
+      setLadderStatus(`${prefix} · ${message}`, message);
+      throw error;
+    }
+  }
+
+  function startUsdtRebalance() {
+    if (usdtRebalanceTask || !usdtRebalanceEligible) return usdtRebalanceTask;
+    let task = null;
+    task = runUsdtRebalance()
+      .catch((error) => {
+        err('USDT 再平衡失败:', error);
+        return { status: 'failed', error };
+      })
+      .finally(() => {
+        if (usdtRebalanceTask !== task) return;
+        usdtRebalanceTask = null;
+        scheduleRenderPanel();
+      });
+    usdtRebalanceTask = task;
+    scheduleRenderPanel();
+    return task;
+  }
+
   async function fetchCurrentSymbolPositionState(symbol) {
     const payload = await fetchCurrentPositionsPayload();
     return {
@@ -5601,11 +5791,75 @@ import {
     autoOpenLeveragePositionCheckTask = task;
   }
 
+  function invalidateUsdtRebalanceEligibility() {
+    const hadPendingTimer = usdtRebalanceEligibilityTimer !== 0;
+    const wasEligible = usdtRebalanceEligible;
+    window.clearTimeout(usdtRebalanceEligibilityTimer);
+    usdtRebalanceEligibilityTimer = 0;
+    usdtRebalanceEligibilityEpoch += 1;
+    if (!usdtRebalanceTask) usdtRebalanceEligible = false;
+    const resetFlatStatus = !usdtRebalanceTask && ladderStatusText === '已全部平仓';
+    if (resetFlatStatus) {
+      setLadderStatus('空闲');
+    }
+    if (hadPendingTimer || wasEligible || resetFlatStatus) scheduleRenderPanel();
+  }
+
+  async function confirmUsdtRebalanceEligibility(epoch) {
+    if (epoch !== usdtRebalanceEligibilityEpoch || document.hidden) return false;
+    if (readAccountPositionCount() !== 0 || getOpenOrdersTabCount() !== 0) return false;
+    if (ladderTask || continuousLadderTask || singleOrderTask || cancelCurrentSymbolOpenOrdersTask) {
+      return false;
+    }
+    const symbol = getCurrentSymbol();
+    if (!symbol || !await waitForBncHeaders(symbol)) return false;
+    const positionState = resolveAllFuturesPositionStatus(await fetchCurrentPositionsPayload());
+    if (epoch !== usdtRebalanceEligibilityEpoch) return false;
+    if (positionState.status !== 'flat') return false;
+    usdtRebalanceEligible = true;
+    setLadderStatus('已全部平仓');
+    scheduleRenderPanel();
+    return true;
+  }
+
+  function scheduleUsdtRebalanceEligibility() {
+    invalidateUsdtRebalanceEligibility();
+    const epoch = usdtRebalanceEligibilityEpoch;
+    usdtRebalanceEligibilityTimer = window.setTimeout(() => {
+      usdtRebalanceEligibilityTimer = 0;
+      let task = null;
+      task = confirmUsdtRebalanceEligibility(epoch)
+        .catch((error) => {
+          log('USDT 再平衡资格检查未通过', error?.message || error);
+          return false;
+        })
+        .finally(() => {
+          if (usdtRebalanceEligibilityTask === task) usdtRebalanceEligibilityTask = null;
+        });
+      usdtRebalanceEligibilityTask = task;
+    }, USDT_REBALANCE_FLAT_STABLE_MS);
+  }
+
+  function updateUsdtRebalanceEligibilityFromAccountCounts(positionCount, openOrdersCount) {
+    if (positionCount === 0 && openOrdersCount === 0) {
+      scheduleUsdtRebalanceEligibility();
+      return;
+    }
+    invalidateUsdtRebalanceEligibility();
+  }
+
   function handleAccountPositionObservation(triggerSource) {
     const positionCount = readAccountPositionCount();
-    if (positionCount == null || positionCount === lastObservedAccountPositionCount) return;
+    const openOrdersCount = getOpenOrdersTabCount();
+    const positionChanged = positionCount !== lastObservedAccountPositionCount;
+    const openOrdersChanged = openOrdersCount !== lastObservedAccountOpenOrdersCount;
+    if (!positionChanged && !openOrdersChanged) return;
     lastObservedAccountPositionCount = positionCount;
-    queueAutoOpenLeveragePositionCheck(triggerSource);
+    lastObservedAccountOpenOrdersCount = openOrdersCount;
+    if (positionChanged && positionCount != null) {
+      queueAutoOpenLeveragePositionCheck(triggerSource);
+    }
+    updateUsdtRebalanceEligibilityFromAccountCounts(positionCount, openOrdersCount);
   }
 
   function getAccountPositionObserverRoot() {
@@ -5620,6 +5874,8 @@ import {
     }
     accountPositionObserverRoot = null;
     lastObservedAccountPositionCount = null;
+    lastObservedAccountOpenOrdersCount = null;
+    invalidateUsdtRebalanceEligibility();
   }
 
   function ensureAccountPositionObserver() {
@@ -6050,6 +6306,8 @@ import {
   function refreshLadderPanel(panel, tradeMode, closeContext) {
     const body = panel.querySelector(`#${LADDER_BODY_ID}`);
     const status = panel.querySelector(`#${LADDER_STATUS_ID}`);
+    const statusText = panel.querySelector(`#${LADDER_STATUS_TEXT_ID}`);
+    const rebalanceButton = panel.querySelector(`#${USDT_REBALANCE_ACTION_ID}`);
     const mode = activeLadderPanelContext?.mode
       || (['OPEN', 'CLOSE'].includes(tradeMode) ? tradeMode : null);
     const symbol = activeLadderPanelContext?.symbol || getCurrentSymbol();
@@ -6094,9 +6352,20 @@ import {
       }
     }
     if (status) {
-      if (status.textContent !== ladderStatusText) status.textContent = ladderStatusText;
-      if (status.title !== ladderStatusTitle) status.title = ladderStatusTitle;
       if (status.style.visibility !== 'visible') status.style.visibility = 'visible';
+    }
+    if (statusText) {
+      if (statusText.textContent !== ladderStatusText) statusText.textContent = ladderStatusText;
+      if (statusText.title !== ladderStatusTitle) statusText.title = ladderStatusTitle;
+    }
+    if (rebalanceButton) {
+      const shouldShow = usdtRebalanceEligible || Boolean(usdtRebalanceTask);
+      const hidden = !shouldShow;
+      if (rebalanceButton.hidden !== hidden) rebalanceButton.hidden = hidden;
+      const disabled = Boolean(usdtRebalanceTask);
+      if (rebalanceButton.disabled !== disabled) rebalanceButton.disabled = disabled;
+      if (disabled) rebalanceButton.setAttribute('aria-disabled', 'true');
+      else rebalanceButton.removeAttribute('aria-disabled');
     }
   }
 
@@ -6439,7 +6708,10 @@ import {
       `<div title="${PANEL_COPY.tooltip.ladderMaker}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${PANEL_COPY.section.ladderMaker}</div>`,
       `<div id="${LADDER_BODY_ID}"></div>`,
       '</div>',
-      `<div id="${LADDER_STATUS_ID}" title="空闲" style="height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">空闲</div>`,
+      `<div id="${LADDER_STATUS_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
+      `<span id="${LADDER_STATUS_TEXT_ID}" title="空闲" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">空闲</span>`,
+      `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">再平衡</button>`,
+      '</div>',
     ].join('');
     panelPositionInvalidated = true;
     document.body.appendChild(panel);
@@ -6610,6 +6882,12 @@ import {
       if (cancelSymbolBtn) {
         if (cancelSymbolBtn.disabled || cancelSymbolBtn.getAttribute('aria-disabled') === 'true') return;
         cancelCurrentSymbolOpenOrders();
+        return;
+      }
+      const rebalanceBtn = target.closest('[data-usdt-rebalance]');
+      if (rebalanceBtn) {
+        if (rebalanceBtn.disabled || rebalanceBtn.getAttribute('aria-disabled') === 'true') return;
+        startUsdtRebalance();
       }
     });
 
@@ -6958,6 +7236,7 @@ import {
         return;
       }
       lastTs = now;
+      invalidateUsdtRebalanceEligibility();
       setLadderStatus(`单击${action.side}准备中`);
       singleOrderTask = (async () => {
         await syncTradeInputs(clickedPrice, qtyPlan.qty, {

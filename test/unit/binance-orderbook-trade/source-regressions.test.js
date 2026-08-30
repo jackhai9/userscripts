@@ -422,7 +422,9 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   const ladderBody = readFunctionBody('refreshLadderPanel');
   assert.match(ladderBody, /status\.style\.visibility !== 'visible'/);
   assert.doesNotMatch(ladderBody, /status\.style\.display/);
-  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*height:18px;[^>]*visibility:visible;[^>]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis`));
+  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_ID\\}"[^>]*display:flex;[^>]*height:18px;[^>]*visibility:visible;[^>]*white-space:nowrap;overflow:hidden`));
+  assert.match(source, new RegExp(`id="\\$\\{LADDER_STATUS_TEXT_ID\\}"[^>]*flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis`));
+  assert.match(source, new RegExp(`id="\\$\\{USDT_REBALANCE_ACTION_ID\\}"[^>]*data-usdt-rebalance="true" hidden`));
 });
 
 test('panel keeps controls in cohesive ordered semantic groups', () => {
@@ -507,7 +509,8 @@ test('direction selector is a compact mutually exclusive radio group', () => {
 
   assert.match(ensurePanelBody, /data-side-selector role="radiogroup" aria-labelledby="\$\{MODE_HINT_ID\}"/);
   assert.equal((ensurePanelBody.match(/role="radio" aria-checked="false"/g) || []).length, 2);
-  assert.equal((ensurePanelBody.match(/border:0;/g) || []).length, 2);
+  assert.match(ensurePanelBody, /id="\$\{SIDE_LONG_ID\}"[^>]*border:0;/);
+  assert.match(ensurePanelBody, /id="\$\{SIDE_SHORT_ID\}"[^>]*border:0;/);
   assert.match(ensurePanelBody, /border-left:1px solid var\(--color-InputLine\)/);
   assert.match(refreshBody, /let hintText = PANEL_COPY\.field\.clickOrderbook/);
   assert.doesNotMatch(refreshBody, /hintText = '仓位确认中'/);
@@ -1231,7 +1234,8 @@ test('stable panel refreshes avoid writing unchanged text and state attributes',
 
   const panelBody = readFunctionBody('refreshLadderPanel');
   assert.doesNotMatch(panelBody, /toggle|expanded/);
-  assert.match(panelBody, /status\.textContent !== ladderStatusText/);
+  assert.match(panelBody, /statusText\.textContent !== ladderStatusText/);
+  assert.match(panelBody, /rebalanceButton\.hidden/);
 
   const computedBody = readFunctionBody('refreshComputedInfo');
   assert.match(computedBody, /formulaPrefixEl\.textContent !== formulaPrefixText/);
@@ -1730,11 +1734,44 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
 
 test('account position count changes schedule symbol-specific API checks', () => {
   const observationBody = readFunctionBody('handleAccountPositionObservation');
-  assert.match(observationBody, /positionCount === lastObservedAccountPositionCount/);
+  assert.match(observationBody, /positionChanged = positionCount !== lastObservedAccountPositionCount/);
+  assert.match(observationBody, /openOrdersChanged = openOrdersCount !== lastObservedAccountOpenOrdersCount/);
   assert.match(observationBody, /queueAutoOpenLeveragePositionCheck\(triggerSource\)/);
+  assert.match(observationBody, /updateUsdtRebalanceEligibilityFromAccountCounts\(positionCount, openOrdersCount\)/);
 
   const checkBody = readFunctionBody('runAutoOpenLeveragePositionCheck');
   assert.match(checkBody, /await fetchCurrentSymbolPositionState\(symbol\)/);
   assert.match(checkBody, /observeAutoOpenLeveragePositionState/);
   assert.match(checkBody, /observation\.shouldReset \|\| resetIfFlat/);
+});
+
+test('USDT rebalance waits for global flat stability and requires zero open orders', () => {
+  assert.match(source, /const USDT_REBALANCE_FLAT_STABLE_MS = 3000;/);
+  const eligibilityBody = readFunctionBody('confirmUsdtRebalanceEligibility');
+  assert.match(eligibilityBody, /readAccountPositionCount\(\) !== 0/);
+  assert.match(eligibilityBody, /getOpenOrdersTabCount\(\) !== 0/);
+  assert.match(eligibilityBody, /resolveAllFuturesPositionStatus\(await fetchCurrentPositionsPayload\(\)\)/);
+  assert.match(eligibilityBody, /positionState\.status !== 'flat'/);
+  assert.match(eligibilityBody, /usdtRebalanceEligible = true/);
+});
+
+test('USDT rebalance uses direct Binance BAPI only after one explicit plan confirmation', () => {
+  assert.match(source, /BINANCE_WALLET_BALANCE_BAPI_PATH = '\/bapi\/asset\/v2\/private\/asset-service\/wallet\/balance\?needBalanceDetail=true&quoteAsset=USDT'/);
+  assert.match(source, /BINANCE_FUTURES_MAX_WITHDRAW_BAPI_PATH = '\/bapi\/futures\/v1\/private\/future\/user-data\/getMaxWithdrawAmount'/);
+  assert.match(source, /BINANCE_WALLET_TRANSFER_BAPI_PATH = '\/bapi\/asset\/v1\/private\/asset-service\/wallet\/transfer'/);
+  const readBalancesBody = readFunctionBody('readCurrentUsdtRebalanceBalances');
+  assert.match(readBalancesBody, /body: \{ assetName: 'USDT' \}/);
+  assert.match(readBalancesBody, /withFuturesTransferableBalance/);
+  const runBody = readFunctionBody('runUsdtRebalance');
+  assert.match(runBody, /window\.confirm\(formatUsdtRebalanceConfirmation\(plan\)\)/);
+  assert.match(runBody, /await assertUsdtRebalanceTradingState\(\)/);
+  assert.match(runBody, /areUsdtBalancesEqual\(currentBalances, expectedBalances\)/);
+  assert.match(runBody, /await submitUsdtRebalanceTransfer\(transfer\)/);
+  assert.match(runBody, /applyUsdtTransferToBalances\(expectedBalances, transfer\)/);
+  const submitBody = readFunctionBody('submitUsdtRebalanceTransfer');
+  assert.match(submitBody, /asset: 'USDT'/);
+  assert.match(submitBody, /amount: transfer\.amount/);
+  assert.match(submitBody, /kindType: transfer\.kindType/);
+  assert.match(submitBody, /payload\?\.success !== true/);
+  assert.doesNotMatch(source, /orderform-transfer-button/);
 });
