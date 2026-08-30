@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.166
+// @version      2.7.167
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -7406,7 +7406,7 @@
     async function runUsdtRebalance() {
       let plan = null;
       let completed = 0;
-      setLadderStatus("正在读取再平衡计划");
+      setLadderStatus("正在读取账户再平衡计划");
       try {
         await assertUsdtRebalanceTradingState();
         const initialBalances = await readCurrentUsdtRebalanceBalances();
@@ -7417,7 +7417,7 @@
           return { status: "already_balanced", plan };
         }
         if (!window.confirm(formatUsdtRebalanceConfirmation(plan))) {
-          setLadderStatus("再平衡已取消");
+          setLadderStatus("账户再平衡已取消");
           return { status: "cancelled", plan };
         }
         let expectedBalances = initialBalances;
@@ -7425,20 +7425,20 @@
           await assertUsdtRebalanceTradingState();
           const currentBalances = await readCurrentUsdtRebalanceBalances();
           if (!areUsdtBalancesEqual(currentBalances, expectedBalances)) {
-            throw new Error("账户余额已变化，已停止再平衡");
+            throw new Error("账户余额已变化，已停止账户再平衡");
           }
-          setLadderStatus(`再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`);
+          setLadderStatus(`账户再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`);
           await submitUsdtRebalanceTransfer(transfer);
           completed += 1;
           expectedBalances = applyUsdtTransferToBalances(expectedBalances, transfer);
           await waitForUsdtRebalanceBalances(expectedBalances);
         }
         usdtRebalanceEligible = false;
-        setLadderStatus(`再平衡已完成 · ${completed}/${plan.transfers.length} 笔`);
+        setLadderStatus(`账户再平衡已完成 · ${completed}/${plan.transfers.length} 笔`);
         return { status: "completed", plan, completed };
       } catch (error) {
         const message = error?.name === "AbortError" ? "Binance 请求超时" : error?.message || String(error);
-        const prefix = completed > 0 && plan ? `再平衡部分完成 · ${completed}/${plan.transfers.length} 笔` : "再平衡失败";
+        const prefix = completed > 0 && plan ? `账户再平衡部分完成 · ${completed}/${plan.transfers.length} 笔` : "账户再平衡失败";
         setLadderStatus(`${prefix} · ${message}`, message);
         throw error;
       }
@@ -8385,7 +8385,7 @@
         "</div>",
         `<div id="${LADDER_STATUS_ROW_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
         `<span id="${LADDER_STATUS_ID}" title="空闲" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">空闲</span>`,
-        `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">再平衡</button>`,
+        `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="将资金、现货和 U 本位账户的 USDT 按 5:4:1 分配" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">账户再平衡</button>`,
         "</div>"
       ].join("");
       panelPositionInvalidated = true;
