@@ -80,7 +80,7 @@ import { keepInteractionFeedbackVisible } from './core/interaction-feedback.js';
 import {
   createContinuousLadderProgress,
   formatContinuousLadderProgress,
-  formatContinuousLadderWaitReason,
+  formatContinuousLadderWaitProgress,
   recordContinuousLadderRound,
   waitForContinuousLadderNextRound,
 } from './core/continuous-ladder.js';
@@ -2932,12 +2932,12 @@ import {
           delay,
           signal: abortController.signal,
           onWaitStateChange: ({ phase, cooldownMs }) => {
-            setContinuousLadderProgressStatus(
+            setLadderStatus(formatContinuousLadderWaitProgress(
               spec.label,
-              'running',
               continuousProgress,
-              formatContinuousLadderWaitReason(phase, cooldownMs),
-            );
+              phase,
+              cooldownMs,
+            ));
           },
         });
         if (readiness.status === 'stopped') {

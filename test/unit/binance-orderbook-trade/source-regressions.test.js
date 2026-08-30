@@ -630,7 +630,7 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(continuousBody, /await waitForContinuousLadderNextRound\(/);
   assert.match(continuousBody, /readContinuousLadderReadiness\(actionType, actionSymbol\)/);
   assert.match(continuousBody, /onWaitStateChange:/);
-  assert.match(continuousBody, /formatContinuousLadderWaitReason\(phase, cooldownMs\)/);
+  assert.match(continuousBody, /formatContinuousLadderWaitProgress\(/);
 
   assert.match(readinessBody, /isCurrentObservedSymbol\(actionSymbol\)/);
   assert.match(readinessBody, /getActiveTradeMode\(\) !== spec\.mode/);

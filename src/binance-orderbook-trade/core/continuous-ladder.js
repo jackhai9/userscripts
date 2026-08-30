@@ -69,15 +69,12 @@ export function recordContinuousLadderRound(progress, outcome) {
   assertContinuousLadderProgress(progress);
 }
 
-export function formatContinuousLadderProgress(label, phase, progress, reason = null) {
+function buildContinuousLadderProgressParts(label, phase, progress) {
   if (typeof label !== 'string' || label.trim() === '') {
     throw new Error('Invalid continuous ladder label');
   }
   const phaseText = CONTINUOUS_LADDER_PHASE_TEXT[phase];
   if (!phaseText) throw new Error('Invalid continuous ladder phase');
-  if (reason !== null && (typeof reason !== 'string' || reason.trim() === '')) {
-    throw new Error('Invalid continuous ladder reason');
-  }
   assertContinuousLadderProgress(progress);
 
   const parts = [`${label}${phaseText}`];
@@ -93,6 +90,14 @@ export function formatContinuousLadderProgress(label, phase, progress, reason = 
   }
   parts.push(`累计 ${progress.submittedOrders} 笔`);
   if (progress.cancelledOrders > 0) parts.push(`撤 ${progress.cancelledOrders} 笔`);
+  return parts;
+}
+
+export function formatContinuousLadderProgress(label, phase, progress, reason = null) {
+  if (reason !== null && (typeof reason !== 'string' || reason.trim() === '')) {
+    throw new Error('Invalid continuous ladder reason');
+  }
+  const parts = buildContinuousLadderProgressParts(label, phase, progress);
   if (reason !== null) parts.push(reason);
   return parts.join(' · ');
 }
@@ -106,7 +111,13 @@ export function formatContinuousLadderWaitReason(phase, cooldownMs) {
   const duration = cooldownMs % 1000 === 0
     ? `${cooldownMs / 1000}s`
     : `${cooldownMs}ms`;
-  return `等待 ${duration} 后继续下一轮`;
+  return `${duration} 后继续`;
+}
+
+export function formatContinuousLadderWaitProgress(label, progress, phase, cooldownMs) {
+  const parts = buildContinuousLadderProgressParts(label, 'running', progress);
+  parts.splice(1, 0, formatContinuousLadderWaitReason(phase, cooldownMs));
+  return parts.join(' · ');
 }
 
 function assertReadinessState(state) {

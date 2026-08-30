@@ -6,6 +6,7 @@ import {
   CONTINUOUS_LADDER_READY_CHECK_MS,
   createContinuousLadderProgress,
   formatContinuousLadderProgress,
+  formatContinuousLadderWaitProgress,
   formatContinuousLadderWaitReason,
   recordContinuousLadderRound,
   waitForContinuousLadderNextRound,
@@ -184,11 +185,50 @@ test('continuous ladder wait reasons distinguish readiness from the actual coold
   );
   assert.equal(
     formatContinuousLadderWaitReason('cooldown', CONTINUOUS_LADDER_COOLDOWN_MS),
-    '等待 1s 后继续下一轮',
+    '1s 后继续',
   );
   assert.throws(
     () => formatContinuousLadderWaitReason('unknown', CONTINUOUS_LADDER_COOLDOWN_MS),
     /Invalid continuous ladder wait phase/,
+  );
+});
+
+test('continuous ladder wait status puts the current wait before progress counters', () => {
+  const progress = createContinuousLadderProgress();
+  recordContinuousLadderRound(progress, {
+    status: 'completed',
+    progress: roundProgress({
+      submittedOrders: 3,
+      plannedOrders: 3,
+      currentPlanSubmittedOrders: 3,
+    }),
+  });
+  recordContinuousLadderRound(progress, {
+    status: 'completed',
+    progress: roundProgress({
+      submittedOrders: 3,
+      plannedOrders: 3,
+      currentPlanSubmittedOrders: 3,
+    }),
+  });
+
+  assert.equal(
+    formatContinuousLadderWaitProgress(
+      '阶梯平空',
+      progress,
+      'cooldown',
+      CONTINUOUS_LADDER_COOLDOWN_MS,
+    ),
+    '阶梯平空连续中 · 1s 后继续 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
+  );
+  assert.equal(
+    formatContinuousLadderWaitProgress(
+      '阶梯平空',
+      progress,
+      'waiting_ready',
+      CONTINUOUS_LADDER_COOLDOWN_MS,
+    ),
+    '阶梯平空连续中 · 等待按钮恢复 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
   );
 });
 

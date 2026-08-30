@@ -1018,15 +1018,12 @@
     recordedRoundOutcomes.add(outcome);
     assertContinuousLadderProgress(progress);
   }
-  function formatContinuousLadderProgress(label, phase, progress, reason = null) {
+  function buildContinuousLadderProgressParts(label, phase, progress) {
     if (typeof label !== "string" || label.trim() === "") {
       throw new Error("Invalid continuous ladder label");
     }
     const phaseText = CONTINUOUS_LADDER_PHASE_TEXT[phase];
     if (!phaseText) throw new Error("Invalid continuous ladder phase");
-    if (reason !== null && (typeof reason !== "string" || reason.trim() === "")) {
-      throw new Error("Invalid continuous ladder reason");
-    }
     assertContinuousLadderProgress(progress);
     const parts = [`${label}${phaseText}`];
     parts.push(progress.startedRounds === 0 ? "0 轮" : `${progress.completedRounds}/${progress.startedRounds} 轮`);
@@ -1039,6 +1036,13 @@
     }
     parts.push(`累计 ${progress.submittedOrders} 笔`);
     if (progress.cancelledOrders > 0) parts.push(`撤 ${progress.cancelledOrders} 笔`);
+    return parts;
+  }
+  function formatContinuousLadderProgress(label, phase, progress, reason = null) {
+    if (reason !== null && (typeof reason !== "string" || reason.trim() === "")) {
+      throw new Error("Invalid continuous ladder reason");
+    }
+    const parts = buildContinuousLadderProgressParts(label, phase, progress);
     if (reason !== null) parts.push(reason);
     return parts.join(" · ");
   }
@@ -1049,7 +1053,12 @@
     if (phase === "waiting_ready") return "等待按钮恢复";
     if (phase !== "cooldown") throw new Error("Invalid continuous ladder wait phase");
     const duration = cooldownMs % 1e3 === 0 ? `${cooldownMs / 1e3}s` : `${cooldownMs}ms`;
-    return `等待 ${duration} 后继续下一轮`;
+    return `${duration} 后继续`;
+  }
+  function formatContinuousLadderWaitProgress(label, progress, phase, cooldownMs) {
+    const parts = buildContinuousLadderProgressParts(label, "running", progress);
+    parts.splice(1, 0, formatContinuousLadderWaitReason(phase, cooldownMs));
+    return parts.join(" · ");
   }
   function assertReadinessState(state) {
     if (!["ready", "waiting", "stopped"].includes(state?.status)) {
@@ -4812,12 +4821,12 @@
             delay,
             signal: abortController.signal,
             onWaitStateChange: ({ phase, cooldownMs }) => {
-              setContinuousLadderProgressStatus(
+              setLadderStatus(formatContinuousLadderWaitProgress(
                 spec.label,
-                "running",
                 continuousProgress,
-                formatContinuousLadderWaitReason(phase, cooldownMs)
-              );
+                phase,
+                cooldownMs
+              ));
             }
           });
           if (readiness.status === "stopped") {
