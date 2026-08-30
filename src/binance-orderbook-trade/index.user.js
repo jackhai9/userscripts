@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.162
+// @version      2.7.163
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -50,6 +50,7 @@ import {
 } from './core/close-action.js';
 import {
   observeAutoOpenLeveragePositionState,
+  resolveSymbolPositionSideStatus,
   resolveSymbolPositionStatus,
 } from './core/auto-open-leverage.js';
 import {
@@ -81,6 +82,7 @@ import {
   createContinuousLadderProgress,
   formatActiveContinuousLadderProgress,
   formatContinuousLadderProgress,
+  formatContinuousLadderPositionClosedProgress,
   formatContinuousLadderWaitProgress,
   recordContinuousLadderRound,
   resolveContinuousLadderRecovery,
@@ -91,6 +93,7 @@ import {
   formatCompletedLadderProgress,
   formatFailedLadderProgress,
   formatInterruptedLadderProgress,
+  formatPositionClosedLadderProgress,
   formatStoppedLadderProgress,
   recordLadderCancelledOrder,
   recordLadderSubmittedOrder,
@@ -282,6 +285,7 @@ import {
   ];
   const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
   const LADDER_ACTION_FEEDBACK_MIN_MS = 240;
+  const CONTINUOUS_CLOSE_POSITION_CHECK_MS = 1000;
   const MULTIPLIER_PRESS_FEEDBACK_MS = 140;
   const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
   const LADDER_REPLACE_ROW_SETTLE_MS = 240;
@@ -2055,6 +2059,42 @@ import {
     };
   }
 
+  function createClosePositionCompletedError() {
+    const error = new Error('当前方向已无持仓');
+    error.name = 'ClosePositionCompletedError';
+    return error;
+  }
+
+  function isClosePositionCompletedError(error) {
+    return error?.name === 'ClosePositionCompletedError';
+  }
+
+  async function throwIfClosePositionCompleted(context, abortSignal = null) {
+    if (context?.spec?.mode !== 'CLOSE') return;
+    throwIfAborted(abortSignal);
+    if (!isCurrentObservedSymbol(context.symbol)) {
+      throw new Error('确认平仓结果时交易对已变化');
+    }
+    if (getActiveTradeMode() !== 'CLOSE') {
+      throw new Error('确认平仓结果时下单模式已变化');
+    }
+    if (!await waitForBncHeaders(context.symbol)) {
+      throw new Error('确认平仓结果时币安请求头尚未就绪');
+    }
+    const state = await fetchCurrentSymbolPositionSideState(
+      context.symbol,
+      context.spec.side,
+    );
+    throwIfAborted(abortSignal);
+    if (!isCurrentObservedSymbol(context.symbol)) {
+      throw new Error('确认平仓结果时交易对已变化');
+    }
+    if (getActiveTradeMode() !== 'CLOSE') {
+      throw new Error('确认平仓结果时下单模式已变化');
+    }
+    if (state.status === 'flat') throw createClosePositionCompletedError();
+  }
+
   async function buildLadderPlan(actionType, expectedContext = null) {
     const spec = getLadderActionSpec(actionType);
     if (!spec) throw new Error('未知阶梯动作');
@@ -2172,7 +2212,7 @@ import {
       );
     }
     const baseQty = normalizeDecimalString(base?.qty ?? '');
-    const unavailableQuantityMessage = getUnavailableLadderQuantityMessage(
+    let unavailableQuantityMessage = getUnavailableLadderQuantityMessage(
       spec.mode,
       baseQty,
       base?.confirmedZeroOpenBalance === true,
@@ -2183,6 +2223,10 @@ import {
           'market_data_not_ready',
           unavailableQuantityMessage,
         );
+      }
+      if (spec.mode === 'CLOSE') {
+        await throwIfClosePositionCompleted({ spec, symbol: startSymbol });
+        unavailableQuantityMessage = '当前方向暂无可平数量';
       }
       throw new Error(unavailableQuantityMessage);
     }
@@ -2989,7 +3033,7 @@ import {
           progress: snapshotLadderProgress(progress),
         };
       })
-      .catch((e) => {
+      .catch(async (e) => {
         if (isLadderStoppedError(e)) {
           if (!continuousSession && isCurrentObservedSymbol(actionSymbol)) {
             setLadderStatus(formatStoppedLadderProgress(spec.label, progress));
@@ -2998,6 +3042,36 @@ import {
             status: 'stopped',
             progress: snapshotLadderProgress(progress),
           };
+        }
+        if (isClosePositionCompletedError(e)) {
+          if (!continuousSession && isCurrentObservedSymbol(actionSymbol)) {
+            setLadderStatus(formatPositionClosedLadderProgress(spec.label, progress));
+          }
+          return {
+            status: 'position_closed',
+            reason: e.message,
+            progress: snapshotLadderProgress(progress),
+          };
+        }
+        if (spec.mode === 'CLOSE' && e?.safeNoSubmit === true) {
+          try {
+            await throwIfClosePositionCompleted(
+              { spec, symbol: actionSymbol },
+              abortController.signal,
+            );
+          } catch (positionError) {
+            if (isClosePositionCompletedError(positionError)) {
+              if (!continuousSession && isCurrentObservedSymbol(actionSymbol)) {
+                setLadderStatus(formatPositionClosedLadderProgress(spec.label, progress));
+              }
+              return {
+                status: 'position_closed',
+                reason: positionError.message,
+                progress: snapshotLadderProgress(progress),
+              };
+            }
+            err('安全失败后确认当前方向持仓失败:', positionError);
+          }
         }
         err('Maker 阶梯执行失败:', e);
         if (!isCurrentObservedSymbol(actionSymbol)) {
@@ -3043,7 +3117,11 @@ import {
     return await ladderTask;
   }
 
-  function readContinuousLadderReadiness(actionType, actionSymbol) {
+  async function readContinuousLadderReadiness(
+    actionType,
+    actionSymbol,
+    positionCheckState,
+  ) {
     const spec = getLadderActionSpec(actionType);
     if (!spec || spec.mode !== 'CLOSE') {
       throw new Error('连续交易仅支持阶梯平仓');
@@ -3060,17 +3138,22 @@ import {
       || singleOrderTask
       || cancelCurrentSymbolOpenOrdersTask
       || !readCurrentOrderbookPrecisionValue()
-      || !isCloseSnapshotReady(actionSymbol)
     ) {
       return { status: 'waiting' };
     }
     const button = spec.buttonGetter();
     if (
-      !button
+      !isCloseSnapshotReady(actionSymbol)
+      || !button
       || !button.isConnected
       || !isVisibleElement(button)
       || isSubmitButtonBusy(button)
     ) {
+      const now = Date.now();
+      if (now - positionCheckState.checkedAt >= CONTINUOUS_CLOSE_POSITION_CHECK_MS) {
+        positionCheckState.checkedAt = now;
+        await throwIfClosePositionCompleted({ spec, symbol: actionSymbol });
+      }
       return { status: 'waiting' };
     }
     return { status: 'ready' };
@@ -3112,6 +3195,7 @@ import {
 
     const abortController = new AbortController();
     const continuousProgress = createContinuousLadderProgress();
+    const positionCheckState = { checkedAt: Date.now() };
     continuousLadderAbortController = abortController;
     activeContinuousLadderActionType = actionType;
     activeContinuousLadderProgress = continuousProgress;
@@ -3122,6 +3206,13 @@ import {
         const outcome = await startLadder(actionType, continuousProgress);
         if (!outcome?.progress) return outcome;
         recordContinuousLadderRound(continuousProgress, outcome);
+        if (outcome.status === 'position_closed') {
+          setLadderStatus(formatContinuousLadderPositionClosedProgress(
+            spec.label,
+            continuousProgress,
+          ));
+          return outcome;
+        }
         const recovery = outcome.status === 'completed'
           ? null
           : resolveContinuousLadderRecovery(outcome.error);
@@ -3140,7 +3231,20 @@ import {
         }
 
         const readiness = await waitForContinuousLadderNextRound({
-          readReadiness: () => readContinuousLadderReadiness(actionType, actionSymbol),
+          readReadiness: async () => {
+            try {
+              return await readContinuousLadderReadiness(
+                actionType,
+                actionSymbol,
+                positionCheckState,
+              );
+            } catch (error) {
+              if (isClosePositionCompletedError(error)) {
+                return { status: 'stopped', reason: 'position_flat' };
+              }
+              throw error;
+            }
+          },
           delay,
           signal: abortController.signal,
           cooldownMs: recovery?.cooldownMs,
@@ -3155,6 +3259,13 @@ import {
           },
         });
         if (readiness.status === 'stopped') {
+          if (readiness.reason === 'position_flat') {
+            setLadderStatus(formatContinuousLadderPositionClosedProgress(
+              spec.label,
+              continuousProgress,
+            ));
+            return { status: 'position_closed', reason: '当前方向已无持仓' };
+          }
           setContinuousLadderProgressStatus(
             spec.label,
             'stopped',
@@ -4982,7 +5093,20 @@ import {
           abortSignal,
         );
         throwIfAborted(abortSignal);
-        if (!result?.ok) throw new Error(result.message || '原挂单未完成替换，已停止重新挂单');
+        if (!result?.ok) {
+          if (
+            replacementPlan.spec.mode === 'CLOSE'
+            && !['symbol_changed', 'dialog_not_closed'].includes(result.status)
+          ) {
+            try {
+              await throwIfClosePositionCompleted(replacementPlan, abortSignal);
+            } catch (positionError) {
+              if (isClosePositionCompletedError(positionError)) throw positionError;
+              err('替换挂单失败后确认当前方向持仓失败:', positionError);
+            }
+          }
+          throw new Error(result.message || '原挂单未完成替换，已停止重新挂单');
+        }
       }
     }
     throw new Error('阶梯重挂流程异常');
@@ -5295,7 +5419,7 @@ import {
     return Boolean(cachedBncHeaders && isCurrentObservedSymbol(symbol));
   }
 
-  async function fetchCurrentSymbolPositionState(symbol) {
+  async function fetchCurrentPositionsPayload() {
     if (!cachedBncHeaders) throw new Error('币安请求头尚未就绪');
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 5000);
@@ -5308,14 +5432,26 @@ import {
         signal: controller.signal,
       });
       if (!resp.ok) throw new Error(`持仓接口异常：HTTP ${resp.status}`);
-      const payload = await resp.json();
-      return {
-        ...resolveSymbolPositionStatus(payload, symbol),
-        source: 'user_position_api',
-      };
+      return await resp.json();
     } finally {
       window.clearTimeout(timer);
     }
+  }
+
+  async function fetchCurrentSymbolPositionState(symbol) {
+    const payload = await fetchCurrentPositionsPayload();
+    return {
+      ...resolveSymbolPositionStatus(payload, symbol),
+      source: 'user_position_api',
+    };
+  }
+
+  async function fetchCurrentSymbolPositionSideState(symbol, side) {
+    const payload = await fetchCurrentPositionsPayload();
+    return {
+      ...resolveSymbolPositionSideStatus(payload, symbol, side),
+      source: 'user_position_api',
+    };
   }
 
   function isStableOpenContext(symbol) {

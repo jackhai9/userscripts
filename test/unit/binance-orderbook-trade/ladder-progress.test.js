@@ -6,6 +6,7 @@ import {
   formatCompletedLadderProgress,
   formatFailedLadderProgress,
   formatInterruptedLadderProgress,
+  formatPositionClosedLadderProgress,
   formatStoppedLadderProgress,
   recordLadderCancelledOrder,
   recordLadderSubmittedOrder,
@@ -95,6 +96,17 @@ test('completed ladder status names the action and confirmed result', () => {
   assert.equal(
     formatCompletedLadderProgress('阶梯平空', 5, 5, progressWithCancellation),
     '阶梯平空已完成 · 已挂 5/5 笔 · 已撤 1 笔',
+  );
+});
+
+test('confirmed flat position is an ended business outcome with retained progress', () => {
+  const progress = createLadderProgress();
+  setLadderPlannedOrders(progress, 3);
+  recordLadderCancelledOrder(progress);
+
+  assert.equal(
+    formatPositionClosedLadderProgress('阶梯平空', progress),
+    '阶梯平空已结束 · 当前方向已无持仓 · 已挂 0/3 笔 · 已撤 1 笔',
   );
 });
 

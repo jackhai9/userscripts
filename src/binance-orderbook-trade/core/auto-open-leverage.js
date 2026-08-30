@@ -21,6 +21,41 @@ export function resolveSymbolPositionStatus(payload, symbol) {
   };
 }
 
+export function resolveSymbolPositionSideStatus(payload, symbol, side) {
+  if (payload?.success !== true) throw new Error('持仓接口返回失败');
+  if (!Array.isArray(payload.data)) throw new Error('持仓接口数据格式异常');
+  if (!symbol) throw new Error('持仓接口缺少交易对');
+  if (side !== 'LONG' && side !== 'SHORT') {
+    throw new Error(`目标持仓方向无效：${String(side)}`);
+  }
+
+  const positions = payload.data.filter((position) => position?.symbol === symbol);
+  let matchingPositionCount = 0;
+  let hasPosition = false;
+  for (const position of positions) {
+    const positionSide = position.positionSide;
+    if (!['BOTH', 'LONG', 'SHORT'].includes(positionSide)) {
+      throw new Error(`持仓方向无效：${String(positionSide)}`);
+    }
+    const amount = parsePositionAmount(position.positionAmount);
+    if (positionSide === side) {
+      matchingPositionCount += 1;
+      if (amount !== 0) hasPosition = true;
+      continue;
+    }
+    if (positionSide === 'BOTH') {
+      matchingPositionCount += 1;
+      if ((side === 'LONG' && amount > 0) || (side === 'SHORT' && amount < 0)) {
+        hasPosition = true;
+      }
+    }
+  }
+  return {
+    status: hasPosition ? 'has_position' : 'flat',
+    matchingPositionCount,
+  };
+}
+
 /**
  * Tracks confirmed position epochs without treating a temporarily missing DOM root
  * as a new flat transition.

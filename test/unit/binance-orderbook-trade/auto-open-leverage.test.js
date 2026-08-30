@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   observeAutoOpenLeveragePositionState,
+  resolveSymbolPositionSideStatus,
   resolveSymbolPositionStatus,
 } from '../../../src/binance-orderbook-trade/core/auto-open-leverage.js';
 
@@ -41,6 +42,55 @@ test('all current-symbol position directions must be zero before reset', () => {
     status: 'flat',
     matchingPositionCount: 2,
   });
+});
+
+test('close completion checks only the requested position side in hedge mode', () => {
+  const payload = {
+    success: true,
+    data: [
+      { symbol: 'HYPEUSDT', positionSide: 'LONG', positionAmount: '1.25' },
+      { symbol: 'HYPEUSDT', positionSide: 'SHORT', positionAmount: '0' },
+    ],
+  };
+
+  assert.deepEqual(resolveSymbolPositionSideStatus(payload, 'HYPEUSDT', 'LONG'), {
+    status: 'has_position',
+    matchingPositionCount: 1,
+  });
+  assert.deepEqual(resolveSymbolPositionSideStatus(payload, 'HYPEUSDT', 'SHORT'), {
+    status: 'flat',
+    matchingPositionCount: 1,
+  });
+});
+
+test('close completion maps signed one-way positions to the requested side', () => {
+  const longPayload = {
+    success: true,
+    data: [{ symbol: 'HYPEUSDT', positionSide: 'BOTH', positionAmount: '1.25' }],
+  };
+  const shortPayload = {
+    success: true,
+    data: [{ symbol: 'HYPEUSDT', positionSide: 'BOTH', positionAmount: '-1.25' }],
+  };
+
+  assert.equal(resolveSymbolPositionSideStatus(longPayload, 'HYPEUSDT', 'LONG').status, 'has_position');
+  assert.equal(resolveSymbolPositionSideStatus(longPayload, 'HYPEUSDT', 'SHORT').status, 'flat');
+  assert.equal(resolveSymbolPositionSideStatus(shortPayload, 'HYPEUSDT', 'LONG').status, 'flat');
+  assert.equal(resolveSymbolPositionSideStatus(shortPayload, 'HYPEUSDT', 'SHORT').status, 'has_position');
+});
+
+test('close completion rejects unknown position directions instead of guessing', () => {
+  assert.throws(
+    () => resolveSymbolPositionSideStatus({
+      success: true,
+      data: [{ symbol: 'HYPEUSDT', positionSide: 'UNKNOWN', positionAmount: '1' }],
+    }, 'HYPEUSDT', 'LONG'),
+    /持仓方向无效/,
+  );
+  assert.throws(
+    () => resolveSymbolPositionSideStatus({ success: true, data: [] }, 'HYPEUSDT', 'UNKNOWN'),
+    /目标持仓方向无效/,
+  );
 });
 
 test('rejects unsuccessful or malformed current-symbol position responses', () => {

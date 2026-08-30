@@ -640,7 +640,10 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(continuousBody, /continue/);
   assert.match(continuousBody, /setContinuousLadderProgressStatus\(/);
   assert.match(continuousBody, /await waitForContinuousLadderNextRound\(/);
-  assert.match(continuousBody, /readContinuousLadderReadiness\(actionType, actionSymbol\)/);
+  assert.match(
+    continuousBody,
+    /readContinuousLadderReadiness\(\s*actionType,\s*actionSymbol,\s*positionCheckState/,
+  );
   assert.match(continuousBody, /onWaitStateChange:/);
   assert.match(continuousBody, /formatContinuousLadderWaitProgress\(/);
   assert.match(startBody, /formatActiveContinuousLadderProgress\(/);
@@ -1631,6 +1634,25 @@ test('continuous close ladders recover only from tagged pre-submit transients', 
   assert.match(recoveryBody, /error\.continuousRecoveryKind = kind/);
 });
 
+test('confirmed directional flat state ends close ladders without masking uncertain outcomes', () => {
+  const startBody = readFunctionBody('startLadder');
+  const planBody = readFunctionBody('buildLadderPlan');
+  const replacementBody = readFunctionBody('runLadderPlanWithOpenOrderReplacement');
+  const readinessBody = readFunctionBody('readContinuousLadderReadiness');
+  const confirmationBody = readFunctionBody('throwIfClosePositionCompleted');
+
+  assert.match(confirmationBody, /fetchCurrentSymbolPositionSideState/);
+  assert.match(confirmationBody, /state\.status === 'flat'/);
+  assert.match(confirmationBody, /throw createClosePositionCompletedError\(\)/);
+  assert.match(planBody, /await throwIfClosePositionCompleted\(\{ spec, symbol: startSymbol \}\)/);
+  assert.match(startBody, /spec\.mode === 'CLOSE' && e\?\.safeNoSubmit === true/);
+  assert.match(startBody, /status: 'position_closed'/);
+  assert.doesNotMatch(startBody, /未确认.*throwIfClosePositionCompleted/);
+  assert.match(replacementBody, /!\['symbol_changed', 'dialog_not_closed'\]\.includes\(result\.status\)/);
+  assert.match(replacementBody, /await throwIfClosePositionCompleted\(replacementPlan, abortSignal\)/);
+  assert.match(readinessBody, /CONTINUOUS_CLOSE_POSITION_CHECK_MS/);
+});
+
 test('single-order sizing and submission retain the captured orderbook precision', () => {
   const resolveBody = readFunctionBody('resolveTargetQty');
   assert.match(resolveBody, /const precision = readCurrentOrderbookPrecisionValue\(\)/);
@@ -1684,9 +1706,11 @@ test('auto leverage reset is authorized by a fresh current-symbol position respo
     source,
     /BINANCE_USER_POSITION_BAPI_PATH = '\/bapi\/futures\/v6\/private\/future\/user-data\/user-position'/,
   );
+  const fetchPayloadBody = readFunctionBody('fetchCurrentPositionsPayload');
   const fetchBody = readFunctionBody('fetchCurrentSymbolPositionState');
   assert.match(fetchBody, /resolveSymbolPositionStatus\(payload, symbol\)/);
-  assert.match(fetchBody, /body: JSON\.stringify\(\{\}\)/);
+  assert.match(fetchBody, /await fetchCurrentPositionsPayload\(\)/);
+  assert.match(fetchPayloadBody, /body: JSON\.stringify\(\{\}\)/);
 
   const resetBody = readFunctionBody('autoResetOpenLeverageToDefault');
   const positionCheckIndex = resetBody.indexOf('await fetchCurrentSymbolPositionState(symbol)');
