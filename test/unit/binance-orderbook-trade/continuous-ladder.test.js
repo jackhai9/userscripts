@@ -5,6 +5,7 @@ import {
   CONTINUOUS_LADDER_COOLDOWN_MS,
   CONTINUOUS_LADDER_READY_CHECK_MS,
   createContinuousLadderProgress,
+  formatActiveContinuousLadderProgress,
   formatContinuousLadderProgress,
   formatContinuousLadderWaitProgress,
   formatContinuousLadderWaitReason,
@@ -52,7 +53,7 @@ test('continuous ladder status summarizes completed rounds and cumulative submis
   });
   assert.equal(
     formatContinuousLadderProgress('阶梯平空', 'running', progress),
-    '阶梯平空连续中 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
+    '连续阶梯平空 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
   );
 });
 
@@ -76,7 +77,7 @@ test('continuous ladder stopped status separates completed rounds from a partial
 
   assert.equal(
     formatContinuousLadderProgress('阶梯平空', 'stopped', progress),
-    '阶梯平空连续已停止 · 2/3 轮 · 本轮 1/3 笔 · 累计 7 笔',
+    '连续阶梯平空 · 已停止 · 2/3 轮 · 本轮 1/3 笔 · 累计 7 笔',
   );
 });
 
@@ -94,7 +95,33 @@ test('continuous ladder status shows cancellations only when they occurred', () 
 
   assert.equal(
     formatContinuousLadderProgress('阶梯平多', 'failed', progress, '下单按钮 3 秒内未恢复可点击'),
-    '阶梯平多连续失败 · 0/1 轮 · 本轮 2/3 笔 · 累计 2 笔 · 撤 1 笔 · 下单按钮 3 秒内未恢复可点击',
+    '连续阶梯平多 · 失败 · 0/1 轮 · 本轮 2/3 笔 · 累计 2 笔 · 撤 1 笔 · 下单按钮 3 秒内未恢复可点击',
+  );
+});
+
+test('active continuous ladder status keeps the continuous action and live round totals', () => {
+  const progress = createContinuousLadderProgress();
+  const completedRound = roundProgress({
+    submittedOrders: 3,
+    plannedOrders: 3,
+    currentPlanSubmittedOrders: 3,
+  });
+  recordContinuousLadderRound(progress, { status: 'completed', progress: completedRound });
+  recordContinuousLadderRound(progress, { status: 'completed', progress: completedRound });
+
+  assert.equal(
+    formatActiveContinuousLadderProgress(
+      '阶梯平空',
+      '第 2 笔确认中',
+      progress,
+      roundProgress({
+        submittedOrders: 1,
+        cancelledOrders: 1,
+        plannedOrders: 3,
+        currentPlanSubmittedOrders: 1,
+      }),
+    ),
+    '连续阶梯平空 · 第 2 笔确认中 · 2/3 轮 · 本轮 1/3 笔 · 累计 7 笔 · 撤 1 笔',
   );
 });
 
@@ -219,7 +246,7 @@ test('continuous ladder wait status puts the current wait before progress counte
       'cooldown',
       CONTINUOUS_LADDER_COOLDOWN_MS,
     ),
-    '阶梯平空连续中 · 1s 后继续 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
+    '连续阶梯平空 · 1s 后继续 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
   );
   assert.equal(
     formatContinuousLadderWaitProgress(
@@ -228,7 +255,7 @@ test('continuous ladder wait status puts the current wait before progress counte
       'waiting_ready',
       CONTINUOUS_LADDER_COOLDOWN_MS,
     ),
-    '阶梯平空连续中 · 等待按钮恢复 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
+    '连续阶梯平空 · 等待按钮恢复 · 2/2 轮 · 本轮 3/3 笔 · 累计 6 笔',
   );
 });
 
