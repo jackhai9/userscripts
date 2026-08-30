@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.169
+// @version      2.7.170
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -211,6 +211,7 @@ import {
   findBinanceChartOrdersTarget as findBinanceChartOrdersTargetDom,
   getBinanceChartOrdersTarget as getBinanceChartOrdersTargetDom,
 } from './dom/chart-orders.js';
+import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
 (function () {
   'use strict';
@@ -5821,35 +5822,36 @@ import {
     if (positionState.status !== 'flat') throw new Error('全账户仍有持仓');
   }
 
-  function formatUsdtRebalanceConfirmation(plan) {
+  function buildUsdtRebalanceDialogModel(plan) {
     const accountLabels = {
       FUNDING: localizedText('资金', 'Funding'),
       MAIN: localizedText('现货', 'Spot'),
       UMFUTURE: localizedText('U本位合约', 'USDⓈ-M Futures'),
     };
-    const accountText = (balances) => [
-      `${ui(accountLabels.FUNDING)} ${balances.FUNDING}`,
-      `${ui(accountLabels.MAIN)} ${balances.MAIN}`,
-      `${ui(accountLabels.UMFUTURE)} ${balances.UMFUTURE}`,
-    ].join(' / ');
-    const transferText = plan.transfers.map((transfer, index) => {
-      const from = ui(accountLabels[transfer.from]);
-      const to = ui(accountLabels[transfer.to]);
-      return `${index + 1}. ${from} → ${to}: ${transfer.amount} USDT`;
-    }).join('\n');
-    return [
-      ui(localizedText(
-        '将全部可划转 USDT 调整为 资金 50% / 现货 40% / U本位 10%',
-        'Reallocate all transferable USDT to Funding 50% / Spot 40% / USDⓈ-M Futures 10%',
-      )),
-      `${ui(localizedText('当前', 'Current'))}: ${accountText(plan.before)}`,
-      `${ui(localizedText('目标', 'Target'))}: ${accountText(plan.targets)}`,
-      transferText,
-      ui(localizedText(
+    const accountCodes = ['FUNDING', 'MAIN', 'UMFUTURE'];
+    return {
+      title: ui(PANEL_COPY.action.accountRebalance),
+      targetSummary: ui(PANEL_COPY.rebalanceDialog.targetSummary),
+      accountHeading: ui(PANEL_COPY.rebalanceDialog.accountHeading),
+      currentHeading: ui(PANEL_COPY.rebalanceDialog.currentHeading),
+      targetHeading: ui(PANEL_COPY.rebalanceDialog.targetHeading),
+      transferHeading: ui(PANEL_COPY.rebalanceDialog.transferHeading),
+      balanceRows: accountCodes.map((accountCode) => ({
+        account: ui(accountLabels[accountCode]),
+        current: plan.before[accountCode],
+        target: plan.targets[accountCode],
+      })),
+      transferRows: plan.transfers.map((transfer) => ({
+        route: `${ui(accountLabels[transfer.from])} → ${ui(accountLabels[transfer.to])}`,
+        amount: `${transfer.amount} USDT`,
+      })),
+      question: ui(localizedText(
         `确认执行 ${plan.transfers.length} 笔划转？`,
         `Confirm ${plan.transfers.length} transfer${plan.transfers.length === 1 ? '' : 's'}?`,
       )),
-    ].filter(Boolean).join('\n\n');
+      cancelLabel: ui(PANEL_COPY.rebalanceDialog.cancel),
+      confirmLabel: ui(PANEL_COPY.rebalanceDialog.confirm),
+    };
   }
 
   async function submitUsdtRebalanceTransfer(transfer) {
@@ -5889,7 +5891,7 @@ import {
         setLadderStatus('USDT 已按 5:4:1 分配');
         return { status: 'already_balanced', plan };
       }
-      if (!window.confirm(formatUsdtRebalanceConfirmation(plan))) {
+      if (!await showUsdtRebalanceDialog(document, buildUsdtRebalanceDialogModel(plan))) {
         setLadderStatus('账户再平衡已取消');
         return { status: 'cancelled', plan };
       }

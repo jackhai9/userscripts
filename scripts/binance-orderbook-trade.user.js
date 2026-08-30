@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.169
+// @version      2.7.170
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -221,6 +221,18 @@
     aria: freezeCopy({
       decrementMultiplier: localizedText("减少倍数", "Decrease multiplier"),
       incrementMultiplier: localizedText("增加倍数", "Increase multiplier")
+    }),
+    rebalanceDialog: freezeCopy({
+      targetSummary: localizedText(
+        "目标分配：资金 50% / 现货 40% / U本位 10%",
+        "Target allocation: Funding 50% / Spot 40% / USDⓈ-M Futures 10%"
+      ),
+      accountHeading: localizedText("账户", "Account"),
+      currentHeading: localizedText("当前 (USDT)", "Current (USDT)"),
+      targetHeading: localizedText("目标 (USDT)", "Target (USDT)"),
+      transferHeading: localizedText("划转计划", "Transfer Plan"),
+      cancel: localizedText("取消", "Cancel"),
+      confirm: localizedText("确认再平衡", "Confirm Rebalance")
     }),
     tooltip: freezeCopy({
       singleOrder: localizedText(
@@ -3029,6 +3041,298 @@
       throw new Error(`图表“显示当前委托”状态异常：${checkedValue}`);
     }
     return { popover, checkbox, checked: checkedValue === "true" };
+  }
+
+  // src/binance-orderbook-trade/dom/usdt-rebalance-dialog.js
+  var USDT_REBALANCE_DIALOG_ID = "jh-binance-usdt-rebalance-dialog";
+  var STYLE_ID = "jh-binance-usdt-rebalance-dialog-style";
+  function assertText(value, field) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error(`Invalid USDT rebalance dialog ${field}`);
+    }
+  }
+  function assertModel(model) {
+    if (!model || !Array.isArray(model.balanceRows) || !Array.isArray(model.transferRows)) {
+      throw new Error("Invalid USDT rebalance dialog model");
+    }
+    for (const field of [
+      "title",
+      "targetSummary",
+      "accountHeading",
+      "currentHeading",
+      "targetHeading",
+      "transferHeading",
+      "question",
+      "cancelLabel",
+      "confirmLabel"
+    ]) {
+      assertText(model[field], field);
+    }
+    for (const row of model.balanceRows) {
+      assertText(row?.account, "balance account");
+      assertText(row?.current, "current balance");
+      assertText(row?.target, "target balance");
+    }
+    if (model.transferRows.length === 0) {
+      throw new Error("USDT rebalance dialog requires at least one transfer");
+    }
+    for (const row of model.transferRows) {
+      assertText(row?.route, "transfer route");
+      assertText(row?.amount, "transfer amount");
+    }
+  }
+  function appendTextElement(document2, parent, tagName, className, text) {
+    const element = document2.createElement(tagName);
+    element.className = className;
+    element.textContent = text;
+    parent.appendChild(element);
+    return element;
+  }
+  function installDialogStyle(document2) {
+    if (document2.getElementById(STYLE_ID)) return;
+    const style = document2.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+    #${USDT_REBALANCE_DIALOG_ID} {
+      box-sizing: border-box;
+      width: min(440px, calc(100vw - 32px));
+      max-height: calc(100vh - 32px);
+      margin: auto;
+      padding: 0;
+      overflow: hidden;
+      border: 1px solid var(--color-InputLine, #eaecef);
+      border-radius: 12px;
+      background: var(--color-BasicBg, #fff);
+      color: var(--color-PrimaryText, #1e2329);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, .18);
+      font-family: BinancePlex, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 20px;
+    }
+    #${USDT_REBALANCE_DIALOG_ID}::backdrop {
+      background: rgba(0, 0, 0, .48);
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-header {
+      padding: 20px 24px 12px;
+      font-size: 20px;
+      font-weight: 600;
+      line-height: 28px;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-body {
+      max-height: calc(100vh - 190px);
+      padding: 0 24px;
+      overflow: auto;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-summary {
+      margin-bottom: 16px;
+      color: var(--color-SecondaryText, #474d57);
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-table {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(92px, auto) minmax(92px, auto);
+      gap: 0;
+      overflow: hidden;
+      border: 1px solid var(--color-InputLine, #eaecef);
+      border-radius: 8px;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-cell {
+      min-width: 0;
+      padding: 9px 10px;
+      overflow: hidden;
+      border-bottom: 1px solid var(--color-InputLine, #eaecef);
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-cell:nth-last-child(-n + 3) {
+      border-bottom: 0;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-cell--heading {
+      background: var(--color-InputBg, #f5f5f5);
+      color: var(--color-TertiaryText, #707a8a);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-cell--number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-section-title {
+      margin: 18px 0 8px;
+      font-weight: 500;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-transfer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--color-InputLine, #eaecef);
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-transfer:last-child {
+      border-bottom: 0;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-transfer-amount {
+      flex: 0 0 auto;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-question {
+      margin-top: 14px;
+      color: var(--color-SecondaryText, #474d57);
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-footer {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      padding: 20px 24px 24px;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-button {
+      height: 40px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-button--cancel {
+      border: 1px solid var(--color-InputLine, #d8dce1);
+      background: var(--color-BasicBg, #fff);
+      color: var(--color-PrimaryText, #1e2329);
+    }
+    #${USDT_REBALANCE_DIALOG_ID} .jh-rebalance-dialog-button--confirm {
+      border: 1px solid var(--color-PrimaryYellow, #f0b90b);
+      background: var(--color-PrimaryYellow, #f0b90b);
+      color: var(--color-TextOnYellow, #202630);
+    }
+  `;
+    (document2.head || document2.documentElement).appendChild(style);
+  }
+  function showUsdtRebalanceDialog(document2, model) {
+    assertModel(model);
+    if (document2.getElementById(USDT_REBALANCE_DIALOG_ID)) {
+      throw new Error("USDT rebalance dialog is already open");
+    }
+    installDialogStyle(document2);
+    const dialog = document2.createElement("dialog");
+    dialog.id = USDT_REBALANCE_DIALOG_ID;
+    dialog.setAttribute("aria-labelledby", `${USDT_REBALANCE_DIALOG_ID}-title`);
+    const title = appendTextElement(
+      document2,
+      dialog,
+      "div",
+      "jh-rebalance-dialog-header",
+      model.title
+    );
+    title.id = `${USDT_REBALANCE_DIALOG_ID}-title`;
+    const body = document2.createElement("div");
+    body.className = "jh-rebalance-dialog-body";
+    dialog.appendChild(body);
+    appendTextElement(
+      document2,
+      body,
+      "div",
+      "jh-rebalance-dialog-summary",
+      model.targetSummary
+    );
+    const table = document2.createElement("div");
+    table.className = "jh-rebalance-dialog-table";
+    table.setAttribute("role", "table");
+    body.appendChild(table);
+    for (const heading of [model.accountHeading, model.currentHeading, model.targetHeading]) {
+      appendTextElement(
+        document2,
+        table,
+        "div",
+        "jh-rebalance-dialog-cell jh-rebalance-dialog-cell--heading",
+        heading
+      ).setAttribute("role", "columnheader");
+    }
+    for (const row of model.balanceRows) {
+      appendTextElement(document2, table, "div", "jh-rebalance-dialog-cell", row.account).setAttribute("role", "cell");
+      appendTextElement(
+        document2,
+        table,
+        "div",
+        "jh-rebalance-dialog-cell jh-rebalance-dialog-cell--number",
+        row.current
+      ).setAttribute("role", "cell");
+      appendTextElement(
+        document2,
+        table,
+        "div",
+        "jh-rebalance-dialog-cell jh-rebalance-dialog-cell--number",
+        row.target
+      ).setAttribute("role", "cell");
+    }
+    appendTextElement(
+      document2,
+      body,
+      "div",
+      "jh-rebalance-dialog-section-title",
+      model.transferHeading
+    );
+    const transfers = document2.createElement("div");
+    body.appendChild(transfers);
+    for (const row of model.transferRows) {
+      const transfer = document2.createElement("div");
+      transfer.className = "jh-rebalance-dialog-transfer";
+      appendTextElement(document2, transfer, "span", "jh-rebalance-dialog-transfer-route", row.route);
+      appendTextElement(
+        document2,
+        transfer,
+        "span",
+        "jh-rebalance-dialog-transfer-amount",
+        row.amount
+      );
+      transfers.appendChild(transfer);
+    }
+    appendTextElement(
+      document2,
+      body,
+      "div",
+      "jh-rebalance-dialog-question",
+      model.question
+    );
+    const footer = document2.createElement("div");
+    footer.className = "jh-rebalance-dialog-footer";
+    dialog.appendChild(footer);
+    const cancelButton = appendTextElement(
+      document2,
+      footer,
+      "button",
+      "jh-rebalance-dialog-button jh-rebalance-dialog-button--cancel",
+      model.cancelLabel
+    );
+    cancelButton.type = "button";
+    cancelButton.dataset.rebalanceDialogAction = "cancel";
+    const confirmButton = appendTextElement(
+      document2,
+      footer,
+      "button",
+      "jh-rebalance-dialog-button jh-rebalance-dialog-button--confirm",
+      model.confirmLabel
+    );
+    confirmButton.type = "button";
+    confirmButton.dataset.rebalanceDialogAction = "confirm";
+    document2.body.appendChild(dialog);
+    dialog.showModal();
+    cancelButton.focus();
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (confirmed) => {
+        if (settled) return;
+        settled = true;
+        if (dialog.open) dialog.close();
+        dialog.remove();
+        resolve(confirmed);
+      };
+      cancelButton.addEventListener("click", () => finish(false));
+      confirmButton.addEventListener("click", () => finish(true));
+      dialog.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        finish(false);
+      });
+      dialog.addEventListener("close", () => finish(false));
+    });
   }
 
   // src/binance-orderbook-trade/index.user.js
@@ -7814,35 +8118,36 @@
       const positionState = resolveAllFuturesPositionStatus(await fetchCurrentPositionsPayload());
       if (positionState.status !== "flat") throw new Error("全账户仍有持仓");
     }
-    function formatUsdtRebalanceConfirmation(plan) {
+    function buildUsdtRebalanceDialogModel(plan) {
       const accountLabels = {
         FUNDING: localizedText("资金", "Funding"),
         MAIN: localizedText("现货", "Spot"),
         UMFUTURE: localizedText("U本位合约", "USDⓈ-M Futures")
       };
-      const accountText = (balances) => [
-        `${ui(accountLabels.FUNDING)} ${balances.FUNDING}`,
-        `${ui(accountLabels.MAIN)} ${balances.MAIN}`,
-        `${ui(accountLabels.UMFUTURE)} ${balances.UMFUTURE}`
-      ].join(" / ");
-      const transferText = plan.transfers.map((transfer, index) => {
-        const from = ui(accountLabels[transfer.from]);
-        const to = ui(accountLabels[transfer.to]);
-        return `${index + 1}. ${from} → ${to}: ${transfer.amount} USDT`;
-      }).join("\n");
-      return [
-        ui(localizedText(
-          "将全部可划转 USDT 调整为 资金 50% / 现货 40% / U本位 10%",
-          "Reallocate all transferable USDT to Funding 50% / Spot 40% / USDⓈ-M Futures 10%"
-        )),
-        `${ui(localizedText("当前", "Current"))}: ${accountText(plan.before)}`,
-        `${ui(localizedText("目标", "Target"))}: ${accountText(plan.targets)}`,
-        transferText,
-        ui(localizedText(
+      const accountCodes = ["FUNDING", "MAIN", "UMFUTURE"];
+      return {
+        title: ui(PANEL_COPY.action.accountRebalance),
+        targetSummary: ui(PANEL_COPY.rebalanceDialog.targetSummary),
+        accountHeading: ui(PANEL_COPY.rebalanceDialog.accountHeading),
+        currentHeading: ui(PANEL_COPY.rebalanceDialog.currentHeading),
+        targetHeading: ui(PANEL_COPY.rebalanceDialog.targetHeading),
+        transferHeading: ui(PANEL_COPY.rebalanceDialog.transferHeading),
+        balanceRows: accountCodes.map((accountCode) => ({
+          account: ui(accountLabels[accountCode]),
+          current: plan.before[accountCode],
+          target: plan.targets[accountCode]
+        })),
+        transferRows: plan.transfers.map((transfer) => ({
+          route: `${ui(accountLabels[transfer.from])} → ${ui(accountLabels[transfer.to])}`,
+          amount: `${transfer.amount} USDT`
+        })),
+        question: ui(localizedText(
           `确认执行 ${plan.transfers.length} 笔划转？`,
           `Confirm ${plan.transfers.length} transfer${plan.transfers.length === 1 ? "" : "s"}?`
-        ))
-      ].filter(Boolean).join("\n\n");
+        )),
+        cancelLabel: ui(PANEL_COPY.rebalanceDialog.cancel),
+        confirmLabel: ui(PANEL_COPY.rebalanceDialog.confirm)
+      };
     }
     async function submitUsdtRebalanceTransfer(transfer) {
       const payload = await fetchUsdtRebalanceBapi(BINANCE_WALLET_TRANSFER_BAPI_PATH, {
@@ -7879,7 +8184,7 @@
           setLadderStatus("USDT 已按 5:4:1 分配");
           return { status: "already_balanced", plan };
         }
-        if (!window.confirm(formatUsdtRebalanceConfirmation(plan))) {
+        if (!await showUsdtRebalanceDialog(document, buildUsdtRebalanceDialogModel(plan))) {
           setLadderStatus("账户再平衡已取消");
           return { status: "cancelled", plan };
         }

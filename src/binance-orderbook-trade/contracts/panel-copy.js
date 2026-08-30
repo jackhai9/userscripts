@@ -107,6 +107,18 @@ export const PANEL_COPY = Object.freeze({
     decrementMultiplier: localizedText('减少倍数', 'Decrease multiplier'),
     incrementMultiplier: localizedText('增加倍数', 'Increase multiplier'),
   }),
+  rebalanceDialog: freezeCopy({
+    targetSummary: localizedText(
+      '目标分配：资金 50% / 现货 40% / U本位 10%',
+      'Target allocation: Funding 50% / Spot 40% / USDⓈ-M Futures 10%',
+    ),
+    accountHeading: localizedText('账户', 'Account'),
+    currentHeading: localizedText('当前 (USDT)', 'Current (USDT)'),
+    targetHeading: localizedText('目标 (USDT)', 'Target (USDT)'),
+    transferHeading: localizedText('划转计划', 'Transfer Plan'),
+    cancel: localizedText('取消', 'Cancel'),
+    confirm: localizedText('确认再平衡', 'Confirm Rebalance'),
+  }),
   tooltip: freezeCopy({
     singleOrder: localizedText(
       '单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。',

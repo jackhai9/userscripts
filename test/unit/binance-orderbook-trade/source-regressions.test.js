@@ -1794,7 +1794,8 @@ test('USDT rebalance uses direct Binance BAPI only after one explicit plan confi
   assert.match(readBalancesBody, /body: \{ assetName: 'USDT' \}/);
   assert.match(readBalancesBody, /withFuturesTransferableBalance/);
   const runBody = readFunctionBody('runUsdtRebalance');
-  assert.match(runBody, /window\.confirm\(formatUsdtRebalanceConfirmation\(plan\)\)/);
+  assert.match(runBody, /await showUsdtRebalanceDialog\(document, buildUsdtRebalanceDialogModel\(plan\)\)/);
+  assert.doesNotMatch(source, /window\.confirm\(/);
   assert.match(runBody, /await assertUsdtRebalanceTradingState\(\)/);
   assert.match(runBody, /areUsdtBalancesEqual\(currentBalances, expectedBalances\)/);
   assert.match(runBody, /await submitUsdtRebalanceTransfer\(transfer\)/);
