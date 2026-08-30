@@ -94,6 +94,6 @@ test('live completion Runtime.evaluate expression owns the page-ready contract',
   assert.match(expression, /"kind":"dialog-confirm"/);
   assert.match(expression, /finishAfterPerformanceTail/);
   assert.match(expression, /dialog-action/);
-  assert.match(expression, /已恢复筛选状态/);
+  assert.match(expression, /撤单已完成/);
   assert.doesNotMatch(expression, /DEFAULT_GLOBAL_NAME/);
 });

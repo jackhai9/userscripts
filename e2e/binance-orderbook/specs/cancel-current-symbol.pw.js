@@ -199,7 +199,7 @@ test('confirming with mixed-symbol orders clears only the current symbol', async
   await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '确认' }).click();
-  await expect(page.getByText('撤单流程结束，已恢复筛选状态')).toBeVisible();
+  await expect(page.getByText('撤单已完成')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(otherSymbolOrders(scenario));
@@ -219,7 +219,7 @@ test('an originally enabled symbol filter remains enabled after confirmation', a
   await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '确认' }).click();
-  await expect(page.getByText('撤单流程结束，已恢复筛选状态')).toBeVisible();
+  await expect(page.getByText('撤单已完成')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(otherSymbolOrders(scenario));
@@ -382,8 +382,8 @@ test('a delayed confirmation keeps visible progress and clears only the current 
 
   await page.getByRole('button', { name: '撤单' }).click();
   await page.getByRole('button', { name: '确认' }).click();
-  await expect(page.getByText('已确认撤单，等待当前币挂单清空')).toBeVisible();
-  await expect(page.getByText('撤单流程结束，已恢复筛选状态')).toBeVisible();
+  await expect(page.getByText('撤单已确认，等待挂单清空')).toBeVisible();
+  await expect(page.getByText('撤单已完成')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(otherSymbolOrders(scenario));
@@ -425,7 +425,7 @@ test('a confirmed dialog that does not clear current orders reports incomplete c
 
   await page.getByRole('button', { name: '撤单' }).click();
   await page.getByRole('button', { name: '确认' }).click();
-  await expect(page.getByText('当前币挂单仍存在，撤单流程未完成')).toBeVisible({
+  await expect(page.getByText('当前交易对挂单仍存在，撤单未完成')).toBeVisible({
     timeout: 10_000,
   });
 
