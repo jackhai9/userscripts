@@ -11,15 +11,24 @@ import {
   withFuturesTransferableBalance,
 } from '../../../src/binance-orderbook-trade/core/usdt-rebalance.js';
 
-test('private transfer BAPI account codes match the current Binance page bundle', () => {
+test('wallet response and private transfer use stable account codes from the current page bundle', () => {
   assert.deepEqual({
-    funding: USDT_REBALANCE_ACCOUNTS.FUNDING.bapiCode,
-    spot: USDT_REBALANCE_ACCOUNTS.MAIN.bapiCode,
-    futures: USDT_REBALANCE_ACCOUNTS.UMFUTURE.bapiCode,
+    funding: {
+      response: USDT_REBALANCE_ACCOUNTS.FUNDING.accountType,
+      transfer: USDT_REBALANCE_ACCOUNTS.FUNDING.bapiCode,
+    },
+    spot: {
+      response: USDT_REBALANCE_ACCOUNTS.MAIN.accountType,
+      transfer: USDT_REBALANCE_ACCOUNTS.MAIN.bapiCode,
+    },
+    futures: {
+      response: USDT_REBALANCE_ACCOUNTS.UMFUTURE.accountType,
+      transfer: USDT_REBALANCE_ACCOUNTS.UMFUTURE.bapiCode,
+    },
   }, {
-    funding: 'CARD',
-    spot: 'MAIN',
-    futures: 'FUTURE',
+    funding: { response: 'CARD', transfer: 'CARD' },
+    spot: { response: 'MAIN', transfer: 'MAIN' },
+    futures: { response: 'FUTURE', transfer: 'FUTURE' },
   });
 });
 
@@ -67,21 +76,24 @@ test('wallet response reads exact USDT free balances for spot and funding', () =
     data: [
       {
         activate: true,
-        walletName: 'Spot',
+        accountType: 'MAIN',
+        walletName: '现货账户',
         assetBalances: [{
           asset: 'USDT', free: '40.5', locked: '0', freeze: '0', withdrawing: '0',
         }],
       },
       {
         activate: true,
-        walletName: 'Funding',
+        accountType: 'CARD',
+        walletName: '资金账户',
         assetBalances: [{
           asset: 'USDT', free: '50', locked: '0', freeze: '0', withdrawing: '0',
         }],
       },
       {
         activate: true,
-        walletName: 'USDⓈ-M Futures',
+        accountType: 'FUTURE',
+        walletName: '合约账户（U本位）',
         assetBalances: [{
           asset: 'USDT', free: '12', locked: '0', freeze: '0', withdrawing: '0',
         }],
@@ -95,9 +107,10 @@ test('wallet response reads exact USDT free balances for spot and funding', () =
 });
 
 test('wallet response rejects locked, frozen, withdrawing, missing, and duplicate balances', () => {
-  const wallet = (walletName, overrides = {}) => ({
+  const wallet = (accountType, overrides = {}) => ({
     activate: true,
-    walletName,
+    accountType,
+    walletName: `localized-${accountType}`,
     assetBalances: [{
       asset: 'USDT', free: '1', locked: '0', freeze: '0', withdrawing: '0', ...overrides,
     }],
@@ -106,35 +119,35 @@ test('wallet response rejects locked, frozen, withdrawing, missing, and duplicat
   assert.throws(
     () => parseUsdtWalletBalances({
       success: true,
-      data: [wallet('Spot', { locked: '0.1' }), wallet('Funding'), wallet('USDⓈ-M Futures')],
+      data: [wallet('MAIN', { locked: '0.1' }), wallet('CARD'), wallet('FUTURE')],
     }),
     /现货账户仍有不可划转 USDT/,
   );
   assert.throws(
     () => parseUsdtWalletBalances({
       success: true,
-      data: [wallet('Spot'), wallet('Funding', { freeze: '0.1' }), wallet('USDⓈ-M Futures')],
+      data: [wallet('MAIN'), wallet('CARD', { freeze: '0.1' }), wallet('FUTURE')],
     }),
     /资金账户仍有不可划转 USDT/,
   );
   assert.throws(
     () => parseUsdtWalletBalances({
       success: true,
-      data: [wallet('Spot'), wallet('Funding'), wallet('USDⓈ-M Futures', { withdrawing: '0.1' })],
+      data: [wallet('MAIN'), wallet('CARD'), wallet('FUTURE', { withdrawing: '0.1' })],
     }),
     /U本位合约账户仍有不可划转 USDT/,
   );
   assert.throws(
     () => parseUsdtWalletBalances({
       success: true,
-      data: [wallet('Spot'), wallet('Funding')],
+      data: [wallet('MAIN'), wallet('CARD')],
     }),
     /缺少 U本位合约账户/,
   );
   assert.throws(
     () => parseUsdtWalletBalances({
       success: true,
-      data: [wallet('Spot'), wallet('Spot'), wallet('Funding'), wallet('USDⓈ-M Futures')],
+      data: [wallet('MAIN'), wallet('MAIN'), wallet('CARD'), wallet('FUTURE')],
     }),
     /重复的现货账户/,
   );

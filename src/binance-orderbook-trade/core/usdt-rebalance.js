@@ -8,24 +8,25 @@ const USDT_SCALE = 8;
 const ACCOUNT_ORDER = ['FUNDING', 'MAIN', 'UMFUTURE'];
 
 /**
- * The private transfer BAPI uses the current page bundle's account codes, which
- * intentionally differ from the public universal-transfer API enum names.
+ * Wallet responses and the private transfer BAPI share the current page
+ * bundle's stable account codes. `walletName` is localized and cannot identify
+ * an account.
  */
 export const USDT_REBALANCE_ACCOUNTS = Object.freeze({
   FUNDING: Object.freeze({
-    walletName: 'Funding',
+    accountType: 'CARD',
     bapiCode: 'CARD',
     label: '资金',
     ratio: 50,
   }),
   MAIN: Object.freeze({
-    walletName: 'Spot',
+    accountType: 'MAIN',
     bapiCode: 'MAIN',
     label: '现货',
     ratio: 40,
   }),
   UMFUTURE: Object.freeze({
-    walletName: 'USDⓈ-M Futures',
+    accountType: 'FUTURE',
     bapiCode: 'FUTURE',
     label: 'U本位合约',
     ratio: 10,
@@ -105,7 +106,7 @@ export function parseUsdtWalletBalances(payload) {
   const balances = {};
   for (const accountCode of ACCOUNT_ORDER) {
     const account = USDT_REBALANCE_ACCOUNTS[accountCode];
-    const matches = payload.data.filter((wallet) => wallet?.walletName === account.walletName);
+    const matches = payload.data.filter((wallet) => wallet?.accountType === account.accountType);
     if (matches.length === 0) throw new Error(`钱包余额缺少 ${account.label}账户`);
     if (matches.length > 1) throw new Error(`钱包余额存在重复的${account.label}账户`);
     const free = readWalletUsdtBalance(matches[0], account);
