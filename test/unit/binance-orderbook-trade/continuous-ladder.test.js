@@ -6,6 +6,7 @@ import {
   CONTINUOUS_LADDER_READY_CHECK_MS,
   createContinuousLadderProgress,
   formatContinuousLadderProgress,
+  formatContinuousLadderWaitReason,
   recordContinuousLadderRound,
   waitForContinuousLadderNextRound,
 } from '../../../src/binance-orderbook-trade/core/continuous-ladder.js';
@@ -126,10 +127,12 @@ test('continuous ladder starts its cooldown only after the previous round is rea
     { status: 'ready' },
   ];
   const delays = [];
+  const waitStates = [];
 
   const result = await waitForContinuousLadderNextRound({
     readReadiness: () => states.shift(),
     delay: async (ms) => delays.push(ms),
+    onWaitStateChange: (state) => waitStates.push(state),
   });
 
   assert.deepEqual(result, { status: 'ready' });
@@ -137,6 +140,10 @@ test('continuous ladder starts its cooldown only after the previous round is rea
     CONTINUOUS_LADDER_READY_CHECK_MS,
     CONTINUOUS_LADDER_READY_CHECK_MS,
     CONTINUOUS_LADDER_COOLDOWN_MS,
+  ]);
+  assert.deepEqual(waitStates, [
+    { phase: 'waiting_ready', cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS },
+    { phase: 'cooldown', cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS },
   ]);
 });
 
@@ -149,10 +156,12 @@ test('continuous ladder restarts a full cooldown if readiness is lost', async ()
     { status: 'ready' },
   ];
   const delays = [];
+  const waitStates = [];
 
   const result = await waitForContinuousLadderNextRound({
     readReadiness: () => states.shift(),
     delay: async (ms) => delays.push(ms),
+    onWaitStateChange: (state) => waitStates.push(state),
   });
 
   assert.deepEqual(result, { status: 'ready' });
@@ -161,6 +170,26 @@ test('continuous ladder restarts a full cooldown if readiness is lost', async ()
     CONTINUOUS_LADDER_READY_CHECK_MS,
     CONTINUOUS_LADDER_COOLDOWN_MS,
   ]);
+  assert.deepEqual(waitStates, [
+    { phase: 'cooldown', cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS },
+    { phase: 'waiting_ready', cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS },
+    { phase: 'cooldown', cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS },
+  ]);
+});
+
+test('continuous ladder wait reasons distinguish readiness from the actual cooldown', () => {
+  assert.equal(
+    formatContinuousLadderWaitReason('waiting_ready', CONTINUOUS_LADDER_COOLDOWN_MS),
+    '等待按钮恢复',
+  );
+  assert.equal(
+    formatContinuousLadderWaitReason('cooldown', CONTINUOUS_LADDER_COOLDOWN_MS),
+    '等待 1s 后继续下一轮',
+  );
+  assert.throws(
+    () => formatContinuousLadderWaitReason('unknown', CONTINUOUS_LADDER_COOLDOWN_MS),
+    /Invalid continuous ladder wait phase/,
+  );
 });
 
 test('continuous ladder returns a terminal readiness state without another cooldown', async () => {

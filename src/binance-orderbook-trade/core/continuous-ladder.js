@@ -97,6 +97,18 @@ export function formatContinuousLadderProgress(label, phase, progress, reason = 
   return parts.join(' · ');
 }
 
+export function formatContinuousLadderWaitReason(phase, cooldownMs) {
+  if (!Number.isFinite(cooldownMs) || cooldownMs < 0) {
+    throw new Error('Invalid continuous ladder cooldown');
+  }
+  if (phase === 'waiting_ready') return '等待按钮恢复';
+  if (phase !== 'cooldown') throw new Error('Invalid continuous ladder wait phase');
+  const duration = cooldownMs % 1000 === 0
+    ? `${cooldownMs / 1000}s`
+    : `${cooldownMs}ms`;
+  return `等待 ${duration} 后继续下一轮`;
+}
+
 function assertReadinessState(state) {
   if (!['ready', 'waiting', 'stopped'].includes(state?.status)) {
     throw new Error('Invalid continuous ladder readiness state');
@@ -109,11 +121,19 @@ async function waitUntilReadyOrStopped({
   delay,
   signal,
   readyCheckMs,
+  cooldownMs,
+  onWaitStateChange,
+  waitingAlreadyReported,
 }) {
+  let reported = waitingAlreadyReported;
   while (true) {
     throwIfAborted(signal);
     const state = assertReadinessState(readReadiness());
     if (state.status !== 'waiting') return state;
+    if (!reported) {
+      onWaitStateChange({ phase: 'waiting_ready', cooldownMs });
+      reported = true;
+    }
     await waitForPromiseOrAbort(delay(readyCheckMs), signal);
   }
 }
@@ -128,22 +148,34 @@ export async function waitForContinuousLadderNextRound({
   signal = null,
   cooldownMs = CONTINUOUS_LADDER_COOLDOWN_MS,
   readyCheckMs = CONTINUOUS_LADDER_READY_CHECK_MS,
+  onWaitStateChange = () => {},
 }) {
   if (!(cooldownMs >= 0)) throw new Error('Invalid continuous ladder cooldown');
   if (!(readyCheckMs > 0)) throw new Error('Invalid continuous ladder readiness interval');
+  if (typeof onWaitStateChange !== 'function') {
+    throw new Error('Invalid continuous ladder wait-state callback');
+  }
 
+  let waitingAlreadyReported = false;
   while (true) {
     const readyState = await waitUntilReadyOrStopped({
       readReadiness,
       delay,
       signal,
       readyCheckMs,
+      cooldownMs,
+      onWaitStateChange,
+      waitingAlreadyReported,
     });
     if (readyState.status === 'stopped') return readyState;
 
+    waitingAlreadyReported = false;
+    onWaitStateChange({ phase: 'cooldown', cooldownMs });
     await waitForPromiseOrAbort(delay(cooldownMs), signal);
     throwIfAborted(signal);
     const afterCooldown = assertReadinessState(readReadiness());
     if (afterCooldown.status !== 'waiting') return afterCooldown;
+    onWaitStateChange({ phase: 'waiting_ready', cooldownMs });
+    waitingAlreadyReported = true;
   }
 }

@@ -629,6 +629,8 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(continuousBody, /setContinuousLadderProgressStatus\(/);
   assert.match(continuousBody, /await waitForContinuousLadderNextRound\(/);
   assert.match(continuousBody, /readContinuousLadderReadiness\(actionType, actionSymbol\)/);
+  assert.match(continuousBody, /onWaitStateChange:/);
+  assert.match(continuousBody, /formatContinuousLadderWaitReason\(phase, cooldownMs\)/);
 
   assert.match(readinessBody, /isCurrentObservedSymbol\(actionSymbol\)/);
   assert.match(readinessBody, /getActiveTradeMode\(\) !== spec\.mode/);
@@ -642,6 +644,7 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(actionButtonBody, /Option\/Alt \+ 单击：连续交易/);
   assert.doesNotMatch(source, /Continuous trading (?:stopped|failed)/);
   assert.match(executionButtonBody, /activeLadderActionType \|\| activeContinuousLadderActionType/);
+  assert.match(executionButtonBody, /PANEL_COPY\.action\.stopContinuousLadderByAction\[actionType\]/);
   assert.match(controlSectionsBody, /!!ladderTask \|\| !!continuousLadderTask/);
 });
 

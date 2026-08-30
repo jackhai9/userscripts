@@ -159,6 +159,8 @@ Continuous ladder trading is available only for close actions through `Option/Al
 
 Continuous-session feedback stays in the shared ladder status row and uses compact Chinese counters. `2/3 轮` means two rounds completed out of three started, `本轮 1/3 笔` reports the latest partial plan, and `累计 7 笔` reports all confirmed submissions across the session. Confirmed cancellations are appended only when greater than zero. Round outcomes must expose a detached progress snapshot so a terminal continuous summary cannot be overwritten by the latest single-round message.
 
+The active continuous-close control keeps a direction-specific stop action (`停止连续平多` / `停止连续平空`) throughout both execution and inter-round waiting. Before the native submit control is ready, the status appends `等待按钮恢复`. Only after the fixed cooldown actually begins may it append `等待 1s 后继续下一轮`; this is a static duration label, not a countdown. The button must not temporarily revert to a ladder-start action between rounds.
+
 When selecting account-order tabs, scope to the bottom account-orders tab group. Do not globally match `当前委托` or `Open Orders`.
 
 When a pane is found through `aria-controls`, confirm it contains current-orders controls such as `隐藏其他合约` or `全撤`. Binance may reuse pane ids in unrelated tab systems.
@@ -199,6 +201,7 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - Option/Alt-click a close ladder button, confirm the next round starts only after the prior round is complete, the native close action is ready, and one full second has elapsed; change ratio, levels, row span, and precision during the wait and confirm the next plan uses the updated profile
 - during a continuous close cooldown, make the native close action temporarily unavailable and confirm the cooldown restarts only after readiness returns; confirm Stop also aborts the cooldown immediately
 - complete multiple continuous close rounds, then stop both during a round and during cooldown; confirm the Chinese status shows completed/started rounds, latest-round order ratio, cumulative confirmed submissions, and no zero-cancellation segment
+- confirm continuous close keeps the direction-specific stop button between rounds, distinguishes `等待按钮恢复` from `等待 1s 后继续下一轮`, and never exposes a start button during the cooldown
 - cancel current-symbol orders, verify only Binance native confirmation opens
 - keep the native cancel-all dialog open for longer than the former decision deadline, verify the script remains in the dialog-tracking state, then cancel and confirm the original order count and temporary page state are restored
 - cancel the native cancel-all dialog through its secondary button, Escape, and backdrop; verify chart and account-order UI state restores immediately without waiting for order clearing
