@@ -271,8 +271,10 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(retryBody, /isBinancePostOnlyMakerRejectCode\(error\?\.binanceCode\)/);
   assert.match(retryBody, /maker_price_conflict'\) return error\.safeNoSubmit === true/);
   assert.match(retryBody, /isBinancePostOnlyMakerRejectCode\(error\?\.binanceCode\) && error\.safeNoSubmit === true/);
-  assert.match(source, /const LADDER_REPRICE_MAX_ATTEMPTS = 5;/);
-  assert.match(generatedSource, /const LADDER_REPRICE_MAX_ATTEMPTS = 5;/);
+  assert.match(source, /const LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS = 5;/);
+  assert.match(source, /const LADDER_REPRICE_PAUSE_MS = 3000;/);
+  assert.match(generatedSource, /const LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS = 5;/);
+  assert.doesNotMatch(source, /LADDER_REPRICE_MAX_ATTEMPTS/);
 
   const interceptBody = readFunctionBody('installFetchInterceptor');
   assert.match(interceptBody, /activeLadderSubmitCapture/);
@@ -326,17 +328,24 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.doesNotMatch(repriceBody, /cancelCurrentSymbolOpenOrders/);
 
   const executeBody = readFunctionBody('executeLadderPlan');
-  assert.match(executeBody, /LADDER_REPRICE_MAX_ATTEMPTS/);
+  assert.match(executeBody, /consecutiveRepriceAttempts/);
+  assert.match(executeBody, /LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS/);
+  assert.match(executeBody, /LADDER_REPRICE_PAUSE_MS/);
+  assert.doesNotMatch(executeBody, /throw new Error\(`盘口连续移动/);
   assert.match(executeBody, /beginLadderSubmitResponseCapture\(\)/);
   const readyButtonBody = readFunctionBody('waitForReadyLadderSubmitButton');
   assert.match(readyButtonBody, /!isSubmitButtonBusy\(candidate\)/);
   assert.match(source, /button\.getAttribute\('aria-busy'\) === 'true'/);
   assert.match(executeBody, /endLadderSubmitResponseCapture\(submitCaptureId\)/);
   assert.match(executeBody, /waitForOrderSubmitAcknowledgement\([\s\S]*plan\.spec\.mode/);
+  assert.match(
+    executeBody,
+    /const button = await waitForReadyLadderSubmitButton\(plan\);\s*throwIfAborted\(abortSignal\);\s*assertLadderExecutionContext\(plan\);/,
+  );
   assert.match(executeBody, /refreshRemainingLadderOrders\(plan,\s*done\)/);
   assert.match(executeBody, /lastRepriceApiErrorCode/);
   assert.match(executeBody, /return \{ done, repriceAttempts, lastRepriceApiErrorCode \}/);
-  assert.match(executeBody, /盘口连续移动/);
+  assert.match(executeBody, /盘口持续移动/);
   assert.doesNotMatch(executeBody, /binanceCode\s*=\s*BINANCE_GTX_ORDER_REJECT_CODE/);
 
   assert.match(generatedSource, /90805022/);
@@ -527,10 +536,8 @@ test('direction selector is a compact mutually exclusive radio group', () => {
 test('ladder feedback labels captured API codes without exposing bare numbers', () => {
   const apiErrorBody = readFunctionBody('createLadderSubmitApiError');
   const diagnosticsBody = readFunctionBody('formatLadderRepriceDiagnostics');
-  const executeBody = readFunctionBody('executeLadderPlan');
   assert.match(apiErrorBody, /Maker 挂单被拒绝（错误码 \$\{apiErrorCode\}）/);
   assert.match(diagnosticsBody, /错误码 \$\{lastRepriceApiErrorCode\}/);
-  assert.match(executeBody, /错误码 \$\{lastRepriceApiErrorCode\}/);
   assert.doesNotMatch(source, /错误码：/);
   assert.doesNotMatch(source, /\(\$\{apiErrorCode\}\)/);
 });
@@ -628,6 +635,9 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(continuousBody, /while \(true\)/);
   assert.match(continuousBody, /await startLadder\(actionType, continuousProgress\)/);
   assert.match(continuousBody, /recordContinuousLadderRound\(continuousProgress, outcome\)/);
+  assert.match(continuousBody, /resolveContinuousLadderRecovery\(outcome\.error\)/);
+  assert.match(continuousBody, /recovery\?\.cooldownMs/);
+  assert.match(continuousBody, /continue/);
   assert.match(continuousBody, /setContinuousLadderProgressStatus\(/);
   assert.match(continuousBody, /await waitForContinuousLadderNextRound\(/);
   assert.match(continuousBody, /readContinuousLadderReadiness\(actionType, actionSymbol\)/);
@@ -1585,16 +1595,40 @@ test('precision changes invalidate edits and immediately rerender the panel', ()
 test('ladder plans fail closed when orderbook precision changes', () => {
   const buildBody = readFunctionBody('buildLadderPlan');
   assert.match(buildBody, /const startPrecision = readCurrentOrderbookPrecisionValue\(\)/);
-  assert.match(buildBody, /if \(!startPrecision\) throw new Error\('未识别价格精度'\)/);
+  assert.match(buildBody, /createContinuousRecoverableLadderError\(\s*'market_data_not_ready',\s*'未识别价格精度'/);
   assert.match(buildBody, /precision: startPrecision/);
+  assert.match(buildBody, /const optionContext = readLadderOptionContext\(spec,\s*startSymbol,\s*startPrecision\)/);
+  assert.match(buildBody, /areLadderOptionContextsEqual\(/);
 
   const contextBody = readFunctionBody('assertLadderExecutionContext');
   assert.match(contextBody, /readCurrentOrderbookPrecisionValue\(\) !== plan\.precision/);
+  assert.match(contextBody, /createContinuousRecoverableLadderError\(\s*'precision_changed'/);
+  assert.match(contextBody, /hasLadderOptionContextChanged\(plan\)/);
+  assert.match(contextBody, /createContinuousRecoverableLadderError\(\s*'options_changed'/);
 
   const replacementBody = readFunctionBody('createLadderExpectedContext');
   assert.match(replacementBody, /symbol: plan\.symbol/);
   assert.match(replacementBody, /mode: plan\.spec\.mode/);
   assert.match(replacementBody, /precision: plan\.precision/);
+});
+
+test('continuous close ladders recover only from tagged pre-submit transients', () => {
+  const syncBody = readFunctionBody('syncTradeInputs');
+  const buttonBody = readFunctionBody('waitForReadyLadderSubmitButton');
+  const executeBody = readFunctionBody('executeLadderPlan');
+  const buildBody = readFunctionBody('buildLadderPlan');
+  const makerBody = readFunctionBody('assertLadderMakerPrice');
+  const repriceBody = readFunctionBody('refreshRemainingLadderOrders');
+  const recoveryBody = readFunctionBody('createContinuousRecoverableLadderError');
+
+  assert.match(syncBody, /createContinuousRecoverableLadderError\(\s*'input_unstable'/);
+  assert.match(buttonBody, /createContinuousRecoverableLadderError\(\s*'controls_not_ready'/);
+  assert.match(executeBody, /createContinuousRecoverableLadderError\(\s*'controls_not_ready'/);
+  assert.match(buildBody, /createContinuousRecoverableLadderError\(\s*'market_data_not_ready'/);
+  assert.match(makerBody, /createContinuousRecoverableLadderError\(\s*'market_data_not_ready'/);
+  assert.match(repriceBody, /createContinuousRecoverableLadderError\(\s*'market_data_not_ready'/);
+  assert.match(recoveryBody, /error\.safeNoSubmit = true/);
+  assert.match(recoveryBody, /error\.continuousRecoveryKind = kind/);
 });
 
 test('single-order sizing and submission retain the captured orderbook precision', () => {

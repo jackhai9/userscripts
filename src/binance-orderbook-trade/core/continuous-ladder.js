@@ -6,6 +6,27 @@ import { snapshotLadderProgress } from './ladder-progress.js';
 
 export const CONTINUOUS_LADDER_COOLDOWN_MS = 1000;
 export const CONTINUOUS_LADDER_READY_CHECK_MS = 50;
+export const CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS = 3000;
+
+const CONTINUOUS_LADDER_RECOVERY = Object.freeze({
+  input_unstable: {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+  },
+  controls_not_ready: {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+  },
+  market_data_not_ready: {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+  },
+  precision_changed: {
+    cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
+    reason: '价格精度已变化，下一轮按新精度继续',
+  },
+  options_changed: {
+    cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
+    reason: '比例、笔数或间距已变化，下一轮按新设置继续',
+  },
+});
 
 const recordedRoundOutcomes = new WeakSet();
 const CONTINUOUS_LADDER_PHASE_TEXT = Object.freeze({
@@ -42,6 +63,19 @@ export function createContinuousLadderProgress() {
     submittedOrders: 0,
     cancelledOrders: 0,
     lastRound: null,
+  };
+}
+
+/**
+ * Recovers only when the failed submission attempt is proven not to have sent an order.
+ */
+export function resolveContinuousLadderRecovery(error) {
+  if (error?.safeNoSubmit !== true) return null;
+  const recovery = CONTINUOUS_LADDER_RECOVERY[error.continuousRecoveryKind];
+  if (!recovery) return null;
+  return {
+    cooldownMs: recovery.cooldownMs,
+    reason: recovery.reason || error.message,
   };
 }
 
