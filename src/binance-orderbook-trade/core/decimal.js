@@ -5,7 +5,7 @@ function pow10(exp) {
 }
 
 export function parseDecimalString(value) {
-  const raw = String(value || '').replace(/,/g, '').trim();
+  const raw = String(value ?? '').replace(/,/g, '').trim();
   if (!/^\d+(\.\d+)?$/.test(raw)) return null;
   const [intPart, fracPart = ''] = raw.split('.');
   return {

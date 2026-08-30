@@ -58,14 +58,14 @@ export function planBufferedMakerPrices({
 
 export function repriceRemainingLadderOrders({ orders, completedCount, prices }) {
   if (!Array.isArray(orders) || !Number.isInteger(completedCount) || completedCount < 0 || completedCount > orders.length) {
-    throw new Error('Invalid completed ladder count');
+    throw new Error('已完成阶梯订单数无效');
   }
   const remainingCount = orders.length - completedCount;
   if (!Array.isArray(prices) || prices.length !== remainingCount) {
-    throw new Error(`Expected ${remainingCount} replacement prices`);
+    throw new Error(`重定价数量不一致：预期 ${remainingCount} 个价格`);
   }
   if (prices.some((price) => !isPositiveDecimalString(normalizeDecimalString(price)))) {
-    throw new Error('Invalid replacement ladder price');
+    throw new Error('阶梯重定价价格无效');
   }
   return orders.map((order, index) => (
     index < completedCount

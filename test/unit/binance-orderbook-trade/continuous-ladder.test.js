@@ -139,11 +139,11 @@ test('continuous ladder progress rejects an invalid or duplicate round outcome',
 
   assert.throws(
     () => recordContinuousLadderRound(progress, outcome),
-    /Continuous ladder round was already recorded/,
+    /连续阶梯本轮结果已记录/,
   );
   assert.throws(
     () => formatContinuousLadderProgress('阶梯平空', 'unknown', progress),
-    /Invalid continuous ladder phase/,
+    /连续阶梯阶段无效/,
   );
 });
 
@@ -216,7 +216,7 @@ test('continuous ladder wait reasons distinguish readiness from the actual coold
   );
   assert.throws(
     () => formatContinuousLadderWaitReason('unknown', CONTINUOUS_LADDER_COOLDOWN_MS),
-    /Invalid continuous ladder wait phase/,
+    /连续阶梯等待阶段无效/,
   );
 });
 
@@ -295,6 +295,6 @@ test('continuous ladder rejects an invalid readiness contract', async () => {
       readReadiness: () => ({ status: 'unknown' }),
       delay: async () => {},
     }),
-    /Invalid continuous ladder readiness state/,
+    /连续阶梯按钮就绪状态无效/,
   );
 });

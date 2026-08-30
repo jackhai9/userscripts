@@ -1029,7 +1029,7 @@ test('trade input synchronization rejects an invalid rollback stability contract
       writeValue: () => {},
       requiredStableMismatchFrames: 0,
     }),
-    /Trade input rollback stability must be a positive integer/,
+    /输入框回退稳定帧数必须为正整数/,
   );
   assert.throws(
     () => createTradeInputStateReader({
@@ -1041,7 +1041,7 @@ test('trade input synchronization rejects an invalid rollback stability contract
       writeValue: () => {},
       maxWriteAttempts: 0,
     }),
-    /Trade input write attempts must be a positive integer/,
+    /输入框写入次数必须为正整数/,
   );
   assert.throws(
     () => createTradeInputStateReader({
@@ -1053,7 +1053,7 @@ test('trade input synchronization rejects an invalid rollback stability contract
       writeValue: () => {},
       requiredStableMatchFrames: 0,
     }),
-    /Trade input accepted stability must be a positive integer/,
+    /输入框写入稳定帧数必须为正整数/,
   );
   assert.throws(
     () => createTradeInputStateReader({
@@ -1065,7 +1065,7 @@ test('trade input synchronization rejects an invalid rollback stability contract
       writeValue: () => {},
       requiredStableMismatchMs: -1,
     }),
-    /Trade input rollback stability duration must be a non-negative number/,
+    /输入框回退稳定时间不能为负数/,
   );
   assert.throws(
     () => createTradeInputStateReader({
@@ -1077,7 +1077,7 @@ test('trade input synchronization rejects an invalid rollback stability contract
       writeValue: () => {},
       requiredStableMatchMs: Number.NaN,
     }),
-    /Trade input accepted stability duration must be a non-negative number/,
+    /输入框写入稳定时间不能为负数/,
   );
   assert.throws(
     () => createTradeInputStateReader({
@@ -1089,7 +1089,7 @@ test('trade input synchronization rejects an invalid rollback stability contract
       writeValue: () => {},
       recoverProvisionalMatchRollback: 'yes',
     }),
-    /Provisional trade input recovery flag must be boolean/,
+    /输入框临时恢复标记必须为布尔值/,
   );
 });
 

@@ -127,10 +127,10 @@ export function findActiveTradeInputs(ownerDocument, {
 
 export function createBoundedInputWriter({ writeValue, maxWriteAttempts }) {
   if (typeof writeValue !== 'function') {
-    throw new Error('Bounded input writer dependency is invalid');
+    throw new Error('输入框写入依赖异常');
   }
   if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
-    throw new Error('Trade input write attempts must be a positive integer');
+    throw new Error('输入框写入次数必须为正整数');
   }
 
   const attemptsByInput = new WeakMap();
@@ -151,7 +151,7 @@ export function isScriptOwnedTradeInputRecoveryState({
   compareValues,
 }) {
   if (typeof compareValues !== 'function') {
-    throw new Error('Trade input recovery comparison dependency is invalid');
+    throw new Error('输入框恢复校验依赖异常');
   }
 
   const isScriptOwnedOrEmpty = (value) => (
@@ -207,28 +207,28 @@ export function createTradeInputStateReader({
     || typeof isRecoveryWriteAllowed !== 'function'
     || typeof readNowMs !== 'function'
   ) {
-    throw new Error('Trade input synchronizer dependencies are invalid');
+    throw new Error('交易输入框同步依赖异常');
   }
   if (
     !Number.isInteger(requiredStableMismatchFrames)
     || requiredStableMismatchFrames < 1
   ) {
-    throw new Error('Trade input rollback stability must be a positive integer');
+    throw new Error('输入框回退稳定帧数必须为正整数');
   }
   if (!Number.isInteger(requiredStableMatchFrames) || requiredStableMatchFrames < 1) {
-    throw new Error('Trade input accepted stability must be a positive integer');
+    throw new Error('输入框写入稳定帧数必须为正整数');
   }
   if (!Number.isFinite(requiredStableMismatchMs) || requiredStableMismatchMs < 0) {
-    throw new Error('Trade input rollback stability duration must be a non-negative number');
+    throw new Error('输入框回退稳定时间不能为负数');
   }
   if (!Number.isFinite(requiredStableMatchMs) || requiredStableMatchMs < 0) {
-    throw new Error('Trade input accepted stability duration must be a non-negative number');
+    throw new Error('输入框写入稳定时间不能为负数');
   }
   if (!Number.isInteger(maxWriteAttempts) || maxWriteAttempts < 1) {
-    throw new Error('Trade input write attempts must be a positive integer');
+    throw new Error('输入框写入次数必须为正整数');
   }
   if (typeof recoverProvisionalMatchRollback !== 'boolean') {
-    throw new Error('Provisional trade input recovery flag must be boolean');
+    throw new Error('输入框临时恢复标记必须为布尔值');
   }
 
   const createSyncSlot = (field) => {
@@ -524,10 +524,10 @@ export function waitForTradeFormFrameState(
     || typeof view.requestAnimationFrame !== 'function'
     || typeof view.cancelAnimationFrame !== 'function'
   ) {
-    throw new Error('Trade form frame scheduler is unavailable');
+    throw new Error('交易表单帧调度器不可用');
   }
   if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
-    throw new Error('requiredStableFrames must be a positive integer');
+    throw new Error('稳定帧数必须为正整数');
   }
 
   return new Promise((resolve) => {
@@ -582,13 +582,13 @@ export function waitForTradeActionButtonFrameState(
     || typeof view.requestAnimationFrame !== 'function'
     || typeof view.cancelAnimationFrame !== 'function'
   ) {
-    throw new Error('Trade action button frame scheduler is unavailable');
+    throw new Error('下单按钮帧调度器不可用');
   }
   if (typeof findButton !== 'function' || typeof isVisibleElement !== 'function') {
-    throw new Error('Trade action button resolver is unavailable');
+    throw new Error('下单按钮定位器不可用');
   }
   if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
-    throw new Error('requiredStableFrames must be a positive integer');
+    throw new Error('稳定帧数必须为正整数');
   }
 
   return new Promise((resolve) => {

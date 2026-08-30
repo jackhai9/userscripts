@@ -138,11 +138,11 @@ test('failed and interrupted ladder statuses retain confirmed progress', () => {
 test('ladder progress rejects invalid counters instead of masking them', () => {
   assert.throws(
     () => formatStoppedLadderProgress('阶梯开多', { submittedOrders: -1, cancelledOrders: 0 }),
-    /Invalid ladder progress/,
+    /阶梯进度状态无效/,
   );
   assert.throws(
     () => recordLadderCancelledOrder({ submittedOrders: 0, cancelledOrders: 1.5 }),
-    /Invalid ladder progress/,
+    /阶梯进度状态无效/,
   );
   assert.throws(
     () => formatCompletedLadderProgress('阶梯开多', 1, 2, {
@@ -151,12 +151,12 @@ test('ladder progress rejects invalid counters instead of masking them', () => {
       plannedOrders: 2,
       currentPlanSubmittedOrders: 1,
     }),
-    /Completed ladder progress mismatch/,
+    /阶梯完成进度与计划不一致/,
   );
 
   assert.throws(
     () => setLadderPlannedOrders(createLadderProgress(), 0),
-    /Invalid ladder planned orders/,
+    /阶梯计划笔数无效/,
   );
 
   const completedProgress = createLadderProgress();
@@ -164,7 +164,7 @@ test('ladder progress rejects invalid counters instead of masking them', () => {
   recordLadderSubmittedOrder(completedProgress);
   assert.throws(
     () => recordLadderSubmittedOrder(completedProgress),
-    /Ladder submitted orders exceed plan/,
+    /阶梯已挂笔数超过计划/,
   );
 });
 

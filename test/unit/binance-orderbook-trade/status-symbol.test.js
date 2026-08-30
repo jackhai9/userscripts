@@ -10,7 +10,7 @@ test('status symbols omit supported futures quote assets', () => {
 });
 
 test('status symbols reject unknown contracts instead of guessing a suffix', () => {
-  assert.throws(() => formatStatusBaseAsset('BTCUSD'), /Unsupported futures status symbol/);
-  assert.throws(() => formatStatusBaseAsset('USDT'), /Unsupported futures status symbol/);
-  assert.throws(() => formatStatusBaseAsset(''), /Unsupported futures status symbol/);
+  assert.throws(() => formatStatusBaseAsset('BTCUSD'), /不支持的合约状态交易对/);
+  assert.throws(() => formatStatusBaseAsset('USDT'), /不支持的合约状态交易对/);
+  assert.throws(() => formatStatusBaseAsset(''), /不支持的合约状态交易对/);
 });

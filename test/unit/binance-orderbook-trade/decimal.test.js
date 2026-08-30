@@ -16,6 +16,7 @@ import {
 test('normalizes unsigned decimal strings without losing precision', () => {
   assert.equal(normalizeDecimalString('001.2300'), '1.23');
   assert.equal(normalizeDecimalString('0.000'), '0');
+  assert.equal(normalizeDecimalString(0), '0');
   assert.equal(normalizeDecimalString('1,234.5000'), '1234.5');
   assert.equal(normalizeDecimalString('-1'), null);
   assert.equal(normalizeDecimalString('abc'), null);

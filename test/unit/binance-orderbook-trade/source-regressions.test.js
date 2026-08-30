@@ -563,7 +563,7 @@ test('ladder minimum quantity failure explains safe manual options', () => {
   assert.match(errorBody, /openOrdersReplacementPlan/);
   assert.match(errorBody, /replacementTotalQty/);
   assert.doesNotMatch(errorBody, /allowPartialReplacement/);
-  assert.match(errorBody, /脚本只会尝试替换当前币同向开仓基础单，不会自动全撤/);
+  assert.match(errorBody, /脚本只会尝试替换当前交易对的同向开仓基础单，不会自动全撤/);
   assert.match(errorBody, /脚本不会自动撤单/);
   assert.doesNotMatch(errorBody, /将自动撤单/);
 
@@ -660,7 +660,8 @@ test('Option or Alt click continuously repeats close ladders only after readines
 
 test('open ladder stops immediately only for a confirmed zero available balance', () => {
   const readOpenQtyBody = readFunctionBody('readOpenBaseQtyForLadder');
-  assert.match(readOpenQtyBody, /isConfirmedZeroOpenBalance\(qty\)/);
+  assert.match(readOpenQtyBody, /isConfirmedZeroOpenBalance\(quantity\.qty\)/);
+  assert.match(readOpenQtyBody, /confirmedZeroOpenBalance/);
   assert.match(readOpenQtyBody, /return \{ qty, qtySource \}/);
   assert.match(readOpenQtyBody, /waitForTradeFormMutationState/);
   assert.doesNotMatch(readOpenQtyBody, /delay\(/);
@@ -675,6 +676,27 @@ test('open ladder stops immediately only for a confirmed zero available balance'
   assert.match(readOpenableBody, /readOpenableQtyByTestIds\(\)/);
   const readOpenableByTestIdsBody = readFunctionBody('readOpenableQtyByTestIds');
   assert.match(readOpenableByTestIdsBody, /qtySource: 'testid'/);
+});
+
+test('user-facing trading failures preserve one precise reason and shared terminology', () => {
+  const buildBody = readFunctionBody('buildLadderPlan');
+  const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
+  const replaceBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
+
+  assert.match(buildBody, /getUnavailableLadderQuantityMessage\(/);
+  assert.match(buildBody, /normalizeDecimalString\(base\?\.qty \?\? ''\)/);
+  assert.match(buildBody, /base\?\.confirmedZeroOpenBalance === true/);
+  assert.match(source, /normalizeDecimalString\(available\?\.amount \?\? ''\)/);
+  assert.match(buildBody, /读取交易规则时交易对已变化/);
+  assert.match(buildBody, /读取交易规则时价格精度已变化/);
+  assert.match(buildBody, /交易规则尚未就绪，请稍后重试/);
+  assert.doesNotMatch(buildBody, /失败或|未就绪或|未读取到可用可/);
+  assert.doesNotMatch(source, /订单簿缩放值|缩放下拉|缩放调整|当前缩放|原生缩放|撤本币|状态丢失|上下文丢失/);
+  assert.doesNotMatch(source, /未找到价格或数量输入框|执行中价格或数量输入框丢失/);
+  assert.doesNotMatch(source, /未定位当前交易对|下单 API 成功响应|当前委托\/历史成交/);
+  assert.doesNotMatch(source, /observer root is unavailable|Binance chart OpenOrders/);
+  assert.doesNotMatch(cancelBody, /未定位到|当前币|逐行撤单/);
+  assert.doesNotMatch(replaceBody, /未定位到|当前币|逐行撤单/);
 });
 
 test('ladder replacement cancels visible current-symbol same-direction rows up to planned quantity', () => {
@@ -789,7 +811,7 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   const cancelRowsBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   assert.match(cancelRowsBody, /if \(!isCurrentObservedSymbol\(symbol\) \|\| symbol !== plan\?\.symbol\)/);
   assert.match(cancelRowsBody, /activateOpenOrdersBasicSubTab\(\s*openOrdersScope,\s*abortSignal[\s\S]*openOrdersScope = await waitForActiveOpenOrdersScope\(abortSignal\)/);
-  assert.match(cancelRowsBody, /if \(!openOrdersScope\) \{\s*const message = '未定位到当前委托面板'/);
+  assert.match(cancelRowsBody, /if \(!openOrdersScope\) \{\s*const message = '未找到当前委托面板'/);
   assert.match(cancelRowsBody, /waitForCurrentSymbolOpenOrderRows\(\s*openOrdersScope,\s*symbol,\s*plan,\s*abortSignal/);
   assert.doesNotMatch(cancelRowsBody, /const openOrdersCount = getOpenOrdersTabCount\(\)/);
   assert.match(cancelRowsBody, /getPlanDirectionLabel\(plan\)/);
@@ -883,7 +905,7 @@ test('ladder task statuses name the active action and observed outcome', () => {
   assert.match(startBody, /formatFailedLadderProgress\(spec\.label,\s*failureMessage,\s*progress\)/);
   assert.match(stopBody, /formatActiveContinuousLadderProgress\(\s*activeSpec\.label,\s*'停止中'/);
   assert.match(stopBody, /setLadderStatus\(`\$\{activeSpec\.label\}停止中`\)/);
-  assert.match(cancelPlanBody, /setPlanStepStatus\(`撤销 \$\{rowsToCancel\.length\} 笔当前币挂单`\)/);
+  assert.match(cancelPlanBody, /setPlanStepStatus\(`撤销 \$\{rowsToCancel\.length\} 笔同向挂单`\)/);
   assert.match(planStatusBody, /`\$\{plan\.spec\.label\}计划：\$\{formatLadderPlanDetail\(plan\)\}`/);
   assert.doesNotMatch(planStatusBody, /%\/|\/幅/);
   assert.match(replacementStatusBody, /`\$\{plan\.spec\.label\}：/);
@@ -1160,7 +1182,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(cancelRunBody, /const message = '撤单已取消';\s*successStatusMessage = message;/);
   assert.doesNotMatch(cancelRunBody, /，已恢复页面状态/);
   assert.match(cancelRunBody, /撤单确认弹窗已打开/);
-  assert.match(cancelRunBody, /已确认撤单，等待当前币挂单清空/);
+  assert.match(cancelRunBody, /撤单已确认，等待挂单清空/);
   assert.match(cancelRunBody, /未能恢复隐藏其他合约状态/);
   assert.match(cancelRunBody, /未能恢复图表当前委托显示/);
   const noOrdersReturnIndex = cancelRunBody.indexOf("status: 'no_orders'");
@@ -1171,7 +1193,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(cancelRunBody, /cancelCurrentSymbolOpenOrdersBlocksLadderActions = true;[\s\S]*scheduleRenderPanel\(\);/);
 
   const startBody = readFunctionBody('startLadder');
-  assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*`\$\{spec\.label\}尚未开始：撤本币挂单处理中`/);
+  assert.match(startBody, /if \(cancelCurrentSymbolOpenOrdersTask\)[\s\S]*`\$\{spec\.label\}尚未开始：撤单处理中`/);
   const actionRowsBody = readFunctionBody('getLadderControlSections');
   assert.match(actionRowsBody, /actionDisabled = ladderRunning[\s\S]*\|\| !!singleOrderTask[\s\S]*\|\| cancelCurrentSymbolOpenOrdersBlocksLadderActions/);
   assert.doesNotMatch(actionRowsBody, /!!cancelCurrentSymbolOpenOrdersTask/);
@@ -1539,7 +1561,7 @@ test('panel numeric options wait for a complete mode-symbol-precision context', 
   assert.match(renderBody, /const storedMultiplier = optionContext/);
 
   const refreshBody = readFunctionBody('refreshComputedInfo');
-  assert.match(refreshBody, /finalText = '等待订单簿缩放值'/);
+  assert.match(refreshBody, /finalText = '等待价格精度'/);
   assert.match(refreshBody, /finalText = '等待开仓\/平仓状态'/);
   assert.match(refreshBody, /const numericContextReady = modeReady && precisionReady/);
 });
@@ -1563,7 +1585,7 @@ test('precision changes invalidate edits and immediately rerender the panel', ()
 test('ladder plans fail closed when orderbook precision changes', () => {
   const buildBody = readFunctionBody('buildLadderPlan');
   assert.match(buildBody, /const startPrecision = readCurrentOrderbookPrecisionValue\(\)/);
-  assert.match(buildBody, /if \(!startPrecision\) throw new Error\('未识别订单簿缩放值'\)/);
+  assert.match(buildBody, /if \(!startPrecision\) throw new Error\('未识别价格精度'\)/);
   assert.match(buildBody, /precision: startPrecision/);
 
   const contextBody = readFunctionBody('assertLadderExecutionContext');
@@ -1578,7 +1600,7 @@ test('ladder plans fail closed when orderbook precision changes', () => {
 test('single-order sizing and submission retain the captured orderbook precision', () => {
   const resolveBody = readFunctionBody('resolveTargetQty');
   assert.match(resolveBody, /const precision = readCurrentOrderbookPrecisionValue\(\)/);
-  assert.match(resolveBody, /if \(!precision\) throw new Error\('未识别订单簿缩放值'\)/);
+  assert.match(resolveBody, /if \(!precision\) throw new Error\('未识别价格精度'\)/);
   assert.match(resolveBody, /loadMultiplier\(tradeMode, symbol, precision\)/);
   assert.match(resolveBody, /precision,/);
   assert.match(source, /readCurrentOrderbookPrecisionValue\(\) !== qtyPlan\.precision/);

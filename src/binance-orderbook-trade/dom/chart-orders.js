@@ -36,7 +36,7 @@ export function findBinanceChartOrdersTarget(document) {
     });
   if (!toolbars.length) return null;
   if (toolbars.length > 1) {
-    throw new Error(`Expected one Binance chart toolbar, found ${toolbars.length}`);
+    throw new Error(`图表工具栏数量异常：${toolbars.length}`);
   }
 
   const toolbar = toolbars[0];
@@ -45,12 +45,10 @@ export function findBinanceChartOrdersTarget(document) {
     trigger.querySelectorAll('.bn-tooltips-ele[aria-describedby]'),
   );
   if (popoverReferences.length !== 1) {
-    throw new Error(
-      `Expected one Binance chart orders popover reference, found ${popoverReferences.length}`,
-    );
+    throw new Error(`图表“显示当前委托”菜单入口数量异常：${popoverReferences.length}`);
   }
   const popoverId = popoverReferences[0].getAttribute('aria-describedby');
-  if (!popoverId) throw new Error('Binance chart orders popover id is unavailable');
+  if (!popoverId) throw new Error('图表“显示当前委托”菜单标识缺失');
 
   return {
     chartRoot,
@@ -63,13 +61,13 @@ export function findBinanceChartOrdersTarget(document) {
 
 export function getBinanceChartOrdersTarget(document) {
   const target = findBinanceChartOrdersTarget(document);
-  if (!target) throw new Error('Binance chart orders target is unavailable');
+  if (!target) throw new Error('未找到图表“显示当前委托”控件');
   return target;
 }
 
 export function assertSameBinanceChartOrdersTarget(capturedTarget, currentTarget) {
   if (!capturedTarget || !currentTarget) {
-    throw new Error('Binance chart orders target is unavailable');
+    throw new Error('未找到图表“显示当前委托”控件');
   }
   if (
     capturedTarget.chartRoot !== currentTarget.chartRoot
@@ -78,7 +76,7 @@ export function assertSameBinanceChartOrdersTarget(capturedTarget, currentTarget
     || capturedTarget.trigger !== currentTarget.trigger
     || capturedTarget.popoverId !== currentTarget.popoverId
   ) {
-    throw new Error('Binance chart orders target changed');
+    throw new Error('图表“显示当前委托”控件已变化');
   }
 }
 
@@ -87,7 +85,7 @@ export function findActiveBinanceChartOrdersPopover(
   target,
   isVisibleElement,
 ) {
-  if (!target?.popoverId) throw new Error('Binance chart orders target is unavailable');
+  if (!target?.popoverId) throw new Error('未找到图表“显示当前委托”控件');
   const popover = document.getElementById(target.popoverId);
   if (
     !popover
@@ -102,13 +100,13 @@ export function findActiveBinanceChartOrdersPopover(
     .filter((checkbox) => OPEN_ORDERS_LABEL_PATTERN.test(normalizeLabel(checkbox.textContent)));
   if (!checkboxes.length) return null;
   if (checkboxes.length > 1) {
-    throw new Error(`Expected one Binance chart OpenOrders checkbox, found ${checkboxes.length}`);
+    throw new Error(`图表“显示当前委托”选项数量异常：${checkboxes.length}`);
   }
 
   const checkbox = checkboxes[0];
   const checkedValue = checkbox.getAttribute('aria-checked');
   if (checkedValue !== 'true' && checkedValue !== 'false') {
-    throw new Error(`Binance chart OpenOrders state is ${checkedValue}`);
+    throw new Error(`图表“显示当前委托”状态异常：${checkedValue}`);
   }
   return { popover, checkbox, checked: checkedValue === 'true' };
 }

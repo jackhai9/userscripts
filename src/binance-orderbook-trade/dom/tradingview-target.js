@@ -11,7 +11,7 @@ export function findBinanceTradingViewTarget(document) {
     .filter(hasVisibleBox);
   if (!chartRoots.length) return null;
   if (chartRoots.length > 1) {
-    throw new Error(`Expected one visible Binance chart root, found ${chartRoots.length}`);
+    throw new Error(`可见图表区域数量异常：${chartRoots.length}`);
   }
 
   const chartRoot = chartRoots[0];
@@ -20,7 +20,7 @@ export function findBinanceTradingViewTarget(document) {
     .filter(Boolean);
   if (!tradingViewApis.length) return null;
   if (tradingViewApis.length > 1) {
-    throw new Error(`Expected one Binance TradingView API, found ${tradingViewApis.length}`);
+    throw new Error(`图表接口数量异常：${tradingViewApis.length}`);
   }
 
   return { chartRoot, tradingViewApi: tradingViewApis[0] };
@@ -28,6 +28,6 @@ export function findBinanceTradingViewTarget(document) {
 
 export function getBinanceTradingViewTarget(document) {
   const target = findBinanceTradingViewTarget(document);
-  if (!target) throw new Error('Binance TradingView target is unavailable');
+  if (!target) throw new Error('未找到可用图表接口');
   return target;
 }

@@ -34,10 +34,10 @@ function normalizePrecisionScopeValue(precision) {
 
 export function modeSymbolPrecisionOptionStorageKey(modeKeys, mode, symbol, precision) {
   if (mode !== 'OPEN' && mode !== 'CLOSE') {
-    throw new Error(`Unknown trade mode: ${mode}`);
+    throw new Error(`未知交易模式：${mode}`);
   }
   const baseKey = modeKeys[mode];
-  if (!baseKey) throw new Error(`Missing storage key for trade mode: ${mode}`);
+  if (!baseKey) throw new Error(`交易模式缺少存储键：${mode}`);
   const normalizedSymbol = String(symbol || '').toUpperCase();
   const normalizedPrecision = normalizePrecisionScopeValue(precision);
   return normalizedSymbol && normalizedPrecision
@@ -74,7 +74,7 @@ export function migrateModeSymbolPrecisionNumberOption(
 ) {
   const numericReplacement = Number(replacementValue);
   if (!options.includes(numericReplacement)) {
-    throw new Error(`Invalid replacement option: ${replacementValue}`);
+    throw new Error(`替换选项无效：${replacementValue}`);
   }
   const storageKey = modeSymbolPrecisionOptionStorageKey(modeKeys, mode, symbol, precision);
   if (!storageKey) return false;

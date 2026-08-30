@@ -52,6 +52,24 @@ export function getLadderPercentForMode(mode, openPercent, closePercent) {
   return null;
 }
 
+export function getUnavailableLadderQuantityMessage(
+  mode,
+  quantity,
+  confirmedZeroOpenBalance = false,
+) {
+  if (mode !== 'OPEN' && mode !== 'CLOSE') {
+    throw new Error(`未知阶梯数量模式：${mode}`);
+  }
+  const parsed = parseDecimalString(quantity);
+  if (parsed?.digits > 0n) return null;
+  if (mode === 'OPEN') {
+    if (!parsed) return '未读取到可开数量';
+    return confirmedZeroOpenBalance ? '可用余额不足' : '当前可开数量为 0';
+  }
+  if (!parsed) return '未读取到可平数量';
+  return '当前方向没有可平仓位';
+}
+
 function pow10(exp) {
   let result = 1n;
   for (let i = 0; i < exp; i += 1) result *= 10n;

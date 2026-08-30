@@ -53,7 +53,7 @@ test('get rejects an unavailable TradingView target', () => {
   const dom = loadFixtureDom(createChartMarkup());
   assert.throws(
     () => getBinanceTradingViewTarget(dom.window.document),
-    /Binance TradingView target is unavailable/,
+    /未找到可用图表接口/,
   );
 });
 
@@ -61,7 +61,7 @@ test('target discovery rejects ambiguous chart roots or TradingView APIs', () =>
   const duplicateRootDom = loadFixtureDom(`${createChartMarkup()}${createChartMarkup()}`);
   assert.throws(
     () => findBinanceTradingViewTarget(duplicateRootDom.window.document),
-    /Expected one visible Binance chart root, found 2/,
+    /可见图表区域数量异常：2/,
   );
 
   const { dom } = loadChartTarget();
@@ -70,6 +70,6 @@ test('target discovery rejects ambiguous chart roots or TradingView APIs', () =>
   secondFrame.contentWindow.tradingViewApi = { activeChart() {} };
   assert.throws(
     () => findBinanceTradingViewTarget(dom.window.document),
-    /Expected one Binance TradingView API, found 2/,
+    /图表接口数量异常：2/,
   );
 });

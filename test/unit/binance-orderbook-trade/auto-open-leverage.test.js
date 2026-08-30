@@ -46,14 +46,14 @@ test('all current-symbol position directions must be zero before reset', () => {
 test('rejects unsuccessful or malformed current-symbol position responses', () => {
   assert.throws(
     () => resolveSymbolPositionStatus({ success: false, data: [] }, 'HYPEUSDT'),
-    /position response was unsuccessful/,
+    /持仓接口返回失败/,
   );
   assert.throws(
     () => resolveSymbolPositionStatus({
       success: true,
       data: [{ symbol: 'HYPEUSDT', positionAmount: 'unknown' }],
     }, 'HYPEUSDT'),
-    /invalid position amount/,
+    /持仓数量无效/,
   );
 });
 

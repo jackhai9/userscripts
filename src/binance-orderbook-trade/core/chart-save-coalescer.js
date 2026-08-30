@@ -2,19 +2,19 @@ const IGNORED_DRAWING_EVENT_TYPES = new Set(['click', 'move']);
 
 function validateTradingViewApi(api) {
   if (!api || typeof api !== 'object') {
-    throw new Error('TradingView API is unavailable');
+    throw new Error('图表接口不可用');
   }
   if (typeof api.saveChart !== 'function') {
-    throw new Error('TradingView saveChart API is unavailable');
+    throw new Error('图表保存接口不可用');
   }
   if (typeof api.subscribe !== 'function' || typeof api.unsubscribe !== 'function') {
-    throw new Error('TradingView drawing-event subscription API is unavailable');
+    throw new Error('图表事件接口不可用');
   }
 }
 
 function restoreSaveChartMethod(api, wrapper, originalSaveChart, originalDescriptor) {
   if (api.saveChart !== wrapper) {
-    throw new Error('TradingView saveChart API changed during save coalescing');
+    throw new Error('图表保存接口在操作期间发生变化');
   }
   if (originalDescriptor) {
     Object.defineProperty(api, 'saveChart', originalDescriptor);
@@ -22,7 +22,7 @@ function restoreSaveChartMethod(api, wrapper, originalSaveChart, originalDescrip
     delete api.saveChart;
   }
   if (api.saveChart !== originalSaveChart) {
-    throw new Error('TradingView saveChart API was not restored');
+    throw new Error('图表保存接口未能恢复');
   }
 }
 
@@ -43,15 +43,15 @@ export async function coalesceTradingViewDrawingSaves(
   } = {},
 ) {
   validateTradingViewApi(api);
-  if (typeof action !== 'function') throw new Error('Chart action is unavailable');
+  if (typeof action !== 'function') throw new Error('图表操作不可用');
   if (!Number.isFinite(eventDiscoveryTimeoutMs) || eventDiscoveryTimeoutMs < 0) {
-    throw new Error('TradingView drawing-event discovery timeout is invalid');
+    throw new Error('图表事件等待时间无效');
   }
   if (!Number.isFinite(settleQuietMs) || settleQuietMs <= 0) {
-    throw new Error('TradingView drawing-save quiet window is invalid');
+    throw new Error('图表保存稳定等待时间无效');
   }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error('TradingView save coalescing timeout is invalid');
+    throw new Error('图表保存超时时间无效');
   }
 
   const originalSaveChart = api.saveChart;
@@ -109,7 +109,7 @@ export async function coalesceTradingViewDrawingSaves(
   try {
     api.saveChart = saveChartWrapper;
     if (api.saveChart !== saveChartWrapper) {
-      throw new Error('TradingView saveChart API is not writable');
+      throw new Error('图表保存接口无法临时接管');
     }
   } catch (error) {
     api.unsubscribe('drawing_event', handleDrawingEvent);
@@ -136,12 +136,12 @@ export async function coalesceTradingViewDrawingSaves(
       waitTimeout = setTimeoutFn(() => {
         if (saveRequestCount < drawingEventCount) {
           settleReject(new Error(
-            `Expected ${drawingEventCount} TradingView saveChart requests, received ${saveRequestCount}`,
+            `图表保存请求数量不一致：预期 ${drawingEventCount}，实际 ${saveRequestCount}`,
           ));
           return;
         }
         settleReject(new Error(
-          `TradingView drawing-save burst did not settle within ${timeoutMs}ms`,
+          `图表保存未在 ${timeoutMs} 毫秒内完成`,
         ));
       }, timeoutMs);
       await burstSettled;
