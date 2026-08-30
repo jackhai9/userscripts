@@ -35,7 +35,7 @@ test('cancel button exposes no-order completion feedback without disabling new a
   });
   assert.equal(idle.disabled, false);
   assert.equal(formatLocalizedText(idle.label, UI_LOCALE_ZH_CN), '撤单');
-  assert.equal(formatLocalizedText(idle.label, UI_LOCALE_EN), 'Cancel Orders');
+  assert.equal(formatLocalizedText(idle.label, UI_LOCALE_EN), 'Cancel');
   const running = resolveCancelSymbolButtonPresentation({
     ladderRunning: false,
     cancelRunning: true,

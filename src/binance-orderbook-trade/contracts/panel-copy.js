@@ -68,7 +68,7 @@ export const PANEL_COPY = Object.freeze({
     openShort: localizedText('阶梯开空', 'Open Short'),
     closeLong: localizedText('阶梯平多', 'Close Long'),
     closeShort: localizedText('阶梯平空', 'Close Short'),
-    cancel: localizedText('撤单', 'Cancel Orders'),
+    cancel: localizedText('撤单', 'Cancel'),
     cancelRunning: localizedText('撤单处理中', 'Cancelling'),
     noOrders: localizedText('无挂单', 'No Orders'),
     accountRebalance: localizedText('账户再平衡', 'Account Rebalance'),

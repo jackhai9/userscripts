@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.168
+// @version      2.7.169
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -248,6 +248,8 @@ import {
   );
   const BINANCE_POST_ONLY_TIME_IN_FORCE = 'GTC';
   const PANEL_ID = 'jh-binance-close-qty-multiplier-panel';
+  // Keep the panel above the trading layout but below Binance portal overlays such as menus.
+  const PANEL_Z_INDEX = 1000;
   const SPACER_ID = 'jh-binance-close-qty-multiplier-spacer';
   const INPUT_ID = 'jh-binance-close-qty-multiplier-input';
   const DEC_ID = 'jh-binance-close-qty-multiplier-dec';
@@ -6530,7 +6532,7 @@ import {
       ? ` title="${ui(PANEL_COPY.tooltip.continuousClose)}"`
       : '';
     const cursor = disabled ? 'not-allowed' : 'pointer';
-    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs}${continuousHint} style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;cursor:${cursor};opacity:1;">${ui(label)}</button>`;
+    return `<button type="button" data-ladder-action="${actionType}"${disabledAttrs}${continuousHint} style="min-width:0;height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${borderColor};border-radius:6px;background:${background};color:${borderColor};font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:${cursor};opacity:1;">${ui(label)}</button>`;
   }
 
   function ladderExecutionButton(actionType, label, tone, disabled = false) {
@@ -6630,7 +6632,7 @@ import {
         `<div id="${ORDERBOOK_PRECISION_RECOMMENDATION_ID}" data-panel-group="precision"></div>`,
         '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:12px;">',
         ...controlSections.actionButtons,
-        `<button type="button" data-ladder-cancel-symbol="true" style="height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;${NEUTRAL_CONTROL_STYLE}">${ui(PANEL_COPY.action.cancel)}</button>`,
+        `<button type="button" data-ladder-cancel-symbol="true" style="min-width:0;height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid ${CONTROL_BORDER_COLOR};border-radius:6px;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${NEUTRAL_CONTROL_STYLE}">${ui(PANEL_COPY.action.cancel)}</button>`,
         '</div>',
       ].join('');
       if (ladderPanelBodySignature !== bodyHtml) {
@@ -6914,7 +6916,7 @@ import {
     panel.style.position = 'fixed';
     panel.style.maxWidth = 'none';
     panel.style.margin = '0';
-    panel.style.zIndex = '999999';
+    panel.style.zIndex = String(PANEL_Z_INDEX);
 
     const layout = calculateFloatingPanelLayout({
       anchorRect,
@@ -6996,7 +6998,7 @@ import {
     panel = document.createElement('div');
     panel.id = PANEL_ID;
     panel.style.position = 'fixed';
-    panel.style.zIndex = '999999';
+    panel.style.zIndex = String(PANEL_Z_INDEX);
     panel.style.width = '320px';
     panel.style.padding = '8px 10px';
     panel.style.borderRadius = '10px';
