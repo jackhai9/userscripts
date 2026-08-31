@@ -159,7 +159,7 @@ test('continuous ladder progress rejects an invalid or duplicate round outcome',
   );
 });
 
-test('continuous ladder retries only explicitly safe transient failures', () => {
+test('continuous ladder retries only explicitly designed recoverable failures', () => {
   const inputUnstable = new Error('价格框或数量框未稳定');
   inputUnstable.safeNoSubmit = true;
   inputUnstable.continuousRecoveryKind = 'input_unstable';
@@ -194,8 +194,11 @@ test('continuous ladder retries only explicitly safe transient failures', () => 
 
   const unknownOutcome = new Error('仍未确认订单结果');
   unknownOutcome.safeNoSubmit = false;
-  unknownOutcome.continuousRecoveryKind = 'input_unstable';
-  assert.equal(resolveContinuousLadderRecovery(unknownOutcome), null);
+  unknownOutcome.continuousRecoveryKind = 'submit_unconfirmed';
+  assert.deepEqual(resolveContinuousLadderRecovery(unknownOutcome), {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+    reason: '仍未确认订单结果',
+  });
 
   const unsupported = new Error('未知错误');
   unsupported.safeNoSubmit = true;

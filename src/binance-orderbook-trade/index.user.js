@@ -633,6 +633,14 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return error;
   }
 
+  function createContinuousUnconfirmedSubmitError(message) {
+    if (!isLocalizedText(message)) throw new Error('未确认下单结果文案必须提供中英文');
+    const error = new Error(formatLocalizedText(message, 'zh-CN'));
+    error.continuousRecoveryKind = 'submit_unconfirmed';
+    error.localizedText = message;
+    return error;
+  }
+
   function getLadderOpenPercent(
     symbol = getCurrentSymbol(),
     precision = readCurrentOrderbookPrecisionValue(),
@@ -3165,7 +3173,15 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     const settleHint = responseObservation.settled
       ? `下单请求已返回，但结果未识别${responseDiagnostic ? `：${responseDiagnostic}` : ''}`
       : (sawBusy ? '下单按钮已恢复，但下单请求仍未返回' : '下单请求仍未返回');
-    throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
+    const englishSettleHint = responseObservation.settled
+      ? `the request returned but its result was not recognized${responseDiagnostic ? `: ${responseDiagnostic}` : ''}`
+      : (sawBusy
+        ? 'the submit button recovered but the request has not returned'
+        : 'the request has not returned');
+    throw createContinuousUnconfirmedSubmitError(localizedText(
+      `未确认${label}成功（${settleHint}）；请在当前委托和历史成交中核对`,
+      `Order submission was not confirmed (${englishSettleHint}); check Open Orders and Trade History`,
+    ));
   }
 
   async function executeLadderPlan(

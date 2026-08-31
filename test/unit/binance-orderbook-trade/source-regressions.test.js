@@ -1779,6 +1779,16 @@ test('continuous close ladders recover only from tagged pre-submit transients', 
   assert.match(recoveryBody, /error\.continuousRecoveryKind = kind/);
 });
 
+test('continuous close ladders continue after an explicitly tagged unconfirmed submission', () => {
+  const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
+  const recoveryBody = readFunctionBody('createContinuousUnconfirmedSubmitError');
+
+  assert.match(acknowledgementBody, /createContinuousUnconfirmedSubmitError\(/);
+  assert.doesNotMatch(acknowledgementBody, /未确认\$\{label\}成功[\s\S]*已停止/);
+  assert.match(recoveryBody, /error\.continuousRecoveryKind = 'submit_unconfirmed'/);
+  assert.doesNotMatch(recoveryBody, /error\.safeNoSubmit = true/);
+});
+
 test('confirmed directional flat state ends close ladders without masking uncertain outcomes', () => {
   const startBody = readFunctionBody('startLadder');
   const planBody = readFunctionBody('buildLadderPlan');

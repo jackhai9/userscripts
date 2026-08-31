@@ -136,14 +136,14 @@
     }
     return Object.freeze({ zhCN, en });
   }
-  function isLocalizedText(value) {
+  function isLocalizedText2(value) {
     return Boolean(
       value && typeof value === "object" && typeof value.zhCN === "string" && typeof value.en === "string"
     );
   }
   function formatLocalizedText(value, locale) {
     if (typeof value === "string") return value;
-    if (!isLocalizedText(value)) throw new Error("Invalid localized UI text");
+    if (!isLocalizedText2(value)) throw new Error("Invalid localized UI text");
     if (locale === UI_LOCALE_ZH_CN) return value.zhCN;
     if (locale === UI_LOCALE_EN) return value.en;
     throw new Error(`Unsupported UI locale: ${locale}`);
@@ -1204,12 +1204,12 @@
     }
   }
   function assertLadderLabel(label) {
-    if (!(isLocalizedText(label) || typeof label === "string" && label.trim() !== "")) {
+    if (!(isLocalizedText2(label) || typeof label === "string" && label.trim() !== "")) {
       throw new Error("阶梯动作名称无效");
     }
   }
   function assertLadderMessage(message) {
-    if (!(isLocalizedText(message) || typeof message === "string" && message.trim() !== "")) {
+    if (!(isLocalizedText2(message) || typeof message === "string" && message.trim() !== "")) {
       throw new Error("阶梯进度信息无效");
     }
   }
@@ -1336,6 +1336,10 @@
   var CONTINUOUS_LADDER_READY_CHECK_MS = 50;
   var CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS = 3e3;
   var CONTINUOUS_LADDER_RECOVERY = Object.freeze({
+    submit_unconfirmed: {
+      cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+      requiresSafeNoSubmit: false
+    },
     input_unstable: {
       cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS
     },
@@ -1369,7 +1373,7 @@
     interrupted: localizedText("已中止", "Interrupted")
   });
   function isValidLocalizedValue(value) {
-    return isLocalizedText(value) || typeof value === "string" && value.trim() !== "";
+    return isLocalizedText2(value) || typeof value === "string" && value.trim() !== "";
   }
   function assertContinuousLadderProgress(progress) {
     if (!progress || !Number.isInteger(progress.startedRounds) || progress.startedRounds < 0 || !Number.isInteger(progress.completedRounds) || progress.completedRounds < 0 || progress.completedRounds > progress.startedRounds || !Number.isInteger(progress.submittedOrders) || progress.submittedOrders < 0 || !Number.isInteger(progress.cancelledOrders) || progress.cancelledOrders < 0 || progress.startedRounds === 0 !== (progress.lastRound === null)) {
@@ -1387,9 +1391,9 @@
     };
   }
   function resolveContinuousLadderRecovery(error) {
-    if (error?.safeNoSubmit !== true) return null;
-    const recovery = CONTINUOUS_LADDER_RECOVERY[error.continuousRecoveryKind];
+    const recovery = CONTINUOUS_LADDER_RECOVERY[error?.continuousRecoveryKind];
     if (!recovery) return null;
+    if (recovery.requiresSafeNoSubmit !== false && error.safeNoSubmit !== true) return null;
     return {
       cooldownMs: recovery.cooldownMs,
       reason: recovery.reason || error.localizedText || error.message
@@ -3823,6 +3827,13 @@
       error.localizedText = localizedMessage;
       return error;
     }
+    function createContinuousUnconfirmedSubmitError(message) {
+      if (!isLocalizedText(message)) throw new Error("未确认下单结果文案必须提供中英文");
+      const error = new Error(formatLocalizedText(message, "zh-CN"));
+      error.continuousRecoveryKind = "submit_unconfirmed";
+      error.localizedText = message;
+      return error;
+    }
     function getLadderOpenPercent(symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
       return loadModeSymbolPrecisionNumberOption(
         localStorage,
@@ -5913,7 +5924,11 @@
       if (capturedApiSuccesses.length === 1) return;
       const responseDiagnostic = responseObservation.diagnostics.length === 0 ? "" : responseObservation.diagnostics.map(formatBinancePlaceOrderResponseDiagnostic).join(" | ");
       const settleHint = responseObservation.settled ? `下单请求已返回，但结果未识别${responseDiagnostic ? `：${responseDiagnostic}` : ""}` : sawBusy ? "下单按钮已恢复，但下单请求仍未返回" : "下单请求仍未返回";
-      throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
+      const englishSettleHint = responseObservation.settled ? `the request returned but its result was not recognized${responseDiagnostic ? `: ${responseDiagnostic}` : ""}` : sawBusy ? "the submit button recovered but the request has not returned" : "the request has not returned";
+      throw createContinuousUnconfirmedSubmitError(localizedText(
+        `未确认${label}成功（${settleHint}）；请在当前委托和历史成交中核对`,
+        `Order submission was not confirmed (${englishSettleHint}); check Open Orders and Trade History`
+      ));
     }
     async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null, options = null) {
       const priceInput = findPriceInput();
