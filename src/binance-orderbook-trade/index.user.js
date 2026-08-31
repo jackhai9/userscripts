@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.174
+// @version      2.7.175
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2811,7 +2811,10 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     const submitted = normalizeDecimalString(submittedPrice);
     const cmp = compareDecimalStrings(expected, submitted);
     if (cmp !== 0) {
-      throw new Error(`价格框未同步，${expectedLabel} ${expected || expectedPrice}，当前提交价 ${submitted || submittedPrice || '-'}`);
+      throw createContinuousRecoverableLadderError(
+        'input_unstable',
+        `价格框未同步，${expectedLabel} ${expected || expectedPrice}，当前提交价 ${submitted || submittedPrice || '-'}`,
+      );
     }
   }
 
@@ -2820,7 +2823,10 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     const submitted = normalizeDecimalString(submittedQty);
     const cmp = compareDecimalStrings(expected, submitted);
     if (cmp !== 0) {
-      throw new Error(`数量框未同步，${expectedLabel} ${expected || expectedQty}，当前提交量 ${submitted || submittedQty || '-'}`);
+      throw createContinuousRecoverableLadderError(
+        'input_unstable',
+        `数量框未同步，${expectedLabel} ${expected || expectedQty}，当前提交量 ${submitted || submittedQty || '-'}`,
+      );
     }
   }
 
@@ -4356,18 +4362,36 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       currentRoot = getActiveOpenOrdersScope() || currentRoot;
       if (!currentRoot) throw new Error('加载待撤挂单时当前委托面板已消失');
 
-      const beforeCount = readOpenOrderRowElements(currentRoot).length;
-      const scrollContainer = findOpenOrderRowsScrollContainer(currentRoot);
-      if (!scrollContainer) return readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
+      // Binance commits the active tab and symbol filter before React mounts
+      // the matching rows and scroll container, so an empty DOM is not settled.
+      const renderRemainingMs = deadline - Date.now();
+      const renderState = await waitForAccountOrdersState(() => {
+        const refreshedRoot = getActiveOpenOrdersScope();
+        if (!refreshedRoot || !isCurrentObservedSymbol(symbol)) return null;
+        const settledState = readCurrentSymbolOpenOrderRowsState(refreshedRoot, symbol, plan);
+        if (!settledState) return null;
+        return {
+          root: refreshedRoot,
+          settledState,
+          scrollContainer: findOpenOrderRowsScrollContainer(refreshedRoot),
+        };
+      }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, renderRemainingMs), abortSignal);
+      if (!renderState) continue;
 
+      currentRoot = renderState.root;
+      const { settledState, scrollContainer } = renderState;
+      if (!scrollContainer && settledState) return settledState.rows;
+
+      const beforeCount = readOpenOrderRowElements(currentRoot).length;
       scrollOpenOrderRowsToBottom(scrollContainer);
-      const remainingMs = deadline - Date.now();
+      const growthRemainingMs = deadline - Date.now();
+      if (growthRemainingMs <= 0) break;
       const growth = await waitForAccountOrdersState(() => {
         const refreshedRoot = getActiveOpenOrdersScope();
         if (!refreshedRoot || !isCurrentObservedSymbol(symbol)) return null;
         const loadedCount = readOpenOrderRowElements(refreshedRoot).length;
         return loadedCount > beforeCount ? { root: refreshedRoot, loadedCount } : null;
-      }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, remainingMs), abortSignal);
+      }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, growthRemainingMs), abortSignal);
 
       throwIfAborted(abortSignal);
       currentRoot = growth?.root || getActiveOpenOrdersScope() || currentRoot;

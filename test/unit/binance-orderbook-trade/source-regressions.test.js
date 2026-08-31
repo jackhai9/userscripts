@@ -294,6 +294,16 @@ test('continuous close recovers a confirmed max-open-orders rejection by freeing
   assert.doesNotMatch(cancelPlanBody, /findCurrentSymbolCancelAllButton/);
 });
 
+test('capacity recovery waits through an unrendered open-orders list instead of treating it as empty', () => {
+  const loadRowsBody = readFunctionBody('loadAllCurrentSymbolOpenOrderRows');
+
+  assert.doesNotMatch(loadRowsBody, /if \(!scrollContainer\) return readCurrentSymbolOpenOrderRows/);
+  assert.match(loadRowsBody, /readCurrentSymbolOpenOrderRowsState\(refreshedRoot,\s*symbol,\s*plan\)/);
+  assert.match(loadRowsBody, /if \(!scrollContainer && settledState\) return settledState\.rows;/);
+  assert.match(loadRowsBody, /waitForAccountOrdersState\([\s\S]*readCurrentSymbolOpenOrderRowsState/);
+  assert.match(loadRowsBody, /scrollOpenOrderRowsToBottom\(scrollContainer\);[\s\S]*const growthRemainingMs = deadline - Date\.now\(\);/);
+});
+
 test('capacity recovery skips an unconfirmed row cancellation without claiming the slot was released', () => {
   const cancelOneRowBody = readFunctionBody('cancelOneOpenOrderRowForPlan');
   const cancelFarthestBody = readFunctionBody('cancelFarthestOpenOrderRowsForPlan');
@@ -1748,6 +1758,8 @@ test('ladder plans fail closed when orderbook precision changes', () => {
 
 test('continuous close ladders recover only from tagged pre-submit transients', () => {
   const syncBody = readFunctionBody('syncTradeInputs');
+  const priceAssertionBody = readFunctionBody('assertSubmittedPriceMatchesExpectedPrice');
+  const quantityAssertionBody = readFunctionBody('assertSubmittedQtyMatchesExpectedQty');
   const buttonBody = readFunctionBody('waitForReadyLadderSubmitButton');
   const executeBody = readFunctionBody('executeLadderPlan');
   const buildBody = readFunctionBody('buildLadderPlan');
@@ -1756,6 +1768,8 @@ test('continuous close ladders recover only from tagged pre-submit transients', 
   const recoveryBody = readFunctionBody('createContinuousRecoverableLadderError');
 
   assert.match(syncBody, /createContinuousRecoverableLadderError\(\s*'input_unstable'/);
+  assert.match(priceAssertionBody, /createContinuousRecoverableLadderError\(\s*'input_unstable'/);
+  assert.match(quantityAssertionBody, /createContinuousRecoverableLadderError\(\s*'input_unstable'/);
   assert.match(buttonBody, /createContinuousRecoverableLadderError\(\s*'controls_not_ready'/);
   assert.match(executeBody, /createContinuousRecoverableLadderError\(\s*'controls_not_ready'/);
   assert.match(buildBody, /createContinuousRecoverableLadderError\(\s*'market_data_not_ready'/);
