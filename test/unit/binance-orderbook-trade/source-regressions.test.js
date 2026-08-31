@@ -294,6 +294,16 @@ test('continuous close recovers a confirmed max-open-orders rejection by freeing
   assert.doesNotMatch(cancelPlanBody, /findCurrentSymbolCancelAllButton/);
 });
 
+test('capacity recovery waits through an unrendered open-orders list instead of treating it as empty', () => {
+  const loadRowsBody = readFunctionBody('loadAllCurrentSymbolOpenOrderRows');
+
+  assert.doesNotMatch(loadRowsBody, /if \(!scrollContainer\) return readCurrentSymbolOpenOrderRows/);
+  assert.match(loadRowsBody, /readCurrentSymbolOpenOrderRowsState\(refreshedRoot,\s*symbol,\s*plan\)/);
+  assert.match(loadRowsBody, /if \(!scrollContainer && settledState\) return settledState\.rows;/);
+  assert.match(loadRowsBody, /waitForAccountOrdersState\([\s\S]*readCurrentSymbolOpenOrderRowsState/);
+  assert.match(loadRowsBody, /scrollOpenOrderRowsToBottom\(scrollContainer\);[\s\S]*const growthRemainingMs = deadline - Date\.now\(\);/);
+});
+
 test('capacity recovery skips an unconfirmed row cancellation without claiming the slot was released', () => {
   const cancelOneRowBody = readFunctionBody('cancelOneOpenOrderRowForPlan');
   const cancelFarthestBody = readFunctionBody('cancelFarthestOpenOrderRowsForPlan');
@@ -1748,6 +1758,8 @@ test('ladder plans fail closed when orderbook precision changes', () => {
 
 test('continuous close ladders recover only from tagged pre-submit transients', () => {
   const syncBody = readFunctionBody('syncTradeInputs');
+  const priceAssertionBody = readFunctionBody('assertSubmittedPriceMatchesExpectedPrice');
+  const quantityAssertionBody = readFunctionBody('assertSubmittedQtyMatchesExpectedQty');
   const buttonBody = readFunctionBody('waitForReadyLadderSubmitButton');
   const executeBody = readFunctionBody('executeLadderPlan');
   const buildBody = readFunctionBody('buildLadderPlan');
@@ -1756,6 +1768,8 @@ test('continuous close ladders recover only from tagged pre-submit transients', 
   const recoveryBody = readFunctionBody('createContinuousRecoverableLadderError');
 
   assert.match(syncBody, /createContinuousRecoverableLadderError\(\s*'input_unstable'/);
+  assert.match(priceAssertionBody, /createContinuousRecoverableLadderError\(\s*'input_unstable'/);
+  assert.match(quantityAssertionBody, /createContinuousRecoverableLadderError\(\s*'input_unstable'/);
   assert.match(buttonBody, /createContinuousRecoverableLadderError\(\s*'controls_not_ready'/);
   assert.match(executeBody, /createContinuousRecoverableLadderError\(\s*'controls_not_ready'/);
   assert.match(buildBody, /createContinuousRecoverableLadderError\(\s*'market_data_not_ready'/);
@@ -1763,6 +1777,48 @@ test('continuous close ladders recover only from tagged pre-submit transients', 
   assert.match(repriceBody, /createContinuousRecoverableLadderError\(\s*'market_data_not_ready'/);
   assert.match(recoveryBody, /error\.safeNoSubmit = true/);
   assert.match(recoveryBody, /error\.continuousRecoveryKind = kind/);
+});
+
+test('continuous close ladders continue after an explicitly tagged unconfirmed submission', () => {
+  const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
+  const recoveryBody = readFunctionBody('createContinuousUnconfirmedSubmitError');
+
+  assert.match(acknowledgementBody, /createContinuousUnconfirmedSubmitError\(/);
+  assert.doesNotMatch(acknowledgementBody, /未确认\$\{label\}成功[\s\S]*已停止/);
+  assert.match(recoveryBody, /error\.continuousRecoveryKind = 'submit_unconfirmed'/);
+  assert.doesNotMatch(recoveryBody, /error\.safeNoSubmit = true/);
+});
+
+test('continuous close defers temporary startup, position, capacity, and open-order failures', () => {
+  const continuousBody = readFunctionBody('startContinuousLadder');
+  const planBody = readFunctionBody('buildLadderPlan');
+  const minimumBody = readFunctionBody('createLadderMinimumQtyFailure');
+  const executeBody = readFunctionBody('executeLadderPlan');
+  const replacementBody = readFunctionBody('runLadderPlanWithOpenOrderReplacement');
+  const readinessBody = readFunctionBody('readContinuousLadderReadiness');
+  const confirmationBody = readFunctionBody('throwIfClosePositionCompleted');
+  const roundRecoveryBody = readFunctionBody('createContinuousRoundRecoveryError');
+
+  assert.match(continuousBody, /outcome\.status !== 'not_started'/);
+  assert.match(continuousBody, /waitForContinuousLadderNextRound/);
+  assert.match(planBody, /createContinuousRecoverableLadderError\(\s*'position_quantity_not_ready'/);
+  assert.match(minimumBody, /mode === 'CLOSE'[\s\S]*continuousRecoveryKind = 'position_quantity_not_ready'/);
+  assert.match(executeBody, /createContinuousRoundRecoveryError\(\s*'order_capacity_not_ready'/);
+  assert.match(replacementBody, /createContinuousRoundRecoveryError\(\s*'open_orders_not_ready'/);
+  assert.match(readinessBody, /resolveContinuousLadderRecovery\(error\)/);
+  assert.match(confirmationBody, /createContinuousRecoverableLadderError\(\s*'position_state_not_ready'/);
+  assert.match(confirmationBody, /skipImmediateCloseRecheck = true/);
+  assert.match(roundRecoveryBody, /removeContinuousTerminalWording\(message\)/);
+});
+
+test('continuous close backs off rate limits and unconfirmed server responses without swallowing fatal rejections', () => {
+  const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
+  const positionFetchBody = readFunctionBody('fetchCurrentPositionsPayload');
+
+  assert.match(acknowledgementBody, /resolveBinanceSubmitResponseRecovery/);
+  assert.match(acknowledgementBody, /createContinuousRoundRecoveryError\(/);
+  assert.match(positionFetchBody, /error\.httpStatus = resp\.status/);
+  assert.match(source, /\[401,\s*403\]\.includes\(error\?\.httpStatus\)/);
 });
 
 test('confirmed directional flat state ends close ladders without masking uncertain outcomes', () => {
@@ -1776,7 +1832,7 @@ test('confirmed directional flat state ends close ladders without masking uncert
   assert.match(confirmationBody, /state\.status === 'flat'/);
   assert.match(confirmationBody, /throw createClosePositionCompletedError\(\)/);
   assert.match(planBody, /await throwIfClosePositionCompleted\(\{ spec, symbol: startSymbol \}\)/);
-  assert.match(startBody, /spec\.mode === 'CLOSE' && e\?\.safeNoSubmit === true/);
+  assert.match(startBody, /spec\.mode === 'CLOSE'[\s\S]*e\?\.safeNoSubmit === true[\s\S]*e\.skipImmediateCloseRecheck !== true/);
   assert.match(startBody, /status: 'position_closed'/);
   assert.doesNotMatch(startBody, /未确认.*throwIfClosePositionCompleted/);
   assert.match(replacementBody, /!\['symbol_changed', 'dialog_not_closed'\]\.includes\(result\.status\)/);

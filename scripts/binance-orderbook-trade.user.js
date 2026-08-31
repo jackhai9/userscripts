@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.174
+// @version      2.7.175
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -136,14 +136,14 @@
     }
     return Object.freeze({ zhCN, en });
   }
-  function isLocalizedText(value) {
+  function isLocalizedText2(value) {
     return Boolean(
       value && typeof value === "object" && typeof value.zhCN === "string" && typeof value.en === "string"
     );
   }
   function formatLocalizedText(value, locale) {
     if (typeof value === "string") return value;
-    if (!isLocalizedText(value)) throw new Error("Invalid localized UI text");
+    if (!isLocalizedText2(value)) throw new Error("Invalid localized UI text");
     if (locale === UI_LOCALE_ZH_CN) return value.zhCN;
     if (locale === UI_LOCALE_EN) return value.en;
     throw new Error(`Unsupported UI locale: ${locale}`);
@@ -476,17 +476,22 @@
 
   // src/binance-orderbook-trade/core/auto-open-leverage.js
   var POSITION_STATUSES = /* @__PURE__ */ new Set(["unknown", "has_position", "flat"]);
+  function createPositionPayloadContractError(message) {
+    const error = new Error(message);
+    error.name = "PositionPayloadContractError";
+    return error;
+  }
   function parsePositionAmount(value) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string" && /^-?(?:\d+\.?\d*|\.\d+)$/.test(value.trim())) {
       return Number(value);
     }
-    throw new Error(`持仓数量无效：${String(value)}`);
+    throw createPositionPayloadContractError(`持仓数量无效：${String(value)}`);
   }
   function resolveSymbolPositionStatus(payload, symbol) {
-    if (payload?.success !== true) throw new Error("持仓接口返回失败");
-    if (!Array.isArray(payload.data)) throw new Error("持仓接口数据格式异常");
-    if (!symbol) throw new Error("持仓接口缺少交易对");
+    if (payload?.success !== true) throw createPositionPayloadContractError("持仓接口返回失败");
+    if (!Array.isArray(payload.data)) throw createPositionPayloadContractError("持仓接口数据格式异常");
+    if (!symbol) throw createPositionPayloadContractError("持仓接口缺少交易对");
     const positions = payload.data.filter((position) => position?.symbol === symbol);
     const hasPosition = positions.some((position) => parsePositionAmount(position.positionAmount) !== 0);
     return {
@@ -495,11 +500,11 @@
     };
   }
   function resolveSymbolPositionSideStatus(payload, symbol, side) {
-    if (payload?.success !== true) throw new Error("持仓接口返回失败");
-    if (!Array.isArray(payload.data)) throw new Error("持仓接口数据格式异常");
-    if (!symbol) throw new Error("持仓接口缺少交易对");
+    if (payload?.success !== true) throw createPositionPayloadContractError("持仓接口返回失败");
+    if (!Array.isArray(payload.data)) throw createPositionPayloadContractError("持仓接口数据格式异常");
+    if (!symbol) throw createPositionPayloadContractError("持仓接口缺少交易对");
     if (side !== "LONG" && side !== "SHORT") {
-      throw new Error(`目标持仓方向无效：${String(side)}`);
+      throw createPositionPayloadContractError(`目标持仓方向无效：${String(side)}`);
     }
     const positions = payload.data.filter((position) => position?.symbol === symbol);
     let matchingPositionCount = 0;
@@ -507,7 +512,7 @@
     for (const position of positions) {
       const positionSide = position.positionSide;
       if (!["BOTH", "LONG", "SHORT"].includes(positionSide)) {
-        throw new Error(`持仓方向无效：${String(positionSide)}`);
+        throw createPositionPayloadContractError(`持仓方向无效：${String(positionSide)}`);
       }
       const amount = parsePositionAmount(position.positionAmount);
       if (positionSide === side) {
@@ -1204,12 +1209,12 @@
     }
   }
   function assertLadderLabel(label) {
-    if (!(isLocalizedText(label) || typeof label === "string" && label.trim() !== "")) {
+    if (!(isLocalizedText2(label) || typeof label === "string" && label.trim() !== "")) {
       throw new Error("阶梯动作名称无效");
     }
   }
   function assertLadderMessage(message) {
-    if (!(isLocalizedText(message) || typeof message === "string" && message.trim() !== "")) {
+    if (!(isLocalizedText2(message) || typeof message === "string" && message.trim() !== "")) {
       throw new Error("阶梯进度信息无效");
     }
   }
@@ -1335,7 +1340,24 @@
   var CONTINUOUS_LADDER_COOLDOWN_MS = 1e3;
   var CONTINUOUS_LADDER_READY_CHECK_MS = 50;
   var CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS = 3e3;
+  var CONTINUOUS_LADDER_LONG_RECOVERY_COOLDOWN_MS = 1e4;
   var CONTINUOUS_LADDER_RECOVERY = Object.freeze({
+    submit_unconfirmed: {
+      cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+      requiresSafeNoSubmit: false
+    },
+    rate_limited: {
+      cooldownMs: CONTINUOUS_LADDER_LONG_RECOVERY_COOLDOWN_MS,
+      requiresSafeNoSubmit: false
+    },
+    order_capacity_not_ready: {
+      cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+      requiresSafeNoSubmit: false
+    },
+    open_orders_not_ready: {
+      cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+      requiresSafeNoSubmit: false
+    },
     input_unstable: {
       cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS
     },
@@ -1344,6 +1366,12 @@
     },
     market_data_not_ready: {
       cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS
+    },
+    position_state_not_ready: {
+      cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS
+    },
+    position_quantity_not_ready: {
+      cooldownMs: CONTINUOUS_LADDER_LONG_RECOVERY_COOLDOWN_MS
     },
     precision_changed: {
       cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
@@ -1369,7 +1397,7 @@
     interrupted: localizedText("已中止", "Interrupted")
   });
   function isValidLocalizedValue(value) {
-    return isLocalizedText(value) || typeof value === "string" && value.trim() !== "";
+    return isLocalizedText2(value) || typeof value === "string" && value.trim() !== "";
   }
   function assertContinuousLadderProgress(progress) {
     if (!progress || !Number.isInteger(progress.startedRounds) || progress.startedRounds < 0 || !Number.isInteger(progress.completedRounds) || progress.completedRounds < 0 || progress.completedRounds > progress.startedRounds || !Number.isInteger(progress.submittedOrders) || progress.submittedOrders < 0 || !Number.isInteger(progress.cancelledOrders) || progress.cancelledOrders < 0 || progress.startedRounds === 0 !== (progress.lastRound === null)) {
@@ -1387,11 +1415,15 @@
     };
   }
   function resolveContinuousLadderRecovery(error) {
-    if (error?.safeNoSubmit !== true) return null;
-    const recovery = CONTINUOUS_LADDER_RECOVERY[error.continuousRecoveryKind];
+    const recovery = CONTINUOUS_LADDER_RECOVERY[error?.continuousRecoveryKind];
     if (!recovery) return null;
+    if (recovery.requiresSafeNoSubmit !== false && error.safeNoSubmit !== true) return null;
+    const cooldownMs = error.continuousRecoveryCooldownMs ?? recovery.cooldownMs;
+    if (!Number.isFinite(cooldownMs) || cooldownMs < 0) {
+      throw new Error("连续阶梯恢复等待时间无效");
+    }
     return {
-      cooldownMs: recovery.cooldownMs,
+      cooldownMs,
       reason: recovery.reason || error.localizedText || error.message
     };
   }
@@ -1707,6 +1739,31 @@
   }
   function isBinanceMaxOpenOrdersErrorCode(code) {
     return code === BINANCE_MAX_OPEN_ORDERS_ERROR_CODE;
+  }
+  function parseRetryAfterMs(value) {
+    if (value == null || value === "") return null;
+    const seconds = Number(value);
+    return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1e3 : null;
+  }
+  function resolveBinanceSubmitResponseRecovery(diagnostics, apiErrors) {
+    if (!Array.isArray(diagnostics) || !Array.isArray(apiErrors)) {
+      throw new Error("下单响应恢复证据无效");
+    }
+    const rateLimitDiagnostic = diagnostics.find(({ httpStatus }) => httpStatus === 418 || httpStatus === 429);
+    const hasRateLimitCode = apiErrors.some(({ code }) => code === -1003);
+    if (rateLimitDiagnostic || hasRateLimitCode) {
+      return {
+        kind: "rate_limited",
+        cooldownMs: parseRetryAfterMs(rateLimitDiagnostic?.retryAfter) ?? 1e4
+      };
+    }
+    if (diagnostics.some(({ httpStatus }) => httpStatus >= 500 && httpStatus <= 599)) {
+      return {
+        kind: "submit_unconfirmed",
+        cooldownMs: 3e3
+      };
+    }
+    return null;
   }
   function getBinanceApiErrorCode(payload) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
@@ -3823,6 +3880,27 @@
       error.localizedText = localizedMessage;
       return error;
     }
+    function createContinuousUnconfirmedSubmitError(message) {
+      if (!isLocalizedText(message)) throw new Error("未确认下单结果文案必须提供中英文");
+      const error = new Error(formatLocalizedText(message, "zh-CN"));
+      error.continuousRecoveryKind = "submit_unconfirmed";
+      error.localizedText = message;
+      return error;
+    }
+    function removeContinuousTerminalWording(message) {
+      const localizedMessage = localizeKnownUiStatus(message);
+      const zh = formatLocalizedText(localizedMessage, "zh-CN").replace(/[，；]\s*已停止(?:重新挂单)?/g, "");
+      const en = formatLocalizedText(localizedMessage, "en").replace(/;\s*(?:replacement\s+)?stopped\b/gi, "");
+      return localizedText(zh, en);
+    }
+    function createContinuousRoundRecoveryError(kind, message, cooldownMs = null) {
+      const localizedMessage = removeContinuousTerminalWording(message);
+      const error = new Error(formatLocalizedText(localizedMessage, "zh-CN"));
+      error.continuousRecoveryKind = kind;
+      error.localizedText = localizedMessage;
+      if (cooldownMs !== null) error.continuousRecoveryCooldownMs = cooldownMs;
+      return error;
+    }
     function getLadderOpenPercent(symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
       return loadModeSymbolPrecisionNumberOption(
         localStorage,
@@ -5287,12 +5365,35 @@
         throw new Error("确认平仓结果时下单模式已变化");
       }
       if (!await waitForBncHeaders(context.symbol)) {
-        throw new Error("确认平仓结果时币安请求头尚未就绪");
+        const error = createContinuousRecoverableLadderError(
+          "position_state_not_ready",
+          "确认平仓结果时币安请求头尚未就绪"
+        );
+        error.skipImmediateCloseRecheck = true;
+        throw error;
       }
-      const state = await fetchCurrentSymbolPositionSideState(
-        context.symbol,
-        context.spec.side
-      );
+      let state;
+      try {
+        state = await fetchCurrentSymbolPositionSideState(
+          context.symbol,
+          context.spec.side
+        );
+      } catch (error) {
+        if (error?.name === "PositionPayloadContractError" || [401, 403].includes(error?.httpStatus) || error?.httpStatus >= 400 && error.httpStatus < 500 && ![418, 429].includes(error.httpStatus)) {
+          throw error;
+        }
+        const rateLimited = [418, 429].includes(error?.httpStatus);
+        const recoveryError = createContinuousRecoverableLadderError(
+          rateLimited ? "rate_limited" : "position_state_not_ready",
+          rateLimited ? "仓位确认请求频率受限" : "仓位确认暂未完成"
+        );
+        if (rateLimited) {
+          const retryAfterSeconds = Number(error.retryAfter);
+          recoveryError.continuousRecoveryCooldownMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0 ? retryAfterSeconds * 1e3 : 1e4;
+        }
+        recoveryError.skipImmediateCloseRecheck = true;
+        throw recoveryError;
+      }
       throwIfAborted(abortSignal);
       if (!isCurrentObservedSymbol(context.symbol)) {
         throw new Error("确认平仓结果时交易对已变化");
@@ -5420,7 +5521,12 @@
         }
         if (spec.mode === "CLOSE") {
           await throwIfClosePositionCompleted({ spec, symbol: startSymbol });
-          unavailableQuantityMessage = "当前方向暂无可平数量";
+          const error = createContinuousRecoverableLadderError(
+            "position_quantity_not_ready",
+            "当前方向暂无可平数量"
+          );
+          error.skipImmediateCloseRecheck = true;
+          throw error;
         }
         throw new Error(unavailableQuantityMessage);
       }
@@ -5513,6 +5619,10 @@
         error.statusTitle,
         `Current ${mode === "OPEN" ? "open" : "close"} ratio is ${percent}%. The target quantity is below the minimum order quantity ${minRequiredQty}, so the ladder cannot ${mode === "OPEN" ? "open" : "close"}. ${levels ? `Current plan: ${levels} orders. ` : ""}${minimumPercent ? `At least ${minimumPercent}% is required to keep the current order count. ` : ""}${maxAutoFitPercent ? `Automatic limit: ${maxAutoFitPercent}%. ` : ""}The script tried increasing the ratio and reducing the order count. ${mode === "OPEN" ? "Only same-symbol, same-direction Basic open orders may be replaced; Cancel All is never automatic." : "Orders are not cancelled automatically."}`
       );
+      if (mode === "CLOSE") {
+        error.safeNoSubmit = true;
+        error.continuousRecoveryKind = "position_quantity_not_ready";
+      }
       if (mode === "OPEN" && spec && symbol && precision && replacementTotalQty && isPositiveDecimalString(replacementTotalQty)) {
         error.openOrdersReplacementPlan = {
           spec,
@@ -5637,7 +5747,10 @@
       const submitted = normalizeDecimalString(submittedPrice);
       const cmp = compareDecimalStrings(expected, submitted);
       if (cmp !== 0) {
-        throw new Error(`价格框未同步，${expectedLabel} ${expected || expectedPrice}，当前提交价 ${submitted || submittedPrice || "-"}`);
+        throw createContinuousRecoverableLadderError(
+          "input_unstable",
+          `价格框未同步，${expectedLabel} ${expected || expectedPrice}，当前提交价 ${submitted || submittedPrice || "-"}`
+        );
       }
     }
     function assertSubmittedQtyMatchesExpectedQty(expectedQty, submittedQty, expectedLabel = "目标量") {
@@ -5645,7 +5758,10 @@
       const submitted = normalizeDecimalString(submittedQty);
       const cmp = compareDecimalStrings(expected, submitted);
       if (cmp !== 0) {
-        throw new Error(`数量框未同步，${expectedLabel} ${expected || expectedQty}，当前提交量 ${submitted || submittedQty || "-"}`);
+        throw createContinuousRecoverableLadderError(
+          "input_unstable",
+          `数量框未同步，${expectedLabel} ${expected || expectedQty}，当前提交量 ${submitted || submittedQty || "-"}`
+        );
       }
     }
     async function syncTradeInputs(expectedPrice, expectedQty, options = null) {
@@ -5888,6 +6004,25 @@
       if (capturedApiErrors.length === 1 && isBinanceMaxOpenOrdersErrorCode(capturedApiErrors[0].code)) {
         throw createLadderMaxOpenOrdersError(capturedApiErrors[0]);
       }
+      const responseRecovery = resolveBinanceSubmitResponseRecovery(
+        responseObservation.diagnostics,
+        capturedApiErrors
+      );
+      if (responseRecovery) {
+        const responseDiagnostic2 = responseObservation.diagnostics.length === 0 ? "" : responseObservation.diagnostics.map(formatBinancePlaceOrderResponseDiagnostic).join(" | ");
+        const reason = responseRecovery.kind === "rate_limited" ? localizedText(
+          `下单请求频率受限${responseDiagnostic2 ? `：${responseDiagnostic2}` : ""}`,
+          `Order request rate limited${responseDiagnostic2 ? `: ${responseDiagnostic2}` : ""}`
+        ) : localizedText(
+          `Binance 服务异常，订单结果未确认${responseDiagnostic2 ? `：${responseDiagnostic2}` : ""}`,
+          `Binance service error; order outcome unconfirmed${responseDiagnostic2 ? `: ${responseDiagnostic2}` : ""}`
+        );
+        throw createContinuousRoundRecoveryError(
+          responseRecovery.kind,
+          reason,
+          responseRecovery.cooldownMs
+        );
+      }
       let failureActivity = activity.status === "failure" ? activity : null;
       if (!failureActivity && capturedApiErrors.length > 0) {
         failureActivity = await waitForOrderFailureFeedback(
@@ -5907,7 +6042,11 @@
       if (capturedApiSuccesses.length === 1) return;
       const responseDiagnostic = responseObservation.diagnostics.length === 0 ? "" : responseObservation.diagnostics.map(formatBinancePlaceOrderResponseDiagnostic).join(" | ");
       const settleHint = responseObservation.settled ? `下单请求已返回，但结果未识别${responseDiagnostic ? `：${responseDiagnostic}` : ""}` : sawBusy ? "下单按钮已恢复，但下单请求仍未返回" : "下单请求仍未返回";
-      throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
+      const englishSettleHint = responseObservation.settled ? `the request returned but its result was not recognized${responseDiagnostic ? `: ${responseDiagnostic}` : ""}` : sawBusy ? "the submit button recovered but the request has not returned" : "the request has not returned";
+      throw createContinuousUnconfirmedSubmitError(localizedText(
+        `未确认${label}成功（${settleHint}）；请在当前委托和历史成交中核对`,
+        `Order submission was not confirmed (${englishSettleHint}); check Open Orders and Trade History`
+      ));
     }
     async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null, options = null) {
       const priceInput = findPriceInput();
@@ -6016,7 +6155,10 @@
             options?.allowMaxOpenOrdersRecovery
           )) {
             if (maxOpenOrdersRecoveryAttempts > 0) {
-              throw new Error("已释放挂单名额，但本轮仍达到最大下单限制，已停止");
+              throw createContinuousRoundRecoveryError(
+                "order_capacity_not_ready",
+                "已释放挂单名额，但本轮仍达到最大下单限制"
+              );
             }
             maxOpenOrdersRecoveryAttempts += 1;
             const recovery = await cancelCurrentSymbolOpenOrdersForPlan(
@@ -6028,7 +6170,14 @@
             );
             throwIfAborted(abortSignal);
             if (!recovery?.ok) {
-              throw new Error(recovery?.message || "未能释放挂单名额，已停止");
+              const message = recovery?.message || "未能释放挂单名额";
+              if (["symbol_changed", "dialog_not_closed"].includes(recovery?.status)) {
+                throw new Error(message);
+              }
+              throw createContinuousRoundRecoveryError(
+                "order_capacity_not_ready",
+                message
+              );
             }
             continue;
           }
@@ -6236,7 +6385,7 @@
             progress: snapshotLadderProgress(progress)
           };
         }
-        if (spec.mode === "CLOSE" && e?.safeNoSubmit === true) {
+        if (spec.mode === "CLOSE" && e?.safeNoSubmit === true && e.skipImmediateCloseRecheck !== true) {
           try {
             await throwIfClosePositionCompleted(
               { spec, symbol: actionSymbol },
@@ -6319,9 +6468,18 @@
       const button = spec.buttonGetter();
       if (!isCloseSnapshotReady(actionSymbol) || !button || !button.isConnected || !isVisibleElement(button) || isSubmitButtonBusy(button)) {
         const now = Date.now();
-        if (now - positionCheckState.checkedAt >= CONTINUOUS_CLOSE_POSITION_CHECK_MS) {
+        const retryAt = positionCheckState.retryAt || 0;
+        if (now >= retryAt && now - positionCheckState.checkedAt >= CONTINUOUS_CLOSE_POSITION_CHECK_MS) {
           positionCheckState.checkedAt = now;
-          await throwIfClosePositionCompleted({ spec, symbol: actionSymbol });
+          try {
+            await throwIfClosePositionCompleted({ spec, symbol: actionSymbol });
+            positionCheckState.retryAt = 0;
+          } catch (error) {
+            if (isClosePositionCompletedError(error)) throw error;
+            const recovery = resolveContinuousLadderRecovery(error);
+            if (!recovery) throw error;
+            positionCheckState.retryAt = Date.now() + recovery.cooldownMs;
+          }
         }
         return { status: "waiting" };
       }
@@ -6357,7 +6515,7 @@
       }
       const abortController = new AbortController();
       const continuousProgress = createContinuousLadderProgress();
-      const positionCheckState = { checkedAt: Date.now() };
+      const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
       continuousLadderAbortController = abortController;
       activeContinuousLadderActionType = actionType;
       activeContinuousLadderProgress = continuousProgress;
@@ -6365,28 +6523,36 @@
         while (true) {
           throwIfAborted(abortController.signal);
           const outcome = await startLadder(actionType, continuousProgress);
-          if (!outcome?.progress) return outcome;
-          recordContinuousLadderRound(continuousProgress, outcome);
-          if (outcome.status === "position_closed") {
-            setLadderStatus(formatContinuousLadderPositionClosedProgress(
-              spec.statusLabel,
-              continuousProgress
-            ));
-            return outcome;
-          }
-          const recovery = outcome.status === "completed" ? null : resolveContinuousLadderRecovery(outcome.error);
-          if (outcome.status !== "completed" && !recovery) {
-            setContinuousLadderProgressStatus(
-              spec.statusLabel,
-              outcome.status,
-              continuousProgress,
-              outcome.reason || null,
-              outcome.titleReason || outcome.reason || null
-            );
-            return outcome;
-          }
-          if (!recovery) {
-            setContinuousLadderProgressStatus(spec.statusLabel, "running", continuousProgress);
+          let recovery = null;
+          if (!outcome?.progress) {
+            if (outcome.status !== "not_started") return outcome;
+            recovery = {
+              cooldownMs: 3e3,
+              reason: localizedText("等待交易页面就绪", "Waiting for the trading page")
+            };
+          } else {
+            recordContinuousLadderRound(continuousProgress, outcome);
+            if (outcome.status === "position_closed") {
+              setLadderStatus(formatContinuousLadderPositionClosedProgress(
+                spec.statusLabel,
+                continuousProgress
+              ));
+              return outcome;
+            }
+            recovery = outcome.status === "completed" ? null : resolveContinuousLadderRecovery(outcome.error);
+            if (outcome.status !== "completed" && !recovery) {
+              setContinuousLadderProgressStatus(
+                spec.statusLabel,
+                outcome.status,
+                continuousProgress,
+                outcome.reason || null,
+                outcome.titleReason || outcome.reason || null
+              );
+              return outcome;
+            }
+            if (!recovery) {
+              setContinuousLadderProgressStatus(spec.statusLabel, "running", continuousProgress);
+            }
           }
           const readiness = await waitForContinuousLadderNextRound({
             readReadiness: async () => {
@@ -6432,7 +6598,7 @@
             );
             return readiness;
           }
-          if (recovery) continue;
+          continue;
         }
       })();
       continuousLadderTask = executionTask.catch((e) => {
@@ -6943,17 +7109,32 @@
         if (!isCurrentObservedSymbol(symbol)) throw new Error("加载待撤挂单时交易对已变化");
         currentRoot = getActiveOpenOrdersScope2() || currentRoot;
         if (!currentRoot) throw new Error("加载待撤挂单时当前委托面板已消失");
+        const renderRemainingMs = deadline - Date.now();
+        const renderState = await waitForAccountOrdersState(() => {
+          const refreshedRoot = getActiveOpenOrdersScope2();
+          if (!refreshedRoot || !isCurrentObservedSymbol(symbol)) return null;
+          const settledState2 = readCurrentSymbolOpenOrderRowsState(refreshedRoot, symbol, plan);
+          if (!settledState2) return null;
+          return {
+            root: refreshedRoot,
+            settledState: settledState2,
+            scrollContainer: findOpenOrderRowsScrollContainer(refreshedRoot)
+          };
+        }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, renderRemainingMs), abortSignal);
+        if (!renderState) continue;
+        currentRoot = renderState.root;
+        const { settledState, scrollContainer } = renderState;
+        if (!scrollContainer && settledState) return settledState.rows;
         const beforeCount = readOpenOrderRowElements(currentRoot).length;
-        const scrollContainer = findOpenOrderRowsScrollContainer(currentRoot);
-        if (!scrollContainer) return readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
         scrollOpenOrderRowsToBottom(scrollContainer);
-        const remainingMs = deadline - Date.now();
+        const growthRemainingMs = deadline - Date.now();
+        if (growthRemainingMs <= 0) break;
         const growth = await waitForAccountOrdersState(() => {
           const refreshedRoot = getActiveOpenOrdersScope2();
           if (!refreshedRoot || !isCurrentObservedSymbol(symbol)) return null;
           const loadedCount = readOpenOrderRowElements(refreshedRoot).length;
           return loadedCount > beforeCount ? { root: refreshedRoot, loadedCount } : null;
-        }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, remainingMs), abortSignal);
+        }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, growthRemainingMs), abortSignal);
         throwIfAborted(abortSignal);
         currentRoot = growth?.root || getActiveOpenOrdersScope2() || currentRoot;
         const afterCount = readOpenOrderRowElements(currentRoot).length;
@@ -8218,7 +8399,14 @@
                 err("替换挂单失败后确认当前方向持仓失败:", positionError);
               }
             }
-            throw new Error(result.message || "原挂单未完成替换，已停止重新挂单");
+            const message = result.message || "原挂单未完成替换";
+            if (["symbol_changed", "dialog_not_closed"].includes(result.status)) {
+              throw new Error(message);
+            }
+            throw createContinuousRoundRecoveryError(
+              "open_orders_not_ready",
+              message
+            );
           }
         }
       }
@@ -8493,7 +8681,12 @@
           credentials: "include",
           signal: controller.signal
         });
-        if (!resp.ok) throw new Error(`持仓接口异常：HTTP ${resp.status}`);
+        if (!resp.ok) {
+          const error = new Error(`持仓接口异常：HTTP ${resp.status}`);
+          error.httpStatus = resp.status;
+          error.retryAfter = resp.headers.get("retry-after");
+          throw error;
+        }
         return await resp.json();
       } finally {
         window.clearTimeout(timer);

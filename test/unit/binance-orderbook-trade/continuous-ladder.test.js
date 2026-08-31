@@ -9,6 +9,7 @@ import {
 
 import {
   CONTINUOUS_LADDER_COOLDOWN_MS,
+  CONTINUOUS_LADDER_LONG_RECOVERY_COOLDOWN_MS,
   CONTINUOUS_LADDER_READY_CHECK_MS,
   CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
   createContinuousLadderProgress,
@@ -159,7 +160,7 @@ test('continuous ladder progress rejects an invalid or duplicate round outcome',
   );
 });
 
-test('continuous ladder retries only explicitly safe transient failures', () => {
+test('continuous ladder retries only explicitly designed recoverable failures', () => {
   const inputUnstable = new Error('价格框或数量框未稳定');
   inputUnstable.safeNoSubmit = true;
   inputUnstable.continuousRecoveryKind = 'input_unstable';
@@ -194,8 +195,34 @@ test('continuous ladder retries only explicitly safe transient failures', () => 
 
   const unknownOutcome = new Error('仍未确认订单结果');
   unknownOutcome.safeNoSubmit = false;
-  unknownOutcome.continuousRecoveryKind = 'input_unstable';
-  assert.equal(resolveContinuousLadderRecovery(unknownOutcome), null);
+  unknownOutcome.continuousRecoveryKind = 'submit_unconfirmed';
+  assert.deepEqual(resolveContinuousLadderRecovery(unknownOutcome), {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+    reason: '仍未确认订单结果',
+  });
+
+  const openOrdersNotReady = new Error('当前委托列表暂未就绪');
+  openOrdersNotReady.continuousRecoveryKind = 'open_orders_not_ready';
+  assert.deepEqual(resolveContinuousLadderRecovery(openOrdersNotReady), {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+    reason: '当前委托列表暂未就绪',
+  });
+
+  const positionQuantityNotReady = new Error('当前方向暂无可平数量');
+  positionQuantityNotReady.safeNoSubmit = true;
+  positionQuantityNotReady.continuousRecoveryKind = 'position_quantity_not_ready';
+  assert.deepEqual(resolveContinuousLadderRecovery(positionQuantityNotReady), {
+    cooldownMs: CONTINUOUS_LADDER_LONG_RECOVERY_COOLDOWN_MS,
+    reason: '当前方向暂无可平数量',
+  });
+
+  const rateLimited = new Error('请求频率受限');
+  rateLimited.continuousRecoveryKind = 'rate_limited';
+  rateLimited.continuousRecoveryCooldownMs = 17000;
+  assert.deepEqual(resolveContinuousLadderRecovery(rateLimited), {
+    cooldownMs: 17000,
+    reason: '请求频率受限',
+  });
 
   const unsupported = new Error('未知错误');
   unsupported.safeNoSubmit = true;

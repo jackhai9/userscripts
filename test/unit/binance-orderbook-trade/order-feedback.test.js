@@ -12,8 +12,36 @@ import {
   isOpenLadderOpenOrdersCapacityFeedback,
   isPostOnlyMakerRejectionFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
+  resolveBinanceSubmitResponseRecovery,
   summarizeBinancePlaceOrderPayload,
 } from '../../../src/binance-orderbook-trade/core/order-feedback.js';
+
+test('classifies only rate limits and uncertain server responses as recoverable', () => {
+  assert.deepEqual(resolveBinanceSubmitResponseRecovery([
+    { httpStatus: 429, retryAfter: '7' },
+  ], []), {
+    kind: 'rate_limited',
+    cooldownMs: 7000,
+  });
+  assert.deepEqual(resolveBinanceSubmitResponseRecovery([
+    { httpStatus: 200, retryAfter: null },
+  ], [{ code: -1003 }]), {
+    kind: 'rate_limited',
+    cooldownMs: 10000,
+  });
+  assert.deepEqual(resolveBinanceSubmitResponseRecovery([
+    { httpStatus: 503, retryAfter: null },
+  ], []), {
+    kind: 'submit_unconfirmed',
+    cooldownMs: 3000,
+  });
+  assert.equal(resolveBinanceSubmitResponseRecovery([
+    { httpStatus: 400, retryAfter: null },
+  ], []), null);
+  assert.equal(resolveBinanceSubmitResponseRecovery([
+    { httpStatus: 403, retryAfter: null },
+  ], []), null);
+});
 
 test('classifies localized and English order feedback', () => {
   assert.equal(classifyOrderFeedback('委托已提交'), 'success');
