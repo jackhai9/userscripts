@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.171
+// @version      2.7.172
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1678,6 +1678,79 @@
   }
   function isBinancePlaceOrderSuccessPayload(payload) {
     return payload != null && typeof payload === "object" && !Array.isArray(payload) && payload.success === true && getBinanceApiErrorCode(payload) == null;
+  }
+  function readDiagnosticScalar(value) {
+    return ["string", "number", "boolean"].includes(typeof value) ? value : null;
+  }
+  function readDiagnosticMessage(value) {
+    if (typeof value !== "string") return null;
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized ? normalized.slice(0, 160) : null;
+  }
+  function summarizeBinancePlaceOrderPayload(payload) {
+    const payloadType = Array.isArray(payload) ? "array" : payload === null ? "null" : typeof payload;
+    if (payloadType !== "object") {
+      return {
+        payloadType,
+        payloadKeys: [],
+        dataKeys: [],
+        success: null,
+        code: null,
+        message: null
+      };
+    }
+    const data = payload.data;
+    return {
+      payloadType,
+      payloadKeys: Object.keys(payload).sort(),
+      dataKeys: data && typeof data === "object" && !Array.isArray(data) ? Object.keys(data).sort() : [],
+      success: readDiagnosticScalar(payload.success),
+      code: readDiagnosticScalar(payload.code),
+      message: readDiagnosticMessage(payload.message ?? payload.msg)
+    };
+  }
+  function formatRetryAfter(value) {
+    if (value == null || value === "") return null;
+    return /^\d+(?:\.\d+)?$/.test(String(value)) ? `Retry-After ${value}s` : `Retry-After ${value}`;
+  }
+  function formatBinancePlaceOrderResponseDiagnostic(diagnostic) {
+    const parts = [];
+    if (diagnostic.httpStatus != null) parts.push(`HTTP ${diagnostic.httpStatus}`);
+    if (diagnostic.contentType) parts.push(diagnostic.contentType);
+    const retryAfter = formatRetryAfter(diagnostic.retryAfter);
+    if (retryAfter) parts.push(retryAfter);
+    const orderCounts = [];
+    if (diagnostic.orderCount10s != null) {
+      orderCounts.push(`X-MBX-ORDER-COUNT-10S=${diagnostic.orderCount10s}`);
+    }
+    if (diagnostic.orderCount1m != null) {
+      orderCounts.push(`X-MBX-ORDER-COUNT-1M=${diagnostic.orderCount1m}`);
+    }
+    if (orderCounts.length > 0) parts.push(orderCounts.join(" · "));
+    if (diagnostic.usedWeight1m != null) {
+      parts.push(`X-MBX-USED-WEIGHT-1M=${diagnostic.usedWeight1m}`);
+    }
+    if (diagnostic.bodyKind === "non_json") {
+      parts.push("non-JSON");
+    } else if (diagnostic.bodyKind === "invalid_json") {
+      parts.push(`JSON parse error${diagnostic.errorName ? ` ${diagnostic.errorName}` : ""}`);
+    } else if (diagnostic.bodyKind === "network_error") {
+      parts.push(`network error${diagnostic.errorName ? ` ${diagnostic.errorName}` : ""}`);
+    } else if (diagnostic.bodyKind === "observation_error") {
+      parts.push(`response observer error${diagnostic.errorName ? ` ${diagnostic.errorName}` : ""}`);
+    } else if (diagnostic.bodyKind === "json") {
+      const summary = diagnostic.payloadSummary;
+      if (!summary) throw new Error("下单 JSON 响应摘要缺失");
+      if (summary.success != null) parts.push(`success=${summary.success}`);
+      if (summary.code != null) parts.push(`code=${summary.code}`);
+      if (summary.message) parts.push(`message=${summary.message}`);
+      if (summary.payloadKeys.length > 0) parts.push(`keys=${summary.payloadKeys.join(",")}`);
+      else parts.push(`JSON type=${summary.payloadType}`);
+      if (summary.dataKeys.length > 0) parts.push(`data.keys=${summary.dataKeys.join(",")}`);
+    } else {
+      throw new Error(`未知下单响应类型：${diagnostic.bodyKind}`);
+    }
+    return parts.join(" · ");
   }
 
   // src/shared/binance-futures-route.js
@@ -4260,6 +4333,7 @@
         captureId: ladderSubmitCaptureSequence,
         apiErrors: [],
         apiSuccesses: [],
+        responseDiagnostics: [],
         responseObservations: [],
         requestStarted,
         resolveRequestStarted
@@ -4269,10 +4343,46 @@
     function endLadderSubmitResponseCapture(captureId) {
       if (activeLadderSubmitCapture?.captureId === captureId) activeLadderSubmitCapture = null;
     }
+    function readLadderSubmitResponseDiagnosticHeaders(response) {
+      return {
+        httpStatus: response.status,
+        contentType: response.headers.get("content-type") || "",
+        retryAfter: response.headers.get("retry-after"),
+        orderCount10s: response.headers.get("x-mbx-order-count-10s"),
+        orderCount1m: response.headers.get("x-mbx-order-count-1m"),
+        usedWeight1m: response.headers.get("x-mbx-used-weight-1m")
+      };
+    }
     async function observeLadderSubmitResponse(response, capture, requestUrl) {
+      const responseHeaders = readLadderSubmitResponseDiagnosticHeaders(response);
       const contentType = response.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) return;
-      const payload = await response.clone().json();
+      if (!contentType.includes("application/json")) {
+        capture.responseDiagnostics.push({
+          ...responseHeaders,
+          bodyKind: "non_json",
+          payloadSummary: null,
+          errorName: null
+        });
+        return;
+      }
+      let payload;
+      try {
+        payload = await response.clone().json();
+      } catch (error) {
+        capture.responseDiagnostics.push({
+          ...responseHeaders,
+          bodyKind: "invalid_json",
+          payloadSummary: null,
+          errorName: error?.name || "Error"
+        });
+        return;
+      }
+      capture.responseDiagnostics.push({
+        ...responseHeaders,
+        bodyKind: "json",
+        payloadSummary: summarizeBinancePlaceOrderPayload(payload),
+        errorName: null
+      });
       const code = getBinanceApiErrorCode(payload);
       if (code != null) {
         capture.apiErrors.push({ requestUrl, code });
@@ -4283,7 +4393,34 @@
       }
     }
     function trackLadderSubmitResponse(request, capture, requestUrl) {
-      const observation = request.then((response) => observeLadderSubmitResponse(response, capture, requestUrl)).catch(() => null);
+      const observation = request.then(
+        (response) => observeLadderSubmitResponse(response, capture, requestUrl),
+        (error) => {
+          capture.responseDiagnostics.push({
+            httpStatus: null,
+            contentType: "",
+            retryAfter: null,
+            orderCount10s: null,
+            orderCount1m: null,
+            usedWeight1m: null,
+            bodyKind: "network_error",
+            payloadSummary: null,
+            errorName: error?.name || "Error"
+          });
+        }
+      ).catch((error) => {
+        capture.responseDiagnostics.push({
+          httpStatus: null,
+          contentType: "",
+          retryAfter: null,
+          orderCount10s: null,
+          orderCount1m: null,
+          usedWeight1m: null,
+          bodyKind: "observation_error",
+          payloadSummary: null,
+          errorName: error?.name || "Error"
+        });
+      });
       capture.responseObservations.push(observation);
       capture.resolveRequestStarted();
     }
@@ -4318,7 +4455,8 @@
       }
       return {
         settled,
-        apiErrors: capture.apiErrors.slice()
+        apiErrors: capture.apiErrors.slice(),
+        diagnostics: capture.responseDiagnostics.slice()
       };
     }
     function readLadderSubmitApiErrors(captureId) {
@@ -5682,7 +5820,7 @@
         submitCaptureId,
         LADDER_SUBMIT_RESPONSE_TIMEOUT_MS,
         abortSignal
-      ) : { settled: false, apiErrors: [] };
+      ) : { settled: false, apiErrors: [], diagnostics: [] };
       const capturedApiErrors = responseObservation.apiErrors;
       const capturedApiSuccesses = readLadderSubmitApiSuccesses(submitCaptureId);
       if (capturedApiErrors.length === 1 && isBinancePostOnlyMakerRejectCode(capturedApiErrors[0].code)) {
@@ -5705,7 +5843,8 @@
         throw new Error(`${failureActivity.message}（${diagnostic}）`);
       }
       if (capturedApiSuccesses.length === 1) return;
-      const settleHint = responseObservation.settled ? "下单请求已返回，但结果未识别" : sawBusy ? "下单按钮已恢复，但下单请求仍未返回" : "下单请求仍未返回";
+      const responseDiagnostic = responseObservation.diagnostics.length === 0 ? "" : responseObservation.diagnostics.map(formatBinancePlaceOrderResponseDiagnostic).join(" | ");
+      const settleHint = responseObservation.settled ? `下单请求已返回，但结果未识别${responseDiagnostic ? `：${responseDiagnostic}` : ""}` : sawBusy ? "下单按钮已恢复，但下单请求仍未返回" : "下单请求仍未返回";
       throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
     }
     async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null) {

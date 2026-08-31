@@ -294,14 +294,22 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(observeBody, /isBinancePlaceOrderSuccessPayload\(payload\)/);
   assert.match(observeBody, /capture\.apiSuccesses\.push\(\{ requestUrl \}\)/);
   assert.match(observeBody, /capture\.apiErrors\.push\(\{ requestUrl, code \}\)/);
+  assert.match(observeBody, /capture\.responseDiagnostics\.push/);
+  assert.match(observeBody, /bodyKind: 'non_json'/);
+  assert.match(observeBody, /bodyKind: 'invalid_json'/);
+  assert.match(observeBody, /summarizeBinancePlaceOrderPayload\(payload\)/);
 
   const trackBody = readFunctionBody('trackLadderSubmitResponse');
   assert.match(trackBody, /capture\.resolveRequestStarted\(\)/);
+  assert.match(trackBody, /bodyKind: 'network_error'/);
+  assert.match(trackBody, /bodyKind: 'observation_error'/);
+  assert.doesNotMatch(trackBody, /\.catch\(\(\) => null\)/);
 
   const observationBody = readFunctionBody('waitForLadderSubmitResponseObservations');
   assert.match(observationBody, /capture\.responseObservations\.slice\(\)/);
   assert.match(observationBody, /Promise\.race\(\[/);
   assert.match(observationBody, /delay\(timeoutMs\)/);
+  assert.match(observationBody, /diagnostics: capture\.responseDiagnostics\.slice\(\)/);
 
   const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
   assert.match(acknowledgementBody, /waitForOrderSubmitStartOrFailureFeedback\(/);
@@ -313,6 +321,7 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(acknowledgementBody, /isPostOnlyMakerRejectionFeedback\(failureActivity\.message\)/);
   assert.match(acknowledgementBody, /createLadderMakerPriceConflictError\(failureActivity\.message\)/);
   assert.match(acknowledgementBody, /capturedApiSuccesses\.length === 1/);
+  assert.match(acknowledgementBody, /formatBinancePlaceOrderResponseDiagnostic/);
   assert.doesNotMatch(acknowledgementBody, /LADDER_SUBMIT_POLL_MS|await delay\(/);
   assert.doesNotMatch(acknowledgementBody, /acknowledgement\.status === 'success'/);
   assert.doesNotMatch(source, /LADDER_SUBMIT_API_CODE_GRACE_MS/);
