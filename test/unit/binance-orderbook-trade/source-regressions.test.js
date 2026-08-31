@@ -271,7 +271,7 @@ test('continuous close recovers a confirmed max-open-orders rejection by freeing
   const cancelPlanBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   const startBody = readFunctionBody('startLadder');
 
-  assert.match(source, /const MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT = 100;/);
+  assert.match(source, /const MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT = 50;/);
   assert.match(acknowledgementBody, /isBinanceMaxOpenOrdersErrorCode\(capturedApiErrors\[0\]\.code\)/);
   assert.match(acknowledgementBody, /createLadderMaxOpenOrdersError\(capturedApiErrors\[0\]\)/);
   assert.match(source, /if \(apiError\.success !== false\) throw new Error\('最大挂单限制响应缺少 success=false'\)/);
