@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.170
+// @version      2.7.171
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -300,7 +300,11 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     LOCAL_LADDER_OPEN_STEP_KEY,
     LOCAL_LADDER_CLOSE_STEP_KEY,
   ];
-  const LADDER_SUBMIT_ACK_TIMEOUT_MS = 3500;
+  const LADDER_SUBMIT_START_TIMEOUT_MS = 3500;
+  // Binance can take up to 10 seconds to resolve an accepted order request.
+  // Once the exact fetch is observed, keep waiting for that response instead of
+  // treating the original UI-start deadline as the response deadline too.
+  const LADDER_SUBMIT_RESPONSE_TIMEOUT_MS = 12000;
   const LADDER_ACTION_FEEDBACK_MIN_MS = 240;
   const CONTINUOUS_CLOSE_POSITION_CHECK_MS = 1000;
   const MULTIPLIER_PRESS_FEEDBACK_MS = 140;
@@ -1358,19 +1362,33 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     });
   }
 
-  async function waitForLadderSubmitResponseObservations(captureId, timeoutMs) {
+  async function waitForLadderSubmitResponseObservations(
+    captureId,
+    timeoutMs,
+    abortSignal = null,
+  ) {
     const capture = activeLadderSubmitCapture?.captureId === captureId
       ? activeLadderSubmitCapture
       : null;
     if (!capture) throw new Error('下单结果跟踪状态异常，已停止');
     const observations = capture.responseObservations.slice();
-    if (observations.length > 0 && timeoutMs > 0) {
-      await Promise.race([
-        Promise.all(observations),
-        delay(timeoutMs),
-      ]);
+    let settled = observations.length === 0;
+    if (observations.length > 0) {
+      const allObservations = Promise.all(observations).then(() => {
+        settled = true;
+      });
+      await waitForPromiseOrAbort(
+        Promise.race([
+          allObservations,
+          delay(timeoutMs),
+        ]),
+        abortSignal,
+      );
     }
-    return capture.apiErrors.slice();
+    return {
+      settled,
+      apiErrors: capture.apiErrors.slice(),
+    };
   }
 
   function readLadderSubmitApiErrors(captureId) {
@@ -2971,18 +2989,31 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     });
   }
 
-  async function waitForOrderSubmitAcknowledgement(button, label, previousFeedbackSnapshot, submitCaptureId, mode) {
-    const startedAt = Date.now();
+  async function waitForOrderSubmitAcknowledgement(
+    button,
+    label,
+    previousFeedbackSnapshot,
+    submitCaptureId,
+    mode,
+    abortSignal = null,
+  ) {
     const sawBusy = isSubmitButtonBusy(button);
-    const activity = await waitForOrderSubmitStartOrFailureFeedback(
-      submitCaptureId,
-      previousFeedbackSnapshot,
-      LADDER_SUBMIT_ACK_TIMEOUT_MS,
+    const activity = await waitForPromiseOrAbort(
+      waitForOrderSubmitStartOrFailureFeedback(
+        submitCaptureId,
+        previousFeedbackSnapshot,
+        LADDER_SUBMIT_START_TIMEOUT_MS,
+      ),
+      abortSignal,
     );
-    const remainingAckMs = Math.max(0, LADDER_SUBMIT_ACK_TIMEOUT_MS - (Date.now() - startedAt));
-    const capturedApiErrors = activeLadderSubmitCapture.responseObservations.length > 0
-      ? await waitForLadderSubmitResponseObservations(submitCaptureId, remainingAckMs)
-      : [];
+    const responseObservation = activity.status === 'request_started'
+      ? await waitForLadderSubmitResponseObservations(
+        submitCaptureId,
+        LADDER_SUBMIT_RESPONSE_TIMEOUT_MS,
+        abortSignal,
+      )
+      : { settled: false, apiErrors: [] };
+    const capturedApiErrors = responseObservation.apiErrors;
     const capturedApiSuccesses = readLadderSubmitApiSuccesses(submitCaptureId);
 
     if (
@@ -2993,10 +3024,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     }
     let failureActivity = activity.status === 'failure' ? activity : null;
     if (!failureActivity && capturedApiErrors.length > 0) {
-      const feedbackWaitMs = Math.max(0, LADDER_SUBMIT_ACK_TIMEOUT_MS - (Date.now() - startedAt));
       failureActivity = await waitForOrderFailureFeedback(
         previousFeedbackSnapshot,
-        feedbackWaitMs,
+        LADDER_SUBMIT_START_TIMEOUT_MS,
       );
       if (failureActivity.status !== 'failure') failureActivity = null;
     }
@@ -3017,7 +3047,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     }
     if (capturedApiSuccesses.length === 1) return;
 
-    const settleHint = sawBusy ? '下单按钮已恢复，但仍未确认订单结果' : '仍未确认订单结果';
+    const settleHint = responseObservation.settled
+      ? '下单请求已返回，但结果未识别'
+      : (sawBusy ? '下单按钮已恢复，但下单请求仍未返回' : '下单请求仍未返回');
     throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
   }
 
@@ -3116,6 +3148,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
               previousFeedback,
               submitCaptureId,
               plan.spec.mode,
+              abortSignal,
             );
           } finally {
             endLadderSubmitResponseCapture(submitCaptureId);
