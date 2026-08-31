@@ -1782,11 +1782,30 @@ test('continuous close ladders recover only from tagged pre-submit transients', 
 test('continuous close ladders continue after an explicitly tagged unconfirmed submission', () => {
   const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
   const recoveryBody = readFunctionBody('createContinuousUnconfirmedSubmitError');
+  const generatedRecoveryBody = readFunctionBody(
+    'createContinuousUnconfirmedSubmitError',
+    generatedSource,
+  );
+  const panelCopyImport = source.match(
+    /import \{([^}]*)\} from '\.\/contracts\/panel-copy\.js';/,
+  );
 
+  assert.notEqual(panelCopyImport, null);
+  assert.match(panelCopyImport[1], /\bisLocalizedText\b/);
   assert.match(acknowledgementBody, /createContinuousUnconfirmedSubmitError\(/);
   assert.doesNotMatch(acknowledgementBody, /未确认\$\{label\}成功[\s\S]*已停止/);
+  assert.match(recoveryBody, /if \(!isLocalizedText\(message\)\)/);
   assert.match(recoveryBody, /error\.continuousRecoveryKind = 'submit_unconfirmed'/);
   assert.doesNotMatch(recoveryBody, /error\.safeNoSubmit = true/);
+
+  const generatedGuard = generatedRecoveryBody.match(
+    /if \(!([A-Za-z_$][\w$]*)\(message\)\)/,
+  );
+  assert.notEqual(generatedGuard, null);
+  assert.match(
+    generatedSource,
+    new RegExp(`(?:function|var|let|const)\\s+${generatedGuard[1]}\\b`),
+  );
 });
 
 test('continuous close defers temporary startup, position, capacity, and open-order failures', () => {

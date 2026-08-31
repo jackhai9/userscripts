@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.176
+// @version      2.7.177
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -136,14 +136,14 @@
     }
     return Object.freeze({ zhCN, en });
   }
-  function isLocalizedText2(value) {
+  function isLocalizedText(value) {
     return Boolean(
       value && typeof value === "object" && typeof value.zhCN === "string" && typeof value.en === "string"
     );
   }
   function formatLocalizedText(value, locale) {
     if (typeof value === "string") return value;
-    if (!isLocalizedText2(value)) throw new Error("Invalid localized UI text");
+    if (!isLocalizedText(value)) throw new Error("Invalid localized UI text");
     if (locale === UI_LOCALE_ZH_CN) return value.zhCN;
     if (locale === UI_LOCALE_EN) return value.en;
     throw new Error(`Unsupported UI locale: ${locale}`);
@@ -1209,12 +1209,12 @@
     }
   }
   function assertLadderLabel(label) {
-    if (!(isLocalizedText2(label) || typeof label === "string" && label.trim() !== "")) {
+    if (!(isLocalizedText(label) || typeof label === "string" && label.trim() !== "")) {
       throw new Error("阶梯动作名称无效");
     }
   }
   function assertLadderMessage(message) {
-    if (!(isLocalizedText2(message) || typeof message === "string" && message.trim() !== "")) {
+    if (!(isLocalizedText(message) || typeof message === "string" && message.trim() !== "")) {
       throw new Error("阶梯进度信息无效");
     }
   }
@@ -1397,7 +1397,7 @@
     interrupted: localizedText("已中止", "Interrupted")
   });
   function isValidLocalizedValue(value) {
-    return isLocalizedText2(value) || typeof value === "string" && value.trim() !== "";
+    return isLocalizedText(value) || typeof value === "string" && value.trim() !== "";
   }
   function assertContinuousLadderProgress(progress) {
     if (!progress || !Number.isInteger(progress.startedRounds) || progress.startedRounds < 0 || !Number.isInteger(progress.completedRounds) || progress.completedRounds < 0 || progress.completedRounds > progress.startedRounds || !Number.isInteger(progress.submittedOrders) || progress.submittedOrders < 0 || !Number.isInteger(progress.cancelledOrders) || progress.cancelledOrders < 0 || progress.startedRounds === 0 !== (progress.lastRound === null)) {
