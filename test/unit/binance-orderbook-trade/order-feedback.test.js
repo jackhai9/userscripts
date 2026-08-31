@@ -4,12 +4,14 @@ import assert from 'node:assert/strict';
 import {
   classifyOrderFeedback,
   evaluateOrderSubmitAcknowledgement,
+  formatBinancePlaceOrderResponseDiagnostic,
   getBinanceApiErrorCode,
   isBinancePlaceOrderSuccessPayload,
   isBinancePostOnlyMakerRejectCode,
   isOpenLadderOpenOrdersCapacityFeedback,
   isPostOnlyMakerRejectionFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
+  summarizeBinancePlaceOrderPayload,
 } from '../../../src/binance-orderbook-trade/core/order-feedback.js';
 
 test('classifies localized and English order feedback', () => {
@@ -113,6 +115,77 @@ test('recognizes only the verified Binance place-order success payload contract'
   assert.equal(isBinancePlaceOrderSuccessPayload({}), false);
   assert.equal(isBinancePlaceOrderSuccessPayload([]), false);
   assert.equal(isBinancePlaceOrderSuccessPayload(null), false);
+});
+
+test('summarizes unknown place-order payloads without retaining order data values', () => {
+  assert.deepEqual(summarizeBinancePlaceOrderPayload({
+    code: '000000',
+    success: false,
+    message: 'Request was throttled',
+    data: {
+      orderId: 123456789,
+      price: '0.16380',
+      quantity: '1',
+    },
+  }), {
+    payloadType: 'object',
+    payloadKeys: ['code', 'data', 'message', 'success'],
+    dataKeys: ['orderId', 'price', 'quantity'],
+    success: false,
+    code: '000000',
+    message: 'Request was throttled',
+  });
+});
+
+test('formats rate-limit response evidence without exposing response data values', () => {
+  const detail = formatBinancePlaceOrderResponseDiagnostic({
+    httpStatus: 429,
+    contentType: 'text/html; charset=utf-8',
+    retryAfter: '2',
+    orderCount10s: '301',
+    orderCount1m: '801',
+    usedWeight1m: '2401',
+    bodyKind: 'non_json',
+    payloadSummary: null,
+    errorName: null,
+  });
+
+  assert.equal(
+    detail,
+    'HTTP 429 · text/html; charset=utf-8 · Retry-After 2s · X-MBX-ORDER-COUNT-10S=301 · X-MBX-ORDER-COUNT-1M=801 · X-MBX-USED-WEIGHT-1M=2401 · non-JSON',
+  );
+  assert.doesNotMatch(detail, /orderId|0\.16380|123456789/);
+});
+
+test('formats unknown JSON response shape and parse failures', () => {
+  assert.equal(formatBinancePlaceOrderResponseDiagnostic({
+    httpStatus: 200,
+    contentType: 'application/json',
+    retryAfter: null,
+    orderCount10s: null,
+    orderCount1m: null,
+    usedWeight1m: null,
+    bodyKind: 'json',
+    payloadSummary: summarizeBinancePlaceOrderPayload({
+      code: '000000',
+      success: false,
+      message: 'Unknown result',
+      data: { orderId: 123456789 },
+    }),
+    errorName: null,
+  }), 'HTTP 200 · application/json · success=false · code=000000 · message=Unknown result · keys=code,data,message,success · data.keys=orderId');
+
+  assert.equal(formatBinancePlaceOrderResponseDiagnostic({
+    httpStatus: 502,
+    contentType: 'application/json',
+    retryAfter: null,
+    orderCount10s: null,
+    orderCount1m: null,
+    usedWeight1m: null,
+    bodyKind: 'invalid_json',
+    payloadSummary: null,
+    errorName: 'SyntaxError',
+  }), 'HTTP 502 · application/json · JSON parse error SyntaxError');
 });
 
 test('recognizes only verified Binance Post Only maker rejection codes', () => {

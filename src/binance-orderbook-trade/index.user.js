@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.171
+// @version      2.7.172
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -119,6 +119,7 @@ import {
 import { formatStatusBaseAsset } from './core/status-symbol.js';
 import {
   evaluateOrderSubmitAcknowledgement,
+  formatBinancePlaceOrderResponseDiagnostic,
   getBinanceApiErrorCode,
   isBinancePlaceOrderSuccessPayload,
   isBinancePostOnlyMakerRejectCode,
@@ -126,6 +127,7 @@ import {
   isPostOnlyMakerRejectionFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
   isPotentialOrderFeedbackText,
+  summarizeBinancePlaceOrderPayload,
 } from './core/order-feedback.js';
 import {
   isFuturesTradingPathname,
@@ -1316,6 +1318,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       captureId: ladderSubmitCaptureSequence,
       apiErrors: [],
       apiSuccesses: [],
+      responseDiagnostics: [],
       responseObservations: [],
       requestStarted,
       resolveRequestStarted,
@@ -1327,10 +1330,47 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     if (activeLadderSubmitCapture?.captureId === captureId) activeLadderSubmitCapture = null;
   }
 
+  function readLadderSubmitResponseDiagnosticHeaders(response) {
+    return {
+      httpStatus: response.status,
+      contentType: response.headers.get('content-type') || '',
+      retryAfter: response.headers.get('retry-after'),
+      orderCount10s: response.headers.get('x-mbx-order-count-10s'),
+      orderCount1m: response.headers.get('x-mbx-order-count-1m'),
+      usedWeight1m: response.headers.get('x-mbx-used-weight-1m'),
+    };
+  }
+
   async function observeLadderSubmitResponse(response, capture, requestUrl) {
+    const responseHeaders = readLadderSubmitResponseDiagnosticHeaders(response);
     const contentType = response.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) return;
-    const payload = await response.clone().json();
+    if (!contentType.includes('application/json')) {
+      capture.responseDiagnostics.push({
+        ...responseHeaders,
+        bodyKind: 'non_json',
+        payloadSummary: null,
+        errorName: null,
+      });
+      return;
+    }
+    let payload;
+    try {
+      payload = await response.clone().json();
+    } catch (error) {
+      capture.responseDiagnostics.push({
+        ...responseHeaders,
+        bodyKind: 'invalid_json',
+        payloadSummary: null,
+        errorName: error?.name || 'Error',
+      });
+      return;
+    }
+    capture.responseDiagnostics.push({
+      ...responseHeaders,
+      bodyKind: 'json',
+      payloadSummary: summarizeBinancePlaceOrderPayload(payload),
+      errorName: null,
+    });
     const code = getBinanceApiErrorCode(payload);
     if (code != null) {
       capture.apiErrors.push({ requestUrl, code });
@@ -1343,8 +1383,35 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   function trackLadderSubmitResponse(request, capture, requestUrl) {
     const observation = request
-      .then((response) => observeLadderSubmitResponse(response, capture, requestUrl))
-      .catch(() => null);
+      .then(
+        (response) => observeLadderSubmitResponse(response, capture, requestUrl),
+        (error) => {
+          capture.responseDiagnostics.push({
+            httpStatus: null,
+            contentType: '',
+            retryAfter: null,
+            orderCount10s: null,
+            orderCount1m: null,
+            usedWeight1m: null,
+            bodyKind: 'network_error',
+            payloadSummary: null,
+            errorName: error?.name || 'Error',
+          });
+        },
+      )
+      .catch((error) => {
+        capture.responseDiagnostics.push({
+          httpStatus: null,
+          contentType: '',
+          retryAfter: null,
+          orderCount10s: null,
+          orderCount1m: null,
+          usedWeight1m: null,
+          bodyKind: 'observation_error',
+          payloadSummary: null,
+          errorName: error?.name || 'Error',
+        });
+      });
     capture.responseObservations.push(observation);
     capture.resolveRequestStarted();
   }
@@ -1388,6 +1455,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return {
       settled,
       apiErrors: capture.apiErrors.slice(),
+      diagnostics: capture.responseDiagnostics.slice(),
     };
   }
 
@@ -3012,7 +3080,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         LADDER_SUBMIT_RESPONSE_TIMEOUT_MS,
         abortSignal,
       )
-      : { settled: false, apiErrors: [] };
+      : { settled: false, apiErrors: [], diagnostics: [] };
     const capturedApiErrors = responseObservation.apiErrors;
     const capturedApiSuccesses = readLadderSubmitApiSuccesses(submitCaptureId);
 
@@ -3047,8 +3115,13 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     }
     if (capturedApiSuccesses.length === 1) return;
 
+    const responseDiagnostic = responseObservation.diagnostics.length === 0
+      ? ''
+      : responseObservation.diagnostics
+        .map(formatBinancePlaceOrderResponseDiagnostic)
+        .join(' | ');
     const settleHint = responseObservation.settled
-      ? '下单请求已返回，但结果未识别'
+      ? `下单请求已返回，但结果未识别${responseDiagnostic ? `：${responseDiagnostic}` : ''}`
       : (sawBusy ? '下单按钮已恢复，但下单请求仍未返回' : '下单请求仍未返回');
     throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
   }
