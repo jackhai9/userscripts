@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.173
+// @version      2.7.174
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -6822,6 +6822,14 @@
         view: window
       }));
     }
+    function createOpenOrderCancellationUnconfirmedError(message) {
+      const error = new Error(message);
+      error.name = "OpenOrderCancellationUnconfirmedError";
+      return error;
+    }
+    function isOpenOrderCancellationUnconfirmedError(error) {
+      return error?.name === "OpenOrderCancellationUnconfirmedError";
+    }
     function getOpenOrderRowKey(cells, row) {
       const cellText = cells.slice(0, 10).map((cell) => (cell.textContent || "").replace(/\s+/g, " ").trim()).join("|");
       return cellText || (row.textContent || "").replace(/\s+/g, " ").trim();
@@ -7125,7 +7133,7 @@
         throw new Error("撤销待替换挂单时交易对已变化");
       }
       if (outcome.status === "timeout") {
-        throw new Error("待替换挂单仍存在，已停止重新挂单");
+        throw createOpenOrderCancellationUnconfirmedError("待替换挂单仍存在，已停止重新挂单");
       }
       if (outcome.status === "dialog_open") {
         const { dialog } = outcome;
@@ -7152,7 +7160,7 @@
           previousKeyCount,
           abortSignal
         )) {
-          throw new Error("待替换挂单仍存在，已停止重新挂单");
+          throw createOpenOrderCancellationUnconfirmedError("待替换挂单仍存在，已停止重新挂单");
         }
       }
       throwIfAborted(abortSignal);
@@ -7162,7 +7170,7 @@
         previousKeyCount,
         abortSignal
       )) {
-        throw new Error("待替换挂单状态未稳定，已停止重新挂单");
+        throw createOpenOrderCancellationUnconfirmedError("待替换挂单状态未稳定，已停止重新挂单");
       }
       recordLadderCancelledOrder(progress);
       return { status: "cancelled", qty: row.qty };
@@ -7201,6 +7209,7 @@
     async function cancelFarthestOpenOrderRowsForPlan(root, plan, targets, progress, setExecutionStatus, abortSignal = null) {
       let releasedCount = 0;
       let cancelledCount = 0;
+      let unconfirmedCount = 0;
       let currentRoot = root;
       for (const target of targets) {
         throwIfAborted(abortSignal);
@@ -7218,14 +7227,25 @@
           row = completeRows.find((candidate) => candidate.key === target.key) || null;
         }
         if (row) {
-          const result = await cancelOneOpenOrderRowForPlan(
-            row,
-            plan,
-            progress,
-            setExecutionStatus,
-            abortSignal
-          );
-          if (result.status === "cancelled") cancelledCount += 1;
+          try {
+            const result = await cancelOneOpenOrderRowForPlan(
+              row,
+              plan,
+              progress,
+              setExecutionStatus,
+              abortSignal
+            );
+            if (result.status === "cancelled") cancelledCount += 1;
+          } catch (error) {
+            if (!isOpenOrderCancellationUnconfirmedError(error)) throw error;
+            unconfirmedCount += 1;
+            const detail2 = localizedText(
+              `已释放 ${releasedCount} 个挂单名额 · 当前撤单未确认，继续本轮`,
+              `Freed ${releasedCount} order slots · Current cancellation unconfirmed; continuing this round`
+            );
+            setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail2], "："), detail2);
+            break;
+          }
         }
         releasedCount += 1;
         const detail = localizedText(
@@ -7234,7 +7254,7 @@
         );
         setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], "："), detail);
       }
-      return { ok: true, releasedCount, cancelledCount };
+      return { ok: true, releasedCount, cancelledCount, unconfirmedCount };
     }
     async function setHideOtherSymbolChecked(root, desiredChecked, symbol = getCurrentSymbol(), abortSignal = null) {
       throwIfAborted(abortSignal);
@@ -8033,7 +8053,10 @@
             abortSignal
           );
           throwIfAborted(abortSignal);
-          const completedDetail = localizedText(
+          const completedDetail = result.unconfirmedCount > 0 ? localizedText(
+            `已释放 ${result.releasedCount} 个挂单名额 · ${result.unconfirmedCount} 笔未确认，继续本轮`,
+            `Freed ${result.releasedCount} order slots · ${result.unconfirmedCount} unconfirmed; continuing this round`
+          ) : localizedText(
             `已释放 ${result.releasedCount} 个挂单名额，继续本轮`,
             `Freed ${result.releasedCount} order slots; continuing this round`
           );

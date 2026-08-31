@@ -294,6 +294,26 @@ test('continuous close recovers a confirmed max-open-orders rejection by freeing
   assert.doesNotMatch(cancelPlanBody, /findCurrentSymbolCancelAllButton/);
 });
 
+test('capacity recovery skips an unconfirmed row cancellation without claiming the slot was released', () => {
+  const cancelOneRowBody = readFunctionBody('cancelOneOpenOrderRowForPlan');
+  const cancelFarthestBody = readFunctionBody('cancelFarthestOpenOrderRowsForPlan');
+
+  assert.match(cancelOneRowBody, /createOpenOrderCancellationUnconfirmedError\('待替换挂单仍存在，已停止重新挂单'\)/);
+  assert.match(cancelOneRowBody, /createOpenOrderCancellationUnconfirmedError\('待替换挂单状态未稳定，已停止重新挂单'\)/);
+  assert.match(cancelFarthestBody, /catch \(error\) \{[\s\S]*isOpenOrderCancellationUnconfirmedError\(error\)/);
+  assert.match(cancelFarthestBody, /unconfirmedCount \+= 1;[\s\S]*break;/);
+  assert.match(cancelFarthestBody, /releasedCount \+= 1;/);
+
+  const unconfirmedCatchStart = cancelFarthestBody.indexOf('catch (error) {');
+  const unconfirmedBreak = cancelFarthestBody.indexOf('break;', unconfirmedCatchStart);
+  const releasedCountIncrement = cancelFarthestBody.indexOf('releasedCount += 1;', unconfirmedBreak);
+  assert.ok(
+    unconfirmedCatchStart >= 0
+    && unconfirmedCatchStart < unconfirmedBreak
+    && unconfirmedBreak < releasedCountIncrement,
+  );
+});
+
 test('open and close ladders reprice only remaining orders after explicit maker conflicts', () => {
   const retryBody = readFunctionBody('isRetryableLadderMakerPriceFailure');
   assert.match(retryBody, /plan\?\.spec\?\.mode !== 'OPEN'/);
