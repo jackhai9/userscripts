@@ -264,6 +264,36 @@ test('ladder retries with restricted open-order replacement after supported feed
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*setExecutionStatus,\s*abortController\.signal/);
 });
 
+test('continuous close recovers a confirmed max-open-orders rejection by freeing farthest slots', () => {
+  const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
+  const executeBody = readFunctionBody('executeLadderPlan');
+  const loadRowsBody = readFunctionBody('loadAllCurrentSymbolOpenOrderRows');
+  const cancelPlanBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
+  const startBody = readFunctionBody('startLadder');
+
+  assert.match(source, /const MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT = 100;/);
+  assert.match(acknowledgementBody, /isBinanceMaxOpenOrdersErrorCode\(capturedApiErrors\[0\]\.code\)/);
+  assert.match(acknowledgementBody, /createLadderMaxOpenOrdersError\(capturedApiErrors\[0\]\)/);
+  assert.match(source, /if \(apiError\.success !== false\) throw new Error\('最大挂单限制响应缺少 success=false'\)/);
+  assert.match(startBody, /allowMaxOpenOrdersRecovery:\s*continuousSession && spec\.mode === 'CLOSE'/);
+  assert.match(executeBody, /isRecoverableMaxOpenOrdersFailure\([\s\S]*options\?\.allowMaxOpenOrdersRecovery/);
+  assert.match(executeBody, /strategy:\s*'farthest_for_capacity'/);
+  assert.match(executeBody, /if \(maxOpenOrdersRecoveryAttempts > 0\)/);
+
+  const recoveryIndex = executeBody.indexOf("{ strategy: 'farthest_for_capacity' }");
+  const retryIndex = executeBody.indexOf('continue;', recoveryIndex);
+  const doneIndex = executeBody.indexOf('done++;', recoveryIndex);
+  assert.ok(recoveryIndex >= 0 && recoveryIndex < retryIndex && retryIndex < doneIndex);
+
+  assert.match(loadRowsBody, /scrollOpenOrderRowsToBottom\(scrollContainer\)/);
+  assert.match(loadRowsBody, /loadedCount > beforeCount/);
+  assert.match(loadRowsBody, /stableEndPasses >= 2/);
+  assert.match(loadRowsBody, /OPEN_ORDERS_LAZY_LOAD_TIMEOUT_MS/);
+  assert.match(cancelPlanBody, /loadAllCurrentSymbolOpenOrderRows\([\s\S]*selectFarthestOpenOrders\(/);
+  assert.match(cancelPlanBody, /MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT/);
+  assert.doesNotMatch(cancelPlanBody, /findCurrentSymbolCancelAllButton/);
+});
+
 test('open and close ladders reprice only remaining orders after explicit maker conflicts', () => {
   const retryBody = readFunctionBody('isRetryableLadderMakerPriceFailure');
   assert.match(retryBody, /plan\?\.spec\?\.mode !== 'OPEN'/);
@@ -293,7 +323,7 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(observeBody, /response\.ok/);
   assert.match(observeBody, /isBinancePlaceOrderSuccessPayload\(payload\)/);
   assert.match(observeBody, /capture\.apiSuccesses\.push\(\{ requestUrl \}\)/);
-  assert.match(observeBody, /capture\.apiErrors\.push\(\{ requestUrl, code \}\)/);
+  assert.match(observeBody, /code,\s*message: payloadSummary\.message,\s*success: payloadSummary\.success/);
   assert.match(observeBody, /capture\.responseDiagnostics\.push/);
   assert.match(observeBody, /bodyKind: 'non_json'/);
   assert.match(observeBody, /bodyKind: 'invalid_json'/);
@@ -771,8 +801,10 @@ test('user-facing trading failures preserve one precise reason and shared termin
 
 test('ladder replacement cancels visible current-symbol same-direction rows up to planned quantity', () => {
   const readRowsBody = readFunctionBody('readCurrentSymbolOpenOrderRows');
-  assert.match(readRowsBody, /findOpenOrderRowElements\(root/);
-  assert.match(readRowsBody, /BINANCE_PAGE_TEXT\.accountOrders\.rowCancel/);
+  const readRowElementsBody = readFunctionBody('readOpenOrderRowElements');
+  assert.match(readRowsBody, /readOpenOrderRowElements\(root\)/);
+  assert.match(readRowElementsBody, /findOpenOrderRowElements\(root/);
+  assert.match(readRowElementsBody, /BINANCE_PAGE_TEXT\.accountOrders\.rowCancel/);
   assert.doesNotMatch(readRowsBody, /list-item-container/);
   assert.match(readRowsBody, /cells\[5\]/);
   assert.match(readRowsBody, /sideText/);
@@ -829,6 +861,7 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(rowStateBody, /rows: \[\]/);
 
   const cancelOpenOrderRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
+  const cancelOneRowBody = readFunctionBody('cancelOneOpenOrderRowForPlan');
   assert.match(cancelOpenOrderRowsBody, /let currentRoot = root/);
   assert.match(cancelOpenOrderRowsBody, /readCurrentSymbolOpenOrderRows\(currentRoot,\s*plan\.symbol,\s*plan\)/);
   assert.match(cancelOpenOrderRowsBody, /const remainingQty = subtractDecimalStrings\(plan\.totalQty,\s*cancelQty\)/);
@@ -838,15 +871,16 @@ test('ladder replacement cancels visible current-symbol same-direction rows up t
   assert.match(cancelOpenOrderRowsBody, /const refreshedRoot = getActiveOpenOrdersScope\(\)/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = refreshedRoot/);
   assert.match(cancelOpenOrderRowsBody, /currentRoot = row\.root \|\| currentRoot/);
-  assert.match(cancelOpenOrderRowsBody, /clickDomTarget\(row\.cancelButton\)/);
-  assert.match(cancelOpenOrderRowsBody, /waitForOpenOrderRowCancellationOutcome\(/);
-  assert.match(cancelOpenOrderRowsBody, /outcome\.status === 'dialog_open'/);
-  assert.match(cancelOpenOrderRowsBody, /confirmOpenOrderRowKeyCountBelow\(\s*plan\.symbol,\s*row\.key,\s*previousKeyCount,\s*abortSignal/);
-  assert.doesNotMatch(cancelOpenOrderRowsBody, /waitForNewVisibleDialog/);
-  assert.match(cancelOpenOrderRowsBody, /const dialogClosed = await waitForDialogToClose\([\s\S]*abortSignal/);
-  assert.match(cancelOpenOrderRowsBody, /DialogNotClosedError/);
-  assert.doesNotMatch(cancelOpenOrderRowsBody, /waitForOpenOrderRowKeyCountBelow\(row\.root/);
-  assert.doesNotMatch(cancelOpenOrderRowsBody, /row\.cancelButton\.click\(\)/);
+  assert.match(cancelOpenOrderRowsBody, /cancelOneOpenOrderRowForPlan\(/);
+  assert.match(cancelOneRowBody, /clickDomTarget\(row\.cancelButton\)/);
+  assert.match(cancelOneRowBody, /waitForOpenOrderRowCancellationOutcome\(/);
+  assert.match(cancelOneRowBody, /outcome\.status === 'dialog_open'/);
+  assert.match(cancelOneRowBody, /confirmOpenOrderRowKeyCountBelow\(\s*plan\.symbol,\s*row\.key,\s*previousKeyCount,\s*abortSignal/);
+  assert.doesNotMatch(cancelOneRowBody, /waitForNewVisibleDialog/);
+  assert.match(cancelOneRowBody, /const dialogClosed = await waitForDialogToClose\([\s\S]*abortSignal/);
+  assert.match(cancelOneRowBody, /DialogNotClosedError/);
+  assert.doesNotMatch(cancelOneRowBody, /waitForOpenOrderRowKeyCountBelow\(row\.root/);
+  assert.doesNotMatch(cancelOneRowBody, /row\.cancelButton\.click\(\)/);
   assert.doesNotMatch(cancelOpenOrderRowsBody, /for \(const row of rowsToCancel\)/);
 
   const waitForRowRemovalBody = readFunctionBody('waitForOpenOrderRowKeyCountBelow');
@@ -902,6 +936,7 @@ test('stopping a ladder aborts replacement waits before another cancel or submit
   const executeBody = readFunctionBody('executeLadderPlan');
   const cancelPlanBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   const cancelRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
+  const cancelOneRowBody = readFunctionBody('cancelOneOpenOrderRowForPlan');
   const waitOutcomeBody = readFunctionBody('waitForOpenOrderRowCancellationOutcome');
 
   assert.match(source, /let ladderAbortController = null/);
@@ -916,9 +951,10 @@ test('stopping a ladder aborts replacement waits before another cancel or submit
   assert.match(cancelPlanBody, /isLadderStoppedError\(e\)[\s\S]*throw e/);
   assert.match(cancelPlanBody, /previousOpenOrdersSubTabIdentity = getOpenOrdersSubTabIdentity\([\s\S]*activateOpenOrdersBasicSubTab\(/);
   assert.match(cancelPlanBody, /symbolFilterOriginalChecked = getCheckboxCheckedState\([\s\S]*ensureOpenOrdersLimitedToCurrentSymbol\(/);
-  assert.match(cancelRowsBody, /throwIfAborted\(abortSignal\)[\s\S]*clickDomTarget\(row\.cancelButton\)/);
-  assert.match(cancelRowsBody, /waitForOpenOrderRowCancellationOutcome\([\s\S]*abortSignal/);
-  assert.match(cancelRowsBody, /waitForDialogToClose\([\s\S]*abortSignal/);
+  assert.match(cancelRowsBody, /throwIfAborted\(abortSignal\)[\s\S]*cancelOneOpenOrderRowForPlan\(/);
+  assert.match(cancelOneRowBody, /throwIfAborted\(abortSignal\)[\s\S]*clickDomTarget\(row\.cancelButton\)/);
+  assert.match(cancelOneRowBody, /waitForOpenOrderRowCancellationOutcome\([\s\S]*abortSignal/);
+  assert.match(cancelOneRowBody, /waitForDialogToClose\([\s\S]*abortSignal/);
   assert.match(waitOutcomeBody, /waitForPromiseOrAbort\([\s\S]*abortSignal/);
 });
 
@@ -928,6 +964,7 @@ test('stopping a ladder preserves confirmed submit and cancel progress', () => {
   const executeBody = readFunctionBody('executeLadderPlan');
   const cancelPlanBody = readFunctionBody('cancelCurrentSymbolOpenOrdersForPlan');
   const cancelRowsBody = readFunctionBody('cancelOpenOrderRowsForPlan');
+  const cancelOneRowBody = readFunctionBody('cancelOneOpenOrderRowForPlan');
 
   assert.match(startBody, /const progress = createLadderProgress\(\)/);
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*setExecutionStatus,\s*abortController\.signal/);
@@ -938,7 +975,7 @@ test('stopping a ladder preserves confirmed submit and cancel progress', () => {
   assert.match(runBody, /cancelCurrentSymbolOpenOrdersForPlan\(\s*replacementPlan,\s*progress,\s*setExecutionStatus,\s*abortSignal/);
   assert.match(executeBody, /waitForOrderSubmitAcknowledgement\([\s\S]*recordLadderSubmittedOrder\(progress\)/);
   assert.match(cancelPlanBody, /cancelOpenOrderRowsForPlan\(\s*openOrdersScope,\s*plan,\s*progress,\s*setExecutionStatus,\s*abortSignal/);
-  assert.match(cancelRowsBody, /confirmOpenOrderRowKeyCountBelow\([\s\S]*recordLadderCancelledOrder\(progress\)/);
+  assert.match(cancelOneRowBody, /confirmOpenOrderRowKeyCountBelow\([\s\S]*recordLadderCancelledOrder\(progress\)/);
 
   const acknowledgementIndex = executeBody.indexOf('await waitForOrderSubmitAcknowledgement(');
   const acknowledgementFinallyIndex = executeBody.indexOf('} finally {', acknowledgementIndex);
@@ -953,10 +990,10 @@ test('stopping a ladder preserves confirmed submit and cancel progress', () => {
     /throwIfAborted/,
   );
 
-  const cancellationConfirmationIndex = cancelRowsBody.indexOf('await confirmOpenOrderRowKeyCountBelow(');
-  const cancelRecordIndex = cancelRowsBody.indexOf('recordLadderCancelledOrder(progress)');
+  const cancellationConfirmationIndex = cancelOneRowBody.indexOf('await confirmOpenOrderRowKeyCountBelow(');
+  const cancelRecordIndex = cancelOneRowBody.indexOf('recordLadderCancelledOrder(progress)');
   assert.ok(cancellationConfirmationIndex >= 0 && cancellationConfirmationIndex < cancelRecordIndex);
-  assert.doesNotMatch(cancelRowsBody.slice(cancellationConfirmationIndex, cancelRecordIndex), /throwIfAborted/);
+  assert.doesNotMatch(cancelOneRowBody.slice(cancellationConfirmationIndex, cancelRecordIndex), /throwIfAborted/);
 });
 
 test('ladder task statuses name the active action and observed outcome', () => {
