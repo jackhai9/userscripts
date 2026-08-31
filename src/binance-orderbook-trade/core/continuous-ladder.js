@@ -15,9 +15,22 @@ import {
 export const CONTINUOUS_LADDER_COOLDOWN_MS = 1000;
 export const CONTINUOUS_LADDER_READY_CHECK_MS = 50;
 export const CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS = 3000;
+export const CONTINUOUS_LADDER_LONG_RECOVERY_COOLDOWN_MS = 10000;
 
 const CONTINUOUS_LADDER_RECOVERY = Object.freeze({
   submit_unconfirmed: {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+    requiresSafeNoSubmit: false,
+  },
+  rate_limited: {
+    cooldownMs: CONTINUOUS_LADDER_LONG_RECOVERY_COOLDOWN_MS,
+    requiresSafeNoSubmit: false,
+  },
+  order_capacity_not_ready: {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+    requiresSafeNoSubmit: false,
+  },
+  open_orders_not_ready: {
     cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
     requiresSafeNoSubmit: false,
   },
@@ -29,6 +42,12 @@ const CONTINUOUS_LADDER_RECOVERY = Object.freeze({
   },
   market_data_not_ready: {
     cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+  },
+  position_state_not_ready: {
+    cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+  },
+  position_quantity_not_ready: {
+    cooldownMs: CONTINUOUS_LADDER_LONG_RECOVERY_COOLDOWN_MS,
   },
   precision_changed: {
     cooldownMs: CONTINUOUS_LADDER_COOLDOWN_MS,
@@ -97,8 +116,12 @@ export function resolveContinuousLadderRecovery(error) {
   const recovery = CONTINUOUS_LADDER_RECOVERY[error?.continuousRecoveryKind];
   if (!recovery) return null;
   if (recovery.requiresSafeNoSubmit !== false && error.safeNoSubmit !== true) return null;
+  const cooldownMs = error.continuousRecoveryCooldownMs ?? recovery.cooldownMs;
+  if (!Number.isFinite(cooldownMs) || cooldownMs < 0) {
+    throw new Error('连续阶梯恢复等待时间无效');
+  }
   return {
-    cooldownMs: recovery.cooldownMs,
+    cooldownMs,
     reason: recovery.reason || error.localizedText || error.message,
   };
 }

@@ -96,14 +96,20 @@ test('close completion rejects unknown position directions instead of guessing',
 test('rejects unsuccessful or malformed current-symbol position responses', () => {
   assert.throws(
     () => resolveSymbolPositionStatus({ success: false, data: [] }, 'HYPEUSDT'),
-    /持仓接口返回失败/,
+    (error) => (
+      error.name === 'PositionPayloadContractError'
+      && /持仓接口返回失败/.test(error.message)
+    ),
   );
   assert.throws(
     () => resolveSymbolPositionStatus({
       success: true,
       data: [{ symbol: 'HYPEUSDT', positionAmount: 'unknown' }],
     }, 'HYPEUSDT'),
-    /持仓数量无效/,
+    (error) => (
+      error.name === 'PositionPayloadContractError'
+      && /持仓数量无效/.test(error.message)
+    ),
   );
 });
 

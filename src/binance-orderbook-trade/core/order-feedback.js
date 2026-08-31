@@ -95,6 +95,40 @@ export function isBinanceMaxOpenOrdersErrorCode(code) {
   return code === BINANCE_MAX_OPEN_ORDERS_ERROR_CODE;
 }
 
+function parseRetryAfterMs(value) {
+  if (value == null || value === '') return null;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
+}
+
+/**
+ * HTTP 418/429 requires backoff. HTTP 5xx leaves an order submission outcome
+ * uncertain, so continuous mode may advance only under its explicit duplicate-
+ * tolerant policy. Other 4xx and business errors remain terminal.
+ */
+export function resolveBinanceSubmitResponseRecovery(diagnostics, apiErrors) {
+  if (!Array.isArray(diagnostics) || !Array.isArray(apiErrors)) {
+    throw new Error('下单响应恢复证据无效');
+  }
+  const rateLimitDiagnostic = diagnostics.find(({ httpStatus }) => (
+    httpStatus === 418 || httpStatus === 429
+  ));
+  const hasRateLimitCode = apiErrors.some(({ code }) => code === -1003);
+  if (rateLimitDiagnostic || hasRateLimitCode) {
+    return {
+      kind: 'rate_limited',
+      cooldownMs: parseRetryAfterMs(rateLimitDiagnostic?.retryAfter) ?? 10000,
+    };
+  }
+  if (diagnostics.some(({ httpStatus }) => httpStatus >= 500 && httpStatus <= 599)) {
+    return {
+      kind: 'submit_unconfirmed',
+      cooldownMs: 3000,
+    };
+  }
+  return null;
+}
+
 export function getBinanceApiErrorCode(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   if (Number.isSafeInteger(payload.code)) return payload.code === 0 ? null : payload.code;
