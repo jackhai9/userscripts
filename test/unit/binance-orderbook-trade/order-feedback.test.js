@@ -7,6 +7,7 @@ import {
   formatBinancePlaceOrderResponseDiagnostic,
   getBinanceApiErrorCode,
   isBinancePlaceOrderSuccessPayload,
+  isBinanceMaxOpenOrdersErrorCode,
   isBinancePostOnlyMakerRejectCode,
   isOpenLadderOpenOrdersCapacityFeedback,
   isPostOnlyMakerRejectionFeedback,
@@ -195,6 +196,12 @@ test('recognizes only verified Binance Post Only maker rejection codes', () => {
   assert.equal(isBinancePostOnlyMakerRejectCode(0), false);
   assert.equal(isBinancePostOnlyMakerRejectCode(-2019), false);
   assert.equal(isBinancePostOnlyMakerRejectCode(90805021), false);
+});
+
+test('recognizes the live Binance maximum open-orders rejection code', () => {
+  assert.equal(isBinanceMaxOpenOrdersErrorCode(90802025), true);
+  assert.equal(isBinanceMaxOpenOrdersErrorCode('90802025'), false);
+  assert.equal(isBinanceMaxOpenOrdersErrorCode(90805022), false);
 });
 
 test('recognizes Post Only maker-execution rejection feedback without exact-message matching', () => {

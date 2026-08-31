@@ -85,9 +85,14 @@ export function isPostOnlyMakerRejectionFeedback(text) {
 }
 
 const BINANCE_POST_ONLY_MAKER_REJECT_CODES = new Set([-5022, 90805022]);
+const BINANCE_MAX_OPEN_ORDERS_ERROR_CODE = 90802025;
 
 export function isBinancePostOnlyMakerRejectCode(code) {
   return BINANCE_POST_ONLY_MAKER_REJECT_CODES.has(code);
+}
+
+export function isBinanceMaxOpenOrdersErrorCode(code) {
+  return code === BINANCE_MAX_OPEN_ORDERS_ERROR_CODE;
 }
 
 export function getBinanceApiErrorCode(payload) {

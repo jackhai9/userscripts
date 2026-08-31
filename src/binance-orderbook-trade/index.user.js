@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.172
+// @version      2.7.173
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -117,10 +117,12 @@ import {
   waitForPromiseOrAbort,
 } from './core/abort.js';
 import { formatStatusBaseAsset } from './core/status-symbol.js';
+import { selectFarthestOpenOrders } from './core/open-order-capacity.js';
 import {
   evaluateOrderSubmitAcknowledgement,
   formatBinancePlaceOrderResponseDiagnostic,
   getBinanceApiErrorCode,
+  isBinanceMaxOpenOrdersErrorCode,
   isBinancePlaceOrderSuccessPayload,
   isBinancePostOnlyMakerRejectCode,
   isOpenLadderOpenOrdersCapacityFeedback,
@@ -312,6 +314,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   const MULTIPLIER_PRESS_FEEDBACK_MS = 140;
   const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
   const LADDER_REPLACE_ROW_SETTLE_MS = 240;
+  const MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT = 100;
+  const OPEN_ORDERS_LAZY_LOAD_SETTLE_MS = 700;
+  const OPEN_ORDERS_LAZY_LOAD_TIMEOUT_MS = 7000;
   const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
   const ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 60000;
   const CANCEL_DIALOG_DISCOVERY_TIMEOUT_MS = 1800;
@@ -1365,15 +1370,21 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       });
       return;
     }
+    const payloadSummary = summarizeBinancePlaceOrderPayload(payload);
     capture.responseDiagnostics.push({
       ...responseHeaders,
       bodyKind: 'json',
-      payloadSummary: summarizeBinancePlaceOrderPayload(payload),
+      payloadSummary,
       errorName: null,
     });
     const code = getBinanceApiErrorCode(payload);
     if (code != null) {
-      capture.apiErrors.push({ requestUrl, code });
+      capture.apiErrors.push({
+        requestUrl,
+        code,
+        message: payloadSummary.message,
+        success: payloadSummary.success,
+      });
       return;
     }
     if (response.ok && isBinancePlaceOrderSuccessPayload(payload)) {
@@ -2704,9 +2715,28 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return isBinancePostOnlyMakerRejectCode(error?.binanceCode) && error.safeNoSubmit === true;
   }
 
+  function isRecoverableMaxOpenOrdersFailure(plan, error, allowRecovery) {
+    return (
+      allowRecovery === true
+      && plan?.spec?.mode === 'CLOSE'
+      && error?.ladderFailureKind === 'max_open_orders'
+      && isBinanceMaxOpenOrdersErrorCode(error.binanceCode)
+      && error.safeNoSubmit === true
+    );
+  }
+
   function createLadderSubmitApiError(apiErrorCode) {
     const error = new Error(`Maker 挂单被拒绝（错误码 ${apiErrorCode}）`);
     error.binanceCode = apiErrorCode;
+    error.safeNoSubmit = true;
+    return error;
+  }
+
+  function createLadderMaxOpenOrdersError(apiError) {
+    if (apiError.success !== false) throw new Error('最大挂单限制响应缺少 success=false');
+    const error = new Error(`${apiError.message || '达到最大下单限制'}（错误码 ${apiError.code}）`);
+    error.binanceCode = apiError.code;
+    error.ladderFailureKind = 'max_open_orders';
     error.safeNoSubmit = true;
     return error;
   }
@@ -3090,6 +3120,12 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     ) {
       throw createLadderSubmitApiError(capturedApiErrors[0].code);
     }
+    if (
+      capturedApiErrors.length === 1
+      && isBinanceMaxOpenOrdersErrorCode(capturedApiErrors[0].code)
+    ) {
+      throw createLadderMaxOpenOrdersError(capturedApiErrors[0]);
+    }
     let failureActivity = activity.status === 'failure' ? activity : null;
     if (!failureActivity && capturedApiErrors.length > 0) {
       failureActivity = await waitForOrderFailureFeedback(
@@ -3126,7 +3162,13 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     throw new Error(`未确认${label}成功（${settleHint}），已停止；请在当前委托和历史成交中核对`);
   }
 
-  async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null) {
+  async function executeLadderPlan(
+    plan,
+    progress,
+    setExecutionStatus,
+    abortSignal = null,
+    options = null,
+  ) {
     const priceInput = findPriceInput();
     const qtyInput = findQtyInput();
     if (!priceInput) {
@@ -3141,6 +3183,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     let consecutiveRepriceAttempts = 0;
     let lastRepriceApiErrorCode = null;
     let previousAcknowledgedInputs = null;
+    let maxOpenOrdersRecoveryAttempts = 0;
     while (done < plan.orders.length) {
       throwIfAborted(abortSignal);
       if (ladderStopRequested) break;
@@ -3232,6 +3275,28 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
           };
         }
       } catch (e) {
+        if (isRecoverableMaxOpenOrdersFailure(
+          plan,
+          e,
+          options?.allowMaxOpenOrdersRecovery,
+        )) {
+          if (maxOpenOrdersRecoveryAttempts > 0) {
+            throw new Error('已释放挂单名额，但本轮仍达到最大下单限制，已停止');
+          }
+          maxOpenOrdersRecoveryAttempts += 1;
+          const recovery = await cancelCurrentSymbolOpenOrdersForPlan(
+            plan,
+            progress,
+            setExecutionStatus,
+            abortSignal,
+            { strategy: 'farthest_for_capacity' },
+          );
+          throwIfAborted(abortSignal);
+          if (!recovery?.ok) {
+            throw new Error(recovery?.message || '未能释放挂单名额，已停止');
+          }
+          continue;
+        }
         if (!isRetryableLadderMakerPriceFailure(plan, e)) throw e;
         if (isBinancePostOnlyMakerRejectCode(e?.binanceCode)) {
           lastRepriceApiErrorCode = e.binanceCode;
@@ -3370,6 +3435,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         progress,
         setExecutionStatus,
         abortController.signal,
+        { allowMaxOpenOrdersRecovery: continuousSession && spec.mode === 'CLOSE' },
       );
       return {
         plan,
@@ -4138,19 +4204,24 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return cellText || (row.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
-  function readCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
-    if (!root || !symbol) return [];
+  function readOpenOrderRowElements(root) {
     return findOpenOrderRowElements(root, {
       isVisibleElement,
       isRowCancelIcon: (icon) => matchesBinancePageText(
         icon.getAttribute('aria-label'),
         BINANCE_PAGE_TEXT.accountOrders.rowCancel,
       ),
-    })
+    });
+  }
+
+  function readCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
+    if (!root || !symbol) return [];
+    return readOpenOrderRowElements(root)
       .map((row) => {
         const cells = findOpenOrderRowCells(row);
         const symbolText = (cells[1]?.textContent || '').replace(/\s+/g, ' ').trim();
         const sideText = (cells[3]?.textContent || '').replace(/\s+/g, ' ').trim();
+        const price = normalizeDecimalString((cells[4]?.textContent || '').replace(/,/g, '').trim());
         const qty = normalizeDecimalString((cells[5]?.textContent || '').replace(/,/g, '').match(/\d+(?:\.\d+)?/)?.[0] || '');
         const cancelButton = findOpenOrderRowCancelButton(row);
         return {
@@ -4159,6 +4230,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
           cells,
           symbolText,
           sideText,
+          price,
           qty,
           cancelButton,
           key: getOpenOrderRowKey(cells, row),
@@ -4167,6 +4239,8 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       .filter((row) => (
         isOpenOrderRowCurrentSymbol(row.symbolText, symbol) &&
         isOpenOrderRowForPlan(row.sideText, plan) &&
+        row.price &&
+        isPositiveDecimalString(row.price) &&
         row.qty &&
         isPositiveDecimalString(row.qty) &&
         row.cancelButton
@@ -4238,6 +4312,84 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     }, LADDER_REPLACE_ROW_SETTLE_MS, abortSignal);
     state = transitioned || readCurrentSymbolOpenOrderRowsState(root, symbol, plan);
     return state?.rows || [];
+  }
+
+  function findOpenOrderRowsScrollContainer(root) {
+    const firstRow = readOpenOrderRowElements(root)[0] || null;
+    let candidate = firstRow?.parentElement || null;
+    while (candidate && root.contains(candidate)) {
+      if (candidate.scrollHeight > candidate.clientHeight + 2) return candidate;
+      if (candidate === root) break;
+      candidate = candidate.parentElement;
+    }
+    return null;
+  }
+
+  function scrollOpenOrderRowsToBottom(scrollContainer) {
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
+  }
+
+  async function loadAllCurrentSymbolOpenOrderRows(
+    root,
+    symbol,
+    plan,
+    abortSignal = null,
+  ) {
+    const deadline = Date.now() + OPEN_ORDERS_LAZY_LOAD_TIMEOUT_MS;
+    let stableEndPasses = 0;
+    let currentRoot = root;
+
+    while (Date.now() < deadline) {
+      throwIfAborted(abortSignal);
+      if (!isCurrentObservedSymbol(symbol)) throw new Error('加载待撤挂单时交易对已变化');
+      currentRoot = getActiveOpenOrdersScope() || currentRoot;
+      if (!currentRoot) throw new Error('加载待撤挂单时当前委托面板已消失');
+
+      const beforeCount = readOpenOrderRowElements(currentRoot).length;
+      const scrollContainer = findOpenOrderRowsScrollContainer(currentRoot);
+      if (!scrollContainer) return readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
+
+      scrollOpenOrderRowsToBottom(scrollContainer);
+      const remainingMs = deadline - Date.now();
+      const growth = await waitForAccountOrdersState(() => {
+        const refreshedRoot = getActiveOpenOrdersScope();
+        if (!refreshedRoot || !isCurrentObservedSymbol(symbol)) return null;
+        const loadedCount = readOpenOrderRowElements(refreshedRoot).length;
+        return loadedCount > beforeCount ? { root: refreshedRoot, loadedCount } : null;
+      }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, remainingMs), abortSignal);
+
+      throwIfAborted(abortSignal);
+      currentRoot = growth?.root || getActiveOpenOrdersScope() || currentRoot;
+      const afterCount = readOpenOrderRowElements(currentRoot).length;
+      if (afterCount > beforeCount) {
+        stableEndPasses = 0;
+        continue;
+      }
+      if (afterCount < beforeCount) {
+        stableEndPasses = 0;
+        continue;
+      }
+
+      const refreshedScrollContainer = findOpenOrderRowsScrollContainer(currentRoot);
+      const reachedBottom = !refreshedScrollContainer || (
+        refreshedScrollContainer.scrollTop + refreshedScrollContainer.clientHeight
+        >= refreshedScrollContainer.scrollHeight - 2
+      );
+      stableEndPasses = reachedBottom ? stableEndPasses + 1 : 0;
+      if (stableEndPasses >= 2) {
+        return readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
+      }
+    }
+    throw new Error('当前委托完整列表 7 秒内未加载完成');
+  }
+
+  function readOpenOrdersDistanceReferencePrice() {
+    const referencePrice = normalizeDecimalString(getLatestTradePrices()[0] || '');
+    if (!referencePrice || !isPositiveDecimalString(referencePrice)) {
+      throw new Error('未读取到当前成交价，无法选择最远挂单');
+    }
+    return referencePrice;
   }
 
   function selectOpenOrderRowsToCancelForPlan(plan, rows, options = null) {
@@ -4397,6 +4549,79 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return Boolean(activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount);
   }
 
+  async function cancelOneOpenOrderRowForPlan(
+    row,
+    plan,
+    progress,
+    setExecutionStatus,
+    abortSignal = null,
+  ) {
+    if (!isCurrentObservedSymbol(plan.symbol)) throw new Error('撤销待替换挂单前交易对已变化');
+    const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
+    if (!row.cancelButton?.isConnected || !isVisibleElement(row.cancelButton)) {
+      if (previousKeyCount === 0) return { status: 'already_removed', qty: row.qty };
+      throw new Error('待替换挂单的撤单按钮已失效，已停止重新挂单');
+    }
+    const dialogsBefore = new Set(getVisibleDialogs());
+    throwIfAborted(abortSignal);
+    if (!clickDomTarget(row.cancelButton)) {
+      throw new Error('待替换挂单的撤单按钮点击失败，已停止重新挂单');
+    }
+    waitForTradeUiMutation({ timeoutMs: 800 });
+    const outcome = await waitForOpenOrderRowCancellationOutcome(
+      plan.symbol,
+      row.key,
+      previousKeyCount,
+      dialogsBefore,
+      abortSignal,
+    );
+    if (outcome.status === 'symbol_changed') {
+      throw new Error('撤销待替换挂单时交易对已变化');
+    }
+    if (outcome.status === 'timeout') {
+      throw new Error('待替换挂单仍存在，已停止重新挂单');
+    }
+    if (outcome.status === 'dialog_open') {
+      const { dialog } = outcome;
+      setExecutionStatus(
+        combineLocalizedText([
+          plan.spec.statusLabel,
+          localizedText('单行撤单确认弹窗已打开', 'Single-order cancellation dialog opened'),
+        ], '：'),
+        localizedText('单行撤单确认弹窗已打开', 'Single-order cancellation dialog opened'),
+      );
+      const dialogClosed = await waitForDialogToClose(
+        dialog,
+        ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS,
+        abortSignal,
+      );
+      if (!dialogClosed) {
+        const error = new Error('单行撤单确认弹窗仍未关闭，未恢复页面状态');
+        error.name = 'DialogNotClosedError';
+        throw error;
+      }
+      if (!(await waitForOpenOrderRowKeyCountBelow(
+        plan.symbol,
+        row.key,
+        previousKeyCount,
+        abortSignal,
+      ))) {
+        throw new Error('待替换挂单仍存在，已停止重新挂单');
+      }
+    }
+    throwIfAborted(abortSignal);
+    if (!(await confirmOpenOrderRowKeyCountBelow(
+      plan.symbol,
+      row.key,
+      previousKeyCount,
+      abortSignal,
+    ))) {
+      throw new Error('待替换挂单状态未稳定，已停止重新挂单');
+    }
+    recordLadderCancelledOrder(progress);
+    return { status: 'cancelled', qty: row.qty };
+  }
+
   async function cancelOpenOrderRowsForPlan(
     root,
     plan,
@@ -4422,71 +4647,66 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         throw new Error('同向可撤挂单数量不足，已停止重新挂单');
       }
       currentRoot = row.root || currentRoot;
-      const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
-      if (!row.cancelButton?.isConnected || !isVisibleElement(row.cancelButton)) {
-        if (previousKeyCount === 0) continue;
-        throw new Error('待替换挂单的撤单按钮已失效，已停止重新挂单');
-      }
-      const dialogsBefore = new Set(getVisibleDialogs());
-      throwIfAborted(abortSignal);
-      if (!clickDomTarget(row.cancelButton)) {
-        throw new Error('待替换挂单的撤单按钮点击失败，已停止重新挂单');
-      }
-      waitForTradeUiMutation({ timeoutMs: 800 });
-      const outcome = await waitForOpenOrderRowCancellationOutcome(
-        plan.symbol,
-        row.key,
-        previousKeyCount,
-        dialogsBefore,
+      const result = await cancelOneOpenOrderRowForPlan(
+        row,
+        plan,
+        progress,
+        setExecutionStatus,
         abortSignal,
       );
-      if (outcome.status === 'symbol_changed') {
-        throw new Error('撤销待替换挂单时交易对已变化');
-      }
-      if (outcome.status === 'timeout') {
-        throw new Error('待替换挂单仍存在，已停止重新挂单');
-      }
-      if (outcome.status === 'dialog_open') {
-        const { dialog } = outcome;
-        setExecutionStatus(
-          combineLocalizedText([
-            plan.spec.statusLabel,
-            localizedText('单行撤单确认弹窗已打开', 'Single-order cancellation dialog opened'),
-          ], '：'),
-          localizedText('单行撤单确认弹窗已打开', 'Single-order cancellation dialog opened'),
-        );
-        const dialogClosed = await waitForDialogToClose(
-          dialog,
-          ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS,
-          abortSignal,
-        );
-        if (!dialogClosed) {
-          const error = new Error('单行撤单确认弹窗仍未关闭，未恢复页面状态');
-          error.name = 'DialogNotClosedError';
-          throw error;
-        }
-        if (!(await waitForOpenOrderRowKeyCountBelow(
-          plan.symbol,
-          row.key,
-          previousKeyCount,
-          abortSignal,
-        ))) {
-          throw new Error('待替换挂单仍存在，已停止重新挂单');
-        }
-      }
-      throwIfAborted(abortSignal);
-      if (!(await confirmOpenOrderRowKeyCountBelow(
-        plan.symbol,
-        row.key,
-        previousKeyCount,
-        abortSignal,
-      ))) {
-        throw new Error('待替换挂单状态未稳定，已停止重新挂单');
-      }
-      cancelQty = addDecimalStrings(cancelQty, row.qty);
-      recordLadderCancelledOrder(progress);
+      if (result.status === 'already_removed') continue;
+      cancelQty = addDecimalStrings(cancelQty, result.qty);
     }
     return { ok: true, cancelQty };
+  }
+
+  async function cancelFarthestOpenOrderRowsForPlan(
+    root,
+    plan,
+    targets,
+    progress,
+    setExecutionStatus,
+    abortSignal = null,
+  ) {
+    let releasedCount = 0;
+    let cancelledCount = 0;
+    let currentRoot = root;
+
+    for (const target of targets) {
+      throwIfAborted(abortSignal);
+      if (!isCurrentObservedSymbol(plan.symbol)) throw new Error('释放挂单名额时交易对已变化');
+      currentRoot = getActiveOpenOrdersScope() || currentRoot;
+      let row = readCurrentSymbolOpenOrderRows(currentRoot, plan.symbol, plan)
+        .find((candidate) => candidate.key === target.key) || null;
+      if (!row) {
+        const completeRows = await loadAllCurrentSymbolOpenOrderRows(
+          currentRoot,
+          plan.symbol,
+          plan,
+          abortSignal,
+        );
+        currentRoot = getActiveOpenOrdersScope() || currentRoot;
+        row = completeRows.find((candidate) => candidate.key === target.key) || null;
+      }
+
+      if (row) {
+        const result = await cancelOneOpenOrderRowForPlan(
+          row,
+          plan,
+          progress,
+          setExecutionStatus,
+          abortSignal,
+        );
+        if (result.status === 'cancelled') cancelledCount += 1;
+      }
+      releasedCount += 1;
+      const detail = localizedText(
+        `释放挂单名额 ${releasedCount}/${targets.length}`,
+        `Freeing order slots ${releasedCount}/${targets.length}`,
+      );
+      setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], '：'), detail);
+    }
+    return { ok: true, releasedCount, cancelledCount };
   }
 
   async function setHideOtherSymbolChecked(
@@ -5258,6 +5478,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     progress,
     setExecutionStatus,
     abortSignal = null,
+    options = null,
   ) {
     throwIfAborted(abortSignal);
     const setPlanStepStatus = (message) => {
@@ -5274,7 +5495,11 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       return { ok: false, status: 'symbol_changed', message };
     }
 
+    const capacityRecovery = options?.strategy === 'farthest_for_capacity';
     const previousAccountOrdersTabIdentity = getAccountOrdersTabIdentity(findSelectedAccountOrdersTab());
+    const previousOpenOrdersScrollTop = findOpenOrderRowsScrollContainer(
+      getActiveOpenOrdersScope(),
+    )?.scrollTop ?? null;
     let openOrdersScope = null;
     let previousOpenOrdersSubTabIdentity = null;
     let symbolFilterOriginalChecked = null;
@@ -5348,18 +5573,60 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         return { ok: false, status: 'scope_not_found', message };
       }
 
-      const rows = await waitForCurrentSymbolOpenOrderRows(
-        openOrdersScope,
-        symbol,
-        plan,
-        abortSignal,
-      );
+      const rows = capacityRecovery
+        ? await loadAllCurrentSymbolOpenOrderRows(
+          openOrdersScope,
+          symbol,
+          plan,
+          abortSignal,
+        )
+        : await waitForCurrentSymbolOpenOrderRows(
+          openOrdersScope,
+          symbol,
+          plan,
+          abortSignal,
+        );
       throwIfAborted(abortSignal);
       if (!rows.length) {
         const directionLabel = getPlanDirectionLabel(plan);
         const message = `未找到${directionLabel || ''}方向的可撤基础单`;
         setPlanStepStatus(message);
         return { ok: false, status: 'rows_not_found', message };
+      }
+
+      if (capacityRecovery) {
+        const referencePrice = readOpenOrdersDistanceReferencePrice();
+        const targets = selectFarthestOpenOrders(
+          rows,
+          referencePrice,
+          MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT,
+        );
+        const preparingDetail = localizedText(
+          `达到挂单上限，准备撤销距当前价最远的 ${targets.length} 笔同向挂单`,
+          `Order limit reached; cancelling the ${targets.length} farthest same-direction orders`,
+        );
+        setExecutionStatus(
+          combineLocalizedText([plan.spec.statusLabel, preparingDetail], '：'),
+          preparingDetail,
+        );
+        const result = await cancelFarthestOpenOrderRowsForPlan(
+          openOrdersScope,
+          plan,
+          targets,
+          progress,
+          setExecutionStatus,
+          abortSignal,
+        );
+        throwIfAborted(abortSignal);
+        const completedDetail = localizedText(
+          `已释放 ${result.releasedCount} 个挂单名额，继续本轮`,
+          `Freed ${result.releasedCount} order slots; continuing this round`,
+        );
+        setExecutionStatus(
+          combineLocalizedText([plan.spec.statusLabel, completedDetail], '：'),
+          completedDetail,
+        );
+        return { ok: true, status: 'capacity_released', ...result };
       }
 
       const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
@@ -5398,6 +5665,16 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         }
         if (previousOpenOrdersSubTabIdentity) {
           await restoreOpenOrdersSubTab(previousOpenOrdersSubTabIdentity, symbol);
+        }
+        if (previousOpenOrdersScrollTop !== null) {
+          openOrdersScope = await waitForActiveOpenOrdersScope();
+          const scrollContainer = findOpenOrderRowsScrollContainer(openOrdersScope);
+          if (scrollContainer) {
+            scrollContainer.scrollTop = Math.min(
+              previousOpenOrdersScrollTop,
+              scrollContainer.scrollHeight,
+            );
+          }
         }
         if (isCurrentObservedSymbol(symbol)) {
           await restoreAccountOrdersTab(previousAccountOrdersTabIdentity, symbol);
@@ -5493,6 +5770,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     progress,
     setExecutionStatus,
     abortSignal = null,
+    options = null,
   ) {
     let replacementContext = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -5508,6 +5786,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
           progress,
           setExecutionStatus,
           abortSignal,
+          options,
         );
         return { plan, ...execution };
       } catch (e) {

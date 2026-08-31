@@ -181,6 +181,8 @@ Continuous-session feedback stays in the shared ladder status row and uses `连�
 
 The active continuous-close control keeps a compact direction-specific stop action (`停止平多` / `停止平空`) on one line throughout both execution and inter-round waiting. Before the native submit control is ready, the status places `等待按钮恢复` immediately after the continuous action name. Only after the fixed cooldown actually begins may it show `1s 后继续` in that same priority position; this is a static duration label, not a countdown. `停止中`, `已停止`, `失败`, and `已中止` use the same phase slot. The button must not temporarily revert to a ladder-start action between rounds.
 
+When a continuous close receives the observed Binance private-page response `code=90802025`, `success=false`, and the max-open-orders message, classify it as a confirmed no-submit capacity rejection. Load the complete lazy current-orders list before ranking rows; the first 50 rendered rows are not a complete candidate set. Release up to 100 current-symbol, same-close-direction Basic limit orders farthest from the current trade price, preserving the nearest orders that are most likely to complete the close. Resume the same unsubmitted ladder level so already confirmed levels are not duplicated. Permit this recovery once per round; a second confirmed capacity rejection stops the session. Do not use Cancel All, and do not touch open-direction, opposite-direction, conditional, or protection orders. If a selected row disappears because it fills while recovery is running, treat that slot as already released but count a cancellation only after the script confirms its own row-cancel action.
+
 When selecting account-order tabs, scope to the bottom account-orders tab group. Do not globally match `当前委托` or `Open Orders`.
 
 When a pane is found through `aria-controls`, confirm it contains current-orders controls such as `隐藏其他合约` or `全撤`. Binance may reuse pane ids in unrelated tab systems.
@@ -228,6 +230,7 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - reload while the native cancel-all dialog is open; verify the next page load restores the original chart OpenOrders setting from the same-tab recovery journal
 - replace close ladder orders when existing reduce-only close orders occupy the closeable quantity
 - replace open ladder orders only by current-symbol same-direction basic open-order rows; verify no cancel-all path or conditional/protection orders are used
+- reach the 200-open-order boundary during continuous close, verify the script fully loads the lazy current-order list, cancels at most 100 farthest current-symbol same-direction Basic rows, preserves nearest rows, resumes the rejected unfinished level without duplicating confirmed levels, and stops if the same capacity rejection repeats in that round
 - verify SVG cancel controls work when the visible cancel target has no native `.click()` method
 - verify account-orders tab and hide-other-symbol state are restored
 - verify the userscript version or live behavior after a Tampermonkey update before continuing live tests
