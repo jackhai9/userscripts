@@ -357,6 +357,32 @@ test('open and close ladders reprice only remaining orders after explicit maker 
   assert.match(generatedSource, /isPostOnlyMakerRejectionFeedback/);
 });
 
+test('an in-flight order request receives a separate response deadline', () => {
+  assert.match(source, /const LADDER_SUBMIT_START_TIMEOUT_MS = 3500;/);
+  assert.match(source, /const LADDER_SUBMIT_RESPONSE_TIMEOUT_MS = 12000;/);
+
+  const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
+  assert.match(
+    acknowledgementBody,
+    /waitForOrderSubmitStartOrFailureFeedback\([\s\S]*LADDER_SUBMIT_START_TIMEOUT_MS/,
+  );
+  assert.match(
+    acknowledgementBody,
+    /waitForLadderSubmitResponseObservations\([\s\S]*LADDER_SUBMIT_RESPONSE_TIMEOUT_MS/,
+  );
+  assert.match(acknowledgementBody, /LADDER_SUBMIT_RESPONSE_TIMEOUT_MS,[\s\S]*abortSignal/);
+  assert.doesNotMatch(acknowledgementBody, /remainingAckMs|Date\.now\(\) - startedAt/);
+
+  const responseBody = readFunctionBody('waitForLadderSubmitResponseObservations');
+  assert.match(responseBody, /waitForPromiseOrAbort\([\s\S]*abortSignal/);
+
+  const executeBody = readFunctionBody('executeLadderPlan');
+  assert.match(
+    executeBody,
+    /waitForOrderSubmitAcknowledgement\([\s\S]*plan\.spec\.mode,[\s\S]*abortSignal/,
+  );
+});
+
 test('bapi headers wake leverage checks without startup or 500ms polling sleeps', () => {
   const waitBody = readFunctionBody('waitForBncHeaders');
   const cacheBody = readFunctionBody('cacheBncHeaders');
