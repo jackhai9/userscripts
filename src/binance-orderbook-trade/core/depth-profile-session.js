@@ -2,11 +2,11 @@ import {
   applyDepthProfileSnapshot,
   buildDepthProfile,
   createDepthProfileBook,
+  DEPTH_PROFILE_LEVELS_PER_SIDE,
   DepthProfileSequenceError,
   pushDepthProfileUpdate,
 } from './depth-profile-book.js';
 
-const DEPTH_SNAPSHOT_LIMIT = 1000;
 const MAX_RESYNCS_PER_CONNECTION = 3;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RESYNC_DELAY_MS = 1000;
@@ -47,7 +47,7 @@ export function createDepthProfileSession(options) {
   let resyncAttempts = 0;
   let book = createDepthProfileBook(symbol);
 
-  const snapshotUrl = `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${DEPTH_SNAPSHOT_LIMIT}`;
+  const snapshotUrl = `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${DEPTH_PROFILE_LEVELS_PER_SIDE}`;
   const streamUrl = `wss://fstream.binance.com/public/ws/${symbol.toLowerCase()}@depth@100ms`;
 
   function emitStatus(status, detail = '') {

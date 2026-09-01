@@ -235,7 +235,7 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
   assert.equal(calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').length, 2);
   assert.deepEqual(
     calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').map((call) => call[2]),
-    [77.5, 177.5],
+    [80, 180],
   );
   assert.deepEqual(calls.find((call) => Array.isArray(call) && call[0] === 'moveTo'), ['moveTo', 0, 140.5]);
   assert.equal(calls.includes('stroke'), true);
@@ -243,6 +243,52 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
   calls.length = 0;
   clearDepthProfile(root);
   assert.deepEqual(calls, ['save', 'setTransform', 'clearRect', 'restore']);
+});
+
+test('draws one bar per visible CSS pixel row and scales width to visible depth', () => {
+  const dom = createChartDom();
+  const { document } = dom.window;
+  const { host } = findDepthProfileHost(document);
+  const root = ensureDepthProfileView(document, host, { onToggle: () => {} });
+  const fillRects = [];
+  const canvas = root.querySelector('canvas');
+  canvas.getContext = () => ({
+    beginPath: () => {},
+    clearRect: () => {},
+    fillRect: (...args) => fillRects.push(args),
+    lineTo: () => {},
+    moveTo: () => {},
+    restore: () => {},
+    save: () => {},
+    setLineDash: () => {},
+    setTransform: () => {},
+    stroke: () => {},
+  });
+
+  const geometry = {
+    top: 0,
+    height: 240,
+    priceToCoordinate: (price) => ({
+      99: 180.4,
+      101: 80.2,
+      102: 80.4,
+    }[price] ?? null),
+  };
+  renderDepthProfile(root, {
+    maxCumulative: 1_000,
+    bids: [{ price: 99, cumulative: 4 }],
+    asks: [
+      { price: 101, cumulative: 3 },
+      { price: 102, cumulative: 8 },
+      { price: 110, cumulative: 1_000 },
+    ],
+  }, geometry, 100);
+
+  assert.equal(fillRects.length, 2);
+  assert.deepEqual(fillRects.map(([, y, , height]) => [y, height]), [[80, 1], [180, 1]]);
+  assert.equal(fillRects[0][0], 0);
+  assert.equal(fillRects[0][2], canvas.getBoundingClientRect().width);
+  assert.equal(fillRects[1][2], canvas.getBoundingClientRect().width / 2);
 });
 
 test('updates root geometry without rewriting unchanged styles', () => {

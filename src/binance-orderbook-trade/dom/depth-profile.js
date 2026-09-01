@@ -243,21 +243,38 @@ export function setDepthProfileGeometry(root, geometry) {
   if (root.style.height !== height) root.style.height = height;
 }
 
-function mapVisibleLevels(levels, geometry) {
-  return levels.map((level) => ({
-    ...level,
-    y: geometry.priceToCoordinate(level.price),
-  })).filter((level) => Number.isFinite(level.y));
+function bucketVisibleLevels(levels, geometry) {
+  const lastRow = Math.max(0, Math.ceil(geometry.height) - 1);
+  const buckets = new Map();
+  for (const level of levels) {
+    const coordinate = geometry.priceToCoordinate(level.price);
+    if (!Number.isFinite(coordinate)) continue;
+    const y = Math.max(0, Math.min(lastRow, Math.round(coordinate)));
+    const current = buckets.get(y);
+    // Several exchange prices can map to one chart pixel. The outermost level has the
+    // largest cumulative quantity and preserves the complete depth represented by that row.
+    if (!current || level.cumulative > current.cumulative) {
+      buckets.set(y, { ...level, y });
+    }
+  }
+  return [...buckets.values()].sort((left, right) => left.y - right.y);
 }
 
-function drawSide(context, levels, profile, width, height, color) {
+function drawSide(context, levels, maxVisibleCumulative, width, color) {
   if (!levels.length) return;
-  const levelHeight = Math.max(1, Math.min(5, height / (levels.length * 2.4)));
   context.fillStyle = color;
   for (const level of levels) {
-    const barWidth = (level.cumulative / profile.maxCumulative) * width;
-    context.fillRect(width - barWidth, level.y - levelHeight / 2, barWidth, levelHeight);
+    const barWidth = (level.cumulative / maxVisibleCumulative) * width;
+    context.fillRect(width - barWidth, level.y, barWidth, 1);
   }
+}
+
+function getMaxVisibleCumulative(...levelGroups) {
+  let maximum = 0;
+  for (const levels of levelGroups) {
+    for (const level of levels) maximum = Math.max(maximum, level.cumulative);
+  }
+  return maximum;
 }
 
 export function renderDepthProfile(root, profile, geometry, currentPrice) {
@@ -275,10 +292,13 @@ export function renderDepthProfile(root, profile, geometry, currentPrice) {
 
   context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   context.clearRect(0, 0, rect.width, rect.height);
-  const asks = mapVisibleLevels(profile.asks, geometry);
-  const bids = mapVisibleLevels(profile.bids, geometry);
-  drawSide(context, asks, profile, rect.width, rect.height, 'rgba(246, 70, 93, .30)');
-  drawSide(context, bids, profile, rect.width, rect.height, 'rgba(14, 203, 129, .30)');
+  const asks = bucketVisibleLevels(profile.asks, geometry);
+  const bids = bucketVisibleLevels(profile.bids, geometry);
+  const maxVisibleCumulative = getMaxVisibleCumulative(asks, bids);
+  if (maxVisibleCumulative > 0) {
+    drawSide(context, asks, maxVisibleCumulative, rect.width, 'rgba(246, 70, 93, .30)');
+    drawSide(context, bids, maxVisibleCumulative, rect.width, 'rgba(14, 203, 129, .30)');
+  }
 
   const currentPriceY = geometry.priceToCoordinate(currentPrice);
   if (!Number.isFinite(currentPriceY)) return true;

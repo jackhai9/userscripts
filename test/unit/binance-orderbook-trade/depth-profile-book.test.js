@@ -5,6 +5,7 @@ import {
   applyDepthProfileSnapshot,
   buildDepthProfile,
   createDepthProfileBook,
+  DEPTH_PROFILE_LEVELS_PER_SIDE,
   DepthProfileSequenceError,
   pushDepthProfileUpdate,
 } from '../../../src/binance-orderbook-trade/core/depth-profile-book.js';
@@ -119,4 +120,21 @@ test('builds a symmetric vertical price range with cumulative depth', () => {
   assert.deepEqual(profile.bids.map((level) => level.cumulative), [2, 5, 10]);
   assert.deepEqual(profile.asks.map((level) => level.cumulative), [4, 10, 20]);
   assert.equal(profile.maxCumulative, 20);
+});
+
+test('builds every level available from the 1000-level snapshot by default', () => {
+  const book = createDepthProfileBook('BTCUSDT');
+  book.ready = true;
+  for (let index = 0; index < DEPTH_PROFILE_LEVELS_PER_SIDE + 1; index += 1) {
+    book.bids.set(String(100 - index / 1000), '1');
+    book.asks.set(String(101 + index / 1000), '1');
+  }
+
+  const profile = buildDepthProfile(book);
+
+  assert.equal(DEPTH_PROFILE_LEVELS_PER_SIDE, 1000);
+  assert.equal(profile.bids.length, 1000);
+  assert.equal(profile.asks.length, 1000);
+  assert.equal(profile.bids.at(-1).cumulative, 1000);
+  assert.equal(profile.asks.at(-1).cumulative, 1000);
 });

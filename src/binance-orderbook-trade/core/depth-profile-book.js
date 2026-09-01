@@ -6,6 +6,7 @@ export class DepthProfileSequenceError extends Error {
 }
 
 const MAX_BUFFERED_UPDATES = 500;
+export const DEPTH_PROFILE_LEVELS_PER_SIDE = 1000;
 
 function assertSymbol(value) {
   if (typeof value !== 'string' || !/^[A-Z0-9_]+$/.test(value)) {
@@ -187,7 +188,9 @@ function addCumulativeQuantity(levels) {
   });
 }
 
-export function buildDepthProfile(book, { levelsPerSide = 60 } = {}) {
+export function buildDepthProfile(book, {
+  levelsPerSide = DEPTH_PROFILE_LEVELS_PER_SIDE,
+} = {}) {
   if (!book.ready) throw new Error('Depth profile book is not ready');
   if (!Number.isInteger(levelsPerSide) || levelsPerSide <= 0) {
     throw new Error('Invalid depth profile level count');

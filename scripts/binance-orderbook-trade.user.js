@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.182
+// @version      2.7.183
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3408,6 +3408,7 @@
     }
   };
   var MAX_BUFFERED_UPDATES = 500;
+  var DEPTH_PROFILE_LEVELS_PER_SIDE = 1e3;
   function assertSymbol(value) {
     if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) {
       throw new Error("Invalid depth profile symbol");
@@ -3565,7 +3566,9 @@
       return { ...level, cumulative };
     });
   }
-  function buildDepthProfile(book, { levelsPerSide = 60 } = {}) {
+  function buildDepthProfile(book, {
+    levelsPerSide = DEPTH_PROFILE_LEVELS_PER_SIDE
+  } = {}) {
     if (!book.ready) throw new Error("Depth profile book is not ready");
     if (!Number.isInteger(levelsPerSide) || levelsPerSide <= 0) {
       throw new Error("Invalid depth profile level count");
@@ -3596,7 +3599,6 @@
   }
 
   // src/binance-orderbook-trade/core/depth-profile-session.js
-  var DEPTH_SNAPSHOT_LIMIT = 1e3;
   var MAX_RESYNCS_PER_CONNECTION = 3;
   var MAX_RECONNECT_ATTEMPTS = 5;
   var RESYNC_DELAY_MS = 1e3;
@@ -3633,7 +3635,7 @@
     let reconnectAttempts = 0;
     let resyncAttempts = 0;
     let book = createDepthProfileBook(symbol);
-    const snapshotUrl = `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${DEPTH_SNAPSHOT_LIMIT}`;
+    const snapshotUrl = `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${DEPTH_PROFILE_LEVELS_PER_SIDE}`;
     const streamUrl = `wss://fstream.binance.com/public/ws/${symbol.toLowerCase()}@depth@100ms`;
     function emitStatus(status, detail = "") {
       if (!active) return;
@@ -3998,20 +4000,34 @@
     if (root.style.top !== top) root.style.top = top;
     if (root.style.height !== height) root.style.height = height;
   }
-  function mapVisibleLevels(levels, geometry) {
-    return levels.map((level) => ({
-      ...level,
-      y: geometry.priceToCoordinate(level.price)
-    })).filter((level) => Number.isFinite(level.y));
+  function bucketVisibleLevels(levels, geometry) {
+    const lastRow = Math.max(0, Math.ceil(geometry.height) - 1);
+    const buckets = /* @__PURE__ */ new Map();
+    for (const level of levels) {
+      const coordinate = geometry.priceToCoordinate(level.price);
+      if (!Number.isFinite(coordinate)) continue;
+      const y = Math.max(0, Math.min(lastRow, Math.round(coordinate)));
+      const current = buckets.get(y);
+      if (!current || level.cumulative > current.cumulative) {
+        buckets.set(y, { ...level, y });
+      }
+    }
+    return [...buckets.values()].sort((left, right) => left.y - right.y);
   }
-  function drawSide(context, levels, profile, width, height, color) {
+  function drawSide(context, levels, maxVisibleCumulative, width, color) {
     if (!levels.length) return;
-    const levelHeight = Math.max(1, Math.min(5, height / (levels.length * 2.4)));
     context.fillStyle = color;
     for (const level of levels) {
-      const barWidth = level.cumulative / profile.maxCumulative * width;
-      context.fillRect(width - barWidth, level.y - levelHeight / 2, barWidth, levelHeight);
+      const barWidth = level.cumulative / maxVisibleCumulative * width;
+      context.fillRect(width - barWidth, level.y, barWidth, 1);
     }
+  }
+  function getMaxVisibleCumulative(...levelGroups) {
+    let maximum = 0;
+    for (const levels of levelGroups) {
+      for (const level of levels) maximum = Math.max(maximum, level.cumulative);
+    }
+    return maximum;
   }
   function renderDepthProfile(root, profile, geometry, currentPrice) {
     setDepthProfileGeometry(root, geometry);
@@ -4027,10 +4043,13 @@
     if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
     context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
     context.clearRect(0, 0, rect.width, rect.height);
-    const asks = mapVisibleLevels(profile.asks, geometry);
-    const bids = mapVisibleLevels(profile.bids, geometry);
-    drawSide(context, asks, profile, rect.width, rect.height, "rgba(246, 70, 93, .30)");
-    drawSide(context, bids, profile, rect.width, rect.height, "rgba(14, 203, 129, .30)");
+    const asks = bucketVisibleLevels(profile.asks, geometry);
+    const bids = bucketVisibleLevels(profile.bids, geometry);
+    const maxVisibleCumulative = getMaxVisibleCumulative(asks, bids);
+    if (maxVisibleCumulative > 0) {
+      drawSide(context, asks, maxVisibleCumulative, rect.width, "rgba(246, 70, 93, .30)");
+      drawSide(context, bids, maxVisibleCumulative, rect.width, "rgba(14, 203, 129, .30)");
+    }
     const currentPriceY = geometry.priceToCoordinate(currentPrice);
     if (!Number.isFinite(currentPriceY)) return true;
     context.save();
