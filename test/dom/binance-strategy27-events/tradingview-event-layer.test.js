@@ -13,6 +13,7 @@ function createChartDom({
   shiftSeconds = 0,
   deferredCreate = false,
   candle = [10, 1.25, 1.3, 1.2, 1.25],
+  previousCandle = null,
 } = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"><div><iframe></iframe></div></div>');
   const shapes = new Map();
@@ -42,14 +43,22 @@ function createChartDom({
     removeEntity(id) { removed.push(id); shapes.delete(id); },
     getSeries: () => ({
       data: () => ({
-        valueAt: (index) => (index === 5 ? currentCandle : null),
+        valueAt: (index) => {
+          if (index === 5) return currentCandle;
+          if (index === 4) return previousCandle;
+          return null;
+        },
       }),
     }),
     _chartWidget: {
       model: () => ({
         model: () => ({
           timeScale: () => ({
-            timePointToIndex: (time) => (time === 10 ? 5 : null),
+            timePointToIndex: (time, matchMode) => {
+              if (time !== 10) return null;
+              if (matchMode === 1 && previousCandle) return 4;
+              return 5;
+            },
           }),
           mainSeries: () => ({
             dataUpdated: () => ({
@@ -250,6 +259,48 @@ test('rejects a directional marker when its matching candle misses the bounded w
     layer.renderOpened('event-a', annotation(), 10_000),
     /candle did not arrive within 5 ms for 10/,
   );
+});
+
+test('anchors a neutral event to the latest prior candle when its exact second has no trade', async () => {
+  const fixture = createChartDom({
+    candle: null,
+    previousCandle: [9, 1.24, 1.28, 1.18, 1.23],
+  });
+  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
+  const layer = createTradingViewEventLayer(target, {
+    maxEvents: 2,
+    maxAgeMs: 60_000,
+    candleWaitMs: 5,
+  });
+
+  assert.equal(await layer.renderOpened('event-a', annotation({
+    markerShape: 'flag',
+    markerColor: '#F0B90B',
+    markerPrice: 1.26,
+  }), 10_000), true);
+
+  const marker = [...fixture.shapes.values()][0];
+  assert.deepEqual(marker.getPoints(), [{ time: 9, price: 1.26 }]);
+  assert.equal(fixture.dataUpdatedListenerCount, 0);
+});
+
+test('places a directional event outside the latest prior candle when its exact second has no trade', async () => {
+  const fixture = createChartDom({
+    candle: null,
+    previousCandle: [9, 1.24, 1.28, 1.18, 1.23],
+  });
+  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
+  const layer = createTradingViewEventLayer(target, {
+    maxEvents: 2,
+    maxAgeMs: 60_000,
+    candleWaitMs: 5,
+  });
+
+  assert.equal(await layer.renderOpened('event-a', annotation(), 10_000), true);
+
+  const marker = [...fixture.shapes.values()][0];
+  assert.deepEqual(marker.getPoints(), [{ time: 9, price: 1.172 }]);
+  assert.equal(fixture.dataUpdatedListenerCount, 0);
 });
 
 test('clear cancels a pending candle wait without creating a late marker', async () => {

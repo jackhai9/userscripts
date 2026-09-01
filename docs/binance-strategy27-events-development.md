@@ -35,9 +35,11 @@ symbol.
   candle for placement instead of the event response midpoint: an up arrow sits
   eight screen pixels below the candle low, and a down arrow sits eight screen
   pixels above the candle high. Rendering waits on TradingView's `dataUpdated`
-  event for at most three seconds. A malformed candle or a missed deadline stops
-  rendering with an explicit contract error rather than placing a misleading
-  marker.
+  event for at most three seconds. Order-book events can occur during a second
+  with no trades, in which case Binance never publishes an exact one-second
+  candle; after the wait, the marker is anchored to the latest prior candle so
+  it never depends on a future bar. A malformed candle or the absence of both an
+  exact and prior candle stops rendering with an explicit contract error.
 - A single draggable panel shows the selected event's four-force facts,
   immediate price response, trigger reasons, close reason, and ordered outcome
   horizons. Dragging the header keeps the panel inside the viewport and stores

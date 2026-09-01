@@ -2,6 +2,8 @@ const CHART_ROOT_SELECTOR = '.chart-widget-root';
 const STATUS_ID = 'jh-strategy27-event-status';
 const DIRECTIONAL_MARKER_GAP_PX = 8;
 const DEFAULT_CANDLE_WAIT_MS = 3_000;
+const EXACT_TIME_MATCH_MODE = 0;
+const PREVIOUS_OR_EXACT_TIME_MATCH_MODE = 1;
 
 function hasVisibleBox(element) {
   if (!element?.getClientRects().length) return false;
@@ -82,19 +84,26 @@ function createMarkerPointResolver(chart) {
     }
   }
 
-  const resolve = (annotation) => {
-    const point = { time: annotation.markerTime, price: annotation.markerPrice };
+  const resolve = (annotation, { allowPreviousCandle = false } = {}) => {
     if (!['flag', 'arrow_up', 'arrow_down'].includes(annotation.markerShape)) {
       throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
     }
 
-    const barIndex = timeScale.timePointToIndex(annotation.markerTime, 0);
+    const matchMode = allowPreviousCandle
+      ? PREVIOUS_OR_EXACT_TIME_MATCH_MODE
+      : EXACT_TIME_MATCH_MODE;
+    const barIndex = timeScale.timePointToIndex(annotation.markerTime, matchMode);
     if (!Number.isFinite(barIndex)) return null;
     const candle = seriesData.valueAt(barIndex);
     if (candle === null) return null;
-    if (!Array.isArray(candle) || candle.length < 5 || candle[0] !== annotation.markerTime) {
+    const candleTime = Array.isArray(candle) ? candle[0] : null;
+    const timeMatches = allowPreviousCandle
+      ? Number.isInteger(candleTime) && candleTime <= annotation.markerTime
+      : candleTime === annotation.markerTime;
+    if (!Array.isArray(candle) || candle.length < 5 || !timeMatches) {
       throw new Error(`Strategy 27 candle is invalid for ${annotation.markerTime}`);
     }
+    const point = { time: candleTime, price: annotation.markerPrice };
     if (annotation.markerShape === 'flag') return point;
     const candleHigh = Number(candle[2]);
     const candleLow = Number(candle[3]);
@@ -116,7 +125,7 @@ function createMarkerPointResolver(chart) {
     if (!Number.isFinite(markerPrice)) {
       throw new Error(`Strategy 27 marker price is unavailable for ${annotation.markerTime}`);
     }
-    return { time: annotation.markerTime, price: markerPrice };
+    return { time: candleTime, price: markerPrice };
   };
   return { dataUpdated, resolve };
 }
@@ -213,9 +222,21 @@ export function createTradingViewEventLayer(target, {
       };
 
       timeoutId = setTimeout(() => {
-        fail(new Error(
-          `Strategy 27 candle did not arrive within ${candleWaitMs} ms for ${annotation.markerTime}`,
-        ));
+        try {
+          // Order-book events can occur during seconds with no trades, so a
+          // one-second chart may never create the exact candle. Anchor those
+          // events to the latest causal candle instead of a future bar.
+          const previousPoint = resolveMarkerPoint(annotation, { allowPreviousCandle: true });
+          if (previousPoint) {
+            finish(previousPoint);
+            return;
+          }
+          fail(new Error(
+            `Strategy 27 candle did not arrive within ${candleWaitMs} ms for ${annotation.markerTime}`,
+          ));
+        } catch (error) {
+          fail(error);
+        }
       }, candleWaitMs);
       pendingCandleWaits.add(cancel);
       dataUpdated.subscribe(owner, onDataUpdated);
