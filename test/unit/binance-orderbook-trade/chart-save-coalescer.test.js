@@ -3,13 +3,23 @@ import assert from 'node:assert/strict';
 
 import {
   coalesceTradingViewDrawingSaves,
-  createTradingViewRemoveSaveBurstController,
+  createTradingViewContinuousSaveController,
 } from '../../../src/binance-orderbook-trade/core/chart-save-coalescer.js';
 
 function createTradingViewApi() {
   const listeners = new Map();
   const saved = [];
+  const drawingToolNames = new Map();
   const api = {
+    activeChart() {
+      return {
+        getShapeById(drawingId) {
+          const toolname = drawingToolNames.get(String(drawingId));
+          if (!toolname) throw new Error('There is no such shape');
+          return { lineDataSource: () => ({ toolname }) };
+        },
+      };
+    },
     saveChart(...args) {
       saved.push({ thisValue: this, args });
     },
@@ -25,7 +35,25 @@ function createTradingViewApi() {
       for (const callback of listeners.get(name) || []) callback(...args);
     },
   };
-  return { api, saved, listeners };
+  return {
+    api,
+    saved,
+    listeners,
+    setDrawingToolName(drawingId, toolname) {
+      drawingToolNames.set(String(drawingId), toolname);
+    },
+  };
+}
+
+function expectedContinuousStats(overrides = {}) {
+  return {
+    deferredSubmitSaveCount: 0,
+    fullSaveCount: 0,
+    orderEventCount: 0,
+    removeEventCount: 0,
+    saveRequestCount: 0,
+    ...overrides,
+  };
 }
 
 function createManualTimers() {
@@ -59,7 +87,7 @@ test('continuous remove-save controller leaves unrelated chart saves synchronous
   const { api, saved } = createTradingViewApi();
   const originalSaveChart = api.saveChart;
   const timers = createManualTimers();
-  const coalescer = createTradingViewRemoveSaveBurstController(api, {
+  const coalescer = createTradingViewContinuousSaveController(api, {
     settleQuietMs: 20,
     maxWaitMs: 100,
     setTimeoutFn: timers.setTimeoutFn,
@@ -69,18 +97,14 @@ test('continuous remove-save controller leaves unrelated chart saves synchronous
   api.saveChart('unrelated');
   assert.deepEqual(saved.map((entry) => entry.args), [['unrelated']]);
 
-  assert.deepEqual(coalescer.stop(), {
-    fullSaveCount: 0,
-    removeEventCount: 0,
-    saveRequestCount: 0,
-  });
+  assert.deepEqual(coalescer.stop(), expectedContinuousStats());
   assert.equal(api.saveChart, originalSaveChart);
 });
 
 test('continuous remove-save controller persists only the final save in one remove burst', () => {
   const { api, saved } = createTradingViewApi();
   const timers = createManualTimers();
-  const coalescer = createTradingViewRemoveSaveBurstController(api, {
+  const coalescer = createTradingViewContinuousSaveController(api, {
     settleQuietMs: 20,
     maxWaitMs: 100,
     setTimeoutFn: timers.setTimeoutFn,
@@ -100,17 +124,17 @@ test('continuous remove-save controller persists only the final save in one remo
   timers.advance(1);
   assert.deepEqual(saved.map((entry) => entry.args), [['snapshot-3']]);
 
-  assert.deepEqual(coalescer.stop(), {
+  assert.deepEqual(coalescer.stop(), expectedContinuousStats({
     fullSaveCount: 1,
     removeEventCount: 3,
     saveRequestCount: 3,
-  });
+  }));
 });
 
 test('continuous remove-save controller flushes at its maximum wait during sustained removals', () => {
   const { api, saved } = createTradingViewApi();
   const timers = createManualTimers();
-  const coalescer = createTradingViewRemoveSaveBurstController(api, {
+  const coalescer = createTradingViewContinuousSaveController(api, {
     settleQuietMs: 50,
     maxWaitMs: 100,
     setTimeoutFn: timers.setTimeoutFn,
@@ -134,7 +158,7 @@ test('continuous remove-save controller flushes pending state and restores the o
   const { api, saved } = createTradingViewApi();
   const originalSaveChart = api.saveChart;
   const timers = createManualTimers();
-  const coalescer = createTradingViewRemoveSaveBurstController(api, {
+  const coalescer = createTradingViewContinuousSaveController(api, {
     settleQuietMs: 20,
     maxWaitMs: 100,
     setTimeoutFn: timers.setTimeoutFn,
@@ -143,11 +167,11 @@ test('continuous remove-save controller flushes pending state and restores the o
 
   api.emit('drawing_event', 'order-1', 'remove');
   api.saveChart('pending-final');
-  assert.deepEqual(coalescer.stop(), {
+  assert.deepEqual(coalescer.stop(), expectedContinuousStats({
     fullSaveCount: 1,
     removeEventCount: 1,
     saveRequestCount: 1,
-  });
+  }));
   assert.deepEqual(saved.map((entry) => entry.args), [['pending-final']]);
   assert.equal(api.saveChart, originalSaveChart);
   assert.equal(timers.timers.size, 0);
@@ -158,22 +182,18 @@ test('continuous remove-save controller flushes pending state and restores the o
 
 test('continuous remove-save controller ignores non-remove drawing events', () => {
   const { api, saved } = createTradingViewApi();
-  const coalescer = createTradingViewRemoveSaveBurstController(api);
+  const coalescer = createTradingViewContinuousSaveController(api);
 
   api.emit('drawing_event', 'order-1', 'properties_changed');
   api.saveChart('properties');
 
   assert.deepEqual(saved.map((entry) => entry.args), [['properties']]);
-  assert.deepEqual(coalescer.stop(), {
-    fullSaveCount: 0,
-    removeEventCount: 0,
-    saveRequestCount: 0,
-  });
+  assert.deepEqual(coalescer.stop(), expectedContinuousStats());
 });
 
 test('continuous remove-save controller does not replace another active save wrapper', () => {
   const { api, saved } = createTradingViewApi();
-  const controller = createTradingViewRemoveSaveBurstController(api);
+  const controller = createTradingViewContinuousSaveController(api);
   const sessionSaveChart = api.saveChart;
   const foreignSaves = [];
   api.saveChart = (...args) => foreignSaves.push(args);
@@ -184,11 +204,7 @@ test('continuous remove-save controller does not replace another active save wra
   assert.deepEqual(saved, []);
 
   api.saveChart = sessionSaveChart;
-  assert.deepEqual(controller.stop(), {
-    fullSaveCount: 0,
-    removeEventCount: 1,
-    saveRequestCount: 0,
-  });
+  assert.deepEqual(controller.stop(), expectedContinuousStats({ removeEventCount: 1 }));
 });
 
 test('continuous remove-save controller restores the chart method when the final save throws', () => {
@@ -197,7 +213,7 @@ test('continuous remove-save controller restores the chart method when the final
     throw new Error('final save failed');
   };
   api.saveChart = originalSaveChart;
-  const controller = createTradingViewRemoveSaveBurstController(api);
+  const controller = createTradingViewContinuousSaveController(api);
 
   api.emit('drawing_event', 'order-1', 'remove');
   api.saveChart('pending');
@@ -205,6 +221,438 @@ test('continuous remove-save controller restores the chart method when the final
   assert.throws(() => controller.stop(), /final save failed/);
   assert.equal(api.saveChart, originalSaveChart);
   assert.equal(listeners.get('drawing_event')?.size, 0);
+});
+
+test('continuous submit captures five order-line saves and replays only the final round snapshot', async () => {
+  const {
+    api,
+    saved,
+    setDrawingToolName,
+  } = createTradingViewApi();
+  const originalSaveChart = api.saveChart;
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    submitEventDiscoveryMs: 10,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+
+  for (let index = 1; index <= 5; index += 1) {
+    const drawingId = `order-${index}`;
+    setDrawingToolName(drawingId, 'LineToolOrder');
+    const capture = controller.beginSubmitCapture(round);
+    api.emit('drawing_event', drawingId, 'properties_changed');
+    api.saveChart(`snapshot-${index}`);
+    const completion = controller.completeSubmitCapture(capture);
+    timers.advance(20);
+    assert.deepEqual(await completion, { matched: true, status: 'captured' });
+    assert.equal(api.saveChart, originalSaveChart);
+    assert.deepEqual(saved, []);
+  }
+
+  assert.deepEqual(controller.endRound(round), expectedContinuousStats({
+    deferredSubmitSaveCount: 5,
+    fullSaveCount: 1,
+    orderEventCount: 5,
+    saveRequestCount: 5,
+  }));
+  assert.deepEqual(saved.map((entry) => entry.args), [['snapshot-5']]);
+  controller.stop();
+});
+
+test('continuous submit capture keeps the final save from multiple order-line events', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('order-1', 'LineToolOrder');
+  setDrawingToolName('order-2', 'LineToolOrder');
+
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('snapshot-1');
+  timers.advance(10);
+  api.emit('drawing_event', 'order-2', 'properties_changed');
+  api.saveChart('snapshot-2');
+  const completion = controller.completeSubmitCapture(capture);
+  timers.advance(20);
+
+  assert.deepEqual(await completion, { matched: true, status: 'captured' });
+  controller.endRound(round);
+  assert.deepEqual(saved.map((entry) => entry.args), [['snapshot-2']]);
+  assert.deepEqual(controller.stop(), expectedContinuousStats({
+    deferredSubmitSaveCount: 1,
+    fullSaveCount: 1,
+    orderEventCount: 2,
+    saveRequestCount: 2,
+  }));
+});
+
+test('continuous submit capture keeps an existing remove burst independent', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('order-1', 'LineToolOrder');
+
+  api.emit('drawing_event', 'removed-order', 'remove');
+  api.saveChart('remove-snapshot');
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('order-snapshot');
+  const completion = controller.completeSubmitCapture(capture);
+  timers.advance(20);
+
+  assert.deepEqual(await completion, { matched: true, status: 'captured' });
+  assert.deepEqual(saved.map((entry) => entry.args), [['remove-snapshot']]);
+  controller.endRound(round);
+  assert.deepEqual(saved.map((entry) => entry.args), [
+    ['remove-snapshot'],
+    ['order-snapshot'],
+  ]);
+  controller.stop();
+});
+
+test('continuous remove burst supersedes an older deferred submit snapshot', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('order-1', 'LineToolOrder');
+
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('order-snapshot');
+  api.emit('drawing_event', 'removed-order', 'remove');
+  api.saveChart('newer-remove-snapshot');
+  timers.advance(20);
+
+  assert.deepEqual(await controller.completeSubmitCapture(capture), {
+    matched: true,
+    status: 'captured',
+  });
+  controller.endRound(round);
+  assert.deepEqual(saved.map((entry) => entry.args), [['newer-remove-snapshot']]);
+  controller.stop();
+});
+
+test('continuous submit capture ignores position lines and leaves their saves synchronous', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    submitEventDiscoveryMs: 10,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('position-1', 'LineToolPosition');
+
+  api.emit('drawing_event', 'position-1', 'properties_changed');
+  api.saveChart('position-snapshot');
+  const completion = controller.completeSubmitCapture(capture);
+  timers.advance(10);
+
+  assert.deepEqual(await completion, { matched: false, status: 'no-order-event' });
+  assert.deepEqual(saved.map((entry) => entry.args), [['position-snapshot']]);
+  controller.endRound(round);
+  controller.stop();
+});
+
+test('continuous submit capture ignores click and move events for order lines', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    submitEventDiscoveryMs: 10,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('order-1', 'LineToolOrder');
+
+  api.emit('drawing_event', 'order-1', 'click');
+  api.emit('drawing_event', 'order-1', 'move');
+  api.saveChart('interaction-snapshot');
+  const completion = controller.completeSubmitCapture(capture);
+  timers.advance(10);
+
+  assert.deepEqual(await completion, { matched: false, status: 'no-order-event' });
+  assert.deepEqual(saved.map((entry) => entry.args), [['interaction-snapshot']]);
+  controller.endRound(round);
+  controller.stop();
+});
+
+test('continuous submit capture restores saveChart before unrelated saves outside the capture', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const originalSaveChart = api.saveChart;
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('order-1', 'LineToolOrder');
+
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('order-snapshot');
+  const completion = controller.completeSubmitCapture(capture);
+  timers.advance(20);
+  await completion;
+  assert.equal(api.saveChart, originalSaveChart);
+
+  api.saveChart('unrelated-snapshot');
+  assert.deepEqual(saved.map((entry) => entry.args), [['unrelated-snapshot']]);
+  controller.endRound(round);
+  assert.deepEqual(saved.map((entry) => entry.args), [
+    ['unrelated-snapshot'],
+    ['order-snapshot'],
+  ]);
+  controller.stop();
+});
+
+test('continuous submit capture flushes the pending round snapshot on stop', async () => {
+  const { api, saved, listeners, setDrawingToolName } = createTradingViewApi();
+  const originalSaveChart = api.saveChart;
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('order-1', 'LineToolOrder');
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('pending-round');
+  const completion = controller.completeSubmitCapture(capture);
+  timers.advance(20);
+  await completion;
+
+  assert.deepEqual(controller.stop(), expectedContinuousStats({
+    deferredSubmitSaveCount: 1,
+    fullSaveCount: 1,
+    orderEventCount: 1,
+    saveRequestCount: 1,
+  }));
+  assert.deepEqual(saved.map((entry) => entry.args), [['pending-round']]);
+  assert.equal(api.saveChart, originalSaveChart);
+  assert.equal(listeners.get('drawing_event')?.size, 0);
+});
+
+test('continuous submit capture flushes pending state while keeping the round active', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  setDrawingToolName('order-1', 'LineToolOrder');
+  const firstCapture = controller.beginSubmitCapture(round);
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('snapshot-1');
+  const firstCompletion = controller.completeSubmitCapture(firstCapture);
+  timers.advance(20);
+  await firstCompletion;
+
+  controller.flush();
+  assert.deepEqual(saved.map((entry) => entry.args), [['snapshot-1']]);
+
+  setDrawingToolName('order-2', 'LineToolOrder');
+  const secondCapture = controller.beginSubmitCapture(round);
+  api.emit('drawing_event', 'order-2', 'properties_changed');
+  api.saveChart('snapshot-2');
+  const secondCompletion = controller.completeSubmitCapture(secondCapture);
+  timers.advance(20);
+  await secondCompletion;
+
+  controller.endRound(round);
+  assert.deepEqual(saved.map((entry) => entry.args), [['snapshot-1'], ['snapshot-2']]);
+  controller.stop();
+});
+
+test('continuous submit capture does not wait for discovery after a lifecycle flush', async () => {
+  const { api } = createTradingViewApi();
+  const controller = createTradingViewContinuousSaveController(api);
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+
+  controller.flush();
+
+  assert.deepEqual(await controller.completeSubmitCapture(capture), {
+    matched: false,
+    status: 'flushed',
+  });
+  controller.endRound(round);
+  controller.stop();
+});
+
+test('continuous submit ownership expires from the moment capture is armed', async () => {
+  const { api } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    submitEventDiscoveryMs: 10,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+
+  timers.advance(10);
+
+  assert.deepEqual(await controller.completeSubmitCapture(capture), {
+    matched: false,
+    status: 'no-order-event',
+  });
+  controller.endRound(round);
+  controller.stop();
+});
+
+test('continuous submit capture skips optimization when another save wrapper is active', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const controller = createTradingViewContinuousSaveController(api);
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  const foreignSaves = [];
+  const sessionSaveChart = api.saveChart;
+  api.saveChart = (...args) => foreignSaves.push(args);
+  setDrawingToolName('order-1', 'LineToolOrder');
+
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  assert.deepEqual(await controller.completeSubmitCapture(capture), {
+    matched: true,
+    status: 'save-chart-busy',
+  });
+  api.saveChart('foreign-order-snapshot');
+  assert.deepEqual(foreignSaves, [['foreign-order-snapshot']]);
+  assert.deepEqual(saved, []);
+
+  api.saveChart = sessionSaveChart;
+  controller.endRound(round);
+  controller.stop();
+});
+
+test('continuous submit capture preserves a wrapper installed during its active burst', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  const sessionSaveChart = api.saveChart;
+  setDrawingToolName('order-1', 'LineToolOrder');
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('pending-round');
+
+  const foreignSaves = [];
+  const replacedSaveChart = api.saveChart;
+  api.saveChart = function foreignSaveChart(...args) {
+    foreignSaves.push({ thisValue: this, args });
+    return replacedSaveChart.apply(this, args);
+  };
+  timers.advance(20);
+
+  assert.deepEqual(await controller.completeSubmitCapture(capture), {
+    matched: true,
+    status: 'save-chart-replaced',
+  });
+  assert.deepEqual(foreignSaves, []);
+  assert.deepEqual(saved.map((entry) => entry.args), [['pending-round']]);
+  assert.notEqual(api.saveChart, sessionSaveChart);
+
+  controller.endRound(round);
+  api.saveChart = sessionSaveChart;
+  controller.stop();
+});
+
+test('continuous submit final replay preserves a wrapper installed after capture', async () => {
+  const { api, saved, setDrawingToolName } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('order-1', 'LineToolOrder');
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('pending-round');
+  const completion = controller.completeSubmitCapture(capture);
+  timers.advance(20);
+  await completion;
+
+  const sessionSaveChart = api.saveChart;
+  const foreignSaves = [];
+  api.saveChart = function foreignSaveChart(...args) {
+    foreignSaves.push({ thisValue: this, args });
+    return sessionSaveChart.apply(this, args);
+  };
+  controller.endRound(round);
+
+  assert.deepEqual(foreignSaves.map((entry) => entry.args), [['pending-round']]);
+  assert.deepEqual(saved.map((entry) => entry.args), [['pending-round']]);
+  api.saveChart = sessionSaveChart;
+  controller.stop();
+});
+
+test('continuous submit final replay restores saveChart when the original save throws', async () => {
+  const { api, setDrawingToolName } = createTradingViewApi();
+  const originalSaveChart = function saveChart() {
+    throw new Error('round save failed');
+  };
+  api.saveChart = originalSaveChart;
+  const timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const round = controller.beginRound();
+  const capture = controller.beginSubmitCapture(round);
+  setDrawingToolName('order-1', 'LineToolOrder');
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('pending-round');
+  const completion = controller.completeSubmitCapture(capture);
+  timers.advance(20);
+  await completion;
+
+  assert.throws(() => controller.endRound(round), /round save failed/);
+  assert.equal(api.saveChart, originalSaveChart);
+  controller.stop();
 });
 
 for (const drawingCount of [1, 5, 70, 120, 199, 200]) {

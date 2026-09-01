@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.178
+// @version      2.7.179
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2838,9 +2838,15 @@
       throw new Error("图表保存接口未能恢复");
     }
   }
-  function createTradingViewRemoveSaveBurstController(api, {
+  function readTradingViewDrawingToolName(api, drawingId) {
+    const shape = api.activeChart?.().getShapeById?.(String(drawingId));
+    return shape?.lineDataSource?.()?.toolname || null;
+  }
+  function createTradingViewContinuousSaveController(api, {
     settleQuietMs = 120,
     maxWaitMs = 400,
+    submitEventDiscoveryMs = 250,
+    getDrawingToolName = readTradingViewDrawingToolName,
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout
   } = {}) {
@@ -2851,12 +2857,39 @@
     if (!Number.isFinite(maxWaitMs) || maxWaitMs < settleQuietMs) {
       throw new Error("图表保存合并最长等待时间无效");
     }
+    if (!Number.isFinite(submitEventDiscoveryMs) || submitEventDiscoveryMs < 0) {
+      throw new Error("订单线事件等待时间无效");
+    }
+    if (typeof getDrawingToolName !== "function") {
+      throw new Error("订单线类型解析依赖异常");
+    }
     const sessionSaveChart = api.saveChart;
     let activeBurst = null;
+    let activeRound = null;
+    let activeSubmitCapture = null;
     let removeEventCount = 0;
+    let orderEventCount = 0;
     let saveRequestCount = 0;
     let fullSaveCount = 0;
+    let deferredSubmitSaveCount = 0;
+    let sequence = 0;
     let stopped = false;
+    const getStats = () => ({
+      deferredSubmitSaveCount,
+      fullSaveCount,
+      orderEventCount,
+      removeEventCount,
+      saveRequestCount
+    });
+    const finishSubmitCapture = (capture, status) => {
+      if (!capture || capture.settled) return;
+      if (capture.discoveryTimer !== null) clearTimeoutFn(capture.discoveryTimer);
+      capture.discoveryTimer = null;
+      capture.settled = true;
+      capture.status = status;
+      if (activeSubmitCapture === capture) activeSubmitCapture = null;
+      capture.resolve({ matched: capture.matched, status });
+    };
     const clearBurstTimers = (burst) => {
       if (burst.settleTimer !== null) clearTimeoutFn(burst.settleTimer);
       if (burst.maxWaitTimer !== null) clearTimeoutFn(burst.maxWaitTimer);
@@ -2868,18 +2901,44 @@
       if (!burst) return void 0;
       clearBurstTimers(burst);
       activeBurst = null;
-      restoreSaveChartMethod(
-        api,
-        burst.wrapper,
-        burst.originalSaveChart,
-        burst.originalDescriptor
-      );
-      if (!burst.pendingSave) return void 0;
-      fullSaveCount += 1;
-      return burst.originalSaveChart.apply(
-        burst.pendingSave.thisValue,
-        burst.pendingSave.args
-      );
+      const saveChartWasReplaced = api.saveChart !== burst.wrapper;
+      if (!saveChartWasReplaced) {
+        restoreSaveChartMethod(
+          api,
+          burst.wrapper,
+          burst.originalSaveChart,
+          burst.originalDescriptor
+        );
+      }
+      try {
+        if (!burst.pendingSave) return void 0;
+        if (saveChartWasReplaced) {
+          if (activeRound?.pendingSave) activeRound.pendingSave = null;
+          fullSaveCount += 1;
+          return burst.originalSaveChart.apply(
+            burst.pendingSave.thisValue,
+            burst.pendingSave.args
+          );
+        }
+        if (burst.deferToRound && activeRound) {
+          activeRound.pendingSave = burst.pendingSave;
+          deferredSubmitSaveCount += 1;
+          return void 0;
+        }
+        if (activeRound?.pendingSave) activeRound.pendingSave = null;
+        fullSaveCount += 1;
+        return burst.originalSaveChart.apply(
+          burst.pendingSave.thisValue,
+          burst.pendingSave.args
+        );
+      } finally {
+        if (burst.submitCapture) {
+          finishSubmitCapture(
+            burst.submitCapture,
+            saveChartWasReplaced ? "save-chart-replaced" : "captured"
+          );
+        }
+      }
     };
     const scheduleBurstSettle = (burst) => {
       if (burst.settleTimer !== null) clearTimeoutFn(burst.settleTimer);
@@ -2891,13 +2950,15 @@
       const originalDescriptor = Object.getOwnPropertyDescriptor(api, "saveChart");
       const burst = {
         maxWaitTimer: null,
+        deferToRound: false,
         originalDescriptor,
         originalSaveChart,
         pendingSave: null,
         settleTimer: null,
+        submitCapture: null,
         wrapper: null
       };
-      burst.wrapper = function removeSaveBurstWrapper(...args) {
+      burst.wrapper = function continuousSaveBurstWrapper(...args) {
         saveRequestCount += 1;
         burst.pendingSave = { thisValue: this, args };
         return void 0;
@@ -2910,21 +2971,131 @@
       burst.maxWaitTimer = setTimeoutFn(flushActiveBurst, maxWaitMs);
       return burst;
     };
-    const handleDrawingEvent = (_drawingId, eventType) => {
-      if (stopped || eventType !== "remove") return;
-      removeEventCount += 1;
+    const flushRoundPendingSave = () => {
+      const pendingSave = activeRound?.pendingSave || null;
+      if (!pendingSave) return void 0;
+      activeRound.pendingSave = null;
+      fullSaveCount += 1;
+      return api.saveChart.apply(pendingSave.thisValue, pendingSave.args);
+    };
+    const handleDrawingEvent = (drawingId, eventType) => {
+      if (stopped || IGNORED_DRAWING_EVENT_TYPES.has(eventType)) return;
+      if (eventType === "remove") {
+        removeEventCount += 1;
+        if (activeBurst?.deferToRound) flushActiveBurst();
+        const burst2 = startBurst();
+        if (burst2) scheduleBurstSettle(burst2);
+        return;
+      }
+      const capture = activeSubmitCapture;
+      if (!capture || capture.settled) return;
+      let toolName = null;
+      try {
+        toolName = getDrawingToolName(api, drawingId);
+      } catch {
+        return;
+      }
+      if (toolName !== "LineToolOrder") return;
+      orderEventCount += 1;
+      capture.matched = true;
+      if (capture.discoveryTimer !== null) clearTimeoutFn(capture.discoveryTimer);
+      capture.discoveryTimer = null;
+      if (activeBurst && !activeBurst.deferToRound) flushActiveBurst();
       const burst = startBurst();
-      if (burst) scheduleBurstSettle(burst);
+      if (!burst) {
+        finishSubmitCapture(capture, "save-chart-busy");
+        return;
+      }
+      burst.deferToRound = true;
+      burst.submitCapture = capture;
+      scheduleBurstSettle(burst);
     };
     api.subscribe("drawing_event", handleDrawingEvent);
     return {
-      flush: flushActiveBurst,
+      getStats,
+      beginRound() {
+        if (stopped) throw new Error("连续图表保存控制器已停止");
+        if (activeRound) throw new Error("已有图表保存轮次正在执行");
+        if (activeSubmitCapture) throw new Error("上一笔订单线捕获尚未结束");
+        flushActiveBurst();
+        sequence += 1;
+        activeRound = { id: sequence, pendingSave: null };
+        return activeRound;
+      },
+      beginSubmitCapture(round) {
+        if (stopped) throw new Error("连续图表保存控制器已停止");
+        if (!activeRound || round !== activeRound) {
+          throw new Error("图表保存轮次不匹配");
+        }
+        if (activeSubmitCapture) throw new Error("已有订单线保存捕获正在执行");
+        let resolve;
+        const promise = new Promise((settle) => {
+          resolve = settle;
+        });
+        sequence += 1;
+        const capture = {
+          discoveryTimer: null,
+          id: sequence,
+          matched: false,
+          promise,
+          resolve,
+          settled: false,
+          status: null
+        };
+        activeSubmitCapture = capture;
+        capture.discoveryTimer = setTimeoutFn(
+          () => finishSubmitCapture(capture, "no-order-event"),
+          submitEventDiscoveryMs
+        );
+        return capture;
+      },
+      async completeSubmitCapture(capture) {
+        if (!capture || capture !== activeSubmitCapture) {
+          if (capture?.settled) return { matched: capture.matched, status: capture.status };
+          throw new Error("订单线保存捕获不匹配");
+        }
+        return await capture.promise;
+      },
+      endRound(round) {
+        if (!activeRound || round !== activeRound) {
+          throw new Error("结束的图表保存轮次不匹配");
+        }
+        if (activeSubmitCapture) {
+          throw new Error("结束图表保存轮次时仍有订单线捕获");
+        }
+        flushActiveBurst();
+        const pendingSave = activeRound.pendingSave;
+        activeRound = null;
+        if (pendingSave) {
+          fullSaveCount += 1;
+          api.saveChart.apply(pendingSave.thisValue, pendingSave.args);
+        }
+        return getStats();
+      },
+      flush() {
+        flushActiveBurst();
+        if (activeSubmitCapture) finishSubmitCapture(activeSubmitCapture, "flushed");
+        return flushRoundPendingSave();
+      },
       stop() {
-        if (stopped) throw new Error("图表删除事件保存合并器已停止");
+        if (stopped) throw new Error("连续图表保存控制器已停止");
         stopped = true;
         api.unsubscribe("drawing_event", handleDrawingEvent);
-        flushActiveBurst();
-        return { fullSaveCount, removeEventCount, saveRequestCount };
+        let cleanupError = null;
+        try {
+          flushActiveBurst();
+        } catch (error) {
+          cleanupError = error;
+        }
+        if (activeSubmitCapture) finishSubmitCapture(activeSubmitCapture, "stopped");
+        try {
+          flushRoundPendingSave();
+        } catch (error) {
+          cleanupError || (cleanupError = error);
+        }
+        activeRound = null;
+        if (cleanupError) throw cleanupError;
+        return getStats();
       }
     };
   }
@@ -3730,6 +3901,7 @@
     const CHART_ORDERS_MENU_POLL_MS = 50;
     const CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS = 120;
     const CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS = 400;
+    const CONTINUOUS_CHART_SUBMIT_EVENT_WAIT_MS = 250;
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS = 5;
     const LADDER_REPRICE_PAUSE_MS = 3e3;
@@ -3828,7 +4000,7 @@
     let singleOrderTask = null;
     let ladderAbortController = null;
     let continuousLadderAbortController = null;
-    let continuousChartSaveCoalescer = null;
+    let continuousChartSaveController = null;
     let activeLadderActionType = null;
     let activeContinuousLadderActionType = null;
     let activeContinuousLadderProgress = null;
@@ -6249,8 +6421,12 @@
           if (!CFG.SAFE_MODE) {
             const previousFeedback = takeOrderFeedbackSnapshot();
             const submitCaptureId = beginLadderSubmitResponseCapture();
+            let chartSubmitCapture = null;
             try {
               throwIfAborted(abortSignal);
+              chartSubmitCapture = options?.chartSaveController?.beginSubmitCapture(
+                options.chartSaveRound
+              ) || null;
               button.click();
               setExecutionStatus(
                 localizedActionStatus(
@@ -6274,6 +6450,18 @@
               );
             } finally {
               endLadderSubmitResponseCapture(submitCaptureId);
+              if (chartSubmitCapture) {
+                try {
+                  await options.chartSaveController.completeSubmitCapture(chartSubmitCapture);
+                } catch (error) {
+                  err("订单线图表保存捕获清理失败:", error);
+                  try {
+                    options.chartSaveController.flush();
+                  } catch (flushError) {
+                    err("订单线图表保存刷新失败:", flushError);
+                  }
+                }
+              }
             }
             previousAcknowledgedInputs = {
               submittedPrice: synchronizedInputs.submittedPrice,
@@ -6354,7 +6542,7 @@
       }
       return { done, repriceAttempts, lastRepriceApiErrorCode };
     }
-    async function startLadder(actionType, continuousProgress = null) {
+    async function startLadder(actionType, continuousProgress = null, chartSaveController = null) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec) {
         setLadderStatus("未知阶梯动作");
@@ -6421,6 +6609,7 @@
         }
         setLadderStatus(singleStatus);
       };
+      const chartSaveRound = chartSaveController?.beginRound() || null;
       invalidateUsdtRebalanceEligibility();
       ladderAbortController = abortController;
       activeLadderActionType = actionType;
@@ -6435,7 +6624,7 @@
         localizedActionStatus(spec.statusLabel, "准备中", " preparing"),
         localizedText("准备中", "Preparing")
       );
-      const executionTask = (async () => {
+      const executeRound = async () => {
         const {
           plan,
           done,
@@ -6446,7 +6635,11 @@
           progress,
           setExecutionStatus,
           abortController.signal,
-          { allowMaxOpenOrdersRecovery: continuousSession && spec.mode === "CLOSE" }
+          {
+            allowMaxOpenOrdersRecovery: continuousSession && spec.mode === "CLOSE",
+            chartSaveController,
+            chartSaveRound
+          }
         );
         return {
           plan,
@@ -6455,6 +6648,25 @@
           lastRepriceApiErrorCode,
           wasStopped: ladderStopRequested
         };
+      };
+      const executionTask = (async () => {
+        let result;
+        try {
+          result = await executeRound();
+        } catch (executionError) {
+          if (chartSaveRound) {
+            try {
+              chartSaveController.endRound(chartSaveRound);
+            } catch (chartSaveError) {
+              if (chartSaveError !== executionError) {
+                err("阶梯轮次失败后的图表保存清理失败:", chartSaveError);
+              }
+            }
+          }
+          throw executionError;
+        }
+        if (chartSaveRound) chartSaveController.endRound(chartSaveRound);
+        return result;
       })();
       ladderTask = keepInteractionFeedbackVisible(executionTask, {
         startedAtMs: feedbackStartedAt,
@@ -6636,9 +6848,10 @@
       try {
         const target = findBinanceTradingViewTarget(document);
         if (!target) return null;
-        return createTradingViewRemoveSaveBurstController(target.tradingViewApi, {
+        return createTradingViewContinuousSaveController(target.tradingViewApi, {
           settleQuietMs: CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS,
-          maxWaitMs: CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS
+          maxWaitMs: CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS,
+          submitEventDiscoveryMs: CONTINUOUS_CHART_SUBMIT_EVENT_WAIT_MS
         });
       } catch (error) {
         warn("未启用连续交易图表保存合并:", error?.message || error);
@@ -6653,8 +6866,8 @@
       } catch (error) {
         err("连续交易图表保存合并清理失败:", error);
       } finally {
-        if (continuousChartSaveCoalescer === coalescer) {
-          continuousChartSaveCoalescer = null;
+        if (continuousChartSaveController === coalescer) {
+          continuousChartSaveController = null;
         }
       }
     }
@@ -6676,13 +6889,17 @@
       const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
       const chartSaveCoalescer = startContinuousChartSaveCoalescing();
       continuousLadderAbortController = abortController;
-      continuousChartSaveCoalescer = chartSaveCoalescer;
+      continuousChartSaveController = chartSaveCoalescer;
       activeContinuousLadderActionType = actionType;
       activeContinuousLadderProgress = continuousProgress;
       const executionTask = (async () => {
         while (true) {
           throwIfAborted(abortController.signal);
-          const outcome = await startLadder(actionType, continuousProgress);
+          const outcome = await startLadder(
+            actionType,
+            continuousProgress,
+            chartSaveCoalescer
+          );
           let recovery = null;
           if (!outcome?.progress) {
             if (outcome.status !== "not_started") return outcome;
@@ -10645,7 +10862,7 @@
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         try {
-          continuousChartSaveCoalescer?.flush();
+          continuousChartSaveController?.flush();
         } catch (error) {
           err("页面隐藏前图表保存刷新失败:", error);
         }
@@ -10668,6 +10885,9 @@
     }
     window.__TM_CLOSE_LONG_DEBUG__ = {
       cfg: CFG,
+      get continuousChartSaveStats() {
+        return continuousChartSaveController?.getStats() || null;
+      },
       get cachedCloseState() {
         return getCachedCloseState(getCurrentSymbol());
       },
