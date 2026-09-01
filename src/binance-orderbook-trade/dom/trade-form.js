@@ -125,6 +125,49 @@ export function findActiveTradeInputs(ownerDocument, {
   return matches.length === 1 ? matches[0] : null;
 }
 
+/**
+ * Cache only the proven form owner. React may replace its controlled inputs on
+ * any frame, so every read still resolves the live descendants inside that
+ * small root. A connected root may be temporarily incomplete while React is
+ * replacing descendants, so only a disconnected root triggers full-document
+ * discovery and establishes the next owner.
+ */
+export function createTradeInputResolver(ownerDocument, {
+  initialRoot = null,
+  panelId,
+  isVisibleElement,
+}) {
+  if (!ownerDocument?.querySelectorAll || typeof isVisibleElement !== 'function') {
+    throw new Error('交易表单解析依赖异常');
+  }
+  let cachedRoot = initialRoot;
+  const resolveInputs = (options = null) => {
+    const requirePrice = options?.requirePrice !== false;
+    if (cachedRoot?.isConnected) {
+      const cachedInputs = findActiveTradeInputs(cachedRoot, {
+        panelId,
+        isVisibleElement,
+        requirePrice,
+      });
+      if (cachedInputs) {
+        cachedRoot = cachedInputs.root;
+        return cachedInputs;
+      }
+      return null;
+    }
+
+    cachedRoot = null;
+    const discoveredInputs = findActiveTradeInputs(ownerDocument, {
+      panelId,
+      isVisibleElement,
+      requirePrice,
+    });
+    if (discoveredInputs) cachedRoot = discoveredInputs.root;
+    return discoveredInputs;
+  };
+  return resolveInputs;
+}
+
 export function createBoundedInputWriter({ writeValue, maxWriteAttempts }) {
   if (typeof writeValue !== 'function') {
     throw new Error('输入框写入依赖异常');

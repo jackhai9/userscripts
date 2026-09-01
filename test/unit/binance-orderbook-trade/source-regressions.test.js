@@ -180,7 +180,7 @@ test('trade input synchronization confirms live controlled values instead of sle
   assert.doesNotMatch(setInputBody, /dispatchEvent\(new Event\('blur'/);
   assert.equal((syncBody.match(/createTradeInputStateReader/g) || []).length, 1);
   assert.match(syncBody, /createBoundedInputWriter/);
-  assert.match(syncBody, /resolveInputs:\s*findTradeInputs/);
+  assert.match(syncBody, /resolveInputs:\s*resolveSynchronizedTradeInputs/);
   assert.equal((syncBody.match(/writeValue:\s*writeTradeInputValue/g) || []).length, 1);
   assert.match(syncBody, /requiredStableMismatchFrames:\s*TRADE_INPUT_SYNC_STABLE_FRAMES/);
   assert.match(syncBody, /requiredStableMismatchMs:\s*stableDurationMs/);
@@ -786,6 +786,38 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.doesNotMatch(source, /stopContinuousLadderByAction/);
   assert.match(executionButtonBody, /white-space:nowrap;overflow:hidden/);
   assert.match(controlSectionsBody, /!!ladderTask \|\| !!continuousLadderTask/);
+});
+
+test('continuous close coalesces only short remove-save bursts and restores the chart method', () => {
+  const startCoalescingBody = readFunctionBody('startContinuousChartSaveCoalescing');
+  const stopCoalescingBody = readFunctionBody('stopContinuousChartSaveCoalescing');
+  const continuousBody = readFunctionBody('startContinuousLadder');
+
+  assert.match(chartSaveCoalescerSource, /export function createTradingViewRemoveSaveBurstController/);
+  assert.match(chartSaveCoalescerSource, /eventType !== 'remove'/);
+  assert.match(chartSaveCoalescerSource, /api\.subscribe\('drawing_event', handleDrawingEvent\)/);
+  assert.match(chartSaveCoalescerSource, /api\.unsubscribe\('drawing_event', handleDrawingEvent\)/);
+  assert.match(chartSaveCoalescerSource, /burst\.originalSaveChart\.apply/);
+  assert.doesNotMatch(chartSaveCoalescerSource, /saveToJSON|orderUpdate|ordersFullUpdate/);
+  assert.match(startCoalescingBody, /findBinanceTradingViewTarget\(document\)/);
+  assert.match(startCoalescingBody, /CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS/);
+  assert.match(startCoalescingBody, /CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS/);
+  assert.match(continuousBody, /const chartSaveCoalescer = startContinuousChartSaveCoalescing\(\)/);
+  assert.match(continuousBody, /stopContinuousChartSaveCoalescing\(chartSaveCoalescer\)/);
+  assert.match(stopCoalescingBody, /coalescer\.stop\(\)/);
+  assert.match(source, /continuousChartSaveCoalescer\?\.flush\(\)/);
+});
+
+test('trade input frame synchronization reuses only its initially proven form root', () => {
+  const syncBody = readFunctionBody('syncTradeInputs');
+  const findBody = readFunctionBody('findTradeInputs');
+
+  assert.match(findBody, /findActiveTradeInputsDom\(document/);
+  assert.match(syncBody, /const inputs = findTradeInputs\(\)/);
+  assert.match(syncBody, /createTradeInputResolver\(document, \{/);
+  assert.match(syncBody, /initialRoot: observationRoot/);
+  assert.match(syncBody, /resolveInputs: resolveSynchronizedTradeInputs/);
+  assert.doesNotMatch(syncBody, /resolveInputs: findTradeInputs/);
 });
 
 test('open ladder stops immediately only for a confirmed zero available balance', () => {

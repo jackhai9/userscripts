@@ -27,6 +27,109 @@ function restoreSaveChartMethod(api, wrapper, originalSaveChart, originalDescrip
 }
 
 /**
+ * Listen throughout a continuous-close session, but replace saveChart only for
+ * a short window opened by a remove drawing event. Unrelated chart saves keep
+ * their original synchronous path, while consecutive order-line removals replay
+ * only their final cumulative snapshot.
+ */
+export function createTradingViewRemoveSaveBurstController(
+  api,
+  {
+    settleQuietMs = 120,
+    maxWaitMs = 400,
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout,
+  } = {},
+) {
+  validateTradingViewApi(api);
+  if (!Number.isFinite(settleQuietMs) || settleQuietMs <= 0) {
+    throw new Error('图表保存合并静默时间无效');
+  }
+  if (!Number.isFinite(maxWaitMs) || maxWaitMs < settleQuietMs) {
+    throw new Error('图表保存合并最长等待时间无效');
+  }
+
+  const sessionSaveChart = api.saveChart;
+  let activeBurst = null;
+  let removeEventCount = 0;
+  let saveRequestCount = 0;
+  let fullSaveCount = 0;
+  let stopped = false;
+
+  const clearBurstTimers = (burst) => {
+    if (burst.settleTimer !== null) clearTimeoutFn(burst.settleTimer);
+    if (burst.maxWaitTimer !== null) clearTimeoutFn(burst.maxWaitTimer);
+    burst.settleTimer = null;
+    burst.maxWaitTimer = null;
+  };
+  const flushActiveBurst = () => {
+    const burst = activeBurst;
+    if (!burst) return undefined;
+    clearBurstTimers(burst);
+    activeBurst = null;
+    restoreSaveChartMethod(
+      api,
+      burst.wrapper,
+      burst.originalSaveChart,
+      burst.originalDescriptor,
+    );
+    if (!burst.pendingSave) return undefined;
+    fullSaveCount += 1;
+    return burst.originalSaveChart.apply(
+      burst.pendingSave.thisValue,
+      burst.pendingSave.args,
+    );
+  };
+  const scheduleBurstSettle = (burst) => {
+    if (burst.settleTimer !== null) clearTimeoutFn(burst.settleTimer);
+    burst.settleTimer = setTimeoutFn(flushActiveBurst, settleQuietMs);
+  };
+  const startBurst = () => {
+    if (activeBurst || api.saveChart !== sessionSaveChart) return activeBurst;
+    const originalSaveChart = api.saveChart;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(api, 'saveChart');
+    const burst = {
+      maxWaitTimer: null,
+      originalDescriptor,
+      originalSaveChart,
+      pendingSave: null,
+      settleTimer: null,
+      wrapper: null,
+    };
+    burst.wrapper = function removeSaveBurstWrapper(...args) {
+      saveRequestCount += 1;
+      burst.pendingSave = { thisValue: this, args };
+      return undefined;
+    };
+    api.saveChart = burst.wrapper;
+    if (api.saveChart !== burst.wrapper) {
+      throw new Error('图表保存接口无法启用删除事件合并');
+    }
+    activeBurst = burst;
+    burst.maxWaitTimer = setTimeoutFn(flushActiveBurst, maxWaitMs);
+    return burst;
+  };
+  const handleDrawingEvent = (_drawingId, eventType) => {
+    if (stopped || eventType !== 'remove') return;
+    removeEventCount += 1;
+    const burst = startBurst();
+    if (burst) scheduleBurstSettle(burst);
+  };
+  api.subscribe('drawing_event', handleDrawingEvent);
+
+  return {
+    flush: flushActiveBurst,
+    stop() {
+      if (stopped) throw new Error('图表删除事件保存合并器已停止');
+      stopped = true;
+      api.unsubscribe('drawing_event', handleDrawingEvent);
+      flushActiveBurst();
+      return { fullSaveCount, removeEventCount, saveRequestCount };
+    },
+  };
+}
+
+/**
  * Binance schedules one complete chart save for every broker drawing event.
  * The last request contains the cumulative final state, so one burst can be
  * persisted with only its final request after all matching events arrive.
