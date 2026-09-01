@@ -32,8 +32,10 @@ symbol.
 - Directional markers are anchored to the matching one-second candle instead
   of the event response midpoint: an up arrow sits eight screen pixels below
   the candle low, and a down arrow sits eight screen pixels above the candle
-  high. Missing or mismatched candle data stops rendering with an explicit
-  contract error rather than placing a misleading marker.
+  high. When a gateway event arrives before Binance publishes that second's
+  candle, rendering waits on TradingView's `dataUpdated` event for at most three
+  seconds. A malformed candle or a missed deadline stops rendering with an
+  explicit contract error rather than placing a misleading marker.
 - A single draggable panel shows the selected event's four-force facts,
   immediate price response, trigger reasons, close reason, and ordered outcome
   horizons. Dragging the header keeps the panel inside the viewport and stores

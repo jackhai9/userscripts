@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.1
+// @version      0.2.2
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流事件和后续结果
 // @match        https://www.binance.com/*/futures/*
@@ -728,6 +728,7 @@
   var CHART_ROOT_SELECTOR = ".chart-widget-root";
   var STATUS_ID = "jh-strategy27-event-status";
   var DIRECTIONAL_MARKER_GAP_PX = 8;
+  var DEFAULT_CANDLE_WAIT_MS = 3e3;
   function hasVisibleBox(element) {
     if (!element?.getClientRects().length) return false;
     const rect = element.getBoundingClientRect();
@@ -785,28 +786,33 @@
     const seriesData = chart.getSeries?.()?.data?.();
     const mainSeries = model?.mainSeries?.();
     const priceScale = mainSeries?.priceScale?.();
+    const dataUpdated = mainSeries?.dataUpdated?.();
     const requiredMethods = [
       [timeScale, "timePointToIndex"],
       [seriesData, "valueAt"],
       [mainSeries, "firstValue"],
       [priceScale, "priceToCoordinate"],
-      [priceScale, "coordinateToPrice"]
+      [priceScale, "coordinateToPrice"],
+      [dataUpdated, "subscribe"],
+      [dataUpdated, "unsubscribe"]
     ];
     for (const [owner, method] of requiredMethods) {
       if (typeof owner?.[method] !== "function") {
         throw new Error(`TradingView marker placement method is unavailable: ${method}`);
       }
     }
-    return (annotation) => {
+    const resolve = (annotation) => {
       const point = { time: annotation.markerTime, price: annotation.markerPrice };
       if (annotation.markerShape === "flag") return point;
       if (!["arrow_up", "arrow_down"].includes(annotation.markerShape)) {
         throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
       }
       const barIndex = timeScale.timePointToIndex(annotation.markerTime, 0);
-      const candle = Number.isFinite(barIndex) ? seriesData.valueAt(barIndex) : null;
+      if (!Number.isFinite(barIndex)) return null;
+      const candle = seriesData.valueAt(barIndex);
+      if (candle === null) return null;
       if (!Array.isArray(candle) || candle.length < 5 || candle[0] !== annotation.markerTime) {
-        throw new Error(`Strategy 27 candle is unavailable for ${annotation.markerTime}`);
+        throw new Error(`Strategy 27 candle is invalid for ${annotation.markerTime}`);
       }
       const candleHigh = Number(candle[2]);
       const candleLow = Number(candle[3]);
@@ -829,6 +835,7 @@
       }
       return { time: annotation.markerTime, price: markerPrice };
     };
+    return { dataUpdated, resolve };
   }
   function verifyResolvedTime(chart, id, requestedTime) {
     const shape = chart.getShapeById(id);
@@ -858,13 +865,68 @@
     shape.setProperties(properties);
     verifyResolvedTime(chart, id, point.time);
   }
-  function createTradingViewEventLayer(target, { maxEvents, maxAgeMs }) {
+  function createTradingViewEventLayer(target, {
+    maxEvents,
+    maxAgeMs,
+    candleWaitMs = DEFAULT_CANDLE_WAIT_MS
+  }) {
     if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error("Strategy 27 maxEvents is invalid");
     if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error("Strategy 27 maxAgeMs is invalid");
+    if (!Number.isInteger(candleWaitMs) || candleWaitMs < 1) {
+      throw new Error("Strategy 27 candleWaitMs is invalid");
+    }
     const { chart } = target;
-    const resolveMarkerPoint = createMarkerPointResolver(chart);
+    const { dataUpdated, resolve: resolveMarkerPoint } = createMarkerPointResolver(chart);
     const registry = /* @__PURE__ */ new Map();
+    const pendingCandleWaits = /* @__PURE__ */ new Set();
     let renderGeneration = 0;
+    function waitForMarkerPoint(annotation, requestedGeneration) {
+      const immediate = resolveMarkerPoint(annotation);
+      if (immediate) return Promise.resolve(immediate);
+      return new Promise((resolve, reject) => {
+        const owner = {};
+        let settled = false;
+        let timeoutId;
+        const cleanup = () => {
+          clearTimeout(timeoutId);
+          dataUpdated.unsubscribe(owner, onDataUpdated);
+          pendingCandleWaits.delete(cancel);
+        };
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(value);
+        };
+        const fail = (error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(error);
+        };
+        const cancel = () => finish(null);
+        const onDataUpdated = () => {
+          if (requestedGeneration !== renderGeneration) {
+            cancel();
+            return;
+          }
+          try {
+            const point = resolveMarkerPoint(annotation);
+            if (point) finish(point);
+          } catch (error) {
+            fail(error);
+          }
+        };
+        timeoutId = setTimeout(() => {
+          fail(new Error(
+            `Strategy 27 candle did not arrive within ${candleWaitMs} ms for ${annotation.markerTime}`
+          ));
+        }, candleWaitMs);
+        pendingCandleWaits.add(cancel);
+        dataUpdated.subscribe(owner, onDataUpdated);
+        onDataUpdated();
+      });
+    }
     function removeRecord(eventId) {
       const record = registry.get(eventId);
       if (!record) return;
@@ -881,11 +943,12 @@
     }
     async function ensureMarker(eventId, annotation, observedAtMs) {
       let record = registry.get(eventId);
-      const markerPoint = resolveMarkerPoint(annotation);
+      const requestedGeneration = renderGeneration;
+      const markerPoint = await waitForMarkerPoint(annotation, requestedGeneration);
+      if (!markerPoint || requestedGeneration !== renderGeneration) return false;
       if (!record) {
         pruneAge(observedAtMs);
         ensureCapacityForNew();
-        const requestedGeneration = renderGeneration;
         const markerId = await createAlignedShape(
           chart,
           markerPoint,
@@ -898,7 +961,6 @@
         record = { markerId, markerShape: annotation.markerShape, observedAtMs };
         registry.set(eventId, record);
       } else if (record.markerShape !== annotation.markerShape) {
-        const requestedGeneration = renderGeneration;
         const markerId = await createAlignedShape(
           chart,
           markerPoint,
@@ -932,6 +994,7 @@
       prune: pruneAge,
       clear() {
         renderGeneration += 1;
+        for (const cancel of [...pendingCandleWaits]) cancel();
         for (const eventId of [...registry.keys()]) removeRecord(eventId);
       },
       get size() {

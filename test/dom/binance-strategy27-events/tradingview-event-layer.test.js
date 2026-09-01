@@ -17,6 +17,8 @@ function createChartDom({
   const dom = loadFixtureDom('<div class="chart-widget-root"><div><iframe></iframe></div></div>');
   const shapes = new Map();
   const removed = [];
+  const dataUpdatedListeners = [];
+  let currentCandle = candle;
   let nextId = 1;
   let releaseCreate = null;
   const chart = {
@@ -40,7 +42,7 @@ function createChartDom({
     removeEntity(id) { removed.push(id); shapes.delete(id); },
     getSeries: () => ({
       data: () => ({
-        valueAt: (index) => (index === 5 ? candle : null),
+        valueAt: (index) => (index === 5 ? currentCandle : null),
       }),
     }),
     _chartWidget: {
@@ -50,6 +52,15 @@ function createChartDom({
             timePointToIndex: (time) => (time === 10 ? 5 : null),
           }),
           mainSeries: () => ({
+            dataUpdated: () => ({
+              subscribe: (owner, listener) => dataUpdatedListeners.push({ owner, listener }),
+              unsubscribe: (owner, listener) => {
+                const index = dataUpdatedListeners.findIndex(
+                  (candidate) => candidate.owner === owner && candidate.listener === listener,
+                );
+                if (index >= 0) dataUpdatedListeners.splice(index, 1);
+              },
+            }),
             firstValue: () => 1,
             priceScale: () => ({
               priceToCoordinate: (price) => 2_000 - (price * 1_000),
@@ -69,6 +80,13 @@ function createChartDom({
     shapes,
     removed,
     releaseCreate: () => releaseCreate(),
+    setCandle: (value) => { currentCandle = value; },
+    fireDataUpdated: () => {
+      for (const { listener } of [...dataUpdatedListeners]) listener();
+    },
+    get dataUpdatedListenerCount() {
+      return dataUpdatedListeners.length;
+    },
   };
 }
 
@@ -169,15 +187,62 @@ test('replaces an event marker when its response direction changes', async () =>
   assert.equal(replacement.getPoints()[0].price, 1.308);
 });
 
-test('rejects a directional marker when its matching candle is unavailable', async () => {
+test('waits for the matching candle data update before placing a directional marker', async () => {
+  const fixture = createChartDom({ candle: null });
+  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
+  const layer = createTradingViewEventLayer(target, {
+    maxEvents: 2,
+    maxAgeMs: 60_000,
+    candleWaitMs: 50,
+  });
+
+  const renderPromise = layer.renderOpened('event-a', annotation(), 10_000);
+  await Promise.resolve();
+  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.dataUpdatedListenerCount, 1);
+
+  fixture.setCandle([10, 1.25, 1.3, 1.2, 1.25]);
+  fixture.fireDataUpdated();
+
+  assert.equal(await renderPromise, true);
+  assert.equal(fixture.shapes.size, 1);
+  assert.equal(fixture.dataUpdatedListenerCount, 0);
+  assert.equal([...fixture.shapes.values()][0].getPoints()[0].price, 1.192);
+});
+
+test('rejects a directional marker when its matching candle misses the bounded wait', async () => {
   const { dom } = createChartDom({ candle: null });
   const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, { maxEvents: 2, maxAgeMs: 60_000 });
+  const layer = createTradingViewEventLayer(target, {
+    maxEvents: 2,
+    maxAgeMs: 60_000,
+    candleWaitMs: 5,
+  });
 
   await assert.rejects(
     layer.renderOpened('event-a', annotation(), 10_000),
-    /candle is unavailable for 10/,
+    /candle did not arrive within 5 ms for 10/,
   );
+});
+
+test('clear cancels a pending candle wait without creating a late marker', async () => {
+  const fixture = createChartDom({ candle: null });
+  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
+  const layer = createTradingViewEventLayer(target, {
+    maxEvents: 2,
+    maxAgeMs: 60_000,
+    candleWaitMs: 50,
+  });
+
+  const renderPromise = layer.renderOpened('event-a', annotation(), 10_000);
+  await Promise.resolve();
+  layer.clear();
+
+  assert.equal(await renderPromise, false);
+  assert.equal(fixture.dataUpdatedListenerCount, 0);
+  fixture.setCandle([10, 1.25, 1.3, 1.2, 1.25]);
+  fixture.fireDataUpdated();
+  assert.equal(fixture.shapes.size, 0);
 });
 
 test('removes a shifted entity and reports chart alignment failure', async () => {
