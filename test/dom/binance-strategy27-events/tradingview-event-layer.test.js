@@ -7,15 +7,22 @@ import {
   findStrategy27ChartTarget,
 } from '../../../src/binance-strategy27-events/dom/tradingview-event-layer.js';
 
-function createChartDom({ resolution = '1S', symbol = 'BTRUSDT@PRICETYPE=LAST', shiftSeconds = 0 } = {}) {
+function createChartDom({
+  resolution = '1S',
+  symbol = 'BTRUSDT@PRICETYPE=LAST',
+  shiftSeconds = 0,
+  deferredCreate = false,
+} = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"><div><iframe></iframe></div></div>');
   const shapes = new Map();
   const removed = [];
   let nextId = 1;
+  let releaseCreate = null;
   const chart = {
     resolution: () => resolution,
     symbol: () => symbol,
     async createShape(point, properties) {
+      if (deferredCreate) await new Promise((resolve) => { releaseCreate = resolve; });
       const id = `shape-${nextId++}`;
       let points = [{ ...point, time: point.time + shiftSeconds }];
       let currentProperties = { ...properties, text: properties.text ?? '' };
@@ -34,7 +41,13 @@ function createChartDom({ resolution = '1S', symbol = 'BTRUSDT@PRICETYPE=LAST', 
   dom.window.document.querySelector('iframe').contentWindow.tradingViewApi = {
     activeChart: () => chart,
   };
-  return { dom, chart, shapes, removed };
+  return {
+    dom,
+    chart,
+    shapes,
+    removed,
+    releaseCreate: () => releaseCreate(),
+  };
 }
 
 function annotation(overrides = {}) {
@@ -43,9 +56,6 @@ function annotation(overrides = {}) {
     markerColor: '#0ECB81',
     markerTime: 10,
     markerPrice: 1.25,
-    noteText: 'Strategy 27 event',
-    noteTime: 10,
-    notePrice: 1.25,
     ...overrides,
   };
 }
@@ -68,21 +78,21 @@ test('requires an exact matching one-second TradingView chart', () => {
   );
 });
 
-test('one event owns one marker and one note that outcomes update in place', async () => {
+test('one event owns one marker across its complete lifecycle', async () => {
   const { dom, shapes, removed } = createChartDom();
   const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
   const layer = createTradingViewEventLayer(target, { maxEvents: 2, maxAgeMs: 60_000 });
 
-  await layer.renderOpened('event-a', annotation({ noteText: '' }), 10_000);
+  await layer.renderOpened('event-a', annotation(), 10_000);
   assert.equal(shapes.size, 1);
-  await layer.renderUpdated('event-a', annotation({ noteText: '' }), 11_000);
+  await layer.renderUpdated('event-a', annotation(), 11_000);
   assert.equal(shapes.size, 1);
-  await layer.renderClosed('event-a', annotation({ noteText: 'closed' }), 12_000);
-  assert.equal(shapes.size, 2);
+  await layer.renderClosed('event-a', annotation(), 12_000);
+  assert.equal(shapes.size, 1);
   const ids = [...shapes.keys()];
-  await layer.renderOutcome('event-a', annotation({ noteText: '5 秒：延续' }), 13_000);
+  await layer.renderOutcome('event-a', annotation(), 13_000);
   assert.deepEqual([...shapes.keys()], ids);
-  assert.equal(shapes.get(ids[1]).getProperties().text, '5 秒：延续');
+  assert.equal(shapes.get(ids[0]).getProperties().shape, 'arrow_up');
 
   layer.remove('event-a');
   assert.equal(shapes.size, 0);
@@ -92,7 +102,7 @@ test('one event owns one marker and one note that outcomes update in place', asy
 
   layer.clear();
   assert.equal(shapes.size, 0);
-  assert.equal(removed.length, 3);
+  assert.equal(removed.length, 2);
 });
 
 test('removes a shifted entity and reports chart alignment failure', async () => {
@@ -104,6 +114,27 @@ test('removes a shifted entity and reports chart alignment failure', async () =>
     layer.renderOpened('event-a', annotation(), 10_000),
     /chart time alignment/,
   );
+  assert.equal(shapes.size, 0);
+  assert.equal(removed.length, 1);
+});
+
+test('clear removes a marker whose asynchronous creation finishes late', async () => {
+  const {
+    dom,
+    shapes,
+    removed,
+    releaseCreate,
+  } = createChartDom({ deferredCreate: true });
+  const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createTradingViewEventLayer(target, { maxEvents: 2, maxAgeMs: 60_000 });
+
+  const renderPromise = layer.renderOpened('event-a', annotation(), 10_000);
+  await Promise.resolve();
+  layer.clear();
+  releaseCreate();
+
+  assert.equal(await renderPromise, false);
+  assert.equal(layer.size, 0);
   assert.equal(shapes.size, 0);
   assert.equal(removed.length, 1);
 });

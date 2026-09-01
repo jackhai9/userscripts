@@ -43,10 +43,9 @@ export function findStrategy27ChartRoot(document) {
   return chartRoots[0];
 }
 
-function shapeOptions(shape, color, text = '') {
+function shapeOptions(shape, color) {
   return {
     shape,
-    text,
     lock: true,
     disableSave: true,
     disableSelection: true,
@@ -54,10 +53,7 @@ function shapeOptions(shape, color, text = '') {
     showInObjectsTree: false,
     overrides: {
       color,
-      fontsize: 12,
       fixedSize: true,
-      wordWrap: true,
-      wordWrapWidth: 220,
     },
   };
 }
@@ -98,13 +94,12 @@ export function createTradingViewEventLayer(target, { maxEvents, maxAgeMs }) {
   if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error('Strategy 27 maxAgeMs is invalid');
   const { chart } = target;
   const registry = new Map();
+  let renderGeneration = 0;
 
   function removeRecord(eventId) {
     const record = registry.get(eventId);
     if (!record) return;
-    for (const id of [record.markerId, record.noteId]) {
-      if (id) chart.removeEntity(id);
-    }
+    chart.removeEntity(record.markerId);
     registry.delete(eventId);
   }
 
@@ -123,11 +118,16 @@ export function createTradingViewEventLayer(target, { maxEvents, maxAgeMs }) {
     if (!record) {
       pruneAge(observedAtMs);
       ensureCapacityForNew();
+      const requestedGeneration = renderGeneration;
       const markerId = await createAlignedShape(chart, {
         time: annotation.markerTime,
         price: annotation.markerPrice,
       }, shapeOptions(annotation.markerShape, annotation.markerColor));
-      record = { markerId, noteId: null, observedAtMs };
+      if (requestedGeneration !== renderGeneration) {
+        chart.removeEntity(markerId);
+        return false;
+      }
+      record = { markerId, observedAtMs };
       registry.set(eventId, record);
     } else {
       updateAlignedShape(chart, record.markerId, {
@@ -136,34 +136,18 @@ export function createTradingViewEventLayer(target, { maxEvents, maxAgeMs }) {
       }, { color: annotation.markerColor });
       record.observedAtMs = observedAtMs;
     }
-    return record;
-  }
-
-  async function ensureNote(eventId, annotation, observedAtMs) {
-    const record = await ensureMarker(eventId, annotation, observedAtMs);
-    const point = { time: annotation.noteTime, price: annotation.notePrice };
-    if (!record.noteId) {
-      record.noteId = await createAlignedShape(
-        chart,
-        point,
-        shapeOptions('text', annotation.markerColor, annotation.noteText),
-      );
-    } else {
-      updateAlignedShape(chart, record.noteId, point, {
-        color: annotation.markerColor,
-        text: annotation.noteText,
-      });
-    }
+    return true;
   }
 
   return Object.freeze({
     renderOpened: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
     renderUpdated: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
-    renderClosed: (eventId, annotation, observedAtMs) => ensureNote(eventId, annotation, observedAtMs),
-    renderOutcome: (eventId, annotation, observedAtMs) => ensureNote(eventId, annotation, observedAtMs),
+    renderClosed: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
+    renderOutcome: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
     remove: removeRecord,
     prune: pruneAge,
     clear() {
+      renderGeneration += 1;
       for (const eventId of [...registry.keys()]) removeRecord(eventId);
     },
     get size() {

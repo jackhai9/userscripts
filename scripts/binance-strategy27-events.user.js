@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.1.2
+// @version      0.2.0
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流事件和后续结果
 // @match        https://www.binance.com/*/futures/*
@@ -590,28 +590,97 @@
   }
 
   // src/binance-strategy27-events/core/event-annotation.js
-  var OUTCOME_LABELS = {
+  var OUTCOME_LABELS = Object.freeze({
     continuation: "延续",
     recovery: "恢复",
     reversal: "反转",
     partial_retracement: "部分回撤",
     not_applicable: "不适用"
-  };
-  function signedDecimal(value) {
+  });
+  var TRIGGER_LABELS = Object.freeze({
+    aggressive_buy_to_ask_depth: "主动买",
+    aggressive_sell_to_bid_depth: "主动卖",
+    bid_addition_to_bid_depth: "bid 增",
+    bid_decrease_to_bid_depth: "bid 减",
+    ask_addition_to_ask_depth: "ask 增",
+    ask_decrease_to_ask_depth: "ask 减",
+    bid_best_price_migration_bps: "bid 迁移",
+    ask_best_price_migration_bps: "ask 迁移",
+    mid_return_bps: "价格响应",
+    spread_change_bps: "点差变化"
+  });
+  var CLOSE_REASON_LABELS = Object.freeze({
+    quiet_period: "安静期结束",
+    maximum_duration: "达到最长持续时间",
+    input_gap: "输入缺口",
+    universe_removed: "移出监控范围",
+    monitor_stopped: "监控停止"
+  });
+  function finiteNumber(value, label) {
     const numeric = Number(value);
-    if (numeric > 0) return `+${value}`;
-    return value;
+    if (!Number.isFinite(numeric)) throw new Error(`Invalid Strategy 27 display number: ${label}`);
+    return numeric;
   }
-  function formatForce(name, force) {
-    return `${name} ${force.notional} USDT/${force.trade_count} 笔，吃对手深度 ${force.to_opposite_depth}`;
+  function trimmedFixed(numeric, digits) {
+    return numeric.toFixed(digits).replace(/(\.\d*?[1-9])0+$|\.0+$/u, "$1");
   }
-  function formatBook(name, side) {
-    return `${name} 增 ${side.observed_addition_notional} 减 ${side.observed_decrease_notional}，最优价迁移 ${signedDecimal(side.best_price_migration_bps)} bps`;
+  function compactDecimal(value, { digits, signed = false, label }) {
+    const numeric = finiteNumber(value, label);
+    const magnitude = trimmedFixed(Math.abs(numeric), digits);
+    if (numeric < 0) return `-${magnitude}`;
+    if (signed && numeric > 0) return `+${magnitude}`;
+    return magnitude;
+  }
+  function formatBps(value, label, { signed = true } = {}) {
+    const numeric = finiteNumber(value, label);
+    return compactDecimal(value, {
+      digits: Math.abs(numeric) < 1 ? 2 : 1,
+      signed,
+      label
+    });
+  }
+  function formatRatio(value, label) {
+    return compactDecimal(value, { digits: 2, label });
+  }
+  function formatNotional(value, label) {
+    const numeric = finiteNumber(value, label);
+    const absolute = Math.abs(numeric);
+    if (absolute >= 1e6) return `${compactDecimal(numeric / 1e6, { digits: 2, label })}M`;
+    if (absolute >= 1e3) return `${compactDecimal(numeric / 1e3, { digits: 1, label })}K`;
+    return compactDecimal(numeric, { digits: 1, label });
+  }
+  function formatForce(label, oppositeSide, force) {
+    return Object.freeze({
+      label,
+      value: `${formatNotional(force.notional, `${label}.notional`)} USDT · ${force.trade_count} 笔`,
+      detail: `吃 ${oppositeSide} 深度 ${formatRatio(force.to_opposite_depth, `${label}.to_opposite_depth`)}`
+    });
+  }
+  function formatBook(label, side) {
+    return Object.freeze({
+      label,
+      value: `增 ${formatNotional(side.observed_addition_notional, `${label}.addition`)} · 减 ${formatNotional(side.observed_decrease_notional, `${label}.decrease`)}`,
+      detail: `迁移 ${formatBps(side.best_price_migration_bps, `${label}.migration`)} bps`
+    });
+  }
+  function formatTriggerReasons(reasons) {
+    return reasons.map((reason) => {
+      const label = TRIGGER_LABELS[reason];
+      if (!label) throw new Error(`Unknown Strategy 27 trigger reason: ${reason}`);
+      return label;
+    }).join("、");
+  }
+  function formatCloseReason(reason) {
+    if (reason === null) return null;
+    const label = CLOSE_REASON_LABELS[reason];
+    if (!label) throw new Error(`Unknown Strategy 27 close reason: ${reason}`);
+    return label;
   }
   function outcomeLine(outcome) {
-    if (outcome.outcome_status !== "complete") return `${outcome.window_seconds} 秒：数据不完整`;
-    const directional = OUTCOME_LABELS[outcome.directional_outcome] ?? "无方向结论";
-    return `${outcome.window_seconds} 秒：${directional}，收盘响应 ${signedDecimal(outcome.return_from_active_end_bps)} bps`;
+    if (outcome.outcome_status !== "complete") return null;
+    const directional = OUTCOME_LABELS[outcome.directional_outcome];
+    if (!directional) throw new Error(`Unknown Strategy 27 directional outcome: ${outcome.directional_outcome}`);
+    return `${outcome.window_seconds} 秒：${directional}，收盘响应 ${formatBps(outcome.return_from_active_end_bps, "outcome.return")} bps`;
   }
   function buildEventAnnotation({
     event,
@@ -622,34 +691,36 @@
   }) {
     const snapshot = messageKind === "event_opened" ? event.trigger_snapshot : event.latest_snapshot;
     const response = snapshot.price_response;
-    const midReturn = Number(response.mid_return_bps);
+    const midReturn = finiteNumber(response.mid_return_bps, "price_response.mid_return_bps");
     const markerShape = midReturn > 0 ? "arrow_up" : midReturn < 0 ? "arrow_down" : "flag";
     const markerColor = midReturn > 0 ? "#0ECB81" : midReturn < 0 ? "#F6465D" : "#F0B90B";
     const incomplete = event.event_status === "incomplete" || outcomes.some((item) => item.outcome_status !== "complete");
-    const lines = [
-      `Strategy 27 ${event.event_kind === "orderflow_event" ? "订单流事件" : "价格响应事件"}`,
-      formatForce("主动买", snapshot.aggressive_buy),
-      formatForce("主动卖", snapshot.aggressive_sell),
-      formatBook("bid", snapshot.bid),
-      formatBook("ask", snapshot.ask),
-      `价格响应 ${signedDecimal(response.mid_return_bps)} bps，点差 ${response.spread_bps} bps`,
-      `触发：${event.trigger_reasons.join("、")}`
-    ];
-    if (event.event_status !== "active") lines.push(`结束：${event.close_reason}`);
-    if (rehydrated) lines.push("此前投影历史不可用");
-    if (incomplete) lines.push("数据不完整，不作方向结论");
-    else lines.push(...outcomes.map(outcomeLine));
-    const coordinateTime = eventTimeToChartSecond(eventTimeMs);
-    const coordinatePrice = Number(response.mid);
+    const notices = [];
+    if (rehydrated) notices.push("此前投影历史不可用");
+    if (incomplete) notices.push("数据不完整，不作方向结论");
+    const title = event.event_kind === "orderflow_event" ? "订单流事件" : "价格响应事件";
+    const summary = `价格 ${formatBps(response.mid_return_bps, "price_response.mid_return_bps")} bps · 点差 ${formatBps(response.spread_bps, "price_response.spread_bps", { signed: false })} bps`;
     return Object.freeze({
+      title,
+      eventTimeMs: event.triggered_at_ms,
+      status: event.event_status,
+      summary,
+      forceRows: Object.freeze([
+        formatForce("主动买", "ask", snapshot.aggressive_buy),
+        formatForce("主动卖", "bid", snapshot.aggressive_sell),
+        formatBook("bid", snapshot.bid),
+        formatBook("ask", snapshot.ask)
+      ]),
+      priceDetail: `点差变化 ${formatBps(response.spread_change_bps, "price_response.spread_change_bps")} bps`,
+      triggerText: formatTriggerReasons(event.trigger_reasons),
+      closeText: formatCloseReason(event.close_reason),
+      outcomeLines: Object.freeze(incomplete ? [] : outcomes.map(outcomeLine).filter(Boolean)),
+      notices: Object.freeze(notices),
       markerShape,
       markerColor,
-      markerTime: coordinateTime,
-      markerPrice: coordinatePrice,
-      noteText: lines.join("\n"),
-      noteTime: coordinateTime,
-      notePrice: coordinatePrice,
-      liveStatus: `${lines[0]}｜${lines[5]}`
+      markerTime: eventTimeToChartSecond(eventTimeMs),
+      markerPrice: finiteNumber(response.mid, "price_response.mid"),
+      liveStatus: `Strategy 27 ${title}｜${summary}`
     });
   }
 
@@ -693,10 +764,9 @@
     if (chartRoots.length !== 1) throw new Error(`Visible Strategy 27 chart root count is invalid: ${chartRoots.length}`);
     return chartRoots[0];
   }
-  function shapeOptions(shape, color, text = "") {
+  function shapeOptions(shape, color) {
     return {
       shape,
-      text,
       lock: true,
       disableSave: true,
       disableSelection: true,
@@ -704,10 +774,7 @@
       showInObjectsTree: false,
       overrides: {
         color,
-        fontsize: 12,
-        fixedSize: true,
-        wordWrap: true,
-        wordWrapWidth: 220
+        fixedSize: true
       }
     };
   }
@@ -744,12 +811,11 @@
     if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error("Strategy 27 maxAgeMs is invalid");
     const { chart } = target;
     const registry = /* @__PURE__ */ new Map();
+    let renderGeneration = 0;
     function removeRecord(eventId) {
       const record = registry.get(eventId);
       if (!record) return;
-      for (const id of [record.markerId, record.noteId]) {
-        if (id) chart.removeEntity(id);
-      }
+      chart.removeEntity(record.markerId);
       registry.delete(eventId);
     }
     function pruneAge(observedAtMs) {
@@ -765,11 +831,16 @@
       if (!record) {
         pruneAge(observedAtMs);
         ensureCapacityForNew();
+        const requestedGeneration = renderGeneration;
         const markerId = await createAlignedShape(chart, {
           time: annotation.markerTime,
           price: annotation.markerPrice
         }, shapeOptions(annotation.markerShape, annotation.markerColor));
-        record = { markerId, noteId: null, observedAtMs };
+        if (requestedGeneration !== renderGeneration) {
+          chart.removeEntity(markerId);
+          return false;
+        }
+        record = { markerId, observedAtMs };
         registry.set(eventId, record);
       } else {
         updateAlignedShape(chart, record.markerId, {
@@ -778,32 +849,17 @@
         }, { color: annotation.markerColor });
         record.observedAtMs = observedAtMs;
       }
-      return record;
-    }
-    async function ensureNote(eventId, annotation, observedAtMs) {
-      const record = await ensureMarker(eventId, annotation, observedAtMs);
-      const point = { time: annotation.noteTime, price: annotation.notePrice };
-      if (!record.noteId) {
-        record.noteId = await createAlignedShape(
-          chart,
-          point,
-          shapeOptions("text", annotation.markerColor, annotation.noteText)
-        );
-      } else {
-        updateAlignedShape(chart, record.noteId, point, {
-          color: annotation.markerColor,
-          text: annotation.noteText
-        });
-      }
+      return true;
     }
     return Object.freeze({
       renderOpened: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
       renderUpdated: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
-      renderClosed: (eventId, annotation, observedAtMs) => ensureNote(eventId, annotation, observedAtMs),
-      renderOutcome: (eventId, annotation, observedAtMs) => ensureNote(eventId, annotation, observedAtMs),
+      renderClosed: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
+      renderOutcome: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
       remove: removeRecord,
       prune: pruneAge,
       clear() {
+        renderGeneration += 1;
         for (const eventId of [...registry.keys()]) removeRecord(eventId);
       },
       get size() {
@@ -845,6 +901,275 @@
   }
   function removeStrategy27StatusView(document) {
     document.getElementById(STATUS_ID)?.remove();
+  }
+
+  // src/binance-strategy27-events/dom/strategy27-event-panel.js
+  var PANEL_ID = "jh-strategy27-event-panel";
+  var STATUS_LABELS = Object.freeze({
+    active: "进行中",
+    complete: "已结束",
+    incomplete: "数据不完整"
+  });
+  function setStyles(element, styles) {
+    Object.assign(element.style, styles);
+    return element;
+  }
+  function createElement(document, tagName, { text = "", role = null, styles = null } = {}) {
+    const element = document.createElement(tagName);
+    element.textContent = text;
+    if (role) element.dataset.role = role;
+    if (styles) setStyles(element, styles);
+    return element;
+  }
+  function formatClock(timestampMs) {
+    const date = new Date(timestampMs);
+    const part = (value) => String(value).padStart(2, "0");
+    return `${part(date.getHours())}:${part(date.getMinutes())}:${part(date.getSeconds())}`;
+  }
+  function buttonStyles() {
+    return {
+      border: "0",
+      borderRadius: "5px",
+      padding: "2px 7px",
+      background: "rgba(132, 142, 156, .18)",
+      color: "#EAECEF",
+      font: "11px/18px BinancePlex, ui-sans-serif, system-ui, sans-serif",
+      cursor: "pointer"
+    };
+  }
+  function appendDetailLine(document, parent, label, value, color = "#EAECEF") {
+    const line = createElement(document, "div", {
+      styles: {
+        display: "grid",
+        gridTemplateColumns: "62px minmax(0, 1fr)",
+        gap: "8px",
+        alignItems: "start"
+      }
+    });
+    line.appendChild(createElement(document, "span", {
+      text: label,
+      styles: { color: "#848E9C", whiteSpace: "nowrap" }
+    }));
+    line.appendChild(createElement(document, "span", {
+      text: value,
+      styles: { color, overflowWrap: "anywhere" }
+    }));
+    parent.appendChild(line);
+  }
+  function createStrategy27EventPanel(document, chartRoot, { maxEvents }) {
+    if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error("Strategy 27 panel maxEvents is invalid");
+    document.getElementById(PANEL_ID)?.remove();
+    const panel = createElement(document, "section", {
+      styles: {
+        position: "absolute",
+        zIndex: "9",
+        right: "84px",
+        top: "68px",
+        width: "320px",
+        maxWidth: "calc(100% - 112px)",
+        maxHeight: "calc(100% - 92px)",
+        border: "1px solid rgba(132, 142, 156, .28)",
+        borderRadius: "8px",
+        background: "rgba(24, 26, 32, .94)",
+        boxShadow: "0 4px 16px rgba(0, 0, 0, .28)",
+        color: "#EAECEF",
+        font: "12px/17px BinancePlex, ui-sans-serif, system-ui, sans-serif",
+        pointerEvents: "auto",
+        overflow: "hidden"
+      }
+    });
+    panel.id = PANEL_ID;
+    const header = createElement(document, "header", {
+      styles: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "8px 9px",
+        borderBottom: "1px solid rgba(132, 142, 156, .18)"
+      }
+    });
+    const heading = createElement(document, "strong", {
+      text: "Strategy 27 事件",
+      styles: { flex: "1", fontSize: "13px" }
+    });
+    const latestButton = createElement(document, "button", {
+      text: "最新",
+      role: "follow-latest",
+      styles: buttonStyles()
+    });
+    latestButton.type = "button";
+    const collapseButton = createElement(document, "button", {
+      text: "收起",
+      role: "collapse",
+      styles: buttonStyles()
+    });
+    collapseButton.type = "button";
+    header.append(heading, latestButton, collapseButton);
+    panel.appendChild(header);
+    const body = createElement(document, "div", {
+      role: "panel-body",
+      styles: { overflow: "auto", maxHeight: "calc(100vh - 190px)" }
+    });
+    const detail = createElement(document, "div", {
+      role: "event-detail",
+      styles: { display: "grid", gap: "5px", padding: "9px" }
+    });
+    const recentTitle = createElement(document, "div", {
+      text: "最近事件",
+      styles: {
+        padding: "7px 9px 4px",
+        borderTop: "1px solid rgba(132, 142, 156, .18)",
+        color: "#848E9C",
+        fontWeight: "600"
+      }
+    });
+    const recent = createElement(document, "div", {
+      role: "event-list",
+      styles: { display: "grid", gap: "2px", padding: "0 6px 7px" }
+    });
+    body.append(detail, recentTitle, recent);
+    panel.appendChild(body);
+    chartRoot.appendChild(panel);
+    const records = /* @__PURE__ */ new Map();
+    let selectedEventId = null;
+    let followLatest = true;
+    let collapsed = false;
+    function orderedEntries() {
+      return [...records.entries()].sort((left, right) => right[1].annotation.eventTimeMs - left[1].annotation.eventTimeMs || right[1].observedAtMs - left[1].observedAtMs);
+    }
+    function renderDetail() {
+      detail.replaceChildren();
+      const record = records.get(selectedEventId);
+      if (!record) {
+        detail.appendChild(createElement(document, "span", {
+          text: "等待新事件",
+          styles: { color: "#848E9C" }
+        }));
+        return;
+      }
+      const { annotation } = record;
+      const title = createElement(document, "div", {
+        styles: { display: "flex", alignItems: "center", gap: "6px" }
+      });
+      title.appendChild(createElement(document, "span", {
+        text: annotation.title,
+        styles: { color: annotation.markerColor, fontWeight: "700", flex: "1" }
+      }));
+      title.appendChild(createElement(document, "span", {
+        text: STATUS_LABELS[annotation.status],
+        styles: { color: "#848E9C", fontSize: "11px" }
+      }));
+      detail.appendChild(title);
+      appendDetailLine(document, detail, "时间", formatClock(annotation.eventTimeMs));
+      appendDetailLine(document, detail, "即时响应", annotation.summary, annotation.markerColor);
+      for (const row of annotation.forceRows) {
+        appendDetailLine(document, detail, row.label, `${row.value}｜${row.detail}`);
+      }
+      appendDetailLine(document, detail, "点差", annotation.priceDetail);
+      appendDetailLine(document, detail, "触发", annotation.triggerText);
+      if (annotation.closeText) appendDetailLine(document, detail, "结束", annotation.closeText);
+      for (const outcome of annotation.outcomeLines) appendDetailLine(document, detail, "后续", outcome);
+      for (const notice of annotation.notices) appendDetailLine(document, detail, "说明", notice, "#F0B90B");
+    }
+    function renderRecent() {
+      recent.replaceChildren();
+      for (const [eventId, record] of orderedEntries()) {
+        const { annotation } = record;
+        const row = createElement(document, "button", {
+          role: "event-row",
+          styles: {
+            display: "grid",
+            gridTemplateColumns: "7px 54px minmax(0, 1fr)",
+            gap: "6px",
+            alignItems: "center",
+            width: "100%",
+            border: "0",
+            borderRadius: "5px",
+            padding: "5px 6px",
+            background: eventId === selectedEventId ? "rgba(132, 142, 156, .18)" : "transparent",
+            color: "#EAECEF",
+            font: "11px/16px BinancePlex, ui-sans-serif, system-ui, sans-serif",
+            textAlign: "left",
+            cursor: "pointer"
+          }
+        });
+        row.type = "button";
+        row.dataset.eventId = eventId;
+        row.title = `${annotation.title}｜${annotation.summary}`;
+        row.appendChild(createElement(document, "span", {
+          styles: {
+            width: "7px",
+            height: "7px",
+            borderRadius: "50%",
+            background: annotation.markerColor
+          }
+        }));
+        row.appendChild(createElement(document, "span", {
+          text: formatClock(annotation.eventTimeMs),
+          styles: { color: "#848E9C" }
+        }));
+        row.appendChild(createElement(document, "span", {
+          text: annotation.summary,
+          styles: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+        }));
+        row.addEventListener("click", () => {
+          selectedEventId = eventId;
+          followLatest = false;
+          render();
+        });
+        recent.appendChild(row);
+      }
+    }
+    function render() {
+      latestButton.style.color = followLatest ? "#F0B90B" : "#EAECEF";
+      renderDetail();
+      renderRecent();
+    }
+    latestButton.addEventListener("click", () => {
+      followLatest = true;
+      selectedEventId = orderedEntries()[0]?.[0] ?? null;
+      render();
+    });
+    collapseButton.addEventListener("click", () => {
+      collapsed = !collapsed;
+      body.style.display = collapsed ? "none" : "block";
+      collapseButton.textContent = collapsed ? "展开" : "收起";
+    });
+    render();
+    return Object.freeze({
+      upsert(eventId, annotation, observedAtMs) {
+        records.set(eventId, { annotation, observedAtMs });
+        const ordered = orderedEntries();
+        while (ordered.length > maxEvents) {
+          const [expiredId] = ordered.pop();
+          records.delete(expiredId);
+        }
+        if (!records.has(selectedEventId)) followLatest = true;
+        if (followLatest) selectedEventId = orderedEntries()[0]?.[0] ?? null;
+        render();
+      },
+      remove(eventId) {
+        records.delete(eventId);
+        if (selectedEventId === eventId) {
+          followLatest = true;
+          selectedEventId = orderedEntries()[0]?.[0] ?? null;
+        }
+        render();
+      },
+      clear() {
+        records.clear();
+        selectedEventId = null;
+        followLatest = true;
+        render();
+      },
+      destroy() {
+        records.clear();
+        panel.remove();
+      },
+      get size() {
+        return records.size;
+      }
+    });
   }
 
   // src/shared/binance-futures-route.js
@@ -909,6 +1234,7 @@
     const GATEWAY_SECRET_KEY = "strategy27GatewayAuthSecret";
     const CONTEXT_CHECK_INTERVAL_MS = 1e3;
     const MAX_RETAINED_EVENTS = 80;
+    const MAX_PANEL_EVENTS = 8;
     const MAX_EVENT_AGE_MS = 2 * 60 * 60 * 1e3;
     const page = unsafeWindow;
     const pageDocument = page.document;
@@ -920,6 +1246,7 @@
       active.controller.abort();
       active.lifecycle.reset(resetReason);
       active.layer.clear();
+      active.panel.destroy();
       active = null;
     }
     function showStatus(chartRoot, text, state = "normal") {
@@ -928,18 +1255,26 @@
     }
     async function renderGatewayResponse(context, response) {
       if (active !== context) return;
-      for (const eventId of context.lifecycle.prune(Date.now())) context.layer.remove(eventId);
+      for (const eventId of context.lifecycle.prune(Date.now())) {
+        context.layer.remove(eventId);
+        context.panel.remove(eventId);
+      }
       if (response.status === "reset") {
         context.lifecycle.reset(response.reason);
         context.layer.clear();
+        context.panel.clear();
         showStatus(context.target.chartRoot, "Strategy 27 已连接，等待新事件");
         return;
       }
       for (const message of response.messages) {
         const action = context.lifecycle.apply(message);
-        for (const eventId of action.evictedEventIds ?? []) context.layer.remove(eventId);
+        for (const eventId of action.evictedEventIds ?? []) {
+          context.layer.remove(eventId);
+          context.panel.remove(eventId);
+        }
         if (action.type === "stream_reset") {
           context.layer.clear();
+          context.panel.clear();
           showStatus(context.target.chartRoot, "Strategy 27 数据流已恢复，等待新事件");
           continue;
         }
@@ -957,7 +1292,9 @@
           event_closed: "renderClosed",
           event_outcome: "renderOutcome"
         }[action.messageKind];
-        await context.layer[renderMethod](action.eventId, annotation, action.observedAtMs);
+        const rendered = await context.layer[renderMethod](action.eventId, annotation, action.observedAtMs);
+        if (!rendered || active !== context) continue;
+        context.panel.upsert(action.eventId, annotation, action.observedAtMs);
         showStatus(context.target.chartRoot, annotation.liveStatus);
       }
     }
@@ -976,6 +1313,9 @@
           maxEvents: MAX_RETAINED_EVENTS,
           maxAgeMs: MAX_EVENT_AGE_MS
         }),
+        panel: createStrategy27EventPanel(pageDocument, target.chartRoot, {
+          maxEvents: MAX_PANEL_EVENTS
+        }),
         failed: false
       };
       active = context;
@@ -991,6 +1331,7 @@
         if (error.name === "AbortError" || active !== context) return;
         context.failed = true;
         context.layer.clear();
+        context.panel.clear();
         showStatus(target.chartRoot, `Strategy 27 已停止：${error.message}`, "error");
       });
     }
@@ -1071,6 +1412,7 @@
     });
     GM_registerMenuCommand("清除 Strategy 27 图表标注", () => {
       active?.layer.clear();
+      active?.panel.clear();
       if (statusView) setStrategy27Status(statusView, "Strategy 27 标注已清除，继续监听");
     });
     const removeRouteListener = installSpaRouteChangeListener(page, restart);
