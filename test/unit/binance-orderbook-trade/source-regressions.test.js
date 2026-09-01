@@ -1120,71 +1120,32 @@ test('panel statuses omit the current full symbol and compact the retained inter
   assert.doesNotMatch(source, /点击时 \$\{qtyPlan\.symbol\}/);
 });
 
-test('bulk cancel removes real chart order drawings with one coalesced save before opening the native dialog', () => {
+test('bulk cancel keeps chart orders visible and coalesces their removal saves after native confirmation', () => {
   assert.match(chartSaveCoalescerSource, /api\.subscribe\('drawing_event'/);
   assert.match(chartSaveCoalescerSource, /function coalescedSaveChart/);
   assert.match(chartSaveCoalescerSource, /originalSaveChart\.apply\(pendingSave\.thisValue, pendingSave\.args\)/);
   assert.match(source, /coalesceTradingViewDrawingSaves/);
   assert.doesNotMatch(source, /tradingProperties\.showOrders/);
-
-  const toggleBody = readFunctionBody('toggleBinanceChartOrdersWithCoalescedSave');
-  assert.match(toggleBody, /coalesceTradingViewDrawingSaves/);
-  assert.match(toggleBody, /checkbox\.click\(\)/);
-  assert.match(toggleBody, /waitForBinanceChartOrdersPopover\(target, expectedChecked\)/);
-  assert.match(toggleBody, /expectDrawingEvents \? \{\} : \{ eventDiscoveryTimeoutMs: 0 \}/);
-
-  const hideBody = readFunctionBody('hideBinanceChartOrdersForBulkCancel');
-  assert.match(hideBody, /state\.originalChecked = current\.checked/);
-  assert.match(hideBody, /writeChartOrdersRecoveryRecord\(\)/);
-  assert.match(hideBody, /state\.changed = true/);
-  assert.match(hideBody, /toggleBinanceChartOrdersWithCoalescedSave\([\s\S]*false,[\s\S]*true/);
-  assert.match(hideBody, /closeBinanceChartOrdersPopover\(target\)/);
-
-  const restoreBody = readFunctionBody('restoreBinanceChartOrdersAfterBulkCancel');
-  assert.match(restoreBody, /assertSameBinanceChartOrdersTarget\(target, getBinanceChartOrdersTarget\(\)\)/);
-  assert.match(restoreBody, /current\.checked !== state\.originalChecked/);
-  assert.match(restoreBody, /toggleBinanceChartOrdersWithCoalescedSave/);
-  assert.match(restoreBody, /clearChartOrdersRecoveryRecord\(\)/);
+  assert.doesNotMatch(source, /hideBinanceChartOrdersForBulkCancel/);
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
-  const targetIndex = cancelBody.indexOf('chartOrdersTarget = getBinanceChartOrdersTarget()');
-  const hideIndex = cancelBody.indexOf(
-    'await hideBinanceChartOrdersForBulkCancel(chartOrdersTarget, chartOrdersState)'
-  );
+  const armIndex = cancelBody.indexOf('armChartSaveCoalescing');
   const destructiveClickIndex = cancelBody.indexOf('cancelAllButton.click()');
-  const watcherIndex = cancelBody.indexOf('createBinanceCancelAllDialogDecisionWatcher()');
-  const chartRestoreIndex = cancelBody.indexOf('await restoreBinanceChartOrdersAfterBulkCancel(');
-  const symbolGuardedRestoreIndex = cancelBody.indexOf('if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol))');
-  const postHideBody = cancelBody.slice(hideIndex);
-  const freshScopeIndex = postHideBody.indexOf('openOrdersScope = await waitForActiveOpenOrdersScope()');
-  const freshFilterIndex = postHideBody.indexOf('isOpenOrdersScopeConfirmedForSymbol(openOrdersScope, symbol)');
-  const freshButtonIndex = postHideBody.indexOf(
-    'cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope)'
-  );
-  const postHideClickIndex = postHideBody.indexOf('cancelAllButton.click()');
+  const watcherIndex = cancelBody.indexOf('createBinanceCancelAllDialogDecisionWatcher(');
+  const clearIndex = cancelBody.indexOf('waitForCurrentSymbolOpenOrdersCleared(openOrdersScope, symbol)');
+  const finishIndex = cancelBody.indexOf('await finishChartSaveCoalescing()');
 
-  assert.ok(targetIndex !== -1 && hideIndex !== -1);
+  assert.ok(armIndex !== -1);
   assert.ok(watcherIndex !== -1 && destructiveClickIndex !== -1);
-  assert.ok(targetIndex < hideIndex);
-  assert.ok(hideIndex < destructiveClickIndex);
+  assert.ok(armIndex < destructiveClickIndex);
   assert.ok(watcherIndex < destructiveClickIndex, 'dialog decision watcher must exist before destructive click');
-  assert.ok(freshScopeIndex !== -1 && freshFilterIndex !== -1 && freshButtonIndex !== -1);
-  assert.ok(
-    freshScopeIndex < freshFilterIndex && freshFilterIndex < freshButtonIndex && freshButtonIndex < postHideClickIndex,
-    'the active scope, symbol filter, and cancel button must be reacquired after hiding'
-  );
-  assert.match(cancelBody, /status: 'chart_orders_not_hidden'/);
+  assert.ok(clearIndex < finishIndex, 'coalescing must remain active until open orders are cleared');
+  assert.match(cancelBody, /onConfirmed: armChartSaveCoalescing/);
+  assert.match(cancelBody, /createTradingViewRemovalSaveController/);
   assert.match(cancelBody, /dialogDecision\.status === 'cancelled'[\s\S]*status: 'cancelled'/);
   assert.match(cancelBody, /dialogDecision\.status === 'cancelled'[\s\S]*return \{ ok: false, status: 'cancelled'[\s\S]*waitForCurrentSymbolOpenOrdersCleared/);
   assert.match(cancelBody, /dialogDecisionWatcher\.dispose\(\)/);
-  assert.match(cancelBody, /restoreChartOrdersState = false[\s\S]*status: 'aborted'/);
-  assert.ok(chartRestoreIndex !== -1 && symbolGuardedRestoreIndex !== -1);
-  assert.ok(
-    symbolGuardedRestoreIndex < chartRestoreIndex,
-    'temporary account UI must recover before chart-order visibility'
-  );
-  assert.match(cancelBody, /if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)[\s\S]*await restoreAccountOrdersTab\([\s\S]*let chartOrdersRestoreSucceeded/);
-  assert.match(cancelBody, /let chartOrdersRestoreSucceeded[\s\S]*await restoreBinanceChartOrdersAfterBulkCancel\(/);
+  assert.match(cancelBody, /finally \{[\s\S]*await finishChartSaveCoalescing\(\)/);
 });
 
 test('bulk cancel distinguishes native confirm from cancellation before clear polling', () => {
@@ -1195,6 +1156,7 @@ test('bulk cancel distinguishes native confirm from cancellation before clear po
   assert.match(watcherBody, /document\.addEventListener\('keydown', handleKeydown, true\)/);
   assert.match(watcherBody, /findBinanceCancelAllDialog\(document, isVisibleElement\)/);
   assert.match(watcherBody, /classifyBinanceCancelAllDialogAction\(contract, eventTarget\)/);
+  assert.match(watcherBody, /if \(action === 'confirmed'\) onConfirmed\?\.\(\);\s*watcher\.action = action/);
   assert.match(watcherBody, /event\.key !== 'Escape' && event\.key !== 'Enter' && event\.key !== ' '/);
   assert.match(watcherBody, /classifyBinanceCancelAllDialogKeyboardAction\(/);
 
@@ -1205,16 +1167,16 @@ test('bulk cancel distinguishes native confirm from cancellation before clear po
   assert.doesNotMatch(decisionBody, /closeDeadline/);
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
-  const watcherIndex = cancelBody.indexOf('createBinanceCancelAllDialogDecisionWatcher()');
+  const watcherIndex = cancelBody.indexOf('createBinanceCancelAllDialogDecisionWatcher(');
   const clickIndex = cancelBody.indexOf('cancelAllButton.click()');
   const cancelledIndex = cancelBody.indexOf("dialogDecision.status === 'cancelled'");
   const clearIndex = cancelBody.indexOf('waitForCurrentSymbolOpenOrdersCleared(openOrdersScope, symbol)');
   assert.ok(watcherIndex < clickIndex, 'decision watcher must be installed before opening the dialog');
   assert.ok(clickIndex < cancelledIndex && cancelledIndex < clearIndex);
   assert.match(cancelBody, /status: 'dialog_not_found'/);
-  assert.match(cancelBody, /status: 'dialog_contract_invalid'/);
+  assert.match(cancelBody, /status: chartSaveSetupFailed \? 'chart_save_not_ready' : 'dialog_contract_invalid'/);
   const invalidDialogBranch = cancelBody.match(
-    /catch \(error\) \{\s*restoreTemporaryUiState = false;([\s\S]*?)status: 'dialog_contract_invalid'/,
+    /catch \(error\) \{\s*restoreTemporaryUiState = false;([\s\S]*?)status: chartSaveSetupFailed/,
   )?.[1] || '';
   assert.notEqual(invalidDialogBranch, '');
   assert.doesNotMatch(invalidDialogBranch, /restoreChartOrdersState = false/);
@@ -1223,26 +1185,19 @@ test('bulk cancel distinguishes native confirm from cancellation before clear po
 
 test('chart Open Orders reload recovery remains pending until restoration succeeds', () => {
   assert.match(source, /chartOrdersRecoveryPendingAtStartup =\s*sessionStorage\.getItem\(CHART_ORDERS_RECOVERY_STORAGE_KEY\) !== null/);
+  assert.doesNotMatch(source, /writeChartOrdersRecoveryRecord/);
 
-  const hideBody = readFunctionBody('hideBinanceChartOrdersForBulkCancel');
-  const stateIndex = hideBody.indexOf('state.originalChecked = current.checked');
-  const writeIndex = hideBody.indexOf('writeChartOrdersRecoveryRecord()');
-  const toggleIndex = hideBody.indexOf('toggleBinanceChartOrdersWithCoalescedSave(');
-  assert.ok(
-    stateIndex !== -1
-      && writeIndex !== -1
-      && toggleIndex !== -1
-      && stateIndex < writeIndex
-      && writeIndex < toggleIndex,
-  );
+  const restoreBody = readFunctionBody('restoreLegacyHiddenBinanceChartOrders');
+  assert.match(restoreBody, /if \(!current\.checked\)/);
+  assert.match(restoreBody, /toggleBinanceChartOrdersWithCoalescedSave\([\s\S]*true,[\s\S]*true/);
+  assert.match(restoreBody, /clearChartOrdersRecoveryRecord\(\)/);
 
   const recoverBody = readFunctionBody('recoverChartOrdersStateAfterReload');
   assert.match(recoverBody, /recovery\.status === 'invalid'/);
   assert.doesNotMatch(recoverBody, /expired/);
   assert.match(recoverBody, /clearChartOrdersRecoveryRecord\(\)/);
   assert.match(recoverBody, /findBinanceChartOrdersTargetDom\(document\)/);
-  assert.match(recoverBody, /originalChecked: recovery\.record\.originalChecked/);
-  assert.match(recoverBody, /restoreBinanceChartOrdersAfterBulkCancel\(target/);
+  assert.match(recoverBody, /restoreLegacyHiddenBinanceChartOrders\(target\)/);
 
   const scheduleBody = readFunctionBody('scheduleChartOrdersRecovery');
   assert.match(scheduleBody, /!chartOrdersRecoveryPendingAtStartup/);
@@ -1308,9 +1263,8 @@ test('cancel current-symbol open orders wait for confirmed clearing before resto
   assert.ok(clearWaitIndex < successIndex, 'clearing must be confirmed before success');
   assert.ok(successIndex < cleanupIndex && cleanupIndex < restoreIndex, 'page state restores only after the clear result');
 
-  assert.match(cancelBody, /chartOrdersDefinitivelyCleared = clearResult\.definitivelyCleared === true/);
-  assert.match(cancelBody, /chartOrdersDefinitivelyCleared && getOpenOrdersTabCount\(\) === 0/);
-  assert.match(cancelBody, /!chartOrdersStillDefinitivelyCleared/);
+  const chartSaveFinishIndex = cancelBody.indexOf('await finishChartSaveCoalescing()');
+  assert.ok(successIndex < chartSaveFinishIndex && chartSaveFinishIndex < restoreIndex);
 });
 
 test('cancel current-symbol open orders are single-flight and follow the native dialog lifecycle', () => {
@@ -1341,8 +1295,8 @@ test('cancel current-symbol open orders are single-flight and follow the native 
 
   const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
   assert.match(cancelBody, /restoreTemporaryUiState = false/);
-  assert.match(cancelBody, /restoreChartOrdersState = false/);
   assert.match(cancelBody, /dialogDecision\.status === 'aborted'[\s\S]*status: 'aborted'/);
+  assert.match(cancelBody, /finally\s*\{[\s\S]*await finishChartSaveCoalescing\(\)/);
   assert.doesNotMatch(cancelBody, /dialogDecision\.status === 'dialog_not_closed'/);
   assert.match(cancelBody, /finally\s*\{[\s\S]*if \(restoreTemporaryUiState && isCurrentObservedSymbol\(symbol\)\)/);
 
@@ -1388,7 +1342,7 @@ test('cancel current-symbol open orders are single-flight and follow the native 
   assert.match(cancelRunBody, /撤单确认弹窗已打开/);
   assert.match(cancelRunBody, /撤单已确认，等待挂单清空/);
   assert.match(cancelRunBody, /未能恢复隐藏其他合约状态/);
-  assert.match(cancelRunBody, /未能恢复图表当前委托显示/);
+  assert.match(cancelRunBody, /撤单已执行，但图表保存合并失败/);
   const noOrdersReturnIndex = cancelRunBody.indexOf("status: 'no_orders'");
   const blockLadderActionsIndex = cancelRunBody.indexOf('cancelCurrentSymbolOpenOrdersBlocksLadderActions = true');
   assert.notEqual(noOrdersReturnIndex, -1);

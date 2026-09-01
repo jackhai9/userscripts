@@ -92,7 +92,7 @@ test('cancelling the native dialog preserves current and other orders and restor
 
   await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(false);
+  await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(true);
   await page.getByRole('button', { name: '取消' }).click();
   await expect(page.getByText('撤单已取消')).toBeVisible();
 
@@ -105,7 +105,7 @@ test('cancelling the native dialog preserves current and other orders and restor
   expect(errors).toEqual([]);
 });
 
-test('a 70-order drawing burst split across tasks performs one full save per toggle', async ({ page }) => {
+test('a 70-order confirmed cancellation keeps drawings visible and performs one final full save', async ({ page }) => {
   const orders = Array.from({ length: 70 }, (_, index) => ({
     id: `current-${index + 1}`,
     symbol: 'HYPEUSDT',
@@ -123,40 +123,26 @@ test('a 70-order drawing burst split across tasks performs one full save per tog
 
   await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(false);
-  await page.getByRole('button', { name: '取消' }).click();
-  await expect(page.getByText('撤单已取消')).toBeVisible();
+  await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(true);
+  await page.getByRole('button', { name: '确认' }).click();
+  await expect(page.getByText('撤单已完成')).toBeVisible();
 
   const state = await readFixtureState(page);
-  expect(state.orders).toEqual(orders);
+  expect(state.orders).toEqual([]);
   expect(
     state.events.filter((event) => event.type === 'chart-save-requested'),
-  ).toHaveLength(140);
-  expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(2);
+  ).toHaveLength(70);
+  expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(1);
   expect(
     state.events
       .filter((event) => event.type === 'chart-orders-checked')
       .map((event) => event.value),
-  ).toEqual([false, true]);
-  for (const checked of [false, true]) {
-    const checkedIndex = state.events.findIndex(
-      (event) => event.type === 'chart-orders-checked' && event.value === checked,
-    );
-    const popoverClosedIndex = state.events.findIndex(
-      (event, index) => index > checkedIndex && event.type === 'chart-orders-popover-closed',
-    );
-    const finalSaveRequestIndex = state.events.findLastIndex(
-      (event) => event.type === 'chart-save-requested' && event.checked === checked,
-    );
-    const fullSaveIndex = state.events.findIndex(
-      (event, index) => index > finalSaveRequestIndex
-        && event.type === 'chart-saved'
-        && event.snapshot.checked === checked,
-    );
-    expect(popoverClosedIndex).toBeGreaterThan(checkedIndex);
-    expect(popoverClosedIndex).toBeLessThan(finalSaveRequestIndex);
-    expect(popoverClosedIndex).toBeLessThan(fullSaveIndex);
-  }
+  ).toEqual([]);
+  const finalSaveRequestIndex = state.events.findLastIndex(
+    (event) => event.type === 'chart-save-requested',
+  );
+  const fullSaveIndex = state.events.findIndex((event) => event.type === 'chart-saved');
+  expect(fullSaveIndex).toBeGreaterThan(finalSaveRequestIndex);
   await expectRestoredState(page, scenario);
   const probe = await finishInteractionProbe(page);
   assertResponsiveInteraction(expect, probe);
@@ -164,7 +150,7 @@ test('a 70-order drawing burst split across tasks performs one full save per tog
   expect(errors).toEqual([]);
 });
 
-test('a popover close failure does not discard coalesced chart saves', async ({ page }) => {
+test('bulk cancel no longer depends on the chart orders popover', async ({ page }) => {
   const scenario = createCancelScenario({
     positions: POSITION_SETS.current,
     orders: ORDER_SETS.current,
@@ -174,17 +160,19 @@ test('a popover close failure does not discard coalesced chart saves', async ({ 
   const { errors } = await openUserscriptScenario(page, scenario);
 
   await page.getByRole('button', { name: '撤单' }).click();
-  await expect(page.getByText('未能恢复图表当前委托显示')).toBeVisible({ timeout: 6_000 });
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByText('撤单已取消')).toBeVisible();
 
   const state = await readFixtureState(page);
   expect(state.dialogOpen).toBe(false);
   expect(state.orders).toEqual(ORDER_SETS.current);
   expect(state.showOrders).toBe(true);
-  expect(state.events.filter((event) => event.type === 'chart-save-requested')).toHaveLength(2);
-  expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(2);
+  expect(state.events.filter((event) => event.type === 'chart-save-requested')).toHaveLength(0);
+  expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(0);
   expect(
     state.events.filter((event) => event.type === 'chart-orders-popover-close-requested'),
-  ).toHaveLength(2);
+  ).toHaveLength(0);
   expect(errors).toEqual([]);
 });
 
@@ -317,7 +305,7 @@ test('a real pagehide aborts dialog tracking without mutating orders', async ({ 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(ORDER_SETS.current);
   expect(state.events.filter((event) => event.type === 'cancel-requested')).toEqual([]);
-  expect(state.showOrders).toBe(false);
+  expect(state.showOrders).toBe(true);
   expect(state.hideOtherSymbols).toBe(true);
   expect(errors).toEqual([]);
 });
@@ -360,11 +348,7 @@ for (const dialogMode of ['extraAction', 'missingPrimary']) {
     const state = await readFixtureState(page);
     expect(state.orders).toEqual(ORDER_SETS.current);
     expect(state.events.filter((event) => event.type === 'cancel-requested')).toEqual([]);
-    expect(
-      state.events
-        .filter((event) => event.type === 'chart-orders-checked')
-        .map((event) => event.value),
-    ).toEqual([false, true]);
+    expect(state.events.filter((event) => event.type === 'chart-orders-checked')).toEqual([]);
     expect(state.showOrders).toBe(true);
     expect(state.hideOtherSymbols).toBe(true);
     expect(errors).toEqual([]);

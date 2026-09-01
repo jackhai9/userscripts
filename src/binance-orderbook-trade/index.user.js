@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.179
+// @version      2.7.180
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -196,12 +196,12 @@ import {
 } from './core/panel-options.js';
 import {
   CHART_ORDERS_RECOVERY_STORAGE_KEY,
-  createChartOrdersRecoveryRecord,
   parseChartOrdersRecoveryRecord,
 } from './core/chart-orders-recovery.js';
 import {
   coalesceTradingViewDrawingSaves,
   createTradingViewContinuousSaveController,
+  createTradingViewRemovalSaveController,
 } from './core/chart-save-coalescer.js';
 import { findBinanceTradingViewTarget } from './dom/tradingview-target.js';
 import { resolveCancelDialogDecision } from './core/cancel-dialog-decision.js';
@@ -864,13 +864,12 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     ['读取挂单时交易对已变化', 'Symbol changed while reading open orders'],
     ['未找到当前委托的全撤按钮', 'Cancel All was not found in Open Orders'],
     ['撤单前交易对已变化', 'Symbol changed before cancellation'],
-    ['未能准备撤单页面，未打开确认弹窗', 'Could not prepare the cancellation page; confirmation was not opened'],
-    ['准备撤单时交易对已变化', 'Symbol changed while preparing cancellation'],
     ['准备撤单时未找到当前委托面板', 'Open Orders panel was not found while preparing cancellation'],
     ['准备撤单时未确认仅显示当前交易对挂单', 'Could not confirm this-symbol-only orders while preparing cancellation'],
     ['准备撤单时未找到全撤按钮', 'Cancel All was not found while preparing cancellation'],
     ['撤单确认弹窗已打开', 'Cancellation confirmation opened'],
     ['撤单确认弹窗结构异常，未执行弹窗操作', 'Cancellation dialog changed; no dialog action was taken'],
+    ['未能准备撤单图表保存，未执行撤单', 'Could not prepare chart saving; cancellation was not executed'],
     ['确认撤单前交易对已变化', 'Symbol changed before cancellation was confirmed'],
     ['未识别到撤单确认弹窗，未继续撤单流程', 'Cancellation dialog was not detected; cancellation stopped'],
     ['撤单已取消', 'Cancellation cancelled'],
@@ -882,7 +881,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     ['当前交易对挂单仍存在，撤单未完成', 'Open orders still exist for this symbol; cancellation is incomplete'],
     ['原挂单已撤，继续阶梯挂单', 'Previous orders cancelled; continuing ladder placement'],
     ['撤单已完成', 'Cancellation completed'],
-    ['未能恢复图表当前委托显示', 'Could not restore chart open-order display'],
+    ['撤单已执行，但图表保存合并失败', 'Cancellation executed, but chart-save coalescing failed'],
     ['阶梯任务运行中，请先停止阶梯挂单', 'A ladder task is running; stop it first'],
     ['连续交易运行中，请先停止阶梯挂单', 'Continuous trading is running; stop it first'],
     ['正在读取账户再平衡计划', 'Loading account rebalance plan'],
@@ -5090,7 +5089,11 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     ));
   }
 
-  function createBinanceCancelAllDialogDecisionWatcher() {
+  function createBinanceCancelAllDialogDecisionWatcher(options = null) {
+    const { onConfirmed } = options || {};
+    if (onConfirmed !== undefined && typeof onConfirmed !== 'function') {
+      throw new Error('撤单确认回调无效');
+    }
     const lifecycleController = new AbortController();
     const dialogSignal = createDialogMutationSignal(document);
     if (!dialogSignal) throw new Error('撤单确认弹窗状态无法观察，已停止');
@@ -5101,12 +5104,16 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       dialogSignal,
     };
 
+    const recordResolvedAction = (action) => {
+      if (!action || watcher.action) return;
+      if (action === 'confirmed') onConfirmed?.();
+      watcher.action = action;
+    };
     const recordAction = (eventTarget) => {
       const contract = findBinanceCancelAllDialog(document, isVisibleElement);
       if (!contract) return;
       watcher.seenDialog = true;
-      const action = classifyBinanceCancelAllDialogAction(contract, eventTarget);
-      if (action && !watcher.action) watcher.action = action;
+      recordResolvedAction(classifyBinanceCancelAllDialogAction(contract, eventTarget));
     };
     const rejectInvalidDialogAction = (event, error) => {
       // Do not let Binance execute an action that the script can no longer classify or recover from.
@@ -5134,7 +5141,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
           event.key,
           document.activeElement || event.target,
         );
-        if (action && !watcher.action) watcher.action = action;
+        recordResolvedAction(action);
       } catch (error) {
         rejectInvalidDialogAction(event, error);
       } finally {
@@ -5198,13 +5205,6 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   function getBinanceChartOrdersTarget() {
     return getBinanceChartOrdersTargetDom(document);
-  }
-
-  function writeChartOrdersRecoveryRecord() {
-    sessionStorage.setItem(
-      CHART_ORDERS_RECOVERY_STORAGE_KEY,
-      createChartOrdersRecoveryRecord(Date.now()),
-    );
   }
 
   function clearChartOrdersRecoveryRecord() {
@@ -5351,39 +5351,15 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     });
   }
 
-  async function hideBinanceChartOrdersForBulkCancel(target, state) {
-    const current = await openBinanceChartOrdersPopover(target);
-    state.originalChecked = current.checked;
-    if (current.checked) {
-      writeChartOrdersRecoveryRecord();
-      state.changed = true;
-      await toggleBinanceChartOrdersWithCoalescedSave(
-        target,
-        current.checkbox,
-        false,
-        true,
-      );
-      return;
-    }
-    await closeBinanceChartOrdersPopover(target);
-  }
-
-  async function restoreBinanceChartOrdersAfterBulkCancel(
-    target,
-    state,
-    expectDrawingEvents,
-  ) {
-    if (typeof expectDrawingEvents !== 'boolean') {
-      throw new Error('图表委托线保存参数异常');
-    }
+  async function restoreLegacyHiddenBinanceChartOrders(target) {
     assertSameBinanceChartOrdersTarget(target, getBinanceChartOrdersTarget());
     const current = await openBinanceChartOrdersPopover(target);
-    if (current.checked !== state.originalChecked) {
+    if (!current.checked) {
       await toggleBinanceChartOrdersWithCoalescedSave(
         target,
         current.checkbox,
-        state.originalChecked,
-        expectDrawingEvents,
+        true,
+        true,
       );
     } else {
       await closeBinanceChartOrdersPopover(target);
@@ -5406,10 +5382,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
     const target = findBinanceChartOrdersTargetDom(document);
     if (!target) return { status: 'target_not_ready' };
-    await restoreBinanceChartOrdersAfterBulkCancel(target, {
-      originalChecked: recovery.record.originalChecked,
-      changed: true,
-    }, true);
+    await restoreLegacyHiddenBinanceChartOrders(target);
     chartOrdersRecoveryPendingAtStartup = false;
     chartOrdersRecoveryLastError = null;
     log('已恢复刷新前的图表当前委托显示状态');
@@ -5460,11 +5433,30 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     let previousOpenOrdersSubTabIdentity = null;
     let symbolFilterOriginalChecked = null;
     let restoreTemporaryUiState = true;
-    let chartOrdersTarget = null;
-    const chartOrdersState = { originalChecked: null, changed: false };
-    let restoreChartOrdersState = true;
-    let chartOrdersDefinitivelyCleared = false;
+    let chartRemovalSaveController = null;
     let successStatusMessage = null;
+    const armChartSaveCoalescing = () => {
+      try {
+        if (chartRemovalSaveController) {
+          throw new Error('撤单图表保存合并已启动');
+        }
+        const target = findBinanceTradingViewTarget(document);
+        if (!target) throw new Error('未找到图表保存接口');
+        chartRemovalSaveController = createTradingViewRemovalSaveController(
+          target.tradingViewApi,
+        );
+      } catch (error) {
+        error.name = 'ChartSaveCoalescingError';
+        throw error;
+      }
+    };
+    const finishChartSaveCoalescing = async () => {
+      if (!chartRemovalSaveController) return;
+      const controller = chartRemovalSaveController;
+      chartRemovalSaveController = null;
+      const result = await controller.finish();
+      log('撤单图表保存已合并', result);
+    };
 
     try {
       const tabReady = await activateOpenOrdersTab();
@@ -5537,22 +5529,6 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       cancelCurrentSymbolOpenOrdersBlocksLadderActions = true;
       scheduleRenderPanel();
 
-      try {
-        chartOrdersTarget = getBinanceChartOrdersTarget();
-        await hideBinanceChartOrdersForBulkCancel(chartOrdersTarget, chartOrdersState);
-      } catch (e) {
-        emit('ERR', '撤单前隐藏图表当前委托失败', e);
-        const message = '未能准备撤单页面，未打开确认弹窗';
-        setLadderStatus(message);
-        return { ok: false, status: 'chart_orders_not_hidden', message };
-      }
-
-      if (!isCurrentObservedSymbol(symbol)) {
-        const message = '准备撤单时交易对已变化';
-        setLadderStatus(message);
-        return { ok: false, status: 'symbol_changed', message };
-      }
-
       openOrdersScope = await waitForActiveOpenOrdersScope();
       if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
         const message = '准备撤单时未找到当前委托面板';
@@ -5571,7 +5547,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         return { ok: false, status: 'cancel_button_not_found', message };
       }
 
-      const dialogDecisionWatcher = createBinanceCancelAllDialogDecisionWatcher();
+      const dialogDecisionWatcher = createBinanceCancelAllDialogDecisionWatcher({
+        onConfirmed: armChartSaveCoalescing,
+      });
       let dialogDecision;
       try {
         cancelAllButton.click();
@@ -5582,16 +5560,24 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         );
       } catch (error) {
         restoreTemporaryUiState = false;
-        emit('ERR', '币安撤单确认弹窗结构异常', error);
-        const message = '撤单确认弹窗结构异常，未执行弹窗操作';
+        const chartSaveSetupFailed = error?.name === 'ChartSaveCoalescingError';
+        emit('ERR', chartSaveSetupFailed
+          ? '撤单图表保存合并启动失败'
+          : '币安撤单确认弹窗结构异常', error);
+        const message = chartSaveSetupFailed
+          ? '未能准备撤单图表保存，未执行撤单'
+          : '撤单确认弹窗结构异常，未执行弹窗操作';
         setLadderStatus(message);
-        return { ok: false, status: 'dialog_contract_invalid', message };
+        return {
+          ok: false,
+          status: chartSaveSetupFailed ? 'chart_save_not_ready' : 'dialog_contract_invalid',
+          message,
+        };
       } finally {
         dialogDecisionWatcher.dispose();
       }
       if (dialogDecision.status === 'aborted') {
         restoreTemporaryUiState = false;
-        restoreChartOrdersState = false;
         const interruptedBaseAsset = formatStatusBaseAsset(symbol);
         const message = `原交易对 ${interruptedBaseAsset} 页面已离开，撤单确认跟踪已停止`;
         setLadderStatus(message);
@@ -5645,12 +5631,20 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         setLadderStatus(message);
         return { ok: false, status: 'not_cleared', message };
       }
-      chartOrdersDefinitivelyCleared = clearResult.definitivelyCleared === true;
       successStatusMessage = waitUntilCleared
         ? '原挂单已撤，继续阶梯挂单'
         : '撤单已完成';
       return { ok: true, status: 'cleared' };
     } finally {
+      let chartSaveCoalescingSucceeded = true;
+      try {
+        await finishChartSaveCoalescing();
+      } catch (error) {
+        chartSaveCoalescingSucceeded = false;
+        emit('ERR', '撤单图表保存合并失败', error);
+        setLadderStatus('撤单已执行，但图表保存合并失败');
+      }
+
       let temporaryUiRestoreSucceeded = true;
       if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol)) {
         openOrdersScope = await waitForActiveOpenOrdersScope();
@@ -5673,27 +5667,10 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         }
       }
 
-      let chartOrdersRestoreSucceeded = true;
-      if (restoreChartOrdersState && chartOrdersState.changed) {
-        try {
-          const chartOrdersStillDefinitivelyCleared =
-            chartOrdersDefinitivelyCleared && getOpenOrdersTabCount() === 0;
-          await restoreBinanceChartOrdersAfterBulkCancel(
-            chartOrdersTarget,
-            chartOrdersState,
-            !chartOrdersStillDefinitivelyCleared,
-          );
-        } catch (e) {
-          chartOrdersRestoreSucceeded = false;
-          emit('ERR', '恢复图表当前委托显示失败', e);
-          setLadderStatus('未能恢复图表当前委托显示');
-        }
-      }
-
       if (
         restoreTemporaryUiState &&
         isCurrentObservedSymbol(symbol) &&
-        chartOrdersRestoreSucceeded &&
+        chartSaveCoalescingSucceeded &&
         temporaryUiRestoreSucceeded &&
         successStatusMessage
       ) {
