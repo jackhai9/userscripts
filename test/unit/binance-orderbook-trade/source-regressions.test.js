@@ -750,7 +750,10 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(source, /startContinuousLadder\(actionType\)/);
   assert.match(continuousBody, /spec\.mode !== 'CLOSE'\) return startLadder\(actionType\)/);
   assert.match(continuousBody, /while \(true\)/);
-  assert.match(continuousBody, /await startLadder\(actionType, continuousProgress\)/);
+  assert.match(
+    continuousBody,
+    /await startLadder\(\s*actionType,\s*continuousProgress,\s*chartSaveCoalescer/,
+  );
   assert.match(continuousBody, /recordContinuousLadderRound\(continuousProgress, outcome\)/);
   assert.match(continuousBody, /resolveContinuousLadderRecovery\(outcome\.error\)/);
   assert.match(continuousBody, /recovery\?\.cooldownMs/);
@@ -788,13 +791,20 @@ test('Option or Alt click continuously repeats close ladders only after readines
   assert.match(controlSectionsBody, /!!ladderTask \|\| !!continuousLadderTask/);
 });
 
-test('continuous close coalesces only short remove-save bursts and restores the chart method', () => {
+test('continuous close captures only owned order-line saves and restores the chart method', () => {
   const startCoalescingBody = readFunctionBody('startContinuousChartSaveCoalescing');
   const stopCoalescingBody = readFunctionBody('stopContinuousChartSaveCoalescing');
   const continuousBody = readFunctionBody('startContinuousLadder');
+  const startLadderBody = readFunctionBody('startLadder');
+  const executeBody = readFunctionBody('executeLadderPlan');
 
-  assert.match(chartSaveCoalescerSource, /export function createTradingViewRemoveSaveBurstController/);
-  assert.match(chartSaveCoalescerSource, /eventType !== 'remove'/);
+  assert.match(chartSaveCoalescerSource, /export function createTradingViewContinuousSaveController/);
+  assert.match(chartSaveCoalescerSource, /toolName !== 'LineToolOrder'/);
+  assert.match(chartSaveCoalescerSource, /IGNORED_DRAWING_EVENT_TYPES\.has\(eventType\)/);
+  assert.match(chartSaveCoalescerSource, /eventType === 'remove'/);
+  assert.match(chartSaveCoalescerSource, /beginSubmitCapture/);
+  assert.match(chartSaveCoalescerSource, /completeSubmitCapture/);
+  assert.match(chartSaveCoalescerSource, /getStats/);
   assert.match(chartSaveCoalescerSource, /api\.subscribe\('drawing_event', handleDrawingEvent\)/);
   assert.match(chartSaveCoalescerSource, /api\.unsubscribe\('drawing_event', handleDrawingEvent\)/);
   assert.match(chartSaveCoalescerSource, /burst\.originalSaveChart\.apply/);
@@ -802,10 +812,20 @@ test('continuous close coalesces only short remove-save bursts and restores the 
   assert.match(startCoalescingBody, /findBinanceTradingViewTarget\(document\)/);
   assert.match(startCoalescingBody, /CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS/);
   assert.match(startCoalescingBody, /CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS/);
+  assert.match(startCoalescingBody, /CONTINUOUS_CHART_SUBMIT_EVENT_WAIT_MS/);
   assert.match(continuousBody, /const chartSaveCoalescer = startContinuousChartSaveCoalescing\(\)/);
+  assert.match(continuousBody, /startLadder\(\s*actionType,\s*continuousProgress,\s*chartSaveCoalescer/);
   assert.match(continuousBody, /stopContinuousChartSaveCoalescing\(chartSaveCoalescer\)/);
   assert.match(stopCoalescingBody, /coalescer\.stop\(\)/);
-  assert.match(source, /continuousChartSaveCoalescer\?\.flush\(\)/);
+  assert.match(startLadderBody, /chartSaveController\?\.beginRound\(\)/);
+  assert.match(startLadderBody, /chartSaveController\.endRound\(chartSaveRound\)/);
+  assert.match(executeBody, /chartSaveController\?\.beginSubmitCapture\(/);
+  assert.match(executeBody, /chartSaveController\.completeSubmitCapture\(chartSubmitCapture\)/);
+  assert.ok(executeBody.indexOf('beginSubmitCapture') < executeBody.indexOf('button.click()'));
+  assert.ok(executeBody.indexOf('button.click()') < executeBody.indexOf('waitForOrderSubmitAcknowledgement'));
+  assert.ok(executeBody.indexOf('waitForOrderSubmitAcknowledgement') < executeBody.indexOf('completeSubmitCapture'));
+  assert.match(source, /continuousChartSaveController\?\.flush\(\)/);
+  assert.match(source, /continuousChartSaveController\?\.getStats\(\)/);
 });
 
 test('trade input frame synchronization reuses only its initially proven form root', () => {
