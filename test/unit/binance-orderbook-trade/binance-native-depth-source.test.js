@@ -120,6 +120,40 @@ test('observes the native RPI snapshot and stream without creating another socke
   source.restore();
 });
 
+test('retains distant active prices delivered after the 1000-level native snapshot', async () => {
+  const denseSnapshot = snapshot({
+    bids: Array.from({ length: 1000 }, (_, index) => [String(100 - index / 1000), '1']),
+    asks: Array.from({ length: 1000 }, (_, index) => [String(101 + index / 1000), '1']),
+  });
+  const { globalObject, source } = createHarness(new FakeResponse(denseSnapshot));
+  const profiles = [];
+  source.subscribe({
+    symbol: 'BTCUSDT',
+    onProfile: (profile) => profiles.push(profile),
+    onStatus: () => {},
+  });
+
+  const nativeSocket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+  const responsePromise = globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+  nativeSocket.message(rpiMessage());
+  await responsePromise;
+  await new Promise((resolve) => setImmediate(resolve));
+  nativeSocket.message(rpiMessage(update({
+    U: 103,
+    u: 104,
+    pu: 102,
+    b: [['50', '7']],
+    a: [['150', '8']],
+  })));
+
+  const profile = profiles.at(-1);
+  assert.equal(profile.bids.length, 1002);
+  assert.equal(profile.asks.length, 1002);
+  assert.equal(profile.bids.at(-1).price, 50);
+  assert.equal(profile.asks.at(-1).price, 150);
+  source.restore();
+});
+
 test('preserves native fetch, WebSocket prototype, instanceof, and static constants', async () => {
   const {
     fetchCalls,
