@@ -2,7 +2,9 @@ export const DEPTH_PROFILE_ID = 'jh-binance-depth-profile';
 
 const STYLE_ID = 'jh-binance-depth-profile-style';
 const CHART_ROOT_SELECTOR = '.chart-widget-root';
+const PRICE_AXIS_SELECTOR = '.chart-markup-table.price-axis-container';
 const PRICE_COORDINATE_SEARCH_STEPS = 13;
+const GEOMETRY_TOLERANCE_PX = 1;
 
 function hasVisibleBox(element) {
   if (!element?.getClientRects().length) return false;
@@ -49,6 +51,22 @@ export function getTradingViewDepthProfileGeometry(frame) {
     || typeof scale.isInverted !== 'function'
   ) return null;
 
+  const viewportWidth = Number(frame.contentWindow.innerWidth);
+  if (!Number.isFinite(viewportWidth) || !(viewportWidth > 0)) return null;
+  const priceAxisRects = Array.from(
+    frame.contentDocument.querySelectorAll(PRICE_AXIS_SELECTOR),
+    (element) => element.getBoundingClientRect(),
+  ).filter((rect) => (
+    rect.width > 0
+    && rect.height > 0
+    && Math.abs(rect.top) <= GEOMETRY_TOLERANCE_PX
+    && Math.abs(rect.height - height) <= GEOMETRY_TOLERANCE_PX
+    && Math.abs(rect.right - viewportWidth) <= GEOMETRY_TOLERANCE_PX
+  ));
+  if (priceAxisRects.length !== 1) return null;
+  const rightInset = Number(priceAxisRects[0].width);
+  if (!Number.isFinite(rightInset) || !(rightInset > 0)) return null;
+
   const visibleRange = scale.getVisiblePriceRange();
   const mode = scale.getMode();
   const inverted = scale.isInverted();
@@ -78,6 +96,7 @@ export function getTradingViewDepthProfileGeometry(frame) {
   return {
     top: 0,
     height,
+    rightInset,
     minPrice,
     maxPrice,
     mode,
@@ -111,7 +130,7 @@ function installStyle(document) {
       position: absolute;
       z-index: 3;
       top: 0;
-      right: 72px;
+      right: 0;
       bottom: auto;
       height: 0;
       width: 132px;
@@ -239,8 +258,10 @@ export function setDepthProfileViewState(root, {
 export function setDepthProfileGeometry(root, geometry) {
   const top = `${geometry.top}px`;
   const height = `${geometry.height}px`;
+  const right = `${geometry.rightInset}px`;
   if (root.style.top !== top) root.style.top = top;
   if (root.style.height !== height) root.style.height = height;
+  if (root.style.right !== right) root.style.right = right;
 }
 
 function bucketVisibleLevels(levels, geometry) {
