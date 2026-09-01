@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.181
+// @version      2.7.182
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -209,8 +209,10 @@ import {
   clearDepthProfile,
   ensureDepthProfileView,
   findDepthProfileHost,
+  getTradingViewDepthProfileGeometry,
   removeDepthProfileView,
   renderDepthProfile,
+  setDepthProfileGeometry,
   setDepthProfileViewState,
 } from './dom/depth-profile.js';
 import { resolveCancelDialogDecision } from './core/cancel-dialog-decision.js';
@@ -492,11 +494,13 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   let depthProfileEnabled = localStorage.getItem(DEPTH_PROFILE_ENABLED_KEY) !== '0';
   let depthProfileSession = null;
   let depthProfileView = null;
+  let depthProfileFrame = null;
   let depthProfileData = null;
   let depthProfileStatus = { status: 'connecting', detail: '' };
   let depthProfileFailedSymbol = null;
   let depthProfileObserver = null;
   let depthProfileObserverRoot = null;
+  let depthProfileRenderQueued = false;
   let depthProfileSyncQueued = false;
   const controlledNativeButtons = new Set();
   let lastObservedSymbol = getCurrentSymbol();
@@ -7925,8 +7929,22 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return { text, title };
   }
 
+  function getCurrentDepthProfilePrice() {
+    const node = Array.from(document.querySelectorAll('.tradew-tradelist .price.emit-price'))
+      .find((candidate) => isVisibleElement(candidate));
+    const price = parsePrice(node);
+    return price == null ? null : Number(price);
+  }
+
   function renderDepthProfileUi() {
     if (!depthProfileView?.isConnected) return;
+    const geometry = getTradingViewDepthProfileGeometry(depthProfileFrame);
+    if (!geometry) {
+      clearDepthProfile(depthProfileView);
+      scheduleDepthProfileSync();
+      return;
+    }
+    setDepthProfileGeometry(depthProfileView, geometry);
     const status = depthProfileStatusPresentation();
     setDepthProfileViewState(depthProfileView, {
       expanded: depthProfileEnabled,
@@ -7936,10 +7954,24 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       statusTitle: status.title,
     });
     if (depthProfileEnabled && depthProfileData) {
-      renderDepthProfile(depthProfileView, depthProfileData);
+      renderDepthProfile(
+        depthProfileView,
+        depthProfileData,
+        geometry,
+        getCurrentDepthProfilePrice(),
+      );
     } else {
       clearDepthProfile(depthProfileView);
     }
+  }
+
+  function scheduleDepthProfileRender() {
+    if (depthProfileRenderQueued) return;
+    depthProfileRenderQueued = true;
+    window.requestAnimationFrame(() => {
+      depthProfileRenderQueued = false;
+      renderDepthProfileUi();
+    });
   }
 
   function stopDepthProfileSession() {
@@ -7956,6 +7988,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   function removeDepthProfileRuntimeView() {
     removeDepthProfileView(document);
     depthProfileView = null;
+    depthProfileFrame = null;
   }
 
   function scheduleDepthProfileSync() {
@@ -7997,14 +8030,14 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
         depthProfileData = profile;
         depthProfileStatus = { status: 'ready', detail: '' };
-        renderDepthProfileUi();
+        scheduleDepthProfileRender();
       },
       onStatus(status) {
         if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
         depthProfileStatus = status;
         if (status.status !== 'ready') depthProfileData = null;
         if (status.status === 'failed') depthProfileFailedSymbol = symbol;
-        renderDepthProfileUi();
+        scheduleDepthProfileRender();
       },
     });
     depthProfileSession = session;
@@ -8019,20 +8052,23 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     }
     ensureDepthProfileObserver();
     let target;
+    let geometry;
     try {
       target = findDepthProfileHost(document);
+      geometry = target ? getTradingViewDepthProfileGeometry(target.frame) : null;
     } catch (error) {
       stopDepthProfileSession();
       removeDepthProfileRuntimeView();
       err('depth profile host discovery failed:', error);
       return;
     }
-    if (!target) {
+    if (!target || !geometry) {
       stopDepthProfileSession();
       removeDepthProfileRuntimeView();
       return;
     }
 
+    depthProfileFrame = target.frame;
     depthProfileView = ensureDepthProfileView(document, target.host, {
       onToggle() {
         depthProfileEnabled = !depthProfileEnabled;
@@ -8046,6 +8082,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         syncDepthProfile();
       },
     });
+    setDepthProfileGeometry(depthProfileView, geometry);
     renderDepthProfileUi();
     if (!depthProfileEnabled) return;
 
