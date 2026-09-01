@@ -55,6 +55,7 @@ src/binance-orderbook-trade/
     continuous-ladder.js
     decimal.js
     depth-profile-book.js
+    binance-native-depth-source.js
     depth-profile-session.js
     ladder-plan.js
     orderbook.js
@@ -107,7 +108,7 @@ scripts/
 
 The optional depth profile is a userscript-owned canvas beside the TradingView price axis. It does not clone Binance's native Depth React component. A feature-gated adapter reads the active TradingView main pane height and maps each depth price through the pane's current price scale, including logarithmic and inverted modes. The divider uses Binance's latest visible trade price rather than the order-book midpoint so it follows TradingView's live-price line. If that contract is unavailable or invalid, the profile fails closed instead of falling back to an approximate scale. Binance Basic and native Depth modes do not expose the verified coordinate contract, so the profile is hidden in those modes.
 
-The data session opens the official USD-M public `{symbol}@depth@100ms` stream before requesting `/fapi/v1/depth?limit=1000`. `core/depth-profile-book.js` applies the official `lastUpdateId`, `U`, `u`, and `pu` sequence contract and treats quantities as absolute values; zero removes a price level. `core/depth-profile-session.js` owns one inflight snapshot, at most three resynchronizations per connection, and at most five reconnect attempts. A terminal failure remains visible until the user collapses and reopens the profile or changes symbols.
+The userscript installs `core/binance-native-depth-source.js` at `document-start` and passively observes the native `/fapi/v1/rpiDepth?limit=1000` response and `{symbol}@rpiDepth@500ms` messages. It preserves Binance's original `fetch` result and WebSocket instances and never opens a second depth connection. `core/depth-profile-book.js` applies the observed `lastUpdateId`, `U`, `u`, and `pu` sequence contract and treats quantities as absolute values; zero removes a price level. `core/depth-profile-session.js` only subscribes the active symbol to that page-owned source. A sequence gap waits for Binance's native resynchronization instead of issuing a userscript-owned retry request, while a changed private RPI contract fails the profile explicitly without blocking Binance's own request.
 
 The session must stop and invalidate old work on symbol change, non-trading routes, hidden documents, and `pagehide`. The overlay canvas uses `pointer-events: none`; only its compact collapse control may receive pointer input. Do not connect this visualization book to ladder pricing or any trading decision.
 

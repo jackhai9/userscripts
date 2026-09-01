@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.184
+// @version      2.7.185
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3598,194 +3598,294 @@
     };
   }
 
-  // src/binance-orderbook-trade/core/depth-profile-session.js
-  var MAX_RESYNCS_PER_CONNECTION = 3;
-  var MAX_RECONNECT_ATTEMPTS = 5;
-  var RESYNC_DELAY_MS = 1e3;
-  var RECONNECT_DELAYS_MS = [1e3, 2e3, 5e3, 1e4, 3e4];
+  // src/binance-orderbook-trade/core/binance-native-depth-source.js
+  var NATIVE_RPI_DEPTH_PATH = "/fapi/v1/rpiDepth";
+  var NATIVE_RPI_DEPTH_LIMIT = "1000";
+  var NATIVE_RPI_STREAM_PATTERN = /^([a-z0-9_]+)@rpiDepth@500ms$/;
   function assertFunction(value, field) {
+    if (typeof value !== "function") throw new Error(`Invalid native depth ${field}`);
+    return value;
+  }
+  function assertSymbol2(value) {
+    if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) {
+      throw new Error("Invalid native depth symbol");
+    }
+    return value;
+  }
+  function resolveRequestUrl(input, baseUrl) {
+    if (typeof input === "string") return new URL(input, baseUrl);
+    if (input && typeof input === "object" && typeof input.url === "string") {
+      return new URL(input.url, baseUrl);
+    }
+    return null;
+  }
+  function resolveNativeSnapshotSymbol(input, baseUrl) {
+    const url = resolveRequestUrl(input, baseUrl);
+    if (!url || url.pathname !== NATIVE_RPI_DEPTH_PATH) return null;
+    const symbol = assertSymbol2(url.searchParams.get("symbol"));
+    if (url.searchParams.get("limit") !== NATIVE_RPI_DEPTH_LIMIT) {
+      return {
+        symbol,
+        error: new Error("Invalid Binance native RPI depth snapshot limit")
+      };
+    }
+    return { symbol, error: null };
+  }
+  function createRecord(symbol) {
+    return {
+      symbol,
+      book: createDepthProfileBook(symbol),
+      profile: null,
+      status: { symbol, status: "connecting", detail: "" },
+      subscribers: /* @__PURE__ */ new Set()
+    };
+  }
+  function installBinanceNativeDepthSource(globalObject) {
+    if (!globalObject || typeof globalObject !== "object") {
+      throw new Error("Invalid native depth global object");
+    }
+    const nativeFetch = assertFunction(globalObject.fetch, "fetch function");
+    const NativeWebSocket = assertFunction(globalObject.WebSocket, "WebSocket constructor");
+    const nativeSocketAddEventListener = assertFunction(
+      NativeWebSocket.prototype?.addEventListener,
+      "WebSocket event listener"
+    );
+    const baseUrl = globalObject.location?.href;
+    if (typeof baseUrl !== "string") throw new Error("Invalid native depth page URL");
+    const records = /* @__PURE__ */ new Map();
+    const socketSymbols = /* @__PURE__ */ new WeakMap();
+    let restored = false;
+    function ensureRecord(symbol) {
+      const normalizedSymbol = assertSymbol2(symbol);
+      let record = records.get(normalizedSymbol);
+      if (!record) {
+        record = createRecord(normalizedSymbol);
+        records.set(normalizedSymbol, record);
+      }
+      return record;
+    }
+    function notifyStatus(record, status, detail = "") {
+      record.status = { symbol: record.symbol, status, detail };
+      for (const subscriber of record.subscribers) subscriber.onStatus(record.status);
+    }
+    function notifyProfile(record, profile) {
+      record.profile = profile;
+      for (const subscriber of record.subscribers) subscriber.onProfile(profile);
+      notifyStatus(record, "ready");
+    }
+    function failRecord(record, error) {
+      record.profile = null;
+      notifyStatus(record, "failed", error?.message || String(error));
+    }
+    function beginSnapshot(symbol) {
+      const record = ensureRecord(symbol);
+      record.book = createDepthProfileBook(symbol);
+      record.profile = null;
+      notifyStatus(record, "synchronizing");
+      for (const [otherSymbol, otherRecord] of records) {
+        if (otherSymbol !== symbol && otherRecord.subscribers.size === 0) records.delete(otherSymbol);
+      }
+      return record;
+    }
+    function acceptSnapshot(symbol, payload) {
+      if (restored) return;
+      const record = ensureRecord(symbol);
+      try {
+        const ready = applyDepthProfileSnapshot(record.book, payload);
+        if (ready) notifyProfile(record, buildDepthProfile(record.book));
+        else notifyStatus(record, "synchronizing");
+      } catch (error) {
+        failRecord(record, error);
+      }
+    }
+    function acceptUpdate(symbol, payload) {
+      if (restored) return;
+      const record = ensureRecord(symbol);
+      try {
+        const ready = pushDepthProfileUpdate(record.book, payload);
+        if (ready) notifyProfile(record, buildDepthProfile(record.book));
+        else notifyStatus(record, "synchronizing");
+      } catch (error) {
+        record.profile = null;
+        if (error instanceof DepthProfileSequenceError) {
+          record.book = createDepthProfileBook(symbol);
+          notifyStatus(record, "resyncing", error.message);
+        } else {
+          failRecord(record, error);
+        }
+      }
+    }
+    function failAll(error) {
+      for (const record of records.values()) failRecord(record, error);
+    }
+    function observeSocket(socket) {
+      const symbols = /* @__PURE__ */ new Set();
+      socketSymbols.set(socket, symbols);
+      Reflect.apply(nativeSocketAddEventListener, socket, ["message", (event) => {
+        if (restored || typeof event?.data !== "string" || !event.data.includes("@rpiDepth@500ms")) {
+          return;
+        }
+        let envelope;
+        try {
+          envelope = JSON.parse(event.data);
+          const match = NATIVE_RPI_STREAM_PATTERN.exec(envelope?.stream);
+          if (!match || !envelope.data || typeof envelope.data !== "object") {
+            throw new Error("Invalid Binance native RPI depth message");
+          }
+          const symbol = assertSymbol2(match[1].toUpperCase());
+          symbols.add(symbol);
+          acceptUpdate(symbol, envelope.data);
+        } catch (error) {
+          failAll(error);
+        }
+      }]);
+      Reflect.apply(nativeSocketAddEventListener, socket, ["close", () => {
+        if (restored) return;
+        for (const symbol of socketSymbols.get(socket) || []) {
+          const record = records.get(symbol);
+          if (record) notifyStatus(record, "reconnecting", "Binance native depth socket closed");
+        }
+      }]);
+    }
+    const observedFetch = new Proxy(nativeFetch, {
+      apply(target, receiver, args) {
+        let observation = null;
+        try {
+          observation = resolveNativeSnapshotSymbol(args[0], baseUrl);
+        } catch (error) {
+          failAll(error);
+        }
+        const symbol = observation?.symbol || null;
+        if (observation?.error) failRecord(ensureRecord(symbol), observation.error);
+        else if (symbol) beginSnapshot(symbol);
+        let result;
+        try {
+          result = Reflect.apply(target, receiver, args);
+        } catch (error) {
+          if (symbol) failRecord(ensureRecord(symbol), error);
+          throw error;
+        }
+        if (symbol && !observation.error) {
+          Promise.resolve(result).then((response) => {
+            if (!response?.ok) {
+              throw new Error(`Binance native RPI depth snapshot HTTP ${response?.status}`);
+            }
+            return response.clone().json();
+          }).then(
+            (payload) => acceptSnapshot(symbol, payload),
+            (error) => failRecord(ensureRecord(symbol), error)
+          );
+        }
+        return result;
+      }
+    });
+    const ObservedWebSocket = new Proxy(NativeWebSocket, {
+      construct(target, args, newTarget) {
+        const socket = Reflect.construct(target, args, newTarget);
+        observeSocket(socket);
+        return socket;
+      }
+    });
+    globalObject.fetch = observedFetch;
+    globalObject.WebSocket = ObservedWebSocket;
+    return {
+      subscribe(options) {
+        const {
+          symbol,
+          onProfile,
+          onStatus
+        } = options || {};
+        const record = ensureRecord(symbol);
+        const subscriber = {
+          onProfile: assertFunction(onProfile, "profile listener"),
+          onStatus: assertFunction(onStatus, "status listener")
+        };
+        if (restored) throw new Error("Binance native depth source has been restored");
+        record.subscribers.add(subscriber);
+        subscriber.onStatus(record.status);
+        if (record.profile) subscriber.onProfile(record.profile);
+        return () => record.subscribers.delete(subscriber);
+      },
+      getState(symbol) {
+        const record = records.get(assertSymbol2(symbol));
+        if (!record) return null;
+        return {
+          status: record.status,
+          bidCount: record.profile?.bids.length || 0,
+          askCount: record.profile?.asks.length || 0,
+          minPrice: record.profile?.minPrice ?? null,
+          maxPrice: record.profile?.maxPrice ?? null
+        };
+      },
+      restore() {
+        if (restored) return;
+        restored = true;
+        if (globalObject.fetch === observedFetch) globalObject.fetch = nativeFetch;
+        if (globalObject.WebSocket === ObservedWebSocket) globalObject.WebSocket = NativeWebSocket;
+        records.clear();
+      }
+    };
+  }
+
+  // src/binance-orderbook-trade/core/depth-profile-session.js
+  function assertFunction2(value, field) {
     if (typeof value !== "function") throw new Error(`Invalid depth profile ${field}`);
+    return value;
+  }
+  function assertSymbol3(value) {
+    if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) {
+      throw new Error("Invalid depth profile session symbol");
+    }
     return value;
   }
   function createDepthProfileSession(options) {
     const {
       symbol,
-      fetchFn,
-      WebSocketCtor,
+      source,
       onProfile,
-      onStatus,
-      setTimer = setTimeout,
-      clearTimer = clearTimeout
+      onStatus
     } = options || {};
-    if (typeof symbol !== "string" || !/^[A-Z0-9_]+$/.test(symbol)) {
-      throw new Error("Invalid depth profile session symbol");
-    }
-    assertFunction(fetchFn, "fetch function");
-    assertFunction(WebSocketCtor, "WebSocket constructor");
-    assertFunction(onProfile, "profile listener");
-    assertFunction(onStatus, "status listener");
-    assertFunction(setTimer, "timer scheduler");
-    assertFunction(clearTimer, "timer clearer");
+    const normalizedSymbol = assertSymbol3(symbol);
+    if (!source || typeof source !== "object") throw new Error("Invalid depth profile source");
+    const subscribe = assertFunction2(source.subscribe, "source subscriber");
+    const profileListener = assertFunction2(onProfile, "profile listener");
+    const statusListener = assertFunction2(onStatus, "status listener");
     let active = false;
-    let epoch = 0;
-    let socket = null;
-    let snapshotController = null;
-    let reconnectTimer = 0;
-    let resyncTimer = 0;
-    let reconnectAttempts = 0;
-    let resyncAttempts = 0;
-    let book = createDepthProfileBook(symbol);
-    const snapshotUrl = `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${DEPTH_PROFILE_LEVELS_PER_SIDE}`;
-    const streamUrl = `wss://fstream.binance.com/public/ws/${symbol.toLowerCase()}@depth@100ms`;
-    function emitStatus(status, detail = "") {
-      if (!active) return;
-      onStatus({ symbol, status, detail });
-    }
-    function clearScheduledWork() {
-      if (reconnectTimer) clearTimer(reconnectTimer);
-      if (resyncTimer) clearTimer(resyncTimer);
-      reconnectTimer = 0;
-      resyncTimer = 0;
-    }
-    function abortSnapshot() {
-      snapshotController?.abort();
-      snapshotController = null;
-    }
-    function closeSocket() {
-      const currentSocket = socket;
-      socket = null;
-      if (currentSocket && currentSocket.readyState < 2) currentSocket.close();
-    }
-    function emitProfile(profile) {
-      reconnectAttempts = 0;
-      onProfile(profile);
-      emitStatus("ready");
-    }
-    function failSession(error) {
-      clearScheduledWork();
-      abortSnapshot();
-      closeSocket();
-      emitStatus("failed", error?.message || String(error));
-      active = false;
-      epoch += 1;
-    }
-    function scheduleReconnect(error) {
-      if (!active || reconnectTimer) return;
-      abortSnapshot();
-      closeSocket();
-      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        failSession(error);
-        return;
+    let unsubscribe = null;
+    function assertMatchingSymbol(value, field) {
+      if (value?.symbol !== normalizedSymbol) {
+        throw new Error(
+          `Depth profile ${field} symbol mismatch: expected ${normalizedSymbol}, received ${value?.symbol}`
+        );
       }
-      const delay = RECONNECT_DELAYS_MS[reconnectAttempts];
-      reconnectAttempts += 1;
-      emitStatus("reconnecting", error?.message || String(error));
-      const scheduledEpoch = epoch;
-      reconnectTimer = setTimer(() => {
-        reconnectTimer = 0;
-        if (!active || scheduledEpoch !== epoch) return;
-        connect();
-      }, delay);
-    }
-    function scheduleResync(error) {
-      if (!active || resyncTimer) return;
-      abortSnapshot();
-      book = createDepthProfileBook(symbol);
-      if (resyncAttempts >= MAX_RESYNCS_PER_CONNECTION) {
-        scheduleReconnect(error);
-        return;
-      }
-      resyncAttempts += 1;
-      emitStatus("resyncing", error?.message || String(error));
-      const scheduledEpoch = epoch;
-      resyncTimer = setTimer(() => {
-        resyncTimer = 0;
-        if (!active || scheduledEpoch !== epoch) return;
-        requestSnapshot();
-      }, RESYNC_DELAY_MS);
-    }
-    async function requestSnapshot() {
-      if (!active || snapshotController) return;
-      const requestEpoch = epoch;
-      const controller = new AbortController();
-      snapshotController = controller;
-      let profile = null;
-      try {
-        const response = await fetchFn(snapshotUrl, { signal: controller.signal });
-        if (!active || requestEpoch !== epoch || snapshotController !== controller) return;
-        if (!response.ok) throw new Error(`Depth snapshot HTTP ${response.status}`);
-        const payload = await response.json();
-        if (!active || requestEpoch !== epoch || snapshotController !== controller) return;
-        const ready = applyDepthProfileSnapshot(book, payload);
-        snapshotController = null;
-        if (ready) profile = buildDepthProfile(book);
-      } catch (error) {
-        if (snapshotController === controller) snapshotController = null;
-        if (controller.signal.aborted || !active || requestEpoch !== epoch) return;
-        scheduleResync(error);
-        return;
-      }
-      if (profile) emitProfile(profile);
-      else emitStatus("synchronizing");
-    }
-    function handleMessage(currentSocket, event) {
-      if (!active || socket !== currentSocket) return;
-      let profile = null;
-      try {
-        const payload = JSON.parse(event.data);
-        const ready = pushDepthProfileUpdate(book, payload);
-        if (ready) profile = buildDepthProfile(book);
-      } catch (error) {
-        if (error instanceof DepthProfileSequenceError) scheduleResync(error);
-        else scheduleReconnect(error);
-        return;
-      }
-      if (profile) emitProfile(profile);
-    }
-    function connect() {
-      if (!active || socket) return;
-      book = createDepthProfileBook(symbol);
-      resyncAttempts = 0;
-      emitStatus("connecting");
-      let currentSocket;
-      try {
-        currentSocket = new WebSocketCtor(streamUrl);
-      } catch (error) {
-        scheduleReconnect(error);
-        return;
-      }
-      socket = currentSocket;
-      currentSocket.addEventListener("open", () => {
-        if (!active || socket !== currentSocket) return;
-        emitStatus("synchronizing");
-        requestSnapshot();
-      }, { once: true });
-      currentSocket.addEventListener("message", (event) => handleMessage(currentSocket, event));
-      currentSocket.addEventListener("error", () => {
-        if (!active || socket !== currentSocket) return;
-        currentSocket.close();
-      });
-      currentSocket.addEventListener("close", () => {
-        if (!active || socket !== currentSocket) return;
-        socket = null;
-        scheduleReconnect(new Error("Depth WebSocket closed"));
-      }, { once: true });
     }
     return {
-      symbol,
+      symbol: normalizedSymbol,
       start() {
         if (active) throw new Error("Depth profile session already started");
         active = true;
-        epoch += 1;
-        connect();
+        statusListener({ symbol: normalizedSymbol, status: "connecting", detail: "" });
+        unsubscribe = Reflect.apply(subscribe, source, [{
+          symbol: normalizedSymbol,
+          onProfile(profile) {
+            if (!active) return;
+            assertMatchingSymbol(profile, "profile");
+            profileListener(profile);
+          },
+          onStatus(status) {
+            if (!active) return;
+            assertMatchingSymbol(status, "status");
+            statusListener(status);
+          }
+        }]);
+        assertFunction2(unsubscribe, "unsubscribe function");
       },
       stop() {
         if (!active) return;
         active = false;
-        epoch += 1;
-        clearScheduledWork();
-        abortSnapshot();
-        closeSocket();
+        const stopSubscription = unsubscribe;
+        unsubscribe = null;
+        stopSubscription?.();
       },
       isActive() {
         return active;
@@ -4655,6 +4755,7 @@
       return isFuturesTradingPathname(location.pathname);
     }
     if (!isFuturesTradingPage()) return;
+    const nativeDepthSource = installBinanceNativeDepthSource(window);
     const CFG = {
       // true=只填数量；false=填数量并自动点“开多/开空/平多/平空”
       SAFE_MODE: false,
@@ -11305,8 +11406,7 @@
       let session = null;
       session = createDepthProfileSession({
         symbol,
-        fetchFn: window.fetch.bind(window),
-        WebSocketCtor: window.WebSocket,
+        source: nativeDepthSource,
         onProfile(profile) {
           if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
           depthProfileData = profile;
@@ -11921,6 +12021,10 @@
       cfg: CFG,
       get continuousChartSaveStats() {
         return continuousChartSaveController?.getStats() || null;
+      },
+      get nativeDepthState() {
+        const symbol = getCurrentSymbol();
+        return symbol ? nativeDepthSource.getState(symbol) : null;
       },
       get cachedCloseState() {
         return getCachedCloseState(getCurrentSymbol());
