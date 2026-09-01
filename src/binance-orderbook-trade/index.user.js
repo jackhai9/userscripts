@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.177
+// @version      2.7.178
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -162,6 +162,7 @@ import {
   calculateFloatingPanelLayout,
   collectTradeButtonsFromScopes,
   createBoundedInputWriter,
+  createTradeInputResolver,
   createTradeInputStateReader,
   findActiveTradeInputs as findActiveTradeInputsDom,
   findTradeFormRoot,
@@ -198,7 +199,11 @@ import {
   createChartOrdersRecoveryRecord,
   parseChartOrdersRecoveryRecord,
 } from './core/chart-orders-recovery.js';
-import { coalesceTradingViewDrawingSaves } from './core/chart-save-coalescer.js';
+import {
+  coalesceTradingViewDrawingSaves,
+  createTradingViewRemoveSaveBurstController,
+} from './core/chart-save-coalescer.js';
+import { findBinanceTradingViewTarget } from './dom/tradingview-target.js';
 import { resolveCancelDialogDecision } from './core/cancel-dialog-decision.js';
 import {
   classifyBinanceCancelAllDialogAction,
@@ -325,6 +330,8 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   const CANCEL_NO_ORDERS_FEEDBACK_MS = 600;
   const CHART_ORDERS_MENU_TIMEOUT_MS = 1800;
   const CHART_ORDERS_MENU_POLL_MS = 50;
+  const CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS = 120;
+  const CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS = 400;
   const LADDER_MAKER_BUFFER_LEVELS = 1;
   const LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS = 5;
   const LADDER_REPRICE_PAUSE_MS = 3000;
@@ -424,6 +431,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   let singleOrderTask = null;
   let ladderAbortController = null;
   let continuousLadderAbortController = null;
+  let continuousChartSaveCoalescer = null;
   let activeLadderActionType = null;
   let activeContinuousLadderActionType = null;
   let activeContinuousLadderProgress = null;
@@ -2953,8 +2961,13 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     }
 
     const observationRoot = inputs.root;
+    const resolveSynchronizedTradeInputs = createTradeInputResolver(document, {
+      initialRoot: observationRoot,
+      panelId: PANEL_ID,
+      isVisibleElement,
+    });
     const readTradeState = createTradeInputStateReader({
-      resolveInputs: findTradeInputs,
+      resolveInputs: resolveSynchronizedTradeInputs,
       expectedPrice,
       expectedQty,
       includePrice: true,
@@ -3781,6 +3794,34 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     );
   }
 
+  function startContinuousChartSaveCoalescing() {
+    try {
+      const target = findBinanceTradingViewTarget(document);
+      if (!target) return null;
+      return createTradingViewRemoveSaveBurstController(target.tradingViewApi, {
+        settleQuietMs: CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS,
+        maxWaitMs: CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS,
+      });
+    } catch (error) {
+      warn('未启用连续交易图表保存合并:', error?.message || error);
+      return null;
+    }
+  }
+
+  function stopContinuousChartSaveCoalescing(coalescer) {
+    if (!coalescer) return;
+    try {
+      const result = coalescer.stop();
+      log('连续交易图表保存已合并', result);
+    } catch (error) {
+      err('连续交易图表保存合并清理失败:', error);
+    } finally {
+      if (continuousChartSaveCoalescer === coalescer) {
+        continuousChartSaveCoalescer = null;
+      }
+    }
+  }
+
   async function startContinuousLadder(actionType) {
     const spec = getLadderActionSpec(actionType);
     if (!spec || spec.mode !== 'CLOSE') return startLadder(actionType);
@@ -3799,7 +3840,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     const abortController = new AbortController();
     const continuousProgress = createContinuousLadderProgress();
     const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
+    const chartSaveCoalescer = startContinuousChartSaveCoalescing();
     continuousLadderAbortController = abortController;
+    continuousChartSaveCoalescer = chartSaveCoalescer;
     activeContinuousLadderActionType = actionType;
     activeContinuousLadderProgress = continuousProgress;
 
@@ -3908,6 +3951,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         return { status: 'failed', error: e };
       })
       .finally(() => {
+        stopContinuousChartSaveCoalescing(chartSaveCoalescer);
         if (continuousLadderAbortController === abortController) {
           continuousLadderAbortController = null;
         }
@@ -8393,6 +8437,11 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
+      try {
+        continuousChartSaveCoalescer?.flush();
+      } catch (error) {
+        err('页面隐藏前图表保存刷新失败:', error);
+      }
       stopTradingTimers();
       stopRouteWatcher();
       return;

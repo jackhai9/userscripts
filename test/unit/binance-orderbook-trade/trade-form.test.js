@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   calculateFloatingPanelLayout,
   createBoundedInputWriter,
+  createTradeInputResolver,
   createTradeInputStateReader,
   findActiveTradeInputs,
   findTradeFormRoot,
@@ -429,6 +430,167 @@ test('active trade form can be resolved before a limit-price input is rendered',
   assert.equal(form?.root.dataset.form, 'visible');
   assert.equal(form?.qtyInput.id, 'unitAmount-open');
   assert.equal(form?.priceInput, null);
+});
+
+test('trade input resolver scans the document once and then resolves live inputs inside the cached root', () => {
+  const dom = loadFixtureDom(`
+    <section id="trade-form">
+      <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
+      <input id="limitPrice-close" />
+      <input id="unitAmount-close" />
+    </section>
+  `);
+  const { document } = dom.window;
+  const originalQuerySelectorAll = document.querySelectorAll.bind(document);
+  let documentScans = 0;
+  document.querySelectorAll = (...args) => {
+    documentScans += 1;
+    return originalQuerySelectorAll(...args);
+  };
+  const resolveInputs = createTradeInputResolver(document, {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement: () => true,
+  });
+
+  assert.equal(resolveInputs()?.qtyInput.id, 'unitAmount-close');
+  const scansAfterDiscovery = documentScans;
+  assert.ok(scansAfterDiscovery > 0);
+  assert.equal(resolveInputs()?.priceInput.id, 'limitPrice-close');
+  assert.equal(resolveInputs()?.qtyInput.id, 'unitAmount-close');
+  assert.equal(documentScans, scansAfterDiscovery);
+});
+
+test('trade input resolver starts from a proven root without another document scan', () => {
+  const dom = loadFixtureDom(`
+    <section id="trade-form">
+      <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
+      <input id="limitPrice-close" />
+      <input id="unitAmount-close" />
+    </section>
+  `);
+  const { document } = dom.window;
+  const root = document.querySelector('#trade-form');
+  const originalQuerySelectorAll = document.querySelectorAll.bind(document);
+  let documentScans = 0;
+  document.querySelectorAll = (...args) => {
+    documentScans += 1;
+    return originalQuerySelectorAll(...args);
+  };
+  const resolveInputs = createTradeInputResolver(document, {
+    initialRoot: root,
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement: () => true,
+  });
+
+  assert.equal(resolveInputs()?.qtyInput.id, 'unitAmount-close');
+  assert.equal(resolveInputs()?.priceInput.id, 'limitPrice-close');
+  assert.equal(documentScans, 0);
+});
+
+test('trade input resolver follows React descendant replacement without rescanning the document', () => {
+  const dom = loadFixtureDom(`
+    <section id="trade-form">
+      <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
+      <input id="limitPrice-close" />
+      <input id="unitAmount-close" />
+    </section>
+  `);
+  const { document } = dom.window;
+  const originalQuerySelectorAll = document.querySelectorAll.bind(document);
+  let documentScans = 0;
+  document.querySelectorAll = (...args) => {
+    documentScans += 1;
+    return originalQuerySelectorAll(...args);
+  };
+  const resolveInputs = createTradeInputResolver(document, {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement: () => true,
+  });
+  const first = resolveInputs();
+  const scansAfterDiscovery = documentScans;
+  const replacementPrice = document.createElement('input');
+  replacementPrice.id = 'limitPrice-close-replacement';
+  const replacementQty = document.createElement('input');
+  replacementQty.id = 'unitAmount-close-replacement';
+  first.priceInput.replaceWith(replacementPrice);
+  first.qtyInput.replaceWith(replacementQty);
+
+  const second = resolveInputs();
+  assert.equal(second?.root, first.root);
+  assert.equal(second?.priceInput, replacementPrice);
+  assert.equal(second?.qtyInput, replacementQty);
+  assert.equal(documentScans, scansAfterDiscovery);
+});
+
+test('trade input resolver waits inside a connected root while React temporarily removes inputs', () => {
+  const dom = loadFixtureDom(`
+    <section id="trade-form">
+      <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
+      <input id="limitPrice-close" />
+      <input id="unitAmount-close" />
+    </section>
+  `);
+  const { document } = dom.window;
+  const originalQuerySelectorAll = document.querySelectorAll.bind(document);
+  let documentScans = 0;
+  document.querySelectorAll = (...args) => {
+    documentScans += 1;
+    return originalQuerySelectorAll(...args);
+  };
+  const resolveInputs = createTradeInputResolver(document, {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement: () => true,
+  });
+  const first = resolveInputs();
+  const scansAfterDiscovery = documentScans;
+  first.priceInput.remove();
+  first.qtyInput.remove();
+
+  assert.equal(resolveInputs(), null);
+  assert.equal(first.root.isConnected, true);
+  assert.equal(documentScans, scansAfterDiscovery);
+
+  const replacementPrice = document.createElement('input');
+  replacementPrice.id = 'limitPrice-close-replacement';
+  const replacementQty = document.createElement('input');
+  replacementQty.id = 'unitAmount-close-replacement';
+  first.root.append(replacementPrice, replacementQty);
+
+  const recovered = resolveInputs();
+  assert.equal(recovered?.priceInput, replacementPrice);
+  assert.equal(recovered?.qtyInput, replacementQty);
+  assert.equal(documentScans, scansAfterDiscovery);
+});
+
+test('trade input resolver rediscovers the form after React replaces the cached root', () => {
+  const dom = loadFixtureDom(`
+    <main>
+      <section id="trade-form">
+        <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
+        <input id="limitPrice-close" />
+        <input id="unitAmount-close" />
+      </section>
+    </main>
+  `);
+  const { document } = dom.window;
+  const resolveInputs = createTradeInputResolver(document, {
+    panelId: 'jh-binance-close-qty-multiplier-panel',
+    isVisibleElement: () => true,
+  });
+  const first = resolveInputs();
+  first.root.outerHTML = `
+    <section id="trade-form-next">
+      <div id="position-direction"><div role="tab" aria-selected="true">开仓</div></div>
+      <input id="limitPrice-open" />
+      <input id="unitAmount-open" />
+    </section>
+  `;
+
+  const second = resolveInputs();
+  assert.equal(first.root.isConnected, false);
+  assert.equal(second?.root.id, 'trade-form-next');
+  assert.equal(second?.priceInput.id, 'limitPrice-open');
+  assert.equal(second?.qtyInput.id, 'unitAmount-open');
 });
 
 test('trade input synchronization performs one post-transition write after a stable same-node rollback', () => {

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.177
+// @version      2.7.178
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2186,6 +2186,40 @@
     }
     return matches.length === 1 ? matches[0] : null;
   }
+  function createTradeInputResolver(ownerDocument, {
+    initialRoot = null,
+    panelId,
+    isVisibleElement
+  }) {
+    if (!ownerDocument?.querySelectorAll || typeof isVisibleElement !== "function") {
+      throw new Error("交易表单解析依赖异常");
+    }
+    let cachedRoot = initialRoot;
+    const resolveInputs = (options = null) => {
+      const requirePrice = options?.requirePrice !== false;
+      if (cachedRoot?.isConnected) {
+        const cachedInputs = findActiveTradeInputs(cachedRoot, {
+          panelId,
+          isVisibleElement,
+          requirePrice
+        });
+        if (cachedInputs) {
+          cachedRoot = cachedInputs.root;
+          return cachedInputs;
+        }
+        return null;
+      }
+      cachedRoot = null;
+      const discoveredInputs = findActiveTradeInputs(ownerDocument, {
+        panelId,
+        isVisibleElement,
+        requirePrice
+      });
+      if (discoveredInputs) cachedRoot = discoveredInputs.root;
+      return discoveredInputs;
+    };
+    return resolveInputs;
+  }
   function createBoundedInputWriter({ writeValue, maxWriteAttempts }) {
     if (typeof writeValue !== "function") {
       throw new Error("输入框写入依赖异常");
@@ -2804,6 +2838,96 @@
       throw new Error("图表保存接口未能恢复");
     }
   }
+  function createTradingViewRemoveSaveBurstController(api, {
+    settleQuietMs = 120,
+    maxWaitMs = 400,
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout
+  } = {}) {
+    validateTradingViewApi(api);
+    if (!Number.isFinite(settleQuietMs) || settleQuietMs <= 0) {
+      throw new Error("图表保存合并静默时间无效");
+    }
+    if (!Number.isFinite(maxWaitMs) || maxWaitMs < settleQuietMs) {
+      throw new Error("图表保存合并最长等待时间无效");
+    }
+    const sessionSaveChart = api.saveChart;
+    let activeBurst = null;
+    let removeEventCount = 0;
+    let saveRequestCount = 0;
+    let fullSaveCount = 0;
+    let stopped = false;
+    const clearBurstTimers = (burst) => {
+      if (burst.settleTimer !== null) clearTimeoutFn(burst.settleTimer);
+      if (burst.maxWaitTimer !== null) clearTimeoutFn(burst.maxWaitTimer);
+      burst.settleTimer = null;
+      burst.maxWaitTimer = null;
+    };
+    const flushActiveBurst = () => {
+      const burst = activeBurst;
+      if (!burst) return void 0;
+      clearBurstTimers(burst);
+      activeBurst = null;
+      restoreSaveChartMethod(
+        api,
+        burst.wrapper,
+        burst.originalSaveChart,
+        burst.originalDescriptor
+      );
+      if (!burst.pendingSave) return void 0;
+      fullSaveCount += 1;
+      return burst.originalSaveChart.apply(
+        burst.pendingSave.thisValue,
+        burst.pendingSave.args
+      );
+    };
+    const scheduleBurstSettle = (burst) => {
+      if (burst.settleTimer !== null) clearTimeoutFn(burst.settleTimer);
+      burst.settleTimer = setTimeoutFn(flushActiveBurst, settleQuietMs);
+    };
+    const startBurst = () => {
+      if (activeBurst || api.saveChart !== sessionSaveChart) return activeBurst;
+      const originalSaveChart = api.saveChart;
+      const originalDescriptor = Object.getOwnPropertyDescriptor(api, "saveChart");
+      const burst = {
+        maxWaitTimer: null,
+        originalDescriptor,
+        originalSaveChart,
+        pendingSave: null,
+        settleTimer: null,
+        wrapper: null
+      };
+      burst.wrapper = function removeSaveBurstWrapper(...args) {
+        saveRequestCount += 1;
+        burst.pendingSave = { thisValue: this, args };
+        return void 0;
+      };
+      api.saveChart = burst.wrapper;
+      if (api.saveChart !== burst.wrapper) {
+        throw new Error("图表保存接口无法启用删除事件合并");
+      }
+      activeBurst = burst;
+      burst.maxWaitTimer = setTimeoutFn(flushActiveBurst, maxWaitMs);
+      return burst;
+    };
+    const handleDrawingEvent = (_drawingId, eventType) => {
+      if (stopped || eventType !== "remove") return;
+      removeEventCount += 1;
+      const burst = startBurst();
+      if (burst) scheduleBurstSettle(burst);
+    };
+    api.subscribe("drawing_event", handleDrawingEvent);
+    return {
+      flush: flushActiveBurst,
+      stop() {
+        if (stopped) throw new Error("图表删除事件保存合并器已停止");
+        stopped = true;
+        api.unsubscribe("drawing_event", handleDrawingEvent);
+        flushActiveBurst();
+        return { fullSaveCount, removeEventCount, saveRequestCount };
+      }
+    };
+  }
   async function coalesceTradingViewDrawingSaves(api, action, {
     eventDiscoveryTimeoutMs = 800,
     settleQuietMs = 50,
@@ -2922,6 +3046,28 @@
       if (subscribed) api.unsubscribe("drawing_event", handleDrawingEvent);
       restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
     }
+  }
+
+  // src/binance-orderbook-trade/dom/tradingview-target.js
+  var CHART_ROOT_SELECTOR = ".chart-widget-root";
+  function hasVisibleBox(element) {
+    if (!element?.getClientRects().length) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+  function findBinanceTradingViewTarget(document2) {
+    const chartRoots = Array.from(document2.querySelectorAll(CHART_ROOT_SELECTOR)).filter(hasVisibleBox);
+    if (!chartRoots.length) return null;
+    if (chartRoots.length > 1) {
+      throw new Error(`可见图表区域数量异常：${chartRoots.length}`);
+    }
+    const chartRoot = chartRoots[0];
+    const tradingViewApis = Array.from(chartRoot.querySelectorAll("iframe")).map((frame) => frame.contentWindow?.tradingViewApi).filter(Boolean);
+    if (!tradingViewApis.length) return null;
+    if (tradingViewApis.length > 1) {
+      throw new Error(`图表接口数量异常：${tradingViewApis.length}`);
+    }
+    return { chartRoot, tradingViewApi: tradingViewApis[0] };
   }
 
   // src/binance-orderbook-trade/core/cancel-dialog-decision.js
@@ -3111,28 +3257,6 @@
   function getOpenOrderRowCells(row, { isVisibleElement }) {
     const cells = getVisibleDirectChildren(row, isVisibleElement);
     return cells.length >= MIN_OPEN_ORDER_COLUMNS ? cells : [];
-  }
-
-  // src/binance-orderbook-trade/dom/tradingview-target.js
-  var CHART_ROOT_SELECTOR = ".chart-widget-root";
-  function hasVisibleBox(element) {
-    if (!element?.getClientRects().length) return false;
-    const rect = element.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  }
-  function findBinanceTradingViewTarget(document2) {
-    const chartRoots = Array.from(document2.querySelectorAll(CHART_ROOT_SELECTOR)).filter(hasVisibleBox);
-    if (!chartRoots.length) return null;
-    if (chartRoots.length > 1) {
-      throw new Error(`可见图表区域数量异常：${chartRoots.length}`);
-    }
-    const chartRoot = chartRoots[0];
-    const tradingViewApis = Array.from(chartRoot.querySelectorAll("iframe")).map((frame) => frame.contentWindow?.tradingViewApi).filter(Boolean);
-    if (!tradingViewApis.length) return null;
-    if (tradingViewApis.length > 1) {
-      throw new Error(`图表接口数量异常：${tradingViewApis.length}`);
-    }
-    return { chartRoot, tradingViewApi: tradingViewApis[0] };
   }
 
   // src/binance-orderbook-trade/dom/chart-orders.js
@@ -3604,6 +3728,8 @@
     const CANCEL_NO_ORDERS_FEEDBACK_MS = 600;
     const CHART_ORDERS_MENU_TIMEOUT_MS = 1800;
     const CHART_ORDERS_MENU_POLL_MS = 50;
+    const CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS = 120;
+    const CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS = 400;
     const LADDER_MAKER_BUFFER_LEVELS = 1;
     const LADDER_REPRICE_PAUSE_EVERY_ATTEMPTS = 5;
     const LADDER_REPRICE_PAUSE_MS = 3e3;
@@ -3702,6 +3828,7 @@
     let singleOrderTask = null;
     let ladderAbortController = null;
     let continuousLadderAbortController = null;
+    let continuousChartSaveCoalescer = null;
     let activeLadderActionType = null;
     let activeContinuousLadderActionType = null;
     let activeContinuousLadderProgress = null;
@@ -5801,8 +5928,13 @@
         );
       }
       const observationRoot = inputs.root;
+      const resolveSynchronizedTradeInputs = createTradeInputResolver(document, {
+        initialRoot: observationRoot,
+        panelId: PANEL_ID,
+        isVisibleElement
+      });
       const readTradeState = createTradeInputStateReader({
-        resolveInputs: findTradeInputs,
+        resolveInputs: resolveSynchronizedTradeInputs,
         expectedPrice,
         expectedQty,
         includePrice: true,
@@ -6500,6 +6632,32 @@
         formatContinuousLadderProgress(label, phase, progress, titleReason)
       );
     }
+    function startContinuousChartSaveCoalescing() {
+      try {
+        const target = findBinanceTradingViewTarget(document);
+        if (!target) return null;
+        return createTradingViewRemoveSaveBurstController(target.tradingViewApi, {
+          settleQuietMs: CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS,
+          maxWaitMs: CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS
+        });
+      } catch (error) {
+        warn("未启用连续交易图表保存合并:", error?.message || error);
+        return null;
+      }
+    }
+    function stopContinuousChartSaveCoalescing(coalescer) {
+      if (!coalescer) return;
+      try {
+        const result = coalescer.stop();
+        log("连续交易图表保存已合并", result);
+      } catch (error) {
+        err("连续交易图表保存合并清理失败:", error);
+      } finally {
+        if (continuousChartSaveCoalescer === coalescer) {
+          continuousChartSaveCoalescer = null;
+        }
+      }
+    }
     async function startContinuousLadder(actionType) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec || spec.mode !== "CLOSE") return startLadder(actionType);
@@ -6516,7 +6674,9 @@
       const abortController = new AbortController();
       const continuousProgress = createContinuousLadderProgress();
       const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
+      const chartSaveCoalescer = startContinuousChartSaveCoalescing();
       continuousLadderAbortController = abortController;
+      continuousChartSaveCoalescer = chartSaveCoalescer;
       activeContinuousLadderActionType = actionType;
       activeContinuousLadderProgress = continuousProgress;
       const executionTask = (async () => {
@@ -6616,6 +6776,7 @@
         );
         return { status: "failed", error: e };
       }).finally(() => {
+        stopContinuousChartSaveCoalescing(chartSaveCoalescer);
         if (continuousLadderAbortController === abortController) {
           continuousLadderAbortController = null;
         }
@@ -10483,6 +10644,11 @@
     scheduleChartOrdersRecovery();
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
+        try {
+          continuousChartSaveCoalescer?.flush();
+        } catch (error) {
+          err("页面隐藏前图表保存刷新失败:", error);
+        }
         stopTradingTimers();
         stopRouteWatcher();
         return;
