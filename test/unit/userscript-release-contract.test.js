@@ -37,7 +37,7 @@ test('release contract identifies the generated Strategy 27 annotation artifact'
 
   assert.equal(contract.name, '【自写】Binance Strategy 27 事件标注');
   assert.equal(contract.namespace, 'binance.strategy27.events');
-  assert.equal(contract.version, '0.2.3');
+  assert.equal(contract.version, '0.2.4');
   assert.equal(contract.runAt, 'document-idle');
   assert.equal(contract.updateURL, contract.downloadURL);
   assert.deepEqual(contract.matches, [

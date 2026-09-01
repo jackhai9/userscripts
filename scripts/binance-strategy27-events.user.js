@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.3
+// @version      0.2.4
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流事件和后续结果
 // @match        https://www.binance.com/*/futures/*
@@ -729,6 +729,8 @@
   var STATUS_ID = "jh-strategy27-event-status";
   var DIRECTIONAL_MARKER_GAP_PX = 8;
   var DEFAULT_CANDLE_WAIT_MS = 3e3;
+  var EXACT_TIME_MATCH_MODE = 0;
+  var PREVIOUS_OR_EXACT_TIME_MATCH_MODE = 1;
   function hasVisibleBox(element) {
     if (!element?.getClientRects().length) return false;
     const rect = element.getBoundingClientRect();
@@ -801,18 +803,21 @@
         throw new Error(`TradingView marker placement method is unavailable: ${method}`);
       }
     }
-    const resolve = (annotation) => {
-      const point = { time: annotation.markerTime, price: annotation.markerPrice };
+    const resolve = (annotation, { allowPreviousCandle = false } = {}) => {
       if (!["flag", "arrow_up", "arrow_down"].includes(annotation.markerShape)) {
         throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
       }
-      const barIndex = timeScale.timePointToIndex(annotation.markerTime, 0);
+      const matchMode = allowPreviousCandle ? PREVIOUS_OR_EXACT_TIME_MATCH_MODE : EXACT_TIME_MATCH_MODE;
+      const barIndex = timeScale.timePointToIndex(annotation.markerTime, matchMode);
       if (!Number.isFinite(barIndex)) return null;
       const candle = seriesData.valueAt(barIndex);
       if (candle === null) return null;
-      if (!Array.isArray(candle) || candle.length < 5 || candle[0] !== annotation.markerTime) {
+      const candleTime = Array.isArray(candle) ? candle[0] : null;
+      const timeMatches = allowPreviousCandle ? Number.isInteger(candleTime) && candleTime <= annotation.markerTime : candleTime === annotation.markerTime;
+      if (!Array.isArray(candle) || candle.length < 5 || !timeMatches) {
         throw new Error(`Strategy 27 candle is invalid for ${annotation.markerTime}`);
       }
+      const point = { time: candleTime, price: annotation.markerPrice };
       if (annotation.markerShape === "flag") return point;
       const candleHigh = Number(candle[2]);
       const candleLow = Number(candle[3]);
@@ -833,7 +838,7 @@
       if (!Number.isFinite(markerPrice)) {
         throw new Error(`Strategy 27 marker price is unavailable for ${annotation.markerTime}`);
       }
-      return { time: annotation.markerTime, price: markerPrice };
+      return { time: candleTime, price: markerPrice };
     };
     return { dataUpdated, resolve };
   }
@@ -922,9 +927,18 @@
           }
         };
         timeoutId = setTimeout(() => {
-          fail(new Error(
-            `Strategy 27 candle did not arrive within ${candleWaitMs} ms for ${annotation.markerTime}`
-          ));
+          try {
+            const previousPoint = resolveMarkerPoint(annotation, { allowPreviousCandle: true });
+            if (previousPoint) {
+              finish(previousPoint);
+              return;
+            }
+            fail(new Error(
+              `Strategy 27 candle did not arrive within ${candleWaitMs} ms for ${annotation.markerTime}`
+            ));
+          } catch (error) {
+            fail(error);
+          }
         }, candleWaitMs);
         pendingCandleWaits.add(cancel);
         dataUpdated.subscribe(owner, onDataUpdated);
