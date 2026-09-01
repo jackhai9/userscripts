@@ -2,6 +2,7 @@ export const DEPTH_PROFILE_ID = 'jh-binance-depth-profile';
 
 const STYLE_ID = 'jh-binance-depth-profile-style';
 const CHART_ROOT_SELECTOR = '.chart-widget-root';
+const PRICE_COORDINATE_SEARCH_STEPS = 13;
 
 function hasVisibleBox(element) {
   if (!element?.getClientRects().length) return false;
@@ -21,27 +22,84 @@ export function findDepthProfileHost(document) {
   if (frames.length > 1) {
     throw new Error(`Visible chart frame count is invalid: ${frames.length}`);
   }
-  if (frames.length === 1) {
-    const frame = frames[0];
-    const host = frame.parentElement?.parentElement;
-    if (!host || !chartRoot.contains(host)) {
-      throw new Error('Visible chart frame host is invalid');
-    }
-    return { chartRoot, frame, host };
+  if (!frames.length) return null;
+  const frame = frames[0];
+  const host = frame.parentElement?.parentElement;
+  if (!host || !chartRoot.contains(host)) {
+    throw new Error('Visible chart frame host is invalid');
   }
+  return { chartRoot, frame, host };
+}
 
-  const basicChartHosts = Array.from(
-    chartRoot.querySelectorAll('.draggableCancel.h-full.relative'),
-  ).filter((candidate) => (
-    hasVisibleBox(candidate)
-    && Array.from(candidate.querySelectorAll('.kline-container')).some(hasVisibleBox)
-    && Array.from(candidate.querySelectorAll('canvas')).some(hasVisibleBox)
-  ));
-  if (basicChartHosts.length > 1) {
-    throw new Error(`Visible basic chart host count is invalid: ${basicChartHosts.length}`);
-  }
-  if (!basicChartHosts.length) return null;
-  return { chartRoot, frame: null, host: basicChartHosts[0] };
+export function getTradingViewDepthProfileGeometry(frame) {
+  // Binance embeds a same-origin TradingView build. Keep this optional adapter isolated and
+  // fail closed when its runtime contract changes instead of drawing against an invented scale.
+  const chart = frame?.contentWindow?.tradingViewApi?.activeChart?.();
+  if (!chart) return null;
+  const paneHeights = chart.getAllPanesHeight?.();
+  const panes = chart.getPanes?.();
+  if (!Array.isArray(paneHeights) || !Array.isArray(panes) || !panes.length) return null;
+  const height = Number(paneHeights[0]);
+  const scale = panes[0]?.getMainSourcePriceScale?.();
+  if (!(height > 0) || !scale) return null;
+  if (
+    typeof scale.coordinateToPrice !== 'function'
+    || typeof scale.getVisiblePriceRange !== 'function'
+    || typeof scale.getMode !== 'function'
+    || typeof scale.isInverted !== 'function'
+  ) return null;
+
+  const visibleRange = scale.getVisiblePriceRange();
+  const mode = scale.getMode();
+  const inverted = scale.isInverted();
+  const sampledPrices = [0, height / 4, height / 2, height * 3 / 4, height]
+    .map((coordinate) => Number(scale.coordinateToPrice(coordinate)));
+  const [topPrice, , , , bottomPrice] = sampledPrices;
+  if (
+    !visibleRange
+    || !Number.isFinite(Number(visibleRange.from))
+    || !Number.isFinite(Number(visibleRange.to))
+    || !Number.isInteger(mode)
+    || typeof inverted !== 'boolean'
+    || !Number.isFinite(topPrice)
+    || !Number.isFinite(bottomPrice)
+    || topPrice === bottomPrice
+  ) return null;
+
+  const minPrice = Math.min(topPrice, bottomPrice);
+  const maxPrice = Math.max(topPrice, bottomPrice);
+  const descendsWithY = topPrice > bottomPrice;
+  if (sampledPrices.some((price, index) => (
+    !Number.isFinite(price)
+    || (index > 0 && (descendsWithY
+      ? price >= sampledPrices[index - 1]
+      : price <= sampledPrices[index - 1]))
+  ))) return null;
+  return {
+    top: 0,
+    height,
+    minPrice,
+    maxPrice,
+    mode,
+    inverted,
+    priceToCoordinate(price) {
+      if (!Number.isFinite(price) || price < minPrice || price > maxPrice) return null;
+      if (price === topPrice) return 0;
+      if (price === bottomPrice) return height;
+      let low = 0;
+      let high = height;
+      for (let index = 0; index < PRICE_COORDINATE_SEARCH_STEPS; index += 1) {
+        const middle = (low + high) / 2;
+        const middlePrice = Number(scale.coordinateToPrice(middle));
+        if (!Number.isFinite(middlePrice)) {
+          throw new Error('TradingView price coordinate is invalid');
+        }
+        if (descendsWithY ? middlePrice > price : middlePrice < price) low = middle;
+        else high = middle;
+      }
+      return (low + high) / 2;
+    },
+  };
 }
 
 function installStyle(document) {
@@ -54,7 +112,8 @@ function installStyle(document) {
       z-index: 3;
       top: 0;
       right: 72px;
-      bottom: 0;
+      bottom: auto;
+      height: 0;
       width: 132px;
       overflow: visible;
       pointer-events: none;
@@ -177,18 +236,32 @@ export function setDepthProfileViewState(root, {
   if (statusElement.title !== statusTitle) statusElement.title = statusTitle;
 }
 
+export function setDepthProfileGeometry(root, geometry) {
+  const top = `${geometry.top}px`;
+  const height = `${geometry.height}px`;
+  if (root.style.top !== top) root.style.top = top;
+  if (root.style.height !== height) root.style.height = height;
+}
+
+function mapVisibleLevels(levels, geometry) {
+  return levels.map((level) => ({
+    ...level,
+    y: geometry.priceToCoordinate(level.price),
+  })).filter((level) => Number.isFinite(level.y));
+}
+
 function drawSide(context, levels, profile, width, height, color) {
-  const priceRange = profile.maxPrice - profile.minPrice;
+  if (!levels.length) return;
   const levelHeight = Math.max(1, Math.min(5, height / (levels.length * 2.4)));
   context.fillStyle = color;
   for (const level of levels) {
-    const y = ((profile.maxPrice - level.price) / priceRange) * height;
     const barWidth = (level.cumulative / profile.maxCumulative) * width;
-    context.fillRect(width - barWidth, y - levelHeight / 2, barWidth, levelHeight);
+    context.fillRect(width - barWidth, level.y - levelHeight / 2, barWidth, levelHeight);
   }
 }
 
-export function renderDepthProfile(root, profile) {
+export function renderDepthProfile(root, profile, geometry, currentPrice) {
+  setDepthProfileGeometry(root, geometry);
   const canvas = root.querySelector('.jh-depth-profile-canvas');
   const rect = canvas.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) return false;
@@ -202,18 +275,20 @@ export function renderDepthProfile(root, profile) {
 
   context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   context.clearRect(0, 0, rect.width, rect.height);
-  drawSide(context, profile.asks, profile, rect.width, rect.height, 'rgba(246, 70, 93, .30)');
-  drawSide(context, profile.bids, profile, rect.width, rect.height, 'rgba(14, 203, 129, .30)');
+  const asks = mapVisibleLevels(profile.asks, geometry);
+  const bids = mapVisibleLevels(profile.bids, geometry);
+  drawSide(context, asks, profile, rect.width, rect.height, 'rgba(246, 70, 93, .30)');
+  drawSide(context, bids, profile, rect.width, rect.height, 'rgba(14, 203, 129, .30)');
 
-  const priceRange = profile.maxPrice - profile.minPrice;
-  const midY = ((profile.maxPrice - profile.midPrice) / priceRange) * rect.height;
+  const currentPriceY = geometry.priceToCoordinate(currentPrice);
+  if (!Number.isFinite(currentPriceY)) return true;
   context.save();
   context.strokeStyle = 'rgba(240, 185, 11, .85)';
   context.lineWidth = 1;
   context.setLineDash([3, 3]);
   context.beginPath();
-  context.moveTo(0, midY + 0.5);
-  context.lineTo(rect.width, midY + 0.5);
+  context.moveTo(0, currentPriceY + 0.5);
+  context.lineTo(rect.width, currentPriceY + 0.5);
   context.stroke();
   context.restore();
   return true;

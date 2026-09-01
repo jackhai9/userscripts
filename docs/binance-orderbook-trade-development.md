@@ -105,7 +105,7 @@ scripts/
 
 ## Vertical Depth Profile
 
-The optional depth profile is a userscript-owned canvas beside the TradingView price axis. It does not clone Binance's native Depth React component and does not read TradingView's private visible-price transform. Its vertical range is symmetric around the current best bid/ask midpoint and is derived only from the nearest local-book levels, so it must not be described as pixel-aligned with the TradingView price scale.
+The optional depth profile is a userscript-owned canvas beside the TradingView price axis. It does not clone Binance's native Depth React component. A feature-gated adapter reads the active TradingView main pane height and maps each depth price through the pane's current price scale, including logarithmic and inverted modes. The divider uses Binance's latest visible trade price rather than the order-book midpoint so it follows TradingView's live-price line. If that contract is unavailable or invalid, the profile fails closed instead of falling back to an approximate scale. Binance Basic and native Depth modes do not expose the verified coordinate contract, so the profile is hidden in those modes.
 
 The data session opens the official USD-M public `{symbol}@depth@100ms` stream before requesting `/fapi/v1/depth?limit=1000`. `core/depth-profile-book.js` applies the official `lastUpdateId`, `U`, `u`, and `pu` sequence contract and treats quantities as absolute values; zero removes a price level. `core/depth-profile-session.js` owns one inflight snapshot, at most three resynchronizations per connection, and at most five reconnect attempts. A terminal failure remains visible until the user collapses and reopens the profile or changes symbols.
 
@@ -229,7 +229,7 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - test open and close modes
 - verify rules-not-ready refuses to order
 - verify orderbook precision recommendation comes from latest-trade price movement, not from the current orderbook display precision
-- verify the vertical depth profile renders beside the price axis in Basic and Trading View modes, does not block chart clicks, disappears in native Depth mode, and resumes with a fresh symbol-owned session after returning
+- verify the vertical depth profile renders only in Trading View mode, is clipped to the main K-line pane, stays aligned after price movement/zoom/scale-mode changes, does not block chart clicks, and resumes with a fresh symbol-owned session after returning from Basic or native Depth mode
 - switch symbols and hide/show the tab while the profile is active; verify no old-symbol bars or stale status survive
 - verify the manual precision refresh button starts one longer sample round without auto-applying or scheduling background resampling
 - verify the precision apply button changes Binance orderbook precision only after an explicit user click

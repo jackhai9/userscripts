@@ -7,8 +7,10 @@ import {
   DEPTH_PROFILE_ID,
   ensureDepthProfileView,
   findDepthProfileHost,
+  getTradingViewDepthProfileGeometry,
   removeDepthProfileView,
   renderDepthProfile,
+  setDepthProfileGeometry,
   setDepthProfileViewState,
 } from '../../../src/binance-orderbook-trade/dom/depth-profile.js';
 
@@ -24,7 +26,28 @@ function createChartDom({ hiddenFrame = false } = {}) {
   `);
 }
 
-test('finds the visible chart frame host without requiring TradingView private APIs', () => {
+function installTradingViewApi(frame, {
+  height = 200,
+  mode = 0,
+  inverted = false,
+  coordinateToPrice = (coordinate) => 110 - coordinate / 10,
+} = {}) {
+  const scale = {
+    coordinateToPrice,
+    getMode: () => mode,
+    getVisiblePriceRange: () => ({ from: 90, to: 110 }),
+    isInverted: () => inverted,
+  };
+  frame.contentWindow.tradingViewApi = {
+    activeChart: () => ({
+      getAllPanesHeight: () => [height, 80, 120],
+      getPanes: () => [{ getMainSourcePriceScale: () => scale }],
+    }),
+  };
+  return scale;
+}
+
+test('finds the visible TradingView frame host', () => {
   const dom = createChartDom();
   const target = findDepthProfileHost(dom.window.document);
 
@@ -37,7 +60,7 @@ test('returns null while Binance mounts the native depth chart instead of a visi
   assert.equal(findDepthProfileHost(dom.window.document), null);
 });
 
-test('finds the visible Binance basic chart host without matching the native depth chart', () => {
+test('does not mount on Binance Basic because it has no verified price-coordinate contract', () => {
   const dom = loadFixtureDom(`
     <div class="chart-widget-root">
       <div class="draggableCancel h-full relative">
@@ -45,13 +68,65 @@ test('finds the visible Binance basic chart host without matching the native dep
       </div>
     </div>
   `);
-  const target = findDepthProfileHost(dom.window.document);
-
-  assert.equal(target.frame, null);
-  assert.equal(target.host.className, 'draggableCancel h-full relative');
-
-  dom.window.document.querySelector('.kline-container').remove();
   assert.equal(findDepthProfileHost(dom.window.document), null);
+});
+
+test('maps prices through the active TradingView main-pane scale', () => {
+  const dom = createChartDom();
+  const frame = dom.window.document.querySelector('iframe');
+  installTradingViewApi(frame);
+
+  const geometry = getTradingViewDepthProfileGeometry(frame);
+
+  assert.equal(geometry.top, 0);
+  assert.equal(geometry.height, 200);
+  assert.equal(geometry.minPrice, 90);
+  assert.equal(geometry.maxPrice, 110);
+  assert.ok(Math.abs(geometry.priceToCoordinate(100) - 100) < 0.02);
+  assert.equal(geometry.priceToCoordinate(111), null);
+});
+
+test('maps prices correctly on logarithmic and inverted TradingView scales', () => {
+  const logarithmic = createChartDom();
+  const logarithmicFrame = logarithmic.window.document.querySelector('iframe');
+  installTradingViewApi(logarithmicFrame, {
+    height: 100,
+    mode: 1,
+    coordinateToPrice: (coordinate) => 1000 * ((100 / 1000) ** (coordinate / 100)),
+  });
+  const logarithmicGeometry = getTradingViewDepthProfileGeometry(logarithmicFrame);
+  assert.equal(logarithmicGeometry.mode, 1);
+  assert.ok(Math.abs(logarithmicGeometry.priceToCoordinate(Math.sqrt(100_000)) - 50) < 0.02);
+
+  const inverted = createChartDom();
+  const invertedFrame = inverted.window.document.querySelector('iframe');
+  installTradingViewApi(invertedFrame, {
+    height: 100,
+    inverted: true,
+    coordinateToPrice: (coordinate) => 90 + coordinate / 5,
+  });
+  const invertedGeometry = getTradingViewDepthProfileGeometry(invertedFrame);
+  assert.equal(invertedGeometry.inverted, true);
+  assert.ok(Math.abs(invertedGeometry.priceToCoordinate(100) - 50) < 0.02);
+});
+
+test('fails closed when the TradingView price-scale adapter is unavailable', () => {
+  const dom = createChartDom();
+  const frame = dom.window.document.querySelector('iframe');
+  assert.equal(getTradingViewDepthProfileGeometry(frame), null);
+
+  frame.contentWindow.tradingViewApi = { activeChart: () => ({}) };
+  assert.equal(getTradingViewDepthProfileGeometry(frame), null);
+});
+
+test('fails closed when TradingView returns a non-monotonic price transform', () => {
+  const dom = createChartDom();
+  const frame = dom.window.document.querySelector('iframe');
+  installTradingViewApi(frame, {
+    coordinateToPrice: (coordinate) => (coordinate === 100 ? 111 : 110 - coordinate / 10),
+  });
+
+  assert.equal(getTradingViewDepthProfileGeometry(frame), null);
 });
 
 test('rejects ambiguous visible chart roots', () => {
@@ -124,7 +199,7 @@ test('reapplying the same view state does not create observer churn', async () =
   assert.equal(mutations.length, 0);
 });
 
-test('draws bid and ask bars plus the current-price divider', () => {
+test('draws bid and ask bars plus the latest-trade divider', () => {
   const dom = createChartDom();
   const { document } = dom.window;
   const { host } = findDepthProfileHost(document);
@@ -133,9 +208,9 @@ test('draws bid and ask bars plus the current-price divider', () => {
   root.querySelector('canvas').getContext = () => ({
     beginPath: () => calls.push('beginPath'),
     clearRect: () => calls.push('clearRect'),
-    fillRect: () => calls.push('fillRect'),
+    fillRect: (...args) => calls.push(['fillRect', ...args]),
     lineTo: () => calls.push('lineTo'),
-    moveTo: () => calls.push('moveTo'),
+    moveTo: (...args) => calls.push(['moveTo', ...args]),
     restore: () => calls.push('restore'),
     save: () => calls.push('save'),
     setLineDash: () => calls.push('setLineDash'),
@@ -143,18 +218,42 @@ test('draws bid and ask bars plus the current-price divider', () => {
     stroke: () => calls.push('stroke'),
   });
 
+  const geometry = {
+    top: 0,
+    height: 240,
+    priceToCoordinate: (price) => ({ 100: 180, 100.5: 140, 101: 80 }[price] ?? null),
+  };
   assert.equal(renderDepthProfile(root, {
     minPrice: 99,
     maxPrice: 102,
-    midPrice: 100.5,
+    midPrice: 99.5,
     maxCumulative: 5,
     bids: [{ price: 100, cumulative: 5 }],
-    asks: [{ price: 101, cumulative: 4 }],
-  }), true);
-  assert.equal(calls.filter((call) => call === 'fillRect').length, 2);
+    asks: [{ price: 101, cumulative: 4 }, { price: 105, cumulative: 5 }],
+  }, geometry, 100.5), true);
+  assert.equal(root.style.height, '240px');
+  assert.equal(calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').length, 2);
+  assert.deepEqual(
+    calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').map((call) => call[2]),
+    [77.5, 177.5],
+  );
+  assert.deepEqual(calls.find((call) => Array.isArray(call) && call[0] === 'moveTo'), ['moveTo', 0, 140.5]);
   assert.equal(calls.includes('stroke'), true);
 
   calls.length = 0;
   clearDepthProfile(root);
   assert.deepEqual(calls, ['save', 'setTransform', 'clearRect', 'restore']);
+});
+
+test('updates root geometry without rewriting unchanged styles', () => {
+  const dom = createChartDom();
+  const { document } = dom.window;
+  const { host } = findDepthProfileHost(document);
+  const root = ensureDepthProfileView(document, host, { onToggle: () => {} });
+
+  setDepthProfileGeometry(root, { top: 4, height: 320 });
+  assert.equal(root.style.top, '4px');
+  assert.equal(root.style.height, '320px');
+  setDepthProfileGeometry(root, { top: 4, height: 320 });
+  assert.equal(root.getAttribute('style'), 'top: 4px; height: 320px;');
 });

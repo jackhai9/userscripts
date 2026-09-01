@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.181
+// @version      2.7.182
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3795,6 +3795,7 @@
   var DEPTH_PROFILE_ID = "jh-binance-depth-profile";
   var STYLE_ID = "jh-binance-depth-profile-style";
   var CHART_ROOT_SELECTOR2 = ".chart-widget-root";
+  var PRICE_COORDINATE_SEARCH_STEPS = 13;
   function hasVisibleBox2(element) {
     if (!element?.getClientRects().length) return false;
     const rect = element.getBoundingClientRect();
@@ -3811,22 +3812,59 @@
     if (frames.length > 1) {
       throw new Error(`Visible chart frame count is invalid: ${frames.length}`);
     }
-    if (frames.length === 1) {
-      const frame = frames[0];
-      const host = frame.parentElement?.parentElement;
-      if (!host || !chartRoot.contains(host)) {
-        throw new Error("Visible chart frame host is invalid");
+    if (!frames.length) return null;
+    const frame = frames[0];
+    const host = frame.parentElement?.parentElement;
+    if (!host || !chartRoot.contains(host)) {
+      throw new Error("Visible chart frame host is invalid");
+    }
+    return { chartRoot, frame, host };
+  }
+  function getTradingViewDepthProfileGeometry(frame) {
+    const chart = frame?.contentWindow?.tradingViewApi?.activeChart?.();
+    if (!chart) return null;
+    const paneHeights = chart.getAllPanesHeight?.();
+    const panes = chart.getPanes?.();
+    if (!Array.isArray(paneHeights) || !Array.isArray(panes) || !panes.length) return null;
+    const height = Number(paneHeights[0]);
+    const scale = panes[0]?.getMainSourcePriceScale?.();
+    if (!(height > 0) || !scale) return null;
+    if (typeof scale.coordinateToPrice !== "function" || typeof scale.getVisiblePriceRange !== "function" || typeof scale.getMode !== "function" || typeof scale.isInverted !== "function") return null;
+    const visibleRange = scale.getVisiblePriceRange();
+    const mode = scale.getMode();
+    const inverted = scale.isInverted();
+    const sampledPrices = [0, height / 4, height / 2, height * 3 / 4, height].map((coordinate) => Number(scale.coordinateToPrice(coordinate)));
+    const [topPrice, , , , bottomPrice] = sampledPrices;
+    if (!visibleRange || !Number.isFinite(Number(visibleRange.from)) || !Number.isFinite(Number(visibleRange.to)) || !Number.isInteger(mode) || typeof inverted !== "boolean" || !Number.isFinite(topPrice) || !Number.isFinite(bottomPrice) || topPrice === bottomPrice) return null;
+    const minPrice = Math.min(topPrice, bottomPrice);
+    const maxPrice = Math.max(topPrice, bottomPrice);
+    const descendsWithY = topPrice > bottomPrice;
+    if (sampledPrices.some((price, index) => !Number.isFinite(price) || index > 0 && (descendsWithY ? price >= sampledPrices[index - 1] : price <= sampledPrices[index - 1]))) return null;
+    return {
+      top: 0,
+      height,
+      minPrice,
+      maxPrice,
+      mode,
+      inverted,
+      priceToCoordinate(price) {
+        if (!Number.isFinite(price) || price < minPrice || price > maxPrice) return null;
+        if (price === topPrice) return 0;
+        if (price === bottomPrice) return height;
+        let low = 0;
+        let high = height;
+        for (let index = 0; index < PRICE_COORDINATE_SEARCH_STEPS; index += 1) {
+          const middle = (low + high) / 2;
+          const middlePrice = Number(scale.coordinateToPrice(middle));
+          if (!Number.isFinite(middlePrice)) {
+            throw new Error("TradingView price coordinate is invalid");
+          }
+          if (descendsWithY ? middlePrice > price : middlePrice < price) low = middle;
+          else high = middle;
+        }
+        return (low + high) / 2;
       }
-      return { chartRoot, frame, host };
-    }
-    const basicChartHosts = Array.from(
-      chartRoot.querySelectorAll(".draggableCancel.h-full.relative")
-    ).filter((candidate) => hasVisibleBox2(candidate) && Array.from(candidate.querySelectorAll(".kline-container")).some(hasVisibleBox2) && Array.from(candidate.querySelectorAll("canvas")).some(hasVisibleBox2));
-    if (basicChartHosts.length > 1) {
-      throw new Error(`Visible basic chart host count is invalid: ${basicChartHosts.length}`);
-    }
-    if (!basicChartHosts.length) return null;
-    return { chartRoot, frame: null, host: basicChartHosts[0] };
+    };
   }
   function installStyle(document2) {
     if (document2.getElementById(STYLE_ID)) return;
@@ -3838,7 +3876,8 @@
       z-index: 3;
       top: 0;
       right: 72px;
-      bottom: 0;
+      bottom: auto;
+      height: 0;
       width: 132px;
       overflow: visible;
       pointer-events: none;
@@ -3953,17 +3992,29 @@
     if (statusElement.textContent !== status) statusElement.textContent = status;
     if (statusElement.title !== statusTitle) statusElement.title = statusTitle;
   }
+  function setDepthProfileGeometry(root, geometry) {
+    const top = `${geometry.top}px`;
+    const height = `${geometry.height}px`;
+    if (root.style.top !== top) root.style.top = top;
+    if (root.style.height !== height) root.style.height = height;
+  }
+  function mapVisibleLevels(levels, geometry) {
+    return levels.map((level) => ({
+      ...level,
+      y: geometry.priceToCoordinate(level.price)
+    })).filter((level) => Number.isFinite(level.y));
+  }
   function drawSide(context, levels, profile, width, height, color) {
-    const priceRange = profile.maxPrice - profile.minPrice;
+    if (!levels.length) return;
     const levelHeight = Math.max(1, Math.min(5, height / (levels.length * 2.4)));
     context.fillStyle = color;
     for (const level of levels) {
-      const y = (profile.maxPrice - level.price) / priceRange * height;
       const barWidth = level.cumulative / profile.maxCumulative * width;
-      context.fillRect(width - barWidth, y - levelHeight / 2, barWidth, levelHeight);
+      context.fillRect(width - barWidth, level.y - levelHeight / 2, barWidth, levelHeight);
     }
   }
-  function renderDepthProfile(root, profile) {
+  function renderDepthProfile(root, profile, geometry, currentPrice) {
+    setDepthProfileGeometry(root, geometry);
     const canvas = root.querySelector(".jh-depth-profile-canvas");
     const rect = canvas.getBoundingClientRect();
     if (!(rect.width > 0) || !(rect.height > 0)) return false;
@@ -3976,17 +4027,19 @@
     if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
     context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
     context.clearRect(0, 0, rect.width, rect.height);
-    drawSide(context, profile.asks, profile, rect.width, rect.height, "rgba(246, 70, 93, .30)");
-    drawSide(context, profile.bids, profile, rect.width, rect.height, "rgba(14, 203, 129, .30)");
-    const priceRange = profile.maxPrice - profile.minPrice;
-    const midY = (profile.maxPrice - profile.midPrice) / priceRange * rect.height;
+    const asks = mapVisibleLevels(profile.asks, geometry);
+    const bids = mapVisibleLevels(profile.bids, geometry);
+    drawSide(context, asks, profile, rect.width, rect.height, "rgba(246, 70, 93, .30)");
+    drawSide(context, bids, profile, rect.width, rect.height, "rgba(14, 203, 129, .30)");
+    const currentPriceY = geometry.priceToCoordinate(currentPrice);
+    if (!Number.isFinite(currentPriceY)) return true;
     context.save();
     context.strokeStyle = "rgba(240, 185, 11, .85)";
     context.lineWidth = 1;
     context.setLineDash([3, 3]);
     context.beginPath();
-    context.moveTo(0, midY + 0.5);
-    context.lineTo(rect.width, midY + 0.5);
+    context.moveTo(0, currentPriceY + 0.5);
+    context.lineTo(rect.width, currentPriceY + 0.5);
     context.stroke();
     context.restore();
     return true;
@@ -4813,11 +4866,13 @@
     let depthProfileEnabled = localStorage.getItem(DEPTH_PROFILE_ENABLED_KEY) !== "0";
     let depthProfileSession = null;
     let depthProfileView = null;
+    let depthProfileFrame = null;
     let depthProfileData = null;
     let depthProfileStatus = { status: "connecting", detail: "" };
     let depthProfileFailedSymbol = null;
     let depthProfileObserver = null;
     let depthProfileObserverRoot = null;
+    let depthProfileRenderQueued = false;
     let depthProfileSyncQueued = false;
     const controlledNativeButtons = /* @__PURE__ */ new Set();
     let lastObservedSymbol = getCurrentSymbol();
@@ -11132,8 +11187,20 @@
       const title = depthProfileStatus.detail ? `${text}: ${depthProfileStatus.detail}` : text;
       return { text, title };
     }
+    function getCurrentDepthProfilePrice() {
+      const node = Array.from(document.querySelectorAll(".tradew-tradelist .price.emit-price")).find((candidate) => isVisibleElement(candidate));
+      const price = parsePrice(node);
+      return price == null ? null : Number(price);
+    }
     function renderDepthProfileUi() {
       if (!depthProfileView?.isConnected) return;
+      const geometry = getTradingViewDepthProfileGeometry(depthProfileFrame);
+      if (!geometry) {
+        clearDepthProfile(depthProfileView);
+        scheduleDepthProfileSync();
+        return;
+      }
+      setDepthProfileGeometry(depthProfileView, geometry);
       const status = depthProfileStatusPresentation();
       setDepthProfileViewState(depthProfileView, {
         expanded: depthProfileEnabled,
@@ -11143,10 +11210,23 @@
         statusTitle: status.title
       });
       if (depthProfileEnabled && depthProfileData) {
-        renderDepthProfile(depthProfileView, depthProfileData);
+        renderDepthProfile(
+          depthProfileView,
+          depthProfileData,
+          geometry,
+          getCurrentDepthProfilePrice()
+        );
       } else {
         clearDepthProfile(depthProfileView);
       }
+    }
+    function scheduleDepthProfileRender() {
+      if (depthProfileRenderQueued) return;
+      depthProfileRenderQueued = true;
+      window.requestAnimationFrame(() => {
+        depthProfileRenderQueued = false;
+        renderDepthProfileUi();
+      });
     }
     function stopDepthProfileSession() {
       depthProfileSession?.stop();
@@ -11160,6 +11240,7 @@
     function removeDepthProfileRuntimeView() {
       removeDepthProfileView(document);
       depthProfileView = null;
+      depthProfileFrame = null;
     }
     function scheduleDepthProfileSync() {
       if (depthProfileSyncQueued) return;
@@ -11197,14 +11278,14 @@
           if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
           depthProfileData = profile;
           depthProfileStatus = { status: "ready", detail: "" };
-          renderDepthProfileUi();
+          scheduleDepthProfileRender();
         },
         onStatus(status) {
           if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
           depthProfileStatus = status;
           if (status.status !== "ready") depthProfileData = null;
           if (status.status === "failed") depthProfileFailedSymbol = symbol;
-          renderDepthProfileUi();
+          scheduleDepthProfileRender();
         }
       });
       depthProfileSession = session;
@@ -11218,19 +11299,22 @@
       }
       ensureDepthProfileObserver();
       let target;
+      let geometry;
       try {
         target = findDepthProfileHost(document);
+        geometry = target ? getTradingViewDepthProfileGeometry(target.frame) : null;
       } catch (error) {
         stopDepthProfileSession();
         removeDepthProfileRuntimeView();
         err("depth profile host discovery failed:", error);
         return;
       }
-      if (!target) {
+      if (!target || !geometry) {
         stopDepthProfileSession();
         removeDepthProfileRuntimeView();
         return;
       }
+      depthProfileFrame = target.frame;
       depthProfileView = ensureDepthProfileView(document, target.host, {
         onToggle() {
           depthProfileEnabled = !depthProfileEnabled;
@@ -11244,6 +11328,7 @@
           syncDepthProfile();
         }
       });
+      setDepthProfileGeometry(depthProfileView, geometry);
       renderDepthProfileUi();
       if (!depthProfileEnabled) return;
       const symbol = getCurrentSymbol();
