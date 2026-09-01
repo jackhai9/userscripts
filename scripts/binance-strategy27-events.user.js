@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.4
+// @version      0.2.5
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流事件和后续结果
 // @match        https://www.binance.com/*/futures/*
@@ -477,6 +477,13 @@
   };
 
   // src/binance-strategy27-events/core/live-event-client.js
+  var DEFAULT_RECONNECT_DELAY_MS = 2e3;
+  var Strategy27GatewayTransportError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "Strategy27GatewayTransportError";
+    }
+  };
   function abortError() {
     return new DOMException("Strategy 27 gateway request aborted", "AbortError");
   }
@@ -515,12 +522,27 @@
         headers: { Authorization: `Bearer ${authSecret}` },
         timeout: 25e3,
         onload: resolveOnce,
-        onerror: () => rejectOnce(new Error("Strategy 27 gateway request failed")),
-        ontimeout: () => rejectOnce(new Error("Strategy 27 gateway request timed out")),
+        onerror: () => rejectOnce(new Strategy27GatewayTransportError("Strategy 27 gateway request failed")),
+        ontimeout: () => rejectOnce(new Strategy27GatewayTransportError("Strategy 27 gateway request timed out")),
         onabort: () => rejectOnce(abortError())
       });
       function abort() {
         handle.abort();
+      }
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+  function waitForReconnect(delayMs, signal) {
+    if (signal.aborted) return Promise.reject(abortError());
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(finish, delayMs);
+      function finish() {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      }
+      function abort() {
+        clearTimeout(timeoutId);
+        reject(abortError());
       }
       signal.addEventListener("abort", abort, { once: true });
     });
@@ -558,29 +580,49 @@
     gatewayBaseUrl,
     authSecret,
     canonicalSymbol,
-    onResponse
+    onResponse,
+    onConnectionStateChange,
+    reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS
   }) {
     if (typeof request !== "function") throw new Error("Strategy 27 request function is required");
     if (typeof authSecret !== "string" || authSecret.length === 0) throw new Error("Strategy 27 gateway secret is not configured");
     if (typeof canonicalSymbol !== "string" || canonicalSymbol.length === 0) throw new Error("Strategy 27 canonical symbol is required");
     if (typeof onResponse !== "function") throw new Error("Strategy 27 response listener is required");
+    if (typeof onConnectionStateChange !== "function") throw new Error("Strategy 27 connection state listener is required");
+    if (!Number.isInteger(reconnectDelayMs) || reconnectDelayMs < 0) throw new Error("Strategy 27 reconnect delay is invalid");
     const origin = normalizeGatewayBaseUrl(gatewayBaseUrl);
     let cursor = null;
+    let reconnecting = false;
     return Object.freeze({
       async run(signal) {
         while (!signal.aborted) {
           const url = new URL("/v1/strategy27/events", origin);
           url.searchParams.set("symbol", canonicalSymbol);
           if (cursor !== null) url.searchParams.set("cursor", cursor);
-          const response = await request({
-            url: url.href,
-            authSecret,
-            signal
-          });
+          let response;
+          try {
+            response = await request({
+              url: url.href,
+              authSecret,
+              signal
+            });
+          } catch (error) {
+            if (!(error instanceof Strategy27GatewayTransportError)) throw error;
+            if (!reconnecting) {
+              reconnecting = true;
+              onConnectionStateChange("reconnecting");
+            }
+            await waitForReconnect(reconnectDelayMs, signal);
+            continue;
+          }
           const payload = parseResponseJson(response);
           assertCursorContract(payload, cursor);
           if (payload.status === "error") {
             throw new Error(`Strategy 27 gateway error: ${payload.error_code}`);
+          }
+          if (reconnecting) {
+            reconnecting = false;
+            onConnectionStateChange("connected");
           }
           await onResponse(payload);
           cursor = payload.next_cursor;
@@ -1580,6 +1622,14 @@
         gatewayBaseUrl: gatewayOrigin,
         authSecret,
         canonicalSymbol,
+        onConnectionStateChange: (state) => {
+          if (active !== context) return;
+          showStatus(
+            context.target.chartRoot,
+            state === "reconnecting" ? "Strategy 27 网关连接中断，正在重连" : "Strategy 27 已重新连接，等待新事件",
+            state === "reconnecting" ? "inactive" : "normal"
+          );
+        },
         onResponse: (response) => renderGatewayResponse(context, response)
       });
       client.run(context.controller.signal).catch((error) => {

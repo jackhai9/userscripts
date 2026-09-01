@@ -24,6 +24,14 @@ symbol.
    source, URL parameters, chart text, console messages, or status text.
 5. Open the matching Binance futures route and select the one-second chart.
 
+The macOS operator machine keeps this forward under a `launchd` user agent so
+the SSH process is restarted after sleep, network changes, or a broken
+connection. The browser client treats only `GM_xmlhttpRequest` transport errors
+and timeouts as recoverable: it retains the current cursor, displays a
+reconnecting status, and retries after two seconds. HTTP responses, gateway
+errors, malformed JSON, cursor violations, and rendering contract failures
+still stop immediately.
+
 ## Rendering Contract
 
 - Every event owns exactly one chart marker throughout its lifecycle. Updates,

@@ -71,6 +71,7 @@ test('long polling binds each response to its requested cursor', async () => {
     gatewayBaseUrl: 'http://127.0.0.1:18765',
     authSecret: 'secret',
     canonicalSymbol: 'BTR/USDT:USDT',
+    onConnectionStateChange: () => {},
     onResponse: async () => {
       if (urls.length === 2) controller.abort();
     },
@@ -96,7 +97,73 @@ test('long polling rejects a response for a different requested cursor', async (
     gatewayBaseUrl: 'http://127.0.0.1:18765',
     authSecret: 'secret',
     canonicalSymbol: 'BTR/USDT:USDT',
+    onConnectionStateChange: () => {},
     onResponse: async () => {},
   });
   await assert.rejects(client.run(new AbortController().signal), /response cursor/);
+});
+
+test('reconnects after a GM transport failure and keeps the requested cursor', async () => {
+  const attempts = [];
+  const connectionStates = [];
+  const controller = new AbortController();
+  let requestCount = 0;
+  const request = createGmJsonRequest((options) => {
+    requestCount += 1;
+    attempts.push(options.url);
+    queueMicrotask(() => {
+      if (requestCount === 2) {
+        options.onerror();
+        return;
+      }
+      options.onload({
+        status: 200,
+        responseText: JSON.stringify({
+          schema_version: 1,
+          status: requestCount === 1 ? 'reset' : 'ok',
+          ...(requestCount === 1 ? { reason: 'initial_cursor' } : {}),
+          requested_cursor: requestCount === 1 ? null : '5-0',
+          next_cursor: requestCount === 1 ? '5-0' : '8-0',
+          messages: [],
+        }),
+      });
+    });
+    return { abort: () => options.onabort() };
+  });
+  const client = createLiveEventClient({
+    request,
+    gatewayBaseUrl: 'http://127.0.0.1:18765',
+    authSecret: 'secret',
+    canonicalSymbol: 'BTR/USDT:USDT',
+    reconnectDelayMs: 0,
+    onConnectionStateChange: (state) => connectionStates.push(state),
+    onResponse: async () => {
+      if (requestCount === 3) controller.abort();
+    },
+  });
+
+  await client.run(controller.signal);
+  assert.equal(attempts.length, 3);
+  assert.equal(new URL(attempts[1]).searchParams.get('cursor'), '5-0');
+  assert.equal(new URL(attempts[2]).searchParams.get('cursor'), '5-0');
+  assert.deepEqual(connectionStates, ['reconnecting', 'connected']);
+});
+
+test('does not retry response contract failures', async () => {
+  let requestCount = 0;
+  const client = createLiveEventClient({
+    request: async () => {
+      requestCount += 1;
+      return { status: 200, responseText: 'not-json' };
+    },
+    gatewayBaseUrl: 'http://127.0.0.1:18765',
+    authSecret: 'secret',
+    canonicalSymbol: 'BTR/USDT:USDT',
+    reconnectDelayMs: 0,
+    onConnectionStateChange: () => {},
+    onResponse: async () => {},
+  });
+
+  await assert.rejects(client.run(new AbortController().signal), /invalid JSON/);
+  assert.equal(requestCount, 1);
 });
