@@ -44,6 +44,11 @@ removed and visualization stops with an alignment error.
 `trigger_snapshot.bucket_start_ms` to equal it; the bucket end remains the
 exclusive end of that same measurement interval.
 
+For a closed event, `latest_snapshot` is the last eligible event bucket retained
+before closure. `event_closed.event_time_ms` carries `active_end_at_ms` and can
+be later than that snapshot's end when an ineligible bucket advances the event
+to its lifecycle deadline without joining the event.
+
 The script stores only its own returned entity IDs. Route, symbol, interval,
 epoch, cursor, or sequence discontinuities abort the request and remove only
 those transient entities. Event count and age are bounded in memory and on the
