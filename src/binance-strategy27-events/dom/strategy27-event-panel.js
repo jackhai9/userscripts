@@ -1,4 +1,7 @@
 const PANEL_ID = 'jh-strategy27-event-panel';
+const PANEL_WIDTH = 320;
+const DEFAULT_RIGHT_OFFSET = 84;
+const DEFAULT_TOP_OFFSET = 68;
 
 const STATUS_LABELS = Object.freeze({
   active: '进行中',
@@ -37,6 +40,102 @@ function buttonStyles() {
   };
 }
 
+function panelWindow(document) {
+  const view = document.defaultView;
+  if (!view) throw new Error('Strategy 27 panel window is unavailable');
+  return view;
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(value, maximum));
+}
+
+function assertPanelPosition(position) {
+  if (position === null) return null;
+  if (
+    !position
+    || typeof position !== 'object'
+    || !Number.isFinite(position.left)
+    || !Number.isFinite(position.top)
+  ) {
+    throw new Error('Strategy 27 panel position is invalid');
+  }
+  return position;
+}
+
+function normalizePanelPosition(document, panel, position) {
+  const view = panelWindow(document);
+  const width = panel.offsetWidth || PANEL_WIDTH;
+  const height = panel.offsetHeight || 48;
+  return {
+    left: clamp(position.left, 0, Math.max(0, view.innerWidth - width)),
+    top: clamp(position.top, 0, Math.max(0, view.innerHeight - height)),
+  };
+}
+
+function applyPanelPosition(panel, position) {
+  panel.style.left = `${position.left}px`;
+  panel.style.top = `${position.top}px`;
+  panel.style.right = 'auto';
+}
+
+function createDefaultPosition(chartRoot) {
+  const chartRect = chartRoot.getBoundingClientRect();
+  return {
+    left: chartRect.right - DEFAULT_RIGHT_OFFSET - PANEL_WIDTH,
+    top: chartRect.top + DEFAULT_TOP_OFFSET,
+  };
+}
+
+function setupPanelDrag(document, panel, header, savePosition) {
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+
+  const onMouseDown = (event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest('button,a')) return;
+    const rect = panel.getBoundingClientRect();
+    dragging = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    startLeft = rect.left;
+    startTop = rect.top;
+    event.preventDefault();
+  };
+
+  const onMouseMove = (event) => {
+    if (!dragging) return;
+    const position = normalizePanelPosition(document, panel, {
+      left: startLeft + event.clientX - startX,
+      top: startTop + event.clientY - startY,
+    });
+    applyPanelPosition(panel, position);
+  };
+
+  const onMouseUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    const rect = panel.getBoundingClientRect();
+    const position = normalizePanelPosition(document, panel, { left: rect.left, top: rect.top });
+    applyPanelPosition(panel, position);
+    savePosition(position);
+  };
+
+  header.addEventListener('mousedown', onMouseDown);
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+
+  return () => {
+    dragging = false;
+    header.removeEventListener('mousedown', onMouseDown);
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+  };
+}
+
 function appendDetailLine(document, parent, label, value, color = '#EAECEF') {
   const line = createElement(document, 'div', {
     styles: {
@@ -57,17 +156,23 @@ function appendDetailLine(document, parent, label, value, color = '#EAECEF') {
   parent.appendChild(line);
 }
 
-export function createStrategy27EventPanel(document, chartRoot, { maxEvents }) {
+export function createStrategy27EventPanel(document, chartRoot, {
+  maxEvents,
+  loadPosition,
+  savePosition,
+}) {
   if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error('Strategy 27 panel maxEvents is invalid');
+  if (typeof loadPosition !== 'function') throw new Error('Strategy 27 panel loadPosition is invalid');
+  if (typeof savePosition !== 'function') throw new Error('Strategy 27 panel savePosition is invalid');
   document.getElementById(PANEL_ID)?.remove();
 
   const panel = createElement(document, 'section', {
     styles: {
-      position: 'absolute',
-      zIndex: '9',
-      right: '84px',
-      top: '68px',
-      width: '320px',
+      position: 'fixed',
+      zIndex: '999996',
+      left: '0',
+      top: '0',
+      width: `${PANEL_WIDTH}px`,
       maxWidth: 'calc(100% - 112px)',
       maxHeight: 'calc(100% - 92px)',
       border: '1px solid rgba(132, 142, 156, .28)',
@@ -77,6 +182,7 @@ export function createStrategy27EventPanel(document, chartRoot, { maxEvents }) {
       color: '#EAECEF',
       font: '12px/17px BinancePlex, ui-sans-serif, system-ui, sans-serif',
       pointerEvents: 'auto',
+      userSelect: 'none',
       overflow: 'hidden',
     },
   });
@@ -89,11 +195,17 @@ export function createStrategy27EventPanel(document, chartRoot, { maxEvents }) {
       gap: '6px',
       padding: '8px 9px',
       borderBottom: '1px solid rgba(132, 142, 156, .18)',
+      cursor: 'move',
     },
+  });
+  header.title = '拖动面板';
+  const dragHandle = createElement(document, 'span', {
+    text: '☰',
+    styles: { color: '#848E9C', fontSize: '13px', cursor: 'move' },
   });
   const heading = createElement(document, 'strong', {
     text: 'Strategy 27 事件',
-    styles: { flex: '1', fontSize: '13px' },
+    styles: { flex: '1', fontSize: '13px', cursor: 'move' },
   });
   const latestButton = createElement(document, 'button', {
     text: '最新',
@@ -107,7 +219,7 @@ export function createStrategy27EventPanel(document, chartRoot, { maxEvents }) {
     styles: buttonStyles(),
   });
   collapseButton.type = 'button';
-  header.append(heading, latestButton, collapseButton);
+  header.append(dragHandle, heading, latestButton, collapseButton);
   panel.appendChild(header);
 
   const body = createElement(document, 'div', {
@@ -133,7 +245,10 @@ export function createStrategy27EventPanel(document, chartRoot, { maxEvents }) {
   });
   body.append(detail, recentTitle, recent);
   panel.appendChild(body);
-  chartRoot.appendChild(panel);
+  document.body.appendChild(panel);
+  const initialPosition = assertPanelPosition(loadPosition()) ?? createDefaultPosition(chartRoot);
+  applyPanelPosition(panel, normalizePanelPosition(document, panel, initialPosition));
+  const cleanupDrag = setupPanelDrag(document, panel, header, savePosition);
 
   const records = new Map();
   let selectedEventId = null;
@@ -278,6 +393,7 @@ export function createStrategy27EventPanel(document, chartRoot, { maxEvents }) {
     },
     destroy() {
       records.clear();
+      cleanupDrag();
       panel.remove();
     },
     get size() {
