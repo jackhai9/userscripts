@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.2
+// @version      0.2.3
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流事件和后续结果
 // @match        https://www.binance.com/*/futures/*
@@ -803,8 +803,7 @@
     }
     const resolve = (annotation) => {
       const point = { time: annotation.markerTime, price: annotation.markerPrice };
-      if (annotation.markerShape === "flag") return point;
-      if (!["arrow_up", "arrow_down"].includes(annotation.markerShape)) {
+      if (!["flag", "arrow_up", "arrow_down"].includes(annotation.markerShape)) {
         throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
       }
       const barIndex = timeScale.timePointToIndex(annotation.markerTime, 0);
@@ -814,6 +813,7 @@
       if (!Array.isArray(candle) || candle.length < 5 || candle[0] !== annotation.markerTime) {
         throw new Error(`Strategy 27 candle is invalid for ${annotation.markerTime}`);
       }
+      if (annotation.markerShape === "flag") return point;
       const candleHigh = Number(candle[2]);
       const candleLow = Number(candle[3]);
       if (!Number.isFinite(candleHigh) || !Number.isFinite(candleLow)) {
@@ -841,7 +841,11 @@
     const shape = chart.getShapeById(id);
     const points = shape?.getPoints?.();
     if (!Array.isArray(points) || points.length !== 1 || points[0].time !== requestedTime) {
-      throw new Error(`Strategy 27 chart time alignment failed for ${requestedTime}`);
+      const actualTime = Array.isArray(points) && points.length === 1 ? points[0]?.time : null;
+      const pointCount = Array.isArray(points) ? points.length : null;
+      throw new Error(
+        `Strategy 27 chart time alignment failed: expected ${requestedTime}, received ${actualTime} (point count ${pointCount})`
+      );
     }
     return shape;
   }
