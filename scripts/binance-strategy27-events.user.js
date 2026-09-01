@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.0
+// @version      0.2.1
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流事件和后续结果
 // @match        https://www.binance.com/*/futures/*
@@ -727,6 +727,7 @@
   // src/binance-strategy27-events/dom/tradingview-event-layer.js
   var CHART_ROOT_SELECTOR = ".chart-widget-root";
   var STATUS_ID = "jh-strategy27-event-status";
+  var DIRECTIONAL_MARKER_GAP_PX = 8;
   function hasVisibleBox(element) {
     if (!element?.getClientRects().length) return false;
     const rect = element.getBoundingClientRect();
@@ -778,6 +779,57 @@
       }
     };
   }
+  function createMarkerPointResolver(chart) {
+    const model = chart._chartWidget?.model?.()?.model?.();
+    const timeScale = model?.timeScale?.();
+    const seriesData = chart.getSeries?.()?.data?.();
+    const mainSeries = model?.mainSeries?.();
+    const priceScale = mainSeries?.priceScale?.();
+    const requiredMethods = [
+      [timeScale, "timePointToIndex"],
+      [seriesData, "valueAt"],
+      [mainSeries, "firstValue"],
+      [priceScale, "priceToCoordinate"],
+      [priceScale, "coordinateToPrice"]
+    ];
+    for (const [owner, method] of requiredMethods) {
+      if (typeof owner?.[method] !== "function") {
+        throw new Error(`TradingView marker placement method is unavailable: ${method}`);
+      }
+    }
+    return (annotation) => {
+      const point = { time: annotation.markerTime, price: annotation.markerPrice };
+      if (annotation.markerShape === "flag") return point;
+      if (!["arrow_up", "arrow_down"].includes(annotation.markerShape)) {
+        throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
+      }
+      const barIndex = timeScale.timePointToIndex(annotation.markerTime, 0);
+      const candle = Number.isFinite(barIndex) ? seriesData.valueAt(barIndex) : null;
+      if (!Array.isArray(candle) || candle.length < 5 || candle[0] !== annotation.markerTime) {
+        throw new Error(`Strategy 27 candle is unavailable for ${annotation.markerTime}`);
+      }
+      const candleHigh = Number(candle[2]);
+      const candleLow = Number(candle[3]);
+      if (!Number.isFinite(candleHigh) || !Number.isFinite(candleLow)) {
+        throw new Error(`Strategy 27 candle prices are invalid for ${annotation.markerTime}`);
+      }
+      const firstValue = mainSeries.firstValue();
+      const candleEdge = annotation.markerShape === "arrow_up" ? candleLow : candleHigh;
+      const edgeCoordinate = priceScale.priceToCoordinate(candleEdge, firstValue);
+      if (!Number.isFinite(edgeCoordinate)) {
+        throw new Error(`Strategy 27 candle coordinate is unavailable for ${annotation.markerTime}`);
+      }
+      const direction = annotation.markerShape === "arrow_up" ? 1 : -1;
+      const markerPrice = priceScale.coordinateToPrice(
+        edgeCoordinate + direction * DIRECTIONAL_MARKER_GAP_PX,
+        firstValue
+      );
+      if (!Number.isFinite(markerPrice)) {
+        throw new Error(`Strategy 27 marker price is unavailable for ${annotation.markerTime}`);
+      }
+      return { time: annotation.markerTime, price: markerPrice };
+    };
+  }
   function verifyResolvedTime(chart, id, requestedTime) {
     const shape = chart.getShapeById(id);
     const points = shape?.getPoints?.();
@@ -810,6 +862,7 @@
     if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error("Strategy 27 maxEvents is invalid");
     if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error("Strategy 27 maxAgeMs is invalid");
     const { chart } = target;
+    const resolveMarkerPoint = createMarkerPointResolver(chart);
     const registry = /* @__PURE__ */ new Map();
     let renderGeneration = 0;
     function removeRecord(eventId) {
@@ -828,25 +881,44 @@
     }
     async function ensureMarker(eventId, annotation, observedAtMs) {
       let record = registry.get(eventId);
+      const markerPoint = resolveMarkerPoint(annotation);
       if (!record) {
         pruneAge(observedAtMs);
         ensureCapacityForNew();
         const requestedGeneration = renderGeneration;
-        const markerId = await createAlignedShape(chart, {
-          time: annotation.markerTime,
-          price: annotation.markerPrice
-        }, shapeOptions(annotation.markerShape, annotation.markerColor));
+        const markerId = await createAlignedShape(
+          chart,
+          markerPoint,
+          shapeOptions(annotation.markerShape, annotation.markerColor)
+        );
         if (requestedGeneration !== renderGeneration) {
           chart.removeEntity(markerId);
           return false;
         }
-        record = { markerId, observedAtMs };
+        record = { markerId, markerShape: annotation.markerShape, observedAtMs };
         registry.set(eventId, record);
+      } else if (record.markerShape !== annotation.markerShape) {
+        const requestedGeneration = renderGeneration;
+        const markerId = await createAlignedShape(
+          chart,
+          markerPoint,
+          shapeOptions(annotation.markerShape, annotation.markerColor)
+        );
+        if (requestedGeneration !== renderGeneration) {
+          chart.removeEntity(markerId);
+          return false;
+        }
+        chart.removeEntity(record.markerId);
+        record.markerId = markerId;
+        record.markerShape = annotation.markerShape;
+        record.observedAtMs = observedAtMs;
       } else {
-        updateAlignedShape(chart, record.markerId, {
-          time: annotation.markerTime,
-          price: annotation.markerPrice
-        }, { color: annotation.markerColor });
+        updateAlignedShape(
+          chart,
+          record.markerId,
+          markerPoint,
+          { color: annotation.markerColor }
+        );
         record.observedAtMs = observedAtMs;
       }
       return true;
@@ -905,6 +977,9 @@
 
   // src/binance-strategy27-events/dom/strategy27-event-panel.js
   var PANEL_ID = "jh-strategy27-event-panel";
+  var PANEL_WIDTH = 320;
+  var DEFAULT_RIGHT_OFFSET = 84;
+  var DEFAULT_TOP_OFFSET = 68;
   var STATUS_LABELS = Object.freeze({
     active: "进行中",
     complete: "已结束",
@@ -937,6 +1012,85 @@
       cursor: "pointer"
     };
   }
+  function panelWindow(document) {
+    const view = document.defaultView;
+    if (!view) throw new Error("Strategy 27 panel window is unavailable");
+    return view;
+  }
+  function clamp(value, minimum, maximum) {
+    return Math.max(minimum, Math.min(value, maximum));
+  }
+  function assertPanelPosition(position) {
+    if (position === null) return null;
+    if (!position || typeof position !== "object" || !Number.isFinite(position.left) || !Number.isFinite(position.top)) {
+      throw new Error("Strategy 27 panel position is invalid");
+    }
+    return position;
+  }
+  function normalizePanelPosition(document, panel, position) {
+    const view = panelWindow(document);
+    const width = panel.offsetWidth || PANEL_WIDTH;
+    const height = panel.offsetHeight || 48;
+    return {
+      left: clamp(position.left, 0, Math.max(0, view.innerWidth - width)),
+      top: clamp(position.top, 0, Math.max(0, view.innerHeight - height))
+    };
+  }
+  function applyPanelPosition(panel, position) {
+    panel.style.left = `${position.left}px`;
+    panel.style.top = `${position.top}px`;
+    panel.style.right = "auto";
+  }
+  function createDefaultPosition(chartRoot) {
+    const chartRect = chartRoot.getBoundingClientRect();
+    return {
+      left: chartRect.right - DEFAULT_RIGHT_OFFSET - PANEL_WIDTH,
+      top: chartRect.top + DEFAULT_TOP_OFFSET
+    };
+  }
+  function setupPanelDrag(document, panel, header, savePosition) {
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    const onMouseDown = (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest("button,a")) return;
+      const rect = panel.getBoundingClientRect();
+      dragging = true;
+      startX = event.clientX;
+      startY = event.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      event.preventDefault();
+    };
+    const onMouseMove = (event) => {
+      if (!dragging) return;
+      const position = normalizePanelPosition(document, panel, {
+        left: startLeft + event.clientX - startX,
+        top: startTop + event.clientY - startY
+      });
+      applyPanelPosition(panel, position);
+    };
+    const onMouseUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      const rect = panel.getBoundingClientRect();
+      const position = normalizePanelPosition(document, panel, { left: rect.left, top: rect.top });
+      applyPanelPosition(panel, position);
+      savePosition(position);
+    };
+    header.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      dragging = false;
+      header.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }
   function appendDetailLine(document, parent, label, value, color = "#EAECEF") {
     const line = createElement(document, "div", {
       styles: {
@@ -956,16 +1110,22 @@
     }));
     parent.appendChild(line);
   }
-  function createStrategy27EventPanel(document, chartRoot, { maxEvents }) {
+  function createStrategy27EventPanel(document, chartRoot, {
+    maxEvents,
+    loadPosition,
+    savePosition
+  }) {
     if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error("Strategy 27 panel maxEvents is invalid");
+    if (typeof loadPosition !== "function") throw new Error("Strategy 27 panel loadPosition is invalid");
+    if (typeof savePosition !== "function") throw new Error("Strategy 27 panel savePosition is invalid");
     document.getElementById(PANEL_ID)?.remove();
     const panel = createElement(document, "section", {
       styles: {
-        position: "absolute",
-        zIndex: "9",
-        right: "84px",
-        top: "68px",
-        width: "320px",
+        position: "fixed",
+        zIndex: "999996",
+        left: "0",
+        top: "0",
+        width: `${PANEL_WIDTH}px`,
         maxWidth: "calc(100% - 112px)",
         maxHeight: "calc(100% - 92px)",
         border: "1px solid rgba(132, 142, 156, .28)",
@@ -975,6 +1135,7 @@
         color: "#EAECEF",
         font: "12px/17px BinancePlex, ui-sans-serif, system-ui, sans-serif",
         pointerEvents: "auto",
+        userSelect: "none",
         overflow: "hidden"
       }
     });
@@ -985,12 +1146,18 @@
         alignItems: "center",
         gap: "6px",
         padding: "8px 9px",
-        borderBottom: "1px solid rgba(132, 142, 156, .18)"
+        borderBottom: "1px solid rgba(132, 142, 156, .18)",
+        cursor: "move"
       }
+    });
+    header.title = "拖动面板";
+    const dragHandle = createElement(document, "span", {
+      text: "☰",
+      styles: { color: "#848E9C", fontSize: "13px", cursor: "move" }
     });
     const heading = createElement(document, "strong", {
       text: "Strategy 27 事件",
-      styles: { flex: "1", fontSize: "13px" }
+      styles: { flex: "1", fontSize: "13px", cursor: "move" }
     });
     const latestButton = createElement(document, "button", {
       text: "最新",
@@ -1004,7 +1171,7 @@
       styles: buttonStyles()
     });
     collapseButton.type = "button";
-    header.append(heading, latestButton, collapseButton);
+    header.append(dragHandle, heading, latestButton, collapseButton);
     panel.appendChild(header);
     const body = createElement(document, "div", {
       role: "panel-body",
@@ -1029,7 +1196,10 @@
     });
     body.append(detail, recentTitle, recent);
     panel.appendChild(body);
-    chartRoot.appendChild(panel);
+    document.body.appendChild(panel);
+    const initialPosition = assertPanelPosition(loadPosition()) ?? createDefaultPosition(chartRoot);
+    applyPanelPosition(panel, normalizePanelPosition(document, panel, initialPosition));
+    const cleanupDrag = setupPanelDrag(document, panel, header, savePosition);
     const records = /* @__PURE__ */ new Map();
     let selectedEventId = null;
     let followLatest = true;
@@ -1164,6 +1334,7 @@
       },
       destroy() {
         records.clear();
+        cleanupDrag();
         panel.remove();
       },
       get size() {
@@ -1232,6 +1403,7 @@
     const DEFAULT_GATEWAY_ORIGIN = "http://127.0.0.1:18765";
     const GATEWAY_ORIGIN_KEY = "strategy27GatewayOrigin";
     const GATEWAY_SECRET_KEY = "strategy27GatewayAuthSecret";
+    const PANEL_POSITION_KEY = "strategy27EventPanelPosition";
     const CONTEXT_CHECK_INTERVAL_MS = 1e3;
     const MAX_RETAINED_EVENTS = 80;
     const MAX_PANEL_EVENTS = 8;
@@ -1314,7 +1486,9 @@
           maxAgeMs: MAX_EVENT_AGE_MS
         }),
         panel: createStrategy27EventPanel(pageDocument, target.chartRoot, {
-          maxEvents: MAX_PANEL_EVENTS
+          maxEvents: MAX_PANEL_EVENTS,
+          loadPosition: () => GM_getValue(PANEL_POSITION_KEY, null),
+          savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position)
         }),
         failed: false
       };

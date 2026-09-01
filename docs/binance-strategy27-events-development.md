@@ -29,9 +29,17 @@ symbol.
 - Every event owns exactly one chart marker throughout its lifecycle. Updates,
   closure, and later outcomes update that marker without creating TradingView
   text shapes.
-- A single fixed panel shows the selected event's four-force facts, immediate
-  price response, trigger reasons, close reason, and ordered outcome horizons.
-  This prevents persistent multiline notes from overlapping one-second bars.
+- Directional markers are anchored to the matching one-second candle instead
+  of the event response midpoint: an up arrow sits eight screen pixels below
+  the candle low, and a down arrow sits eight screen pixels above the candle
+  high. Missing or mismatched candle data stops rendering with an explicit
+  contract error rather than placing a misleading marker.
+- A single draggable panel shows the selected event's four-force facts,
+  immediate price response, trigger reasons, close reason, and ordered outcome
+  horizons. Dragging the header keeps the panel inside the viewport and stores
+  its last position in Tampermonkey private storage. This prevents persistent
+  multiline notes from overlapping one-second bars while preserving the
+  operator's preferred placement across chart context changes and reloads.
 - The panel keeps the eight most recent events. It follows the newest event by
   default; selecting an older row pauses that behavior until `最新` is pressed.
 - Notional values use compact `K` and `M` suffixes. Ratios use at most two

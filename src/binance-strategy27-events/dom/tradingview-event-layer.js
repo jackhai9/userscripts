@@ -1,5 +1,6 @@
 const CHART_ROOT_SELECTOR = '.chart-widget-root';
 const STATUS_ID = 'jh-strategy27-event-status';
+const DIRECTIONAL_MARKER_GAP_PX = 8;
 
 function hasVisibleBox(element) {
   if (!element?.getClientRects().length) return false;
@@ -58,6 +59,61 @@ function shapeOptions(shape, color) {
   };
 }
 
+function createMarkerPointResolver(chart) {
+  const model = chart._chartWidget?.model?.()?.model?.();
+  const timeScale = model?.timeScale?.();
+  const seriesData = chart.getSeries?.()?.data?.();
+  const mainSeries = model?.mainSeries?.();
+  const priceScale = mainSeries?.priceScale?.();
+  const requiredMethods = [
+    [timeScale, 'timePointToIndex'],
+    [seriesData, 'valueAt'],
+    [mainSeries, 'firstValue'],
+    [priceScale, 'priceToCoordinate'],
+    [priceScale, 'coordinateToPrice'],
+  ];
+  for (const [owner, method] of requiredMethods) {
+    if (typeof owner?.[method] !== 'function') {
+      throw new Error(`TradingView marker placement method is unavailable: ${method}`);
+    }
+  }
+
+  return (annotation) => {
+    const point = { time: annotation.markerTime, price: annotation.markerPrice };
+    if (annotation.markerShape === 'flag') return point;
+    if (!['arrow_up', 'arrow_down'].includes(annotation.markerShape)) {
+      throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
+    }
+
+    const barIndex = timeScale.timePointToIndex(annotation.markerTime, 0);
+    const candle = Number.isFinite(barIndex) ? seriesData.valueAt(barIndex) : null;
+    if (!Array.isArray(candle) || candle.length < 5 || candle[0] !== annotation.markerTime) {
+      throw new Error(`Strategy 27 candle is unavailable for ${annotation.markerTime}`);
+    }
+    const candleHigh = Number(candle[2]);
+    const candleLow = Number(candle[3]);
+    if (!Number.isFinite(candleHigh) || !Number.isFinite(candleLow)) {
+      throw new Error(`Strategy 27 candle prices are invalid for ${annotation.markerTime}`);
+    }
+
+    const firstValue = mainSeries.firstValue();
+    const candleEdge = annotation.markerShape === 'arrow_up' ? candleLow : candleHigh;
+    const edgeCoordinate = priceScale.priceToCoordinate(candleEdge, firstValue);
+    if (!Number.isFinite(edgeCoordinate)) {
+      throw new Error(`Strategy 27 candle coordinate is unavailable for ${annotation.markerTime}`);
+    }
+    const direction = annotation.markerShape === 'arrow_up' ? 1 : -1;
+    const markerPrice = priceScale.coordinateToPrice(
+      edgeCoordinate + (direction * DIRECTIONAL_MARKER_GAP_PX),
+      firstValue,
+    );
+    if (!Number.isFinite(markerPrice)) {
+      throw new Error(`Strategy 27 marker price is unavailable for ${annotation.markerTime}`);
+    }
+    return { time: annotation.markerTime, price: markerPrice };
+  };
+}
+
 function verifyResolvedTime(chart, id, requestedTime) {
   const shape = chart.getShapeById(id);
   const points = shape?.getPoints?.();
@@ -93,6 +149,7 @@ export function createTradingViewEventLayer(target, { maxEvents, maxAgeMs }) {
   if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error('Strategy 27 maxEvents is invalid');
   if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error('Strategy 27 maxAgeMs is invalid');
   const { chart } = target;
+  const resolveMarkerPoint = createMarkerPointResolver(chart);
   const registry = new Map();
   let renderGeneration = 0;
 
@@ -115,25 +172,44 @@ export function createTradingViewEventLayer(target, { maxEvents, maxAgeMs }) {
 
   async function ensureMarker(eventId, annotation, observedAtMs) {
     let record = registry.get(eventId);
+    const markerPoint = resolveMarkerPoint(annotation);
     if (!record) {
       pruneAge(observedAtMs);
       ensureCapacityForNew();
       const requestedGeneration = renderGeneration;
-      const markerId = await createAlignedShape(chart, {
-        time: annotation.markerTime,
-        price: annotation.markerPrice,
-      }, shapeOptions(annotation.markerShape, annotation.markerColor));
+      const markerId = await createAlignedShape(
+        chart,
+        markerPoint,
+        shapeOptions(annotation.markerShape, annotation.markerColor),
+      );
       if (requestedGeneration !== renderGeneration) {
         chart.removeEntity(markerId);
         return false;
       }
-      record = { markerId, observedAtMs };
+      record = { markerId, markerShape: annotation.markerShape, observedAtMs };
       registry.set(eventId, record);
+    } else if (record.markerShape !== annotation.markerShape) {
+      const requestedGeneration = renderGeneration;
+      const markerId = await createAlignedShape(
+        chart,
+        markerPoint,
+        shapeOptions(annotation.markerShape, annotation.markerColor),
+      );
+      if (requestedGeneration !== renderGeneration) {
+        chart.removeEntity(markerId);
+        return false;
+      }
+      chart.removeEntity(record.markerId);
+      record.markerId = markerId;
+      record.markerShape = annotation.markerShape;
+      record.observedAtMs = observedAtMs;
     } else {
-      updateAlignedShape(chart, record.markerId, {
-        time: annotation.markerTime,
-        price: annotation.markerPrice,
-      }, { color: annotation.markerColor });
+      updateAlignedShape(
+        chart,
+        record.markerId,
+        markerPoint,
+        { color: annotation.markerColor },
+      );
       record.observedAtMs = observedAtMs;
     }
     return true;

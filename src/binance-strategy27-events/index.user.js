@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.0
+// @version      0.2.1
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流事件和后续结果
 // @match        https://www.binance.com/*/futures/*
@@ -50,6 +50,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
   const DEFAULT_GATEWAY_ORIGIN = 'http://127.0.0.1:18765';
   const GATEWAY_ORIGIN_KEY = 'strategy27GatewayOrigin';
   const GATEWAY_SECRET_KEY = 'strategy27GatewayAuthSecret';
+  const PANEL_POSITION_KEY = 'strategy27EventPanelPosition';
   const CONTEXT_CHECK_INTERVAL_MS = 1_000;
   const MAX_RETAINED_EVENTS = 80;
   const MAX_PANEL_EVENTS = 8;
@@ -138,6 +139,8 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       }),
       panel: createStrategy27EventPanel(pageDocument, target.chartRoot, {
         maxEvents: MAX_PANEL_EVENTS,
+        loadPosition: () => GM_getValue(PANEL_POSITION_KEY, null),
+        savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position),
       }),
       failed: false,
     };
