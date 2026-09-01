@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.180
+// @version      2.7.181
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3400,6 +3400,610 @@
     return { chartRoot, tradingViewApi: tradingViewApis[0] };
   }
 
+  // src/binance-orderbook-trade/core/depth-profile-book.js
+  var DepthProfileSequenceError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "DepthProfileSequenceError";
+    }
+  };
+  var MAX_BUFFERED_UPDATES = 500;
+  function assertSymbol(value) {
+    if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) {
+      throw new Error("Invalid depth profile symbol");
+    }
+    return value;
+  }
+  function assertUpdateId(value, field) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`Invalid depth profile ${field}`);
+    }
+    return value;
+  }
+  function parseLevels(value, field) {
+    if (!Array.isArray(value)) throw new Error(`Invalid depth profile ${field}`);
+    return value.map((level) => {
+      if (!Array.isArray(level) || level.length < 2) {
+        throw new Error(`Invalid depth profile ${field} level`);
+      }
+      const price = String(level[0]);
+      const quantity = String(level[1]);
+      const numericPrice = Number(price);
+      const numericQuantity = Number(quantity);
+      if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
+        throw new Error(`Invalid depth profile ${field} price`);
+      }
+      if (!Number.isFinite(numericQuantity) || numericQuantity < 0) {
+        throw new Error(`Invalid depth profile ${field} quantity`);
+      }
+      return [price, quantity];
+    });
+  }
+  function parseSnapshot(payload, symbol) {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Invalid depth profile snapshot");
+    }
+    return {
+      lastUpdateId: assertUpdateId(payload.lastUpdateId, "snapshot update id"),
+      bids: parseLevels(payload.bids, "snapshot bids"),
+      asks: parseLevels(payload.asks, "snapshot asks"),
+      symbol: assertSymbol(symbol)
+    };
+  }
+  function parseUpdate(payload, symbol) {
+    if (!payload || typeof payload !== "object" || payload.e !== "depthUpdate") {
+      throw new Error("Invalid depth profile update");
+    }
+    if (payload.s !== symbol) {
+      throw new Error(`Depth profile symbol mismatch: expected ${symbol}, received ${payload.s}`);
+    }
+    if (payload.st !== void 0 && payload.st !== 1) {
+      throw new Error(`Depth profile received non-USD-M data: ${payload.st}`);
+    }
+    return {
+      firstUpdateId: assertUpdateId(payload.U, "first update id"),
+      finalUpdateId: assertUpdateId(payload.u, "final update id"),
+      previousFinalUpdateId: assertUpdateId(payload.pu, "previous final update id"),
+      bids: parseLevels(payload.b, "bid updates"),
+      asks: parseLevels(payload.a, "ask updates")
+    };
+  }
+  function replaceLevels(target, levels) {
+    target.clear();
+    for (const [price, quantity] of levels) {
+      if (Number(quantity) > 0) target.set(price, quantity);
+    }
+  }
+  function applyLevels(target, levels) {
+    for (const [price, quantity] of levels) {
+      if (Number(quantity) === 0) target.delete(price);
+      else target.set(price, quantity);
+    }
+  }
+  function applyUpdate(book, update, { first = false } = {}) {
+    if (!first && update.finalUpdateId <= book.previousFinalUpdateId) return;
+    if (!first && update.previousFinalUpdateId !== book.previousFinalUpdateId) {
+      throw new DepthProfileSequenceError(
+        `Depth update sequence gap: expected pu ${book.previousFinalUpdateId}, received ${update.previousFinalUpdateId}`
+      );
+    }
+    applyLevels(book.bids, update.bids);
+    applyLevels(book.asks, update.asks);
+    book.previousFinalUpdateId = update.finalUpdateId;
+    book.ready = true;
+  }
+  function createDepthProfileBook(symbol) {
+    return {
+      symbol: assertSymbol(symbol),
+      bids: /* @__PURE__ */ new Map(),
+      asks: /* @__PURE__ */ new Map(),
+      bufferedUpdates: [],
+      snapshotUpdateId: null,
+      previousFinalUpdateId: null,
+      ready: false
+    };
+  }
+  function pushDepthProfileUpdate(book, payload) {
+    const update = parseUpdate(payload, book.symbol);
+    if (book.snapshotUpdateId === null || !book.ready) {
+      book.bufferedUpdates.push(update);
+      if (book.bufferedUpdates.length > MAX_BUFFERED_UPDATES) {
+        throw new DepthProfileSequenceError("Depth update buffer exceeded its limit");
+      }
+      if (book.snapshotUpdateId !== null) applyBufferedUpdates(book);
+      return book.ready;
+    }
+    applyUpdate(book, update);
+    return true;
+  }
+  function applyBufferedUpdates(book) {
+    const eligibleUpdates = book.bufferedUpdates.filter(
+      (update) => update.finalUpdateId >= book.snapshotUpdateId
+    );
+    if (!eligibleUpdates.length) {
+      book.bufferedUpdates = [];
+      return false;
+    }
+    const firstIndex = eligibleUpdates.findIndex(
+      (update) => update.firstUpdateId <= book.snapshotUpdateId && update.finalUpdateId >= book.snapshotUpdateId
+    );
+    if (firstIndex < 0) {
+      const first = eligibleUpdates[0];
+      if (first.firstUpdateId > book.snapshotUpdateId) {
+        throw new DepthProfileSequenceError(
+          `Depth snapshot gap: snapshot ${book.snapshotUpdateId}, first update ${first.firstUpdateId}`
+        );
+      }
+      book.bufferedUpdates = eligibleUpdates;
+      return false;
+    }
+    const updates = eligibleUpdates.slice(firstIndex);
+    applyUpdate(book, updates[0], { first: true });
+    for (const update of updates.slice(1)) applyUpdate(book, update);
+    book.bufferedUpdates = [];
+    return true;
+  }
+  function applyDepthProfileSnapshot(book, payload) {
+    const snapshot = parseSnapshot(payload, book.symbol);
+    replaceLevels(book.bids, snapshot.bids);
+    replaceLevels(book.asks, snapshot.asks);
+    book.snapshotUpdateId = snapshot.lastUpdateId;
+    book.previousFinalUpdateId = null;
+    book.ready = false;
+    return applyBufferedUpdates(book);
+  }
+  function toSortedLevels(levels, direction, limit) {
+    return [...levels.entries()].map(([price, quantity]) => ({
+      price: Number(price),
+      quantity: Number(quantity)
+    })).filter((level) => Number.isFinite(level.price) && Number.isFinite(level.quantity)).sort((left, right) => direction * (left.price - right.price)).slice(0, limit);
+  }
+  function addCumulativeQuantity(levels) {
+    let cumulative = 0;
+    return levels.map((level) => {
+      cumulative += level.quantity;
+      return { ...level, cumulative };
+    });
+  }
+  function buildDepthProfile(book, { levelsPerSide = 60 } = {}) {
+    if (!book.ready) throw new Error("Depth profile book is not ready");
+    if (!Number.isInteger(levelsPerSide) || levelsPerSide <= 0) {
+      throw new Error("Invalid depth profile level count");
+    }
+    const bids = addCumulativeQuantity(toSortedLevels(book.bids, -1, levelsPerSide));
+    const asks = addCumulativeQuantity(toSortedLevels(book.asks, 1, levelsPerSide));
+    if (!bids.length || !asks.length) throw new Error("Depth profile requires bids and asks");
+    const midPrice = (bids[0].price + asks[0].price) / 2;
+    const furthestDistance = Math.max(
+      midPrice - bids[bids.length - 1].price,
+      asks[asks.length - 1].price - midPrice
+    );
+    if (!(furthestDistance > 0)) throw new Error("Depth profile price range is empty");
+    const maxCumulative = Math.max(
+      bids[bids.length - 1].cumulative,
+      asks[asks.length - 1].cumulative
+    );
+    if (!(maxCumulative > 0)) throw new Error("Depth profile quantity range is empty");
+    return {
+      symbol: book.symbol,
+      midPrice,
+      minPrice: midPrice - furthestDistance,
+      maxPrice: midPrice + furthestDistance,
+      maxCumulative,
+      bids,
+      asks
+    };
+  }
+
+  // src/binance-orderbook-trade/core/depth-profile-session.js
+  var DEPTH_SNAPSHOT_LIMIT = 1e3;
+  var MAX_RESYNCS_PER_CONNECTION = 3;
+  var MAX_RECONNECT_ATTEMPTS = 5;
+  var RESYNC_DELAY_MS = 1e3;
+  var RECONNECT_DELAYS_MS = [1e3, 2e3, 5e3, 1e4, 3e4];
+  function assertFunction(value, field) {
+    if (typeof value !== "function") throw new Error(`Invalid depth profile ${field}`);
+    return value;
+  }
+  function createDepthProfileSession(options) {
+    const {
+      symbol,
+      fetchFn,
+      WebSocketCtor,
+      onProfile,
+      onStatus,
+      setTimer = setTimeout,
+      clearTimer = clearTimeout
+    } = options || {};
+    if (typeof symbol !== "string" || !/^[A-Z0-9_]+$/.test(symbol)) {
+      throw new Error("Invalid depth profile session symbol");
+    }
+    assertFunction(fetchFn, "fetch function");
+    assertFunction(WebSocketCtor, "WebSocket constructor");
+    assertFunction(onProfile, "profile listener");
+    assertFunction(onStatus, "status listener");
+    assertFunction(setTimer, "timer scheduler");
+    assertFunction(clearTimer, "timer clearer");
+    let active = false;
+    let epoch = 0;
+    let socket = null;
+    let snapshotController = null;
+    let reconnectTimer = 0;
+    let resyncTimer = 0;
+    let reconnectAttempts = 0;
+    let resyncAttempts = 0;
+    let book = createDepthProfileBook(symbol);
+    const snapshotUrl = `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${DEPTH_SNAPSHOT_LIMIT}`;
+    const streamUrl = `wss://fstream.binance.com/public/ws/${symbol.toLowerCase()}@depth@100ms`;
+    function emitStatus(status, detail = "") {
+      if (!active) return;
+      onStatus({ symbol, status, detail });
+    }
+    function clearScheduledWork() {
+      if (reconnectTimer) clearTimer(reconnectTimer);
+      if (resyncTimer) clearTimer(resyncTimer);
+      reconnectTimer = 0;
+      resyncTimer = 0;
+    }
+    function abortSnapshot() {
+      snapshotController?.abort();
+      snapshotController = null;
+    }
+    function closeSocket() {
+      const currentSocket = socket;
+      socket = null;
+      if (currentSocket && currentSocket.readyState < 2) currentSocket.close();
+    }
+    function emitProfile(profile) {
+      reconnectAttempts = 0;
+      onProfile(profile);
+      emitStatus("ready");
+    }
+    function failSession(error) {
+      clearScheduledWork();
+      abortSnapshot();
+      closeSocket();
+      emitStatus("failed", error?.message || String(error));
+      active = false;
+      epoch += 1;
+    }
+    function scheduleReconnect(error) {
+      if (!active || reconnectTimer) return;
+      abortSnapshot();
+      closeSocket();
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        failSession(error);
+        return;
+      }
+      const delay = RECONNECT_DELAYS_MS[reconnectAttempts];
+      reconnectAttempts += 1;
+      emitStatus("reconnecting", error?.message || String(error));
+      const scheduledEpoch = epoch;
+      reconnectTimer = setTimer(() => {
+        reconnectTimer = 0;
+        if (!active || scheduledEpoch !== epoch) return;
+        connect();
+      }, delay);
+    }
+    function scheduleResync(error) {
+      if (!active || resyncTimer) return;
+      abortSnapshot();
+      book = createDepthProfileBook(symbol);
+      if (resyncAttempts >= MAX_RESYNCS_PER_CONNECTION) {
+        scheduleReconnect(error);
+        return;
+      }
+      resyncAttempts += 1;
+      emitStatus("resyncing", error?.message || String(error));
+      const scheduledEpoch = epoch;
+      resyncTimer = setTimer(() => {
+        resyncTimer = 0;
+        if (!active || scheduledEpoch !== epoch) return;
+        requestSnapshot();
+      }, RESYNC_DELAY_MS);
+    }
+    async function requestSnapshot() {
+      if (!active || snapshotController) return;
+      const requestEpoch = epoch;
+      const controller = new AbortController();
+      snapshotController = controller;
+      let profile = null;
+      try {
+        const response = await fetchFn(snapshotUrl, { signal: controller.signal });
+        if (!active || requestEpoch !== epoch || snapshotController !== controller) return;
+        if (!response.ok) throw new Error(`Depth snapshot HTTP ${response.status}`);
+        const payload = await response.json();
+        if (!active || requestEpoch !== epoch || snapshotController !== controller) return;
+        const ready = applyDepthProfileSnapshot(book, payload);
+        snapshotController = null;
+        if (ready) profile = buildDepthProfile(book);
+      } catch (error) {
+        if (snapshotController === controller) snapshotController = null;
+        if (controller.signal.aborted || !active || requestEpoch !== epoch) return;
+        scheduleResync(error);
+        return;
+      }
+      if (profile) emitProfile(profile);
+      else emitStatus("synchronizing");
+    }
+    function handleMessage(currentSocket, event) {
+      if (!active || socket !== currentSocket) return;
+      let profile = null;
+      try {
+        const payload = JSON.parse(event.data);
+        const ready = pushDepthProfileUpdate(book, payload);
+        if (ready) profile = buildDepthProfile(book);
+      } catch (error) {
+        if (error instanceof DepthProfileSequenceError) scheduleResync(error);
+        else scheduleReconnect(error);
+        return;
+      }
+      if (profile) emitProfile(profile);
+    }
+    function connect() {
+      if (!active || socket) return;
+      book = createDepthProfileBook(symbol);
+      resyncAttempts = 0;
+      emitStatus("connecting");
+      let currentSocket;
+      try {
+        currentSocket = new WebSocketCtor(streamUrl);
+      } catch (error) {
+        scheduleReconnect(error);
+        return;
+      }
+      socket = currentSocket;
+      currentSocket.addEventListener("open", () => {
+        if (!active || socket !== currentSocket) return;
+        emitStatus("synchronizing");
+        requestSnapshot();
+      }, { once: true });
+      currentSocket.addEventListener("message", (event) => handleMessage(currentSocket, event));
+      currentSocket.addEventListener("error", () => {
+        if (!active || socket !== currentSocket) return;
+        currentSocket.close();
+      });
+      currentSocket.addEventListener("close", () => {
+        if (!active || socket !== currentSocket) return;
+        socket = null;
+        scheduleReconnect(new Error("Depth WebSocket closed"));
+      }, { once: true });
+    }
+    return {
+      symbol,
+      start() {
+        if (active) throw new Error("Depth profile session already started");
+        active = true;
+        epoch += 1;
+        connect();
+      },
+      stop() {
+        if (!active) return;
+        active = false;
+        epoch += 1;
+        clearScheduledWork();
+        abortSnapshot();
+        closeSocket();
+      },
+      isActive() {
+        return active;
+      }
+    };
+  }
+
+  // src/binance-orderbook-trade/dom/depth-profile.js
+  var DEPTH_PROFILE_ID = "jh-binance-depth-profile";
+  var STYLE_ID = "jh-binance-depth-profile-style";
+  var CHART_ROOT_SELECTOR2 = ".chart-widget-root";
+  function hasVisibleBox2(element) {
+    if (!element?.getClientRects().length) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+  function findDepthProfileHost(document2) {
+    const chartRoots = Array.from(document2.querySelectorAll(CHART_ROOT_SELECTOR2)).filter(hasVisibleBox2);
+    if (!chartRoots.length) return null;
+    if (chartRoots.length > 1) {
+      throw new Error(`Visible chart root count is invalid: ${chartRoots.length}`);
+    }
+    const chartRoot = chartRoots[0];
+    const frames = Array.from(chartRoot.querySelectorAll("iframe")).filter(hasVisibleBox2);
+    if (frames.length > 1) {
+      throw new Error(`Visible chart frame count is invalid: ${frames.length}`);
+    }
+    if (frames.length === 1) {
+      const frame = frames[0];
+      const host = frame.parentElement?.parentElement;
+      if (!host || !chartRoot.contains(host)) {
+        throw new Error("Visible chart frame host is invalid");
+      }
+      return { chartRoot, frame, host };
+    }
+    const basicChartHosts = Array.from(
+      chartRoot.querySelectorAll(".draggableCancel.h-full.relative")
+    ).filter((candidate) => hasVisibleBox2(candidate) && Array.from(candidate.querySelectorAll(".kline-container")).some(hasVisibleBox2) && Array.from(candidate.querySelectorAll("canvas")).some(hasVisibleBox2));
+    if (basicChartHosts.length > 1) {
+      throw new Error(`Visible basic chart host count is invalid: ${basicChartHosts.length}`);
+    }
+    if (!basicChartHosts.length) return null;
+    return { chartRoot, frame: null, host: basicChartHosts[0] };
+  }
+  function installStyle(document2) {
+    if (document2.getElementById(STYLE_ID)) return;
+    const style = document2.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+    #${DEPTH_PROFILE_ID} {
+      position: absolute;
+      z-index: 3;
+      top: 0;
+      right: 72px;
+      bottom: 0;
+      width: 132px;
+      overflow: visible;
+      pointer-events: none;
+      font-family: BinancePlex, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    #${DEPTH_PROFILE_ID} .jh-depth-profile-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-BasicBg, #fff) 72%, transparent));
+      opacity: .9;
+      pointer-events: none;
+    }
+    #${DEPTH_PROFILE_ID}[data-expanded="false"] .jh-depth-profile-canvas {
+      display: none;
+    }
+    #${DEPTH_PROFILE_ID} .jh-depth-profile-toggle {
+      position: absolute;
+      z-index: 2;
+      top: 8px;
+      right: 4px;
+      box-sizing: border-box;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 1px solid var(--color-InputLine, #d8dce1);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--color-BasicBg, #fff) 88%, transparent);
+      color: var(--color-SecondaryText, #474d57);
+      font-size: 12px;
+      line-height: 22px;
+      text-align: center;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    #${DEPTH_PROFILE_ID}[data-expanded="false"] {
+      width: 28px;
+    }
+    #${DEPTH_PROFILE_ID} .jh-depth-profile-status {
+      position: absolute;
+      right: 4px;
+      bottom: 8px;
+      max-width: 124px;
+      padding: 3px 6px;
+      overflow: hidden;
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--color-BasicBg, #fff) 90%, transparent);
+      color: var(--color-TertiaryText, #707a8a);
+      font-size: 10px;
+      line-height: 14px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    #${DEPTH_PROFILE_ID} .jh-depth-profile-status:empty,
+    #${DEPTH_PROFILE_ID}[data-expanded="false"] .jh-depth-profile-status {
+      display: none;
+    }
+  `;
+    (document2.head || document2.documentElement).appendChild(style);
+  }
+  function ensureDepthProfileView(document2, host, { onToggle }) {
+    if (!(host instanceof document2.defaultView.Element)) {
+      throw new Error("Invalid depth profile host");
+    }
+    if (typeof onToggle !== "function") throw new Error("Invalid depth profile toggle listener");
+    const existing = document2.getElementById(DEPTH_PROFILE_ID);
+    if (existing && existing.parentElement === host) return existing;
+    existing?.remove();
+    installStyle(document2);
+    const root = document2.createElement("div");
+    root.id = DEPTH_PROFILE_ID;
+    root.dataset.expanded = "true";
+    const canvas = document2.createElement("canvas");
+    canvas.className = "jh-depth-profile-canvas";
+    canvas.setAttribute("aria-hidden", "true");
+    root.appendChild(canvas);
+    const toggle = document2.createElement("button");
+    toggle.type = "button";
+    toggle.className = "jh-depth-profile-toggle";
+    toggle.dataset.depthProfileToggle = "true";
+    toggle.addEventListener("click", onToggle);
+    root.appendChild(toggle);
+    const status = document2.createElement("div");
+    status.className = "jh-depth-profile-status";
+    status.setAttribute("aria-live", "polite");
+    root.appendChild(status);
+    host.appendChild(root);
+    return root;
+  }
+  function setDepthProfileViewState(root, {
+    expanded,
+    expandedLabel,
+    collapsedLabel,
+    status = "",
+    statusTitle = status
+  }) {
+    const toggle = root.querySelector("[data-depth-profile-toggle]");
+    const statusElement = root.querySelector(".jh-depth-profile-status");
+    const expandedValue = String(expanded);
+    const toggleText = expanded ? "−" : collapsedLabel;
+    const toggleTitle = expanded ? expandedLabel : collapsedLabel;
+    if (root.dataset.expanded !== expandedValue) root.dataset.expanded = expandedValue;
+    if (toggle.textContent !== toggleText) toggle.textContent = toggleText;
+    if (toggle.title !== toggleTitle) toggle.title = toggleTitle;
+    if (toggle.getAttribute("aria-label") !== toggleTitle) {
+      toggle.setAttribute("aria-label", toggleTitle);
+    }
+    if (toggle.getAttribute("aria-pressed") !== expandedValue) {
+      toggle.setAttribute("aria-pressed", expandedValue);
+    }
+    if (statusElement.textContent !== status) statusElement.textContent = status;
+    if (statusElement.title !== statusTitle) statusElement.title = statusTitle;
+  }
+  function drawSide(context, levels, profile, width, height, color) {
+    const priceRange = profile.maxPrice - profile.minPrice;
+    const levelHeight = Math.max(1, Math.min(5, height / (levels.length * 2.4)));
+    context.fillStyle = color;
+    for (const level of levels) {
+      const y = (profile.maxPrice - level.price) / priceRange * height;
+      const barWidth = level.cumulative / profile.maxCumulative * width;
+      context.fillRect(width - barWidth, y - levelHeight / 2, barWidth, levelHeight);
+    }
+  }
+  function renderDepthProfile(root, profile) {
+    const canvas = root.querySelector(".jh-depth-profile-canvas");
+    const rect = canvas.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return false;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Depth profile canvas context is unavailable");
+    const devicePixelRatio = root.ownerDocument.defaultView.devicePixelRatio || 1;
+    const pixelWidth = Math.max(1, Math.round(rect.width * devicePixelRatio));
+    const pixelHeight = Math.max(1, Math.round(rect.height * devicePixelRatio));
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    context.clearRect(0, 0, rect.width, rect.height);
+    drawSide(context, profile.asks, profile, rect.width, rect.height, "rgba(246, 70, 93, .30)");
+    drawSide(context, profile.bids, profile, rect.width, rect.height, "rgba(14, 203, 129, .30)");
+    const priceRange = profile.maxPrice - profile.minPrice;
+    const midY = (profile.maxPrice - profile.midPrice) / priceRange * rect.height;
+    context.save();
+    context.strokeStyle = "rgba(240, 185, 11, .85)";
+    context.lineWidth = 1;
+    context.setLineDash([3, 3]);
+    context.beginPath();
+    context.moveTo(0, midY + 0.5);
+    context.lineTo(rect.width, midY + 0.5);
+    context.stroke();
+    context.restore();
+    return true;
+  }
+  function clearDepthProfile(root) {
+    const canvas = root.querySelector(".jh-depth-profile-canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Depth profile canvas context is unavailable");
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.restore();
+  }
+  function removeDepthProfileView(document2) {
+    document2.getElementById(DEPTH_PROFILE_ID)?.remove();
+  }
+
   // src/binance-orderbook-trade/core/cancel-dialog-decision.js
   function resolveCancelDialogDecision({
     seenDialog,
@@ -3596,7 +4200,7 @@
   function normalizeLabel(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
-  function hasVisibleBox2(element) {
+  function hasVisibleBox3(element) {
     if (!element?.getClientRects().length) return false;
     const rect = element.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
@@ -3610,7 +4214,7 @@
       const trigger2 = toolbar2.children[toolbar2.children.length - 2];
       const latestPriceSlot = toolbar2.children[toolbar2.children.length - 1];
       const latestPriceControl = latestPriceSlot.matches(LATEST_PRICE_CONTROL_SELECTOR) ? latestPriceSlot : Array.from(latestPriceSlot.children).find((child) => child.matches(LATEST_PRICE_CONTROL_SELECTOR));
-      return hasVisibleBox2(toolbar2) && hasVisibleBox2(trigger2) && trigger2.matches(".bn-tooltips-wrap.bn-tooltips-web") && hasVisibleBox2(latestPriceControl);
+      return hasVisibleBox3(toolbar2) && hasVisibleBox3(trigger2) && trigger2.matches(".bn-tooltips-wrap.bn-tooltips-web") && hasVisibleBox3(latestPriceControl);
     });
     if (!toolbars.length) return null;
     if (toolbars.length > 1) {
@@ -3668,7 +4272,7 @@
 
   // src/binance-orderbook-trade/dom/usdt-rebalance-dialog.js
   var USDT_REBALANCE_DIALOG_ID = "jh-binance-usdt-rebalance-dialog";
-  var STYLE_ID = "jh-binance-usdt-rebalance-dialog-style";
+  var STYLE_ID2 = "jh-binance-usdt-rebalance-dialog-style";
   function assertText(value, field) {
     if (typeof value !== "string" || value.trim() === "") {
       throw new Error(`Invalid USDT rebalance dialog ${field}`);
@@ -3712,9 +4316,9 @@
     return element;
   }
   function installDialogStyle(document2) {
-    if (document2.getElementById(STYLE_ID)) return;
+    if (document2.getElementById(STYLE_ID2)) return;
     const style = document2.createElement("style");
-    style.id = STYLE_ID;
+    style.id = STYLE_ID2;
     style.textContent = `
     #${USDT_REBALANCE_DIALOG_ID} {
       box-sizing: border-box;
@@ -4005,6 +4609,7 @@
     const USDT_REBALANCE_ACTION_ID = "jh-binance-usdt-rebalance-action";
     const MULTIPLIER_PRESS_FEEDBACK_ATTR = "data-jh-press-feedback";
     const ORDERBOOK_PRECISION_RECOMMENDATION_ID = "jh-binance-orderbook-precision-recommendation";
+    const DEPTH_PROFILE_ENABLED_KEY = "jh_binance_depth_profile_enabled_v1";
     const DEFAULT_MULTIPLIER = "1";
     const DEFAULT_CLOSE_SIDE = "LONG";
     const DEFAULT_OPEN_SIDE = "LONG";
@@ -4205,6 +4810,15 @@
       nativeOptionsStatus: null,
       status: PANEL_COPY.status.precisionInsufficient
     };
+    let depthProfileEnabled = localStorage.getItem(DEPTH_PROFILE_ENABLED_KEY) !== "0";
+    let depthProfileSession = null;
+    let depthProfileView = null;
+    let depthProfileData = null;
+    let depthProfileStatus = { status: "connecting", detail: "" };
+    let depthProfileFailedSymbol = null;
+    let depthProfileObserver = null;
+    let depthProfileObserverRoot = null;
+    let depthProfileSyncQueued = false;
     const controlledNativeButtons = /* @__PURE__ */ new Set();
     let lastObservedSymbol = getCurrentSymbol();
     const MODE_HINT_ID = "jh-binance-trade-mode-hint";
@@ -10503,6 +11117,145 @@
       });
       return panel;
     }
+    function depthProfileStatusPresentation() {
+      const copyByStatus = {
+        connecting: localizedText("连接深度数据", "Connecting depth"),
+        synchronizing: localizedText("同步深度数据", "Syncing depth"),
+        resyncing: localizedText("重新同步深度", "Resyncing depth"),
+        reconnecting: localizedText("重新连接深度", "Reconnecting depth"),
+        failed: localizedText("深度数据不可用", "Depth unavailable"),
+        ready: null
+      };
+      const copy = copyByStatus[depthProfileStatus.status];
+      if (copy === void 0) throw new Error(`Unknown depth profile status: ${depthProfileStatus.status}`);
+      const text = depthProfileStatus.status === "ready" ? "" : ui(copy);
+      const title = depthProfileStatus.detail ? `${text}: ${depthProfileStatus.detail}` : text;
+      return { text, title };
+    }
+    function renderDepthProfileUi() {
+      if (!depthProfileView?.isConnected) return;
+      const status = depthProfileStatusPresentation();
+      setDepthProfileViewState(depthProfileView, {
+        expanded: depthProfileEnabled,
+        expandedLabel: ui(localizedText("隐藏深度剖面", "Hide depth profile")),
+        collapsedLabel: ui(localizedText("深", "D")),
+        status: status.text,
+        statusTitle: status.title
+      });
+      if (depthProfileEnabled && depthProfileData) {
+        renderDepthProfile(depthProfileView, depthProfileData);
+      } else {
+        clearDepthProfile(depthProfileView);
+      }
+    }
+    function stopDepthProfileSession() {
+      depthProfileSession?.stop();
+      depthProfileSession = null;
+    }
+    function stopDepthProfileObserver() {
+      depthProfileObserver?.disconnect();
+      depthProfileObserver = null;
+      depthProfileObserverRoot = null;
+    }
+    function removeDepthProfileRuntimeView() {
+      removeDepthProfileView(document);
+      depthProfileView = null;
+    }
+    function scheduleDepthProfileSync() {
+      if (depthProfileSyncQueued) return;
+      depthProfileSyncQueued = true;
+      window.requestAnimationFrame(() => {
+        depthProfileSyncQueued = false;
+        syncDepthProfile();
+      });
+    }
+    function ensureDepthProfileObserver() {
+      const visibleRoots = Array.from(document.querySelectorAll(".chart-widget-root")).filter((root2) => root2.getClientRects().length > 0);
+      const root = visibleRoots.length === 1 ? visibleRoots[0] : null;
+      if (!root) {
+        stopDepthProfileObserver();
+        return;
+      }
+      if (depthProfileObserver && depthProfileObserverRoot === root && root.isConnected) return;
+      stopDepthProfileObserver();
+      depthProfileObserverRoot = root;
+      depthProfileObserver = new MutationObserver(scheduleDepthProfileSync);
+      depthProfileObserver.observe(root, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["class", "style"]
+      });
+    }
+    function startDepthProfileSession(symbol) {
+      let session = null;
+      session = createDepthProfileSession({
+        symbol,
+        fetchFn: window.fetch.bind(window),
+        WebSocketCtor: window.WebSocket,
+        onProfile(profile) {
+          if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
+          depthProfileData = profile;
+          depthProfileStatus = { status: "ready", detail: "" };
+          renderDepthProfileUi();
+        },
+        onStatus(status) {
+          if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
+          depthProfileStatus = status;
+          if (status.status !== "ready") depthProfileData = null;
+          if (status.status === "failed") depthProfileFailedSymbol = symbol;
+          renderDepthProfileUi();
+        }
+      });
+      depthProfileSession = session;
+      session.start();
+    }
+    function syncDepthProfile() {
+      if (document.hidden || !isFuturesTradingPage()) {
+        stopDepthProfileSession();
+        removeDepthProfileRuntimeView();
+        return;
+      }
+      ensureDepthProfileObserver();
+      let target;
+      try {
+        target = findDepthProfileHost(document);
+      } catch (error) {
+        stopDepthProfileSession();
+        removeDepthProfileRuntimeView();
+        err("depth profile host discovery failed:", error);
+        return;
+      }
+      if (!target) {
+        stopDepthProfileSession();
+        removeDepthProfileRuntimeView();
+        return;
+      }
+      depthProfileView = ensureDepthProfileView(document, target.host, {
+        onToggle() {
+          depthProfileEnabled = !depthProfileEnabled;
+          localStorage.setItem(DEPTH_PROFILE_ENABLED_KEY, depthProfileEnabled ? "1" : "0");
+          if (depthProfileEnabled) depthProfileFailedSymbol = null;
+          else {
+            stopDepthProfileSession();
+            depthProfileData = null;
+            depthProfileStatus = { status: "connecting", detail: "" };
+          }
+          syncDepthProfile();
+        }
+      });
+      renderDepthProfileUi();
+      if (!depthProfileEnabled) return;
+      const symbol = getCurrentSymbol();
+      if (!symbol) return;
+      if (depthProfileSession?.symbol !== symbol) stopDepthProfileSession();
+      if (depthProfileFailedSymbol === symbol) return;
+      if (!depthProfileSession || !depthProfileSession.isActive()) {
+        depthProfileData = null;
+        depthProfileStatus = { status: "connecting", detail: "" };
+        startDepthProfileSession(symbol);
+      }
+    }
     function removePanel() {
       panelResizeObserver?.disconnect();
       panelResizeObserver = null;
@@ -10516,6 +11269,7 @@
       clearCancelNoOrdersFeedback();
       cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
       removePanel();
+      removeDepthProfileRuntimeView();
       stopTradingTimers();
       invalidateTradeButtonCache();
       lastDisplayCloseState = null;
@@ -10896,10 +11650,20 @@
       }
     }, true);
     window.addEventListener("storage", (event) => {
+      if (event.key === DEPTH_PROFILE_ENABLED_KEY) {
+        depthProfileEnabled = event.newValue !== "0";
+        if (depthProfileEnabled) depthProfileFailedSymbol = null;
+        else stopDepthProfileSession();
+        scheduleDepthProfileSync();
+      }
       if (event.key?.startsWith(`${LOCAL_QTY_MULTIPLIER_PREFIX}:`) || isSymbolScopedSideStorageKey(event.key, [LOCAL_CLOSE_SIDE_KEY, LOCAL_OPEN_SIDE_KEY]) || event.key?.startsWith(`${LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX}:`) || isModeSymbolOptionStorageKey(event.key, LADDER_OPTION_STORAGE_KEYS)) scheduleRenderPanel();
     });
     installUiSyncObservers();
     function clearSymbolOwnedRuntimeState(symbol) {
+      stopDepthProfileSession();
+      depthProfileData = null;
+      depthProfileFailedSymbol = null;
+      depthProfileStatus = { status: "connecting", detail: "" };
       clearCancelNoOrdersFeedback();
       cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
       stopMultiplierEdit();
@@ -10939,11 +11703,15 @@
       ensureTradeModeTabObserver();
       ensureAccountPositionObserver();
       ensureOrderbookPrecisionObserver();
+      ensureDepthProfileObserver();
+      scheduleDepthProfileSync();
     }
     function stopTradingTimers() {
       stopTradeModeTabObserver();
       stopAccountPositionObserver();
       stopOrderbookPrecisionObserver();
+      stopDepthProfileObserver();
+      stopDepthProfileSession();
       clearTradeUiMutationWait();
     }
     function syncRouteState() {
@@ -10953,6 +11721,7 @@
       if (uiLocaleChanged) {
         activeUiLocale = nextUiLocale;
         removePanel();
+        removeDepthProfileRuntimeView();
       }
       const isTradingRoute = isFuturesTradingPage();
       if (!isTradingRoute) {
@@ -11000,6 +11769,12 @@
     startRouteWatcher();
     startTradingTimers();
     scheduleChartOrdersRecovery();
+    window.addEventListener("resize", scheduleDepthProfileSync);
+    window.addEventListener("pagehide", () => {
+      stopDepthProfileObserver();
+      stopDepthProfileSession();
+      removeDepthProfileRuntimeView();
+    }, { once: true });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         try {

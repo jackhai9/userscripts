@@ -54,11 +54,14 @@ src/binance-orderbook-trade/
     cancel-orders.js
     continuous-ladder.js
     decimal.js
+    depth-profile-book.js
+    depth-profile-session.js
     ladder-plan.js
     orderbook.js
     quantity.js
   dom/
     account-orders.js
+    depth-profile.js
     trade-form.js
 test/
   unit/
@@ -80,12 +83,14 @@ scripts/
 - quantity allocation and step-size rounding
 - cancel-order text evidence
 - orderbook display-step inference
+- public depth snapshot/diff synchronization and bounded reconnect lifecycle
 - ladder action specs
 
 `dom/` contains DOM traversal and selector logic that can run under jsdom fixtures:
 
 - bottom account-orders tab detection
 - active current-orders pane detection
+- vertical depth-profile host discovery and canvas rendering
 - trade form tab and action button filtering
 
 `index.user.js` owns side effects:
@@ -97,6 +102,14 @@ scripts/
 - storage
 - panel rendering
 - async execution flow
+
+## Vertical Depth Profile
+
+The optional depth profile is a userscript-owned canvas beside the TradingView price axis. It does not clone Binance's native Depth React component and does not read TradingView's private visible-price transform. Its vertical range is symmetric around the current best bid/ask midpoint and is derived only from the nearest local-book levels, so it must not be described as pixel-aligned with the TradingView price scale.
+
+The data session opens the official USD-M public `{symbol}@depth@100ms` stream before requesting `/fapi/v1/depth?limit=1000`. `core/depth-profile-book.js` applies the official `lastUpdateId`, `U`, `u`, and `pu` sequence contract and treats quantities as absolute values; zero removes a price level. `core/depth-profile-session.js` owns one inflight snapshot, at most three resynchronizations per connection, and at most five reconnect attempts. A terminal failure remains visible until the user collapses and reopens the profile or changes symbols.
+
+The session must stop and invalidate old work on symbol change, non-trading routes, hidden documents, and `pagehide`. The overlay canvas uses `pointer-events: none`; only its compact collapse control may receive pointer input. Do not connect this visualization book to ladder pricing or any trading decision.
 
 ## UI Localization
 
@@ -216,6 +229,8 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - test open and close modes
 - verify rules-not-ready refuses to order
 - verify orderbook precision recommendation comes from latest-trade price movement, not from the current orderbook display precision
+- verify the vertical depth profile renders beside the price axis in Basic and Trading View modes, does not block chart clicks, disappears in native Depth mode, and resumes with a fresh symbol-owned session after returning
+- switch symbols and hide/show the tab while the profile is active; verify no old-symbol bars or stale status survive
 - verify the manual precision refresh button starts one longer sample round without auto-applying or scheduling background resampling
 - verify the precision apply button changes Binance orderbook precision only after an explicit user click
 - verify precision decrease/increase selects the exact native divide-by-10/multiply-by-10 option, restores the corresponding symbol-mode-precision panel profile, and stops at a missing native decade option

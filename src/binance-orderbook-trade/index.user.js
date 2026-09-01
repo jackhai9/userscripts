@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.180
+// @version      2.7.181
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -204,6 +204,15 @@ import {
   createTradingViewRemovalSaveController,
 } from './core/chart-save-coalescer.js';
 import { findBinanceTradingViewTarget } from './dom/tradingview-target.js';
+import { createDepthProfileSession } from './core/depth-profile-session.js';
+import {
+  clearDepthProfile,
+  ensureDepthProfileView,
+  findDepthProfileHost,
+  removeDepthProfileView,
+  renderDepthProfile,
+  setDepthProfileViewState,
+} from './dom/depth-profile.js';
 import { resolveCancelDialogDecision } from './core/cancel-dialog-decision.js';
 import {
   classifyBinanceCancelAllDialogAction,
@@ -274,6 +283,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   const USDT_REBALANCE_ACTION_ID = 'jh-binance-usdt-rebalance-action';
   const MULTIPLIER_PRESS_FEEDBACK_ATTR = 'data-jh-press-feedback';
   const ORDERBOOK_PRECISION_RECOMMENDATION_ID = 'jh-binance-orderbook-precision-recommendation';
+  const DEPTH_PROFILE_ENABLED_KEY = 'jh_binance_depth_profile_enabled_v1';
   const DEFAULT_MULTIPLIER = '1';
   const DEFAULT_CLOSE_SIDE = 'LONG';
   const DEFAULT_OPEN_SIDE = 'LONG';
@@ -479,6 +489,15 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     nativeOptionsStatus: null,
     status: PANEL_COPY.status.precisionInsufficient,
   };
+  let depthProfileEnabled = localStorage.getItem(DEPTH_PROFILE_ENABLED_KEY) !== '0';
+  let depthProfileSession = null;
+  let depthProfileView = null;
+  let depthProfileData = null;
+  let depthProfileStatus = { status: 'connecting', detail: '' };
+  let depthProfileFailedSymbol = null;
+  let depthProfileObserver = null;
+  let depthProfileObserverRoot = null;
+  let depthProfileSyncQueued = false;
   const controlledNativeButtons = new Set();
   let lastObservedSymbol = getCurrentSymbol();
 
@@ -7888,6 +7907,159 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return panel;
   }
 
+  function depthProfileStatusPresentation() {
+    const copyByStatus = {
+      connecting: localizedText('连接深度数据', 'Connecting depth'),
+      synchronizing: localizedText('同步深度数据', 'Syncing depth'),
+      resyncing: localizedText('重新同步深度', 'Resyncing depth'),
+      reconnecting: localizedText('重新连接深度', 'Reconnecting depth'),
+      failed: localizedText('深度数据不可用', 'Depth unavailable'),
+      ready: null,
+    };
+    const copy = copyByStatus[depthProfileStatus.status];
+    if (copy === undefined) throw new Error(`Unknown depth profile status: ${depthProfileStatus.status}`);
+    const text = depthProfileStatus.status === 'ready' ? '' : ui(copy);
+    const title = depthProfileStatus.detail
+      ? `${text}: ${depthProfileStatus.detail}`
+      : text;
+    return { text, title };
+  }
+
+  function renderDepthProfileUi() {
+    if (!depthProfileView?.isConnected) return;
+    const status = depthProfileStatusPresentation();
+    setDepthProfileViewState(depthProfileView, {
+      expanded: depthProfileEnabled,
+      expandedLabel: ui(localizedText('隐藏深度剖面', 'Hide depth profile')),
+      collapsedLabel: ui(localizedText('深', 'D')),
+      status: status.text,
+      statusTitle: status.title,
+    });
+    if (depthProfileEnabled && depthProfileData) {
+      renderDepthProfile(depthProfileView, depthProfileData);
+    } else {
+      clearDepthProfile(depthProfileView);
+    }
+  }
+
+  function stopDepthProfileSession() {
+    depthProfileSession?.stop();
+    depthProfileSession = null;
+  }
+
+  function stopDepthProfileObserver() {
+    depthProfileObserver?.disconnect();
+    depthProfileObserver = null;
+    depthProfileObserverRoot = null;
+  }
+
+  function removeDepthProfileRuntimeView() {
+    removeDepthProfileView(document);
+    depthProfileView = null;
+  }
+
+  function scheduleDepthProfileSync() {
+    if (depthProfileSyncQueued) return;
+    depthProfileSyncQueued = true;
+    window.requestAnimationFrame(() => {
+      depthProfileSyncQueued = false;
+      syncDepthProfile();
+    });
+  }
+
+  function ensureDepthProfileObserver() {
+    const visibleRoots = Array.from(document.querySelectorAll('.chart-widget-root'))
+      .filter((root) => root.getClientRects().length > 0);
+    const root = visibleRoots.length === 1 ? visibleRoots[0] : null;
+    if (!root) {
+      stopDepthProfileObserver();
+      return;
+    }
+    if (depthProfileObserver && depthProfileObserverRoot === root && root.isConnected) return;
+    stopDepthProfileObserver();
+    depthProfileObserverRoot = root;
+    depthProfileObserver = new MutationObserver(scheduleDepthProfileSync);
+    depthProfileObserver.observe(root, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class', 'style'],
+    });
+  }
+
+  function startDepthProfileSession(symbol) {
+    let session = null;
+    session = createDepthProfileSession({
+      symbol,
+      fetchFn: window.fetch.bind(window),
+      WebSocketCtor: window.WebSocket,
+      onProfile(profile) {
+        if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
+        depthProfileData = profile;
+        depthProfileStatus = { status: 'ready', detail: '' };
+        renderDepthProfileUi();
+      },
+      onStatus(status) {
+        if (depthProfileSession !== session || getCurrentSymbol() !== symbol) return;
+        depthProfileStatus = status;
+        if (status.status !== 'ready') depthProfileData = null;
+        if (status.status === 'failed') depthProfileFailedSymbol = symbol;
+        renderDepthProfileUi();
+      },
+    });
+    depthProfileSession = session;
+    session.start();
+  }
+
+  function syncDepthProfile() {
+    if (document.hidden || !isFuturesTradingPage()) {
+      stopDepthProfileSession();
+      removeDepthProfileRuntimeView();
+      return;
+    }
+    ensureDepthProfileObserver();
+    let target;
+    try {
+      target = findDepthProfileHost(document);
+    } catch (error) {
+      stopDepthProfileSession();
+      removeDepthProfileRuntimeView();
+      err('depth profile host discovery failed:', error);
+      return;
+    }
+    if (!target) {
+      stopDepthProfileSession();
+      removeDepthProfileRuntimeView();
+      return;
+    }
+
+    depthProfileView = ensureDepthProfileView(document, target.host, {
+      onToggle() {
+        depthProfileEnabled = !depthProfileEnabled;
+        localStorage.setItem(DEPTH_PROFILE_ENABLED_KEY, depthProfileEnabled ? '1' : '0');
+        if (depthProfileEnabled) depthProfileFailedSymbol = null;
+        else {
+          stopDepthProfileSession();
+          depthProfileData = null;
+          depthProfileStatus = { status: 'connecting', detail: '' };
+        }
+        syncDepthProfile();
+      },
+    });
+    renderDepthProfileUi();
+    if (!depthProfileEnabled) return;
+
+    const symbol = getCurrentSymbol();
+    if (!symbol) return;
+    if (depthProfileSession?.symbol !== symbol) stopDepthProfileSession();
+    if (depthProfileFailedSymbol === symbol) return;
+    if (!depthProfileSession || !depthProfileSession.isActive()) {
+      depthProfileData = null;
+      depthProfileStatus = { status: 'connecting', detail: '' };
+      startDepthProfileSession(symbol);
+    }
+  }
+
   function removePanel() {
     panelResizeObserver?.disconnect();
     panelResizeObserver = null;
@@ -7902,6 +8074,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     clearCancelNoOrdersFeedback();
     cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
     removePanel();
+    removeDepthProfileRuntimeView();
     stopTradingTimers();
     invalidateTradeButtonCache();
     lastDisplayCloseState = null;
@@ -8339,6 +8512,12 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   }, true);
 
   window.addEventListener('storage', (event) => {
+    if (event.key === DEPTH_PROFILE_ENABLED_KEY) {
+      depthProfileEnabled = event.newValue !== '0';
+      if (depthProfileEnabled) depthProfileFailedSymbol = null;
+      else stopDepthProfileSession();
+      scheduleDepthProfileSync();
+    }
     if (
       event.key?.startsWith(`${LOCAL_QTY_MULTIPLIER_PREFIX}:`) ||
       isSymbolScopedSideStorageKey(event.key, [LOCAL_CLOSE_SIDE_KEY, LOCAL_OPEN_SIDE_KEY]) ||
@@ -8351,6 +8530,10 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   // ── 切换币种 / 首次进入时触发杠杆重置 ──
   function clearSymbolOwnedRuntimeState(symbol) {
+    stopDepthProfileSession();
+    depthProfileData = null;
+    depthProfileFailedSymbol = null;
+    depthProfileStatus = { status: 'connecting', detail: '' };
     clearCancelNoOrdersFeedback();
     cancelCurrentSymbolOpenOrdersBlocksLadderActions = false;
     stopMultiplierEdit();
@@ -8393,12 +8576,16 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     ensureTradeModeTabObserver();
     ensureAccountPositionObserver();
     ensureOrderbookPrecisionObserver();
+    ensureDepthProfileObserver();
+    scheduleDepthProfileSync();
   }
 
   function stopTradingTimers() {
     stopTradeModeTabObserver();
     stopAccountPositionObserver();
     stopOrderbookPrecisionObserver();
+    stopDepthProfileObserver();
+    stopDepthProfileSession();
     clearTradeUiMutationWait();
   }
 
@@ -8409,6 +8596,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     if (uiLocaleChanged) {
       activeUiLocale = nextUiLocale;
       removePanel();
+      removeDepthProfileRuntimeView();
     }
     const isTradingRoute = isFuturesTradingPage();
     if (!isTradingRoute) {
@@ -8461,6 +8649,13 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   startRouteWatcher();
   startTradingTimers();
   scheduleChartOrdersRecovery();
+
+  window.addEventListener('resize', scheduleDepthProfileSync);
+  window.addEventListener('pagehide', () => {
+    stopDepthProfileObserver();
+    stopDepthProfileSession();
+    removeDepthProfileRuntimeView();
+  }, { once: true });
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
