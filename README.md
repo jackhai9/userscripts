@@ -40,6 +40,7 @@ This repository is the source of truth and distribution point for the scripts. G
 | Binance orderbook one-click order entry | Binance Futures | Click an orderbook price, infer the current open/close tab, fill quantity, and submit an order with a multiplier panel | This repository | [Install][install-binance-orderbook-trade] |
 | Binance Futures data panel | Binance Futures | Overlay open interest, long/short ratios, funding rate, basis, and directional signals | This repository | [Install][install-binance-trading-data] |
 | Binance CoinMarketCap data panel | Binance Futures | Show CoinMarketCap valuation, supply, and liquidity data for the current symbol | This repository | [Install][install-binance-coinmarketcap-data] |
+| Binance Strategy 27 event annotations | Binance Futures | Draw VPS-computed Strategy 27 event markers and outcome notes on the matching one-second chart | This repository | [Install][install-binance-strategy27-events] |
 | Auto refresh | Any page | Refresh selected pages on a configurable schedule | This repository | [Install][install-auto-refresh] |
 | CoinMarketCap valuation labels | CoinMarketCap | Label and highlight circulating market cap and FDV / total valuation in the Chinese UI | This repository | [Install][install-coinmarketcap-valuation-helper] |
 | m3u8 downloader | Video pages | Enhanced m3u8 detection and export workflow for allowlisted video sites | This repository | [Install][install-m3u8] |
@@ -58,6 +59,12 @@ This repository is the source of truth and distribution point for the scripts. G
 - Aggregates open interest, account/position ratios, taker ratio, funding rate, and basis.
 - Displays values and simple directional signals inside the trading page.
 - Reduces context switching between Binance and external data pages.
+
+### Binance Strategy 27 event annotations
+
+- Reads only the authenticated loopback gateway through an SSH local forward.
+- Adds no Binance market-data WebSocket or Binance API key to Chrome.
+- Draws bounded, transient event markers and objective four-force notes on the matching one-second chart.
 
 ### m3u8 downloader
 
@@ -87,7 +94,7 @@ npm run build:binance-userscripts
 ## Maintenance Rules
 
 1. Each script has exactly one source of truth.
-2. `src/binance-orderbook-trade/`, `src/binance-trading-data/`, `src/binance-coinmarketcap-data/`, and `src/m3u8-downloader/` are source directories for the corresponding generated scripts.
+2. `src/binance-orderbook-trade/`, `src/binance-trading-data/`, `src/binance-coinmarketcap-data/`, `src/binance-strategy27-events/`, and `src/m3u8-downloader/` are source directories for the corresponding generated scripts.
 3. Public install entry points remain generated files under `scripts/*.user.js`.
 4. Do not copy script source into secondary repositories.
 5. Bump `@version` when behavior changes.
@@ -96,6 +103,7 @@ npm run build:binance-userscripts
 ## Documentation
 
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
+- [Binance Strategy 27 event annotations](docs/binance-strategy27-events-development.md)
 - [Brooks media sync workflow](docs/brooks-media-sync-workflow.md)
 
 ## License
@@ -105,6 +113,7 @@ MIT. See [LICENSE](LICENSE).
 [install-binance-orderbook-trade]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
 [install-binance-trading-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-trading-data.user.js
 [install-binance-coinmarketcap-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-coinmarketcap-data.user.js
+[install-binance-strategy27-events]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy27-events.user.js
 [install-auto-refresh]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/auto_refresh.user.js
 [install-coinmarketcap-valuation-helper]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/coinmarketcap-valuation-helper.user.js
 [install-m3u8]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/m3u8-downloader.user.js
