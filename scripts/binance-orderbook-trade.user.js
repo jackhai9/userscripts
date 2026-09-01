@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.185
+// @version      2.7.186
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3408,7 +3408,6 @@
     }
   };
   var MAX_BUFFERED_UPDATES = 500;
-  var DEPTH_PROFILE_LEVELS_PER_SIDE = 1e3;
   function assertSymbol(value) {
     if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) {
       throw new Error("Invalid depth profile symbol");
@@ -3553,11 +3552,11 @@
     book.ready = false;
     return applyBufferedUpdates(book);
   }
-  function toSortedLevels(levels, direction, limit) {
+  function toSortedLevels(levels, direction) {
     return [...levels.entries()].map(([price, quantity]) => ({
       price: Number(price),
       quantity: Number(quantity)
-    })).filter((level) => Number.isFinite(level.price) && Number.isFinite(level.quantity)).sort((left, right) => direction * (left.price - right.price)).slice(0, limit);
+    })).filter((level) => Number.isFinite(level.price) && Number.isFinite(level.quantity)).sort((left, right) => direction * (left.price - right.price));
   }
   function addCumulativeQuantity(levels) {
     let cumulative = 0;
@@ -3566,15 +3565,10 @@
       return { ...level, cumulative };
     });
   }
-  function buildDepthProfile(book, {
-    levelsPerSide = DEPTH_PROFILE_LEVELS_PER_SIDE
-  } = {}) {
+  function buildDepthProfile(book) {
     if (!book.ready) throw new Error("Depth profile book is not ready");
-    if (!Number.isInteger(levelsPerSide) || levelsPerSide <= 0) {
-      throw new Error("Invalid depth profile level count");
-    }
-    const bids = addCumulativeQuantity(toSortedLevels(book.bids, -1, levelsPerSide));
-    const asks = addCumulativeQuantity(toSortedLevels(book.asks, 1, levelsPerSide));
+    const bids = addCumulativeQuantity(toSortedLevels(book.bids, -1));
+    const asks = addCumulativeQuantity(toSortedLevels(book.asks, 1));
     if (!bids.length || !asks.length) throw new Error("Depth profile requires bids and asks");
     const midPrice = (bids[0].price + asks[0].price) / 2;
     const furthestDistance = Math.max(

@@ -6,7 +6,6 @@ export class DepthProfileSequenceError extends Error {
 }
 
 const MAX_BUFFERED_UPDATES = 500;
-export const DEPTH_PROFILE_LEVELS_PER_SIDE = 1000;
 
 function assertSymbol(value) {
   if (typeof value !== 'string' || !/^[A-Z0-9_]+$/.test(value)) {
@@ -169,15 +168,14 @@ export function applyDepthProfileSnapshot(book, payload) {
   return applyBufferedUpdates(book);
 }
 
-function toSortedLevels(levels, direction, limit) {
+function toSortedLevels(levels, direction) {
   return [...levels.entries()]
     .map(([price, quantity]) => ({
       price: Number(price),
       quantity: Number(quantity),
     }))
     .filter((level) => Number.isFinite(level.price) && Number.isFinite(level.quantity))
-    .sort((left, right) => direction * (left.price - right.price))
-    .slice(0, limit);
+    .sort((left, right) => direction * (left.price - right.price));
 }
 
 function addCumulativeQuantity(levels) {
@@ -188,15 +186,10 @@ function addCumulativeQuantity(levels) {
   });
 }
 
-export function buildDepthProfile(book, {
-  levelsPerSide = DEPTH_PROFILE_LEVELS_PER_SIDE,
-} = {}) {
+export function buildDepthProfile(book) {
   if (!book.ready) throw new Error('Depth profile book is not ready');
-  if (!Number.isInteger(levelsPerSide) || levelsPerSide <= 0) {
-    throw new Error('Invalid depth profile level count');
-  }
-  const bids = addCumulativeQuantity(toSortedLevels(book.bids, -1, levelsPerSide));
-  const asks = addCumulativeQuantity(toSortedLevels(book.asks, 1, levelsPerSide));
+  const bids = addCumulativeQuantity(toSortedLevels(book.bids, -1));
+  const asks = addCumulativeQuantity(toSortedLevels(book.asks, 1));
   if (!bids.length || !asks.length) throw new Error('Depth profile requires bids and asks');
 
   const midPrice = (bids[0].price + asks[0].price) / 2;
