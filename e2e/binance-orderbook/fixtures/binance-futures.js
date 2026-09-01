@@ -335,7 +335,9 @@ export function renderBinanceFuturesFixture(scenario) {
           record('cancel-requested', { symbol: scenario.currentSymbol });
           setTimeout(() => {
             if (scenario.host.clearMode === 'currentSymbol') {
+              const removedOrders = currentOrders().map((item) => ({ ...item }));
               state.orders = state.orders.filter((item) => item.symbol !== scenario.currentSymbol);
+              scheduleChartOrderRemovals(removedOrders);
             }
             closeDialog('confirm');
             renderAccountWidget();
@@ -401,6 +403,25 @@ export function renderBinanceFuturesFixture(scenario) {
           for (const listener of chartEventListeners.get(eventName) || []) listener(...args);
         },
       };
+
+      function scheduleChartOrderRemovals(orders) {
+        if (!state.showOrders) return;
+        orders.forEach((order, index) => {
+          setTimeout(() => {
+            tradingViewApi.emit('drawing_event', 'order-' + order.id, 'remove');
+            record('chart-save-requested', {
+              checked: true,
+              index,
+              orderId: order.id,
+            });
+            tradingViewApi.saveChart({
+              checked: true,
+              drawingCount: Math.max(0, orders.length - index - 1),
+              finalOrderId: order.id,
+            });
+          }, scenario.host.mutationDelayMs + (index * 2));
+        });
+      }
 
       function renderChartOrdersPopover() {
         chartOrdersPopover.innerHTML =

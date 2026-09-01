@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   coalesceTradingViewDrawingSaves,
   createTradingViewContinuousSaveController,
+  createTradingViewRemovalSaveController,
 } from '../../../src/binance-orderbook-trade/core/chart-save-coalescer.js';
 
 function createTradingViewApi() {
@@ -82,6 +83,239 @@ function createManualTimers() {
   };
   return { advance, clearTimeoutFn, setTimeoutFn, timers };
 }
+
+test('bulk removal controller keeps unrelated saves synchronous before the first remove', async () => {
+  const { api, saved, listeners } = createTradingViewApi();
+  const originalSaveChart = api.saveChart;
+  const controller = createTradingViewRemovalSaveController(api, { eventDiscoveryMs: 0 });
+
+  assert.notEqual(api.saveChart, originalSaveChart);
+  api.saveChart('unrelated');
+  assert.deepEqual(saved.map((entry) => entry.args), [['unrelated']]);
+  assert.deepEqual(await controller.finish(), {
+    fullSaveCount: 0,
+    removeEventCount: 0,
+    saveRequestCount: 0,
+    synchronousSaveCount: 1,
+  });
+
+  assert.equal(api.saveChart, originalSaveChart);
+  assert.deepEqual(saved.map((entry) => entry.args), [['unrelated']]);
+  assert.equal(listeners.get('drawing_event')?.size, 0);
+});
+
+test('bulk removal controller persists one final snapshot across separate remove bursts', async () => {
+  const { api, saved, listeners } = createTradingViewApi();
+  const originalSaveChart = api.saveChart;
+  const timers = createManualTimers();
+  const controller = createTradingViewRemovalSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    eventDiscoveryMs: 10,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+
+  api.emit('drawing_event', 'order-1', 'remove');
+  api.saveChart('snapshot-1');
+  timers.advance(20);
+  assert.notEqual(api.saveChart, originalSaveChart);
+  assert.deepEqual(saved, []);
+
+  api.saveChart('unrelated-between-bursts');
+  api.emit('drawing_event', 'order-2', 'remove');
+  api.saveChart('snapshot-2');
+  const completion = controller.finish();
+  timers.advance(20);
+  const result = await completion;
+
+  assert.deepEqual(result, {
+    fullSaveCount: 1,
+    removeEventCount: 2,
+    saveRequestCount: 2,
+    synchronousSaveCount: 1,
+  });
+  assert.deepEqual(saved.map((entry) => entry.args), [
+    ['unrelated-between-bursts'],
+    ['snapshot-2'],
+  ]);
+  assert.equal(api.saveChart, originalSaveChart);
+  assert.equal(listeners.get('drawing_event')?.size, 0);
+});
+
+test('bulk removal controller waits briefly for delayed remove events before finishing', async () => {
+  const { api, saved } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewRemovalSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    eventDiscoveryMs: 30,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+
+  const completion = controller.finish();
+  timers.advance(10);
+  api.emit('drawing_event', 'order-1', 'remove');
+  api.saveChart('snapshot-1');
+  timers.advance(20);
+
+  assert.deepEqual(await completion, {
+    fullSaveCount: 1,
+    removeEventCount: 1,
+    saveRequestCount: 1,
+    synchronousSaveCount: 0,
+  });
+  assert.deepEqual(saved.map((entry) => entry.args), [['snapshot-1']]);
+});
+
+test('bulk removal controller ignores non-remove drawing events', async () => {
+  const { api, saved } = createTradingViewApi();
+  const controller = createTradingViewRemovalSaveController(api, { eventDiscoveryMs: 0 });
+
+  api.emit('drawing_event', 'order-1', 'properties_changed');
+  api.saveChart('unrelated');
+
+  assert.deepEqual(await controller.finish(), {
+    fullSaveCount: 0,
+    removeEventCount: 0,
+    saveRequestCount: 0,
+    synchronousSaveCount: 1,
+  });
+  assert.deepEqual(saved.map((entry) => entry.args), [['unrelated']]);
+});
+
+test('bulk removal controller discards an older removal snapshot after a later synchronous save', async () => {
+  const { api, saved } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewRemovalSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    eventDiscoveryMs: 0,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+
+  api.emit('drawing_event', 'order-1', 'remove');
+  api.saveChart('removal-snapshot');
+  timers.advance(20);
+  api.saveChart('newer-unrelated-snapshot');
+
+  assert.deepEqual(await controller.finish(), {
+    fullSaveCount: 0,
+    removeEventCount: 1,
+    saveRequestCount: 1,
+    synchronousSaveCount: 1,
+  });
+  assert.deepEqual(saved.map((entry) => entry.args), [['newer-unrelated-snapshot']]);
+});
+
+test('bulk removal controller preserves an externally replaced chart save method', async () => {
+  const { api, saved, listeners } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewRemovalSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    eventDiscoveryMs: 0,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+
+  api.emit('drawing_event', 'order-1', 'remove');
+  api.saveChart('old-removal-snapshot');
+  const foreignSaves = [];
+  const foreignSaveChart = (...args) => foreignSaves.push(args);
+  api.saveChart = foreignSaveChart;
+  api.saveChart('newer-foreign-snapshot');
+  timers.advance(20);
+
+  await assert.rejects(controller.finish(), /图表保存接口在删除事件合并期间发生变化/);
+  assert.equal(api.saveChart, foreignSaveChart);
+  assert.deepEqual(saved, []);
+  assert.deepEqual(foreignSaves, [['newer-foreign-snapshot']]);
+  assert.equal(listeners.get('drawing_event')?.size, 0);
+});
+
+test('bulk removal controller drops a settled snapshot after external save ownership changes', async () => {
+  const { api, saved } = createTradingViewApi();
+  const timers = createManualTimers();
+  const controller = createTradingViewRemovalSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    eventDiscoveryMs: 0,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+
+  api.emit('drawing_event', 'order-1', 'remove');
+  api.saveChart('old-removal-snapshot');
+  timers.advance(20);
+  const foreignSaves = [];
+  const foreignSaveChart = (...args) => foreignSaves.push(args);
+  api.saveChart = foreignSaveChart;
+  api.saveChart('newer-foreign-snapshot');
+
+  await assert.rejects(
+    controller.finish(),
+    /图表保存接口在删除事件监视期间发生变化/,
+  );
+  assert.equal(api.saveChart, foreignSaveChart);
+  assert.deepEqual(saved, []);
+  assert.deepEqual(foreignSaves, [['newer-foreign-snapshot']]);
+});
+
+test('bulk removal controller restores the chart API before a final save error', async () => {
+  const { api, listeners } = createTradingViewApi();
+  const originalSaveChart = function saveChart() {
+    throw new Error('final save failed');
+  };
+  api.saveChart = originalSaveChart;
+  const timers = createManualTimers();
+  const controller = createTradingViewRemovalSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    eventDiscoveryMs: 0,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+
+  api.emit('drawing_event', 'order-1', 'remove');
+  api.saveChart('snapshot-1');
+  const completion = controller.finish();
+  timers.advance(20);
+
+  await assert.rejects(completion, /final save failed/);
+  assert.equal(api.saveChart, originalSaveChart);
+  assert.equal(listeners.get('drawing_event')?.size, 0);
+});
+
+test('bulk removal controller settles after an external replacement when the original save throws', async () => {
+  const { api, listeners } = createTradingViewApi();
+  api.saveChart = function saveChart() {
+    throw new Error('original save failed');
+  };
+  const timers = createManualTimers();
+  const controller = createTradingViewRemovalSaveController(api, {
+    settleQuietMs: 20,
+    maxWaitMs: 100,
+    eventDiscoveryMs: 0,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+
+  api.emit('drawing_event', 'order-1', 'remove');
+  api.saveChart('pending-snapshot');
+  const foreignSaveChart = () => {};
+  api.saveChart = foreignSaveChart;
+  timers.advance(20);
+
+  await assert.rejects(
+    controller.finish(),
+    /图表保存接口在删除事件合并期间发生变化/,
+  );
+  assert.equal(api.saveChart, foreignSaveChart);
+  assert.equal(listeners.get('drawing_event')?.size, 0);
+});
 
 test('continuous remove-save controller leaves unrelated chart saves synchronous', () => {
   const { api, saved } = createTradingViewApi();

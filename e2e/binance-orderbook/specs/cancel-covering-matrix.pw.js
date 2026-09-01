@@ -51,7 +51,9 @@ for (const entry of CANCEL_COVERING_SCENARIOS) {
       await expect(page.getByRole('button', { name: '无挂单' })).toBeVisible();
     } else {
       await expect(page.getByRole('dialog')).toBeVisible();
-      await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(false);
+      await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(
+        scenario.ui.showOrders,
+      );
       await page.getByRole('button', {
         name: vector.dialogOutcome === 'confirm' ? '确认' : '取消',
       }).click();
@@ -79,19 +81,16 @@ for (const entry of CANCEL_COVERING_SCENARIOS) {
       hasCurrentOrders && vector.dialogOutcome === 'confirm' ? 1 : 0,
     );
     const currentOrderCount = currentSymbolOrders(scenario).length;
-    const expectedChartToggleCount = hasCurrentOrders && scenario.ui.showOrders ? 2 : 0;
-    const expectedChartSaveBurstCount = expectedChartToggleCount === 0
-      ? 0
-      : vector.dialogOutcome === 'confirm' ? 1 : 2;
-    const expectedChartSaveRequestCount = expectedChartSaveBurstCount * currentOrderCount;
-    expect(state.events.filter((event) => event.type === 'chart-orders-checked')).toHaveLength(
-      expectedChartToggleCount,
-    );
+    const expectsChartRemovalSave = hasCurrentOrders
+      && scenario.ui.showOrders
+      && vector.dialogOutcome === 'confirm';
+    const expectedChartSaveRequestCount = expectsChartRemovalSave ? currentOrderCount : 0;
+    expect(state.events.filter((event) => event.type === 'chart-orders-checked')).toHaveLength(0);
     expect(state.events.filter((event) => event.type === 'chart-save-requested')).toHaveLength(
       expectedChartSaveRequestCount,
     );
     expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(
-      expectedChartSaveBurstCount,
+      expectsChartRemovalSave ? 1 : 0,
     );
     expect(errors).toEqual([]);
   });

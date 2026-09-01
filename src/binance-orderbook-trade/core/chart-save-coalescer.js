@@ -308,6 +308,184 @@ export function createTradingViewContinuousSaveController(
 }
 
 /**
+ * A native bulk cancellation can emit many drawing removals over several short
+ * bursts. Removal-triggered saves are held until the lifecycle finishes. Saves
+ * outside a burst still run synchronously and supersede older held snapshots.
+ */
+export function createTradingViewRemovalSaveController(
+  api,
+  {
+    settleQuietMs = 140,
+    maxWaitMs = 600,
+    eventDiscoveryMs = 250,
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout,
+  } = {},
+) {
+  validateTradingViewApi(api);
+  if (!Number.isFinite(settleQuietMs) || settleQuietMs <= 0) {
+    throw new Error('删除事件保存合并静默时间无效');
+  }
+  if (!Number.isFinite(maxWaitMs) || maxWaitMs < settleQuietMs) {
+    throw new Error('删除事件保存合并最长等待时间无效');
+  }
+  if (!Number.isFinite(eventDiscoveryMs) || eventDiscoveryMs < 0) {
+    throw new Error('删除事件发现时间无效');
+  }
+
+  const sessionSaveChart = api.saveChart;
+  const sessionDescriptor = Object.getOwnPropertyDescriptor(api, 'saveChart');
+  let activeBurst = null;
+  let controllerError = null;
+  let discoveryTimer = null;
+  let finished = false;
+  let fullSaveCount = 0;
+  let pendingFinalSave = null;
+  let removeEventCount = 0;
+  let saveRequestCount = 0;
+  let synchronousSaveCount = 0;
+  let firstRemoveResolve;
+  const firstRemove = new Promise((resolve) => {
+    firstRemoveResolve = resolve;
+  });
+
+  const getStats = () => ({
+    fullSaveCount,
+    removeEventCount,
+    saveRequestCount,
+    synchronousSaveCount,
+  });
+  const monitoredSaveChart = function monitoredRemovalSessionSaveChart(...args) {
+    synchronousSaveCount += 1;
+    pendingFinalSave = null;
+    return sessionSaveChart.apply(this, args);
+  };
+  const clearBurstTimers = (burst) => {
+    if (burst.settleTimer !== null) clearTimeoutFn(burst.settleTimer);
+    if (burst.maxWaitTimer !== null) clearTimeoutFn(burst.maxWaitTimer);
+    burst.settleTimer = null;
+    burst.maxWaitTimer = null;
+  };
+  const finishBurst = () => {
+    const burst = activeBurst;
+    if (!burst) return;
+    clearBurstTimers(burst);
+    activeBurst = null;
+    if (api.saveChart !== burst.wrapper) {
+      controllerError ||= new Error('图表保存接口在删除事件合并期间发生变化');
+      pendingFinalSave = null;
+      burst.resolve();
+      return;
+    }
+    restoreSaveChartMethod(
+      api,
+      burst.wrapper,
+      burst.originalSaveChart,
+      burst.originalDescriptor,
+    );
+    if (burst.pendingSave) pendingFinalSave = burst.pendingSave;
+    burst.resolve();
+  };
+  const scheduleBurstSettle = (burst) => {
+    if (burst.settleTimer !== null) clearTimeoutFn(burst.settleTimer);
+    burst.settleTimer = setTimeoutFn(finishBurst, settleQuietMs);
+  };
+  const startBurst = () => {
+    if (activeBurst) return activeBurst;
+    if (api.saveChart !== monitoredSaveChart) {
+      controllerError ||= new Error('图表保存接口正被其他操作占用');
+      return null;
+    }
+    let resolve;
+    const settled = new Promise((settle) => {
+      resolve = settle;
+    });
+    const burst = {
+      maxWaitTimer: null,
+      originalDescriptor: Object.getOwnPropertyDescriptor(api, 'saveChart'),
+      originalSaveChart: api.saveChart,
+      pendingSave: null,
+      resolve,
+      settleTimer: null,
+      settled,
+      wrapper: null,
+    };
+    burst.wrapper = function removalSaveBurstWrapper(...args) {
+      saveRequestCount += 1;
+      burst.pendingSave = { thisValue: this, args };
+    };
+    api.saveChart = burst.wrapper;
+    if (api.saveChart !== burst.wrapper) {
+      throw new Error('图表保存接口无法启用删除事件合并');
+    }
+    activeBurst = burst;
+    burst.maxWaitTimer = setTimeoutFn(finishBurst, maxWaitMs);
+    return burst;
+  };
+  const handleDrawingEvent = (_drawingId, eventType) => {
+    if (finished || eventType !== 'remove') return;
+    removeEventCount += 1;
+    if (removeEventCount === 1) firstRemoveResolve();
+    try {
+      const burst = startBurst();
+      if (burst) scheduleBurstSettle(burst);
+    } catch (error) {
+      controllerError ||= error;
+    }
+  };
+
+  api.subscribe('drawing_event', handleDrawingEvent);
+  try {
+    api.saveChart = monitoredSaveChart;
+    if (api.saveChart !== monitoredSaveChart) {
+      throw new Error('图表保存接口无法启用删除事件监视');
+    }
+  } catch (error) {
+    api.unsubscribe('drawing_event', handleDrawingEvent);
+    throw error;
+  }
+
+  return {
+    getStats,
+    async finish() {
+      if (finished) throw new Error('删除事件保存合并已结束');
+
+      if (removeEventCount === 0 && eventDiscoveryMs > 0) {
+        await Promise.race([
+          firstRemove,
+          new Promise((resolve) => {
+            discoveryTimer = setTimeoutFn(resolve, eventDiscoveryMs);
+          }),
+        ]);
+      }
+      if (discoveryTimer !== null) clearTimeoutFn(discoveryTimer);
+      discoveryTimer = null;
+      if (activeBurst) await activeBurst.settled;
+
+      finished = true;
+      api.unsubscribe('drawing_event', handleDrawingEvent);
+      if (api.saveChart === monitoredSaveChart) {
+        restoreSaveChartMethod(
+          api,
+          monitoredSaveChart,
+          sessionSaveChart,
+          sessionDescriptor,
+        );
+      } else {
+        controllerError ||= new Error('图表保存接口在删除事件监视期间发生变化');
+        pendingFinalSave = null;
+      }
+      if (pendingFinalSave) {
+        fullSaveCount += 1;
+        sessionSaveChart.apply(pendingFinalSave.thisValue, pendingFinalSave.args);
+      }
+      if (controllerError) throw controllerError;
+      return getStats();
+    },
+  };
+}
+
+/**
  * Binance schedules one complete chart save for every broker drawing event.
  * The last request contains the cumulative final state, so one burst can be
  * persisted with only its final request after all matching events arrive.
