@@ -9,6 +9,8 @@ const iconSources = [
   'scripts/binance-trading-data.user.js',
   'src/binance-coinmarketcap-data/index.user.js',
   'scripts/binance-coinmarketcap-data.user.js',
+  'src/binance-strategy27-events/index.user.js',
+  'scripts/binance-strategy27-events.user.js',
   'src/m3u8-downloader/index.user.js',
   'scripts/m3u8-downloader.user.js',
   'scripts/auto_refresh.user.js',

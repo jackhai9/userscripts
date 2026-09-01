@@ -18,6 +18,10 @@ export const TARGETS = {
     entry: 'src/binance-coinmarketcap-data/index.user.js',
     output: 'scripts/binance-coinmarketcap-data.user.js',
   },
+  'binance-strategy27-events': {
+    entry: 'src/binance-strategy27-events/index.user.js',
+    output: 'scripts/binance-strategy27-events.user.js',
+  },
   'm3u8-downloader': {
     entry: 'src/m3u8-downloader/index.user.js',
     output: 'scripts/m3u8-downloader.user.js',

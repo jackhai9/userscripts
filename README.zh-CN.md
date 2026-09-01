@@ -38,6 +38,7 @@
 | 【自写】Binance 订单簿单击下单 | Binance Futures | 单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
 | 【自写】Binance 合约交易数据面板 | Binance Futures | 在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号 | 本仓库 | [`点击安装`][install-binance-trading-data] |
 | 【自写】Binance CoinMarketCap 数据面板 | Binance Futures | 在 Binance 合约页面显示当前币种的 CoinMarketCap 估值、供应量和流动性数据 | 本仓库 | [`点击安装`][install-binance-coinmarketcap-data] |
+| 【自写】Binance Strategy 27 事件标注 | Binance Futures | 在匹配币种的一秒图表标注 VPS 已计算的 Strategy 27 事件和后续结果 | 本仓库 | [`点击安装`][install-binance-strategy27-events] |
 | 【自写】定时刷新指定页面 | Any page | 指定页面按设定时间自动刷新 | 本仓库 | [`点击安装`][install-auto-refresh] |
 | 【自写】CoinMarketCap 估值口径命名 | CoinMarketCap | 在中文币种页面左上角统计区标注并高亮流通市值和 FDV / 总估值 | 本仓库 | [`点击安装`][install-coinmarketcap-valuation-helper] |
 | 【改写】m3u8-downloader | Video pages | m3u8 下载增强脚本，仅在白名单视频站启用 | 本仓库 | [`点击安装`][install-m3u8] |
@@ -56,6 +57,12 @@
 - 聚合持仓量、多空比、资金费率、basis 等合约数据。
 - 使用浮动面板展示当前值和多空信号。
 - 适合在交易页面内快速判断市场结构，不需要频繁切换数据网站。
+
+### Binance Strategy 27 事件标注
+
+- 只通过 SSH 本地转发读取带认证的本机网关。
+- 不在 Chrome 中新增 Binance 行情 WebSocket，也不使用 Binance API Key。
+- 在匹配币种的一秒图表上绘制数量和保留时间均受限的事件标记及四力客观备注。
 
 ### m3u8-downloader
 
@@ -85,7 +92,7 @@ npm run build:binance-userscripts
 ## 维护规则
 
 1. 同一脚本只允许一个真源仓库改代码。
-2. `src/binance-orderbook-trade/`、`src/binance-trading-data/`、`src/binance-coinmarketcap-data/`、`src/m3u8-downloader/` 是对应脚本的开发真源。
+2. `src/binance-orderbook-trade/`、`src/binance-trading-data/`、`src/binance-coinmarketcap-data/`、`src/binance-strategy27-events/`、`src/m3u8-downloader/` 是对应脚本的开发真源。
 3. 公开安装入口仍是生成后的 `scripts/*.user.js`；修改对应 `src/` 后运行 `npm run build:binance-userscripts` 或单脚本 build 命令。
 4. 非真源仓库只放安装链接，不复制脚本源码。
 5. 每次发布递增 `@version`，并保留 `@updateURL/@downloadURL` 指向真源 raw 地址。
@@ -94,11 +101,13 @@ npm run build:binance-userscripts
 开发手册：
 
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
+- [Binance Strategy 27 event annotations](docs/binance-strategy27-events-development.md)
 - [Brooks media sync workflow](docs/brooks-media-sync-workflow.md)
 
 [install-binance-orderbook-trade]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
 [install-binance-trading-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-trading-data.user.js
 [install-binance-coinmarketcap-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-coinmarketcap-data.user.js
+[install-binance-strategy27-events]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy27-events.user.js
 [install-auto-refresh]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/auto_refresh.user.js
 [install-coinmarketcap-valuation-helper]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/coinmarketcap-valuation-helper.user.js
 [install-m3u8]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/m3u8-downloader.user.js

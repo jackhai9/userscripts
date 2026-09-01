@@ -11,6 +11,8 @@ import {
 
 const artifactPath = new URL('../../scripts/binance-orderbook-trade.user.js', import.meta.url);
 const source = await readFile(artifactPath, 'utf8');
+const strategy27ArtifactPath = new URL('../../scripts/binance-strategy27-events.user.js', import.meta.url);
+const strategy27Source = await readFile(strategy27ArtifactPath, 'utf8');
 
 test('release contract identifies the generated Binance orderbook artifact', () => {
   const contract = createUserscriptReleaseContract(source, artifactPath.pathname);
@@ -27,6 +29,32 @@ test('release contract identifies the generated Binance orderbook artifact', () 
   assert.match(contract.sha256, /^[a-f0-9]{64}$/);
   assert.equal(contract.bytes, Buffer.byteLength(source));
   assert.equal(contract.characters, source.length);
+});
+
+test('release contract identifies the generated Strategy 27 annotation artifact', () => {
+  const contract = createUserscriptReleaseContract(strategy27Source, strategy27ArtifactPath.pathname);
+  const metadata = parseUserscriptMetadata(strategy27Source);
+
+  assert.equal(contract.name, '【自写】Binance Strategy 27 事件标注');
+  assert.equal(contract.namespace, 'binance.strategy27.events');
+  assert.equal(contract.version, '0.1.0');
+  assert.equal(contract.runAt, 'document-idle');
+  assert.equal(contract.updateURL, contract.downloadURL);
+  assert.deepEqual(contract.matches, [
+    'https://www.binance.com/*/futures/*',
+    'https://www.binance.com/futures/*',
+  ]);
+  assert.deepEqual(metadata.get('connect'), ['127.0.0.1']);
+  assert.deepEqual(metadata.get('grant'), [
+    'unsafeWindow',
+    'GM_xmlhttpRequest',
+    'GM_getValue',
+    'GM_setValue',
+    'GM_registerMenuCommand',
+  ]);
+  assert.equal(strategy27Source.includes('new WebSocket'), false);
+  assert.equal(strategy27Source.includes('wss://'), false);
+  assert.equal(strategy27Source.includes('apiKey'), false);
 });
 
 test('release contract requires metadata at the first byte', () => {

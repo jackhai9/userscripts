@@ -6,8 +6,9 @@
 - `src/binance-orderbook-trade/` 是 `scripts/binance-orderbook-trade.user.js` 的开发真源。
 - `src/binance-trading-data/` 是 `scripts/binance-trading-data.user.js` 的开发真源。
 - `src/binance-coinmarketcap-data/` 是 `scripts/binance-coinmarketcap-data.user.js` 的开发真源。
+- `src/binance-strategy27-events/` 是 `scripts/binance-strategy27-events.user.js` 的开发真源。
 - `src/m3u8-downloader/` 是 `scripts/m3u8-downloader.user.js` 的开发真源。
-- `scripts/binance-orderbook-trade.user.js`、`scripts/binance-trading-data.user.js`、`scripts/binance-coinmarketcap-data.user.js`、`scripts/m3u8-downloader.user.js` 是生成后的单文件安装/更新入口，必须保持可读、非压缩、非混淆。
+- `scripts/binance-orderbook-trade.user.js`、`scripts/binance-trading-data.user.js`、`scripts/binance-coinmarketcap-data.user.js`、`scripts/binance-strategy27-events.user.js`、`scripts/m3u8-downloader.user.js` 是生成后的单文件安装/更新入口，必须保持可读、非压缩、非混淆。
 - 其它 userscript 在迁移前仍以 `scripts/*.user.js` 为真源。
 - `README.md` 只维护安装入口、真源说明和发布约束，不承载开发细节。
 - 非真源仓库不复制脚本源码，只放安装链接。
@@ -20,6 +21,8 @@
   Binance 合约交易数据面板，核心风险在 5 分钟调度、缓存回退、前后台切换。
 - `scripts/binance-coinmarketcap-data.user.js`
   Binance CoinMarketCap 数据面板，核心风险在 symbol 解析、CMC 资产映射、跨页误注入。
+- `scripts/binance-strategy27-events.user.js`
+  Binance Strategy 27 图表标注，核心风险在网关 cursor / epoch、symbol / 秒坐标、生命周期和脚本实体归属。
 - `scripts/m3u8-downloader.user.js`
   m3u8 下载增强脚本，核心风险在通用 m3u8 拦截、Brooks 媒体索引、失败重试、暂停/继续状态、active runtime 计时和 Bunny caption URL 推导。
 - `scripts/auto_refresh.user.js`
@@ -37,6 +40,7 @@
 
 - 修改 `src/binance-orderbook-trade/**` 后必须运行 `npm run build:binance-orderbook-trade` 生成 `scripts/binance-orderbook-trade.user.js`。
 - 修改 `src/binance-trading-data/**`、`src/binance-coinmarketcap-data/**` 或 `src/shared/**` 后必须运行 `npm run build:binance-userscripts` 或对应单脚本 build 命令生成 `scripts/*.user.js`。
+- 修改 `src/binance-strategy27-events/**` 后必须运行 `npm run build:binance-strategy27-events` 生成 `scripts/binance-strategy27-events.user.js`。
 - 修改 `src/m3u8-downloader/**` 后必须运行 `npm run build:m3u8-downloader` 生成 `scripts/m3u8-downloader.user.js`。
 - 修改已迁移的 `src/binance-*`、`src/m3u8-downloader/**` 或 `src/shared/**` 且改变行为时，必须同步 bump 对应生成 userscript 头部 `@version`。
 - 修改尚未迁移的 `scripts/` 下任意 userscript，必须同步 bump 该文件头部 `@version`。
