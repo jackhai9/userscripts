@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.183
+// @version      2.7.184
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3797,7 +3797,9 @@
   var DEPTH_PROFILE_ID = "jh-binance-depth-profile";
   var STYLE_ID = "jh-binance-depth-profile-style";
   var CHART_ROOT_SELECTOR2 = ".chart-widget-root";
+  var PRICE_AXIS_SELECTOR = ".chart-markup-table.price-axis-container";
   var PRICE_COORDINATE_SEARCH_STEPS = 13;
+  var GEOMETRY_TOLERANCE_PX = 1;
   function hasVisibleBox2(element) {
     if (!element?.getClientRects().length) return false;
     const rect = element.getBoundingClientRect();
@@ -3832,6 +3834,15 @@
     const scale = panes[0]?.getMainSourcePriceScale?.();
     if (!(height > 0) || !scale) return null;
     if (typeof scale.coordinateToPrice !== "function" || typeof scale.getVisiblePriceRange !== "function" || typeof scale.getMode !== "function" || typeof scale.isInverted !== "function") return null;
+    const viewportWidth = Number(frame.contentWindow.innerWidth);
+    if (!Number.isFinite(viewportWidth) || !(viewportWidth > 0)) return null;
+    const priceAxisRects = Array.from(
+      frame.contentDocument.querySelectorAll(PRICE_AXIS_SELECTOR),
+      (element) => element.getBoundingClientRect()
+    ).filter((rect) => rect.width > 0 && rect.height > 0 && Math.abs(rect.top) <= GEOMETRY_TOLERANCE_PX && Math.abs(rect.height - height) <= GEOMETRY_TOLERANCE_PX && Math.abs(rect.right - viewportWidth) <= GEOMETRY_TOLERANCE_PX);
+    if (priceAxisRects.length !== 1) return null;
+    const rightInset = Number(priceAxisRects[0].width);
+    if (!Number.isFinite(rightInset) || !(rightInset > 0)) return null;
     const visibleRange = scale.getVisiblePriceRange();
     const mode = scale.getMode();
     const inverted = scale.isInverted();
@@ -3845,6 +3856,7 @@
     return {
       top: 0,
       height,
+      rightInset,
       minPrice,
       maxPrice,
       mode,
@@ -3877,7 +3889,7 @@
       position: absolute;
       z-index: 3;
       top: 0;
-      right: 72px;
+      right: 0;
       bottom: auto;
       height: 0;
       width: 132px;
@@ -3997,8 +4009,10 @@
   function setDepthProfileGeometry(root, geometry) {
     const top = `${geometry.top}px`;
     const height = `${geometry.height}px`;
+    const right = `${geometry.rightInset}px`;
     if (root.style.top !== top) root.style.top = top;
     if (root.style.height !== height) root.style.height = height;
+    if (root.style.right !== right) root.style.right = right;
   }
   function bucketVisibleLevels(levels, geometry) {
     const lastRow = Math.max(0, Math.ceil(geometry.height) - 1);

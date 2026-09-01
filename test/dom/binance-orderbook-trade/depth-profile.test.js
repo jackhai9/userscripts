@@ -28,10 +28,27 @@ function createChartDom({ hiddenFrame = false } = {}) {
 
 function installTradingViewApi(frame, {
   height = 200,
+  viewportWidth = 1200,
+  priceAxisWidth = 88,
   mode = 0,
   inverted = false,
   coordinateToPrice = (coordinate) => 110 - coordinate / 10,
 } = {}) {
+  Object.defineProperty(frame.contentWindow, 'innerWidth', {
+    configurable: true,
+    value: viewportWidth,
+  });
+  const priceAxis = frame.contentDocument.createElement('div');
+  priceAxis.className = 'chart-markup-table price-axis-container';
+  priceAxis.getBoundingClientRect = () => ({
+    width: priceAxisWidth,
+    height,
+    left: viewportWidth - priceAxisWidth,
+    right: viewportWidth,
+    top: 0,
+    bottom: height,
+  });
+  frame.contentDocument.body.appendChild(priceAxis);
   const scale = {
     coordinateToPrice,
     getMode: () => mode,
@@ -80,6 +97,7 @@ test('maps prices through the active TradingView main-pane scale', () => {
 
   assert.equal(geometry.top, 0);
   assert.equal(geometry.height, 200);
+  assert.equal(geometry.rightInset, 88);
   assert.equal(geometry.minPrice, 90);
   assert.equal(geometry.maxPrice, 110);
   assert.ok(Math.abs(geometry.priceToCoordinate(100) - 100) < 0.02);
@@ -127,6 +145,29 @@ test('fails closed when TradingView returns a non-monotonic price transform', ()
   });
 
   assert.equal(getTradingViewDepthProfileGeometry(frame), null);
+});
+
+test('fails closed when the TradingView main-pane price axis is missing or ambiguous', () => {
+  const missing = createChartDom();
+  const missingFrame = missing.window.document.querySelector('iframe');
+  installTradingViewApi(missingFrame);
+  missingFrame.contentDocument.querySelector('.price-axis-container').remove();
+  assert.equal(getTradingViewDepthProfileGeometry(missingFrame), null);
+
+  const ambiguous = createChartDom();
+  const ambiguousFrame = ambiguous.window.document.querySelector('iframe');
+  installTradingViewApi(ambiguousFrame);
+  const duplicate = ambiguousFrame.contentDocument.querySelector('.price-axis-container').cloneNode();
+  duplicate.getBoundingClientRect = () => ({
+    width: 88,
+    height: 200,
+    left: 1112,
+    right: 1200,
+    top: 0,
+    bottom: 200,
+  });
+  ambiguousFrame.contentDocument.body.appendChild(duplicate);
+  assert.equal(getTradingViewDepthProfileGeometry(ambiguousFrame), null);
 });
 
 test('rejects ambiguous visible chart roots', () => {
@@ -297,9 +338,10 @@ test('updates root geometry without rewriting unchanged styles', () => {
   const { host } = findDepthProfileHost(document);
   const root = ensureDepthProfileView(document, host, { onToggle: () => {} });
 
-  setDepthProfileGeometry(root, { top: 4, height: 320 });
+  setDepthProfileGeometry(root, { top: 4, height: 320, rightInset: 88 });
   assert.equal(root.style.top, '4px');
   assert.equal(root.style.height, '320px');
-  setDepthProfileGeometry(root, { top: 4, height: 320 });
-  assert.equal(root.getAttribute('style'), 'top: 4px; height: 320px;');
+  assert.equal(root.style.right, '88px');
+  setDepthProfileGeometry(root, { top: 4, height: 320, rightInset: 88 });
+  assert.equal(root.getAttribute('style'), 'top: 4px; height: 320px; right: 88px;');
 });
