@@ -26,12 +26,18 @@ symbol.
 
 ## Rendering Contract
 
-- `event_opened` creates one marker.
-- `event_updated` updates that marker and the compact status strip without
-  creating a note.
-- `event_closed` creates or updates one objective note with the event interval,
-  four-force facts, immediate price response, trigger reasons, and close reason.
-- `event_outcome` updates that same note with the ordered outcome horizons.
+- Every event owns exactly one chart marker throughout its lifecycle. Updates,
+  closure, and later outcomes update that marker without creating TradingView
+  text shapes.
+- A single fixed panel shows the selected event's four-force facts, immediate
+  price response, trigger reasons, close reason, and ordered outcome horizons.
+  This prevents persistent multiline notes from overlapping one-second bars.
+- The panel keeps the eight most recent events. It follows the newest event by
+  default; selecting an older row pauses that behavior until `最新` is pressed.
+- Notional values use compact `K` and `M` suffixes. Ratios use at most two
+  decimal places. Basis-point values normally use one decimal place and use two
+  only below one basis point. Binary floating-point tails and internal trigger
+  keys are never shown in user-visible text.
 - Incomplete or input-gap facts are marked as incomplete and carry no
   directional conclusion.
 
@@ -49,10 +55,11 @@ before closure. `event_closed.event_time_ms` carries `active_end_at_ms` and can
 be later than that snapshot's end when an ineligible bucket advances the event
 to its lifecycle deadline without joining the event.
 
-The script stores only its own returned entity IDs. Route, symbol, interval,
-epoch, cursor, or sequence discontinuities abort the request and remove only
-those transient entities. Event count and age are bounded in memory and on the
-chart.
+The script stores only its own returned marker IDs and its bounded in-memory
+panel records. Route, symbol, interval, epoch, cursor, or sequence
+discontinuities abort the request and remove only those transient entities.
+Marker count and age are bounded on the chart; the panel retains at most eight
+events.
 
 ## Development
 
