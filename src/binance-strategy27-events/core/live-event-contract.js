@@ -154,7 +154,6 @@ function validateEvent(value) {
       'universe_removed',
       'monitor_stopped',
     ].includes(value.close_reason), 'closed event close_reason is invalid');
-    assertCondition(value.latest_snapshot.bucket_end_ms === value.active_end_at_ms, 'closed latest snapshot must end at active_end_at_ms');
   }
 }
 

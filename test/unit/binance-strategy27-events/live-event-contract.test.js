@@ -167,6 +167,25 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
   );
 });
 
+test('allows a closed event to retain the last eligible snapshot before its lifecycle boundary', () => {
+  const closedEvent = {
+    ...event({ status: 'complete', activeEnd: 2_000 }),
+    latest_snapshot: snapshot({ start: 1_500, end: 1_750 }),
+  };
+  const closedEnvelope = envelope({
+    kind: 'event_closed',
+    payload: { event: closedEvent },
+    status: 'complete',
+    eventTime: 2_000,
+  });
+
+  assert.equal(validateLiveEnvelope(closedEnvelope), closedEnvelope);
+  assert.throws(
+    () => validateLiveEnvelope({ ...closedEnvelope, event_time_ms: 1_999 }),
+    /event_closed time is invalid/,
+  );
+});
+
 test('tracks exact sequence and event lifecycle while allowing reset rehydration', () => {
   const lifecycle = new LiveEventLifecycle('BTR/USDT:USDT', lifecycleOptions);
   const opened = lifecycle.apply(envelope());
