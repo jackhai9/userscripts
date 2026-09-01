@@ -14,7 +14,7 @@ const epoch = '0123456789abcdef0123456789abcdef';
 const eventId = 'a'.repeat(64);
 const lifecycleOptions = { maxEvents: 80, maxAgeMs: 2 * 60 * 60 * 1_000 };
 
-function snapshot({ start = 750, end = 1_000, mid = '1.25' } = {}) {
+function snapshot({ start = 1_000, end = 1_250, mid = '1.25' } = {}) {
   return {
     bucket_start_ms: start,
     bucket_end_ms: end,
@@ -153,6 +153,18 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
     }),
     /canonical decimal string/,
   );
+  assert.throws(
+    () => validateLiveEnvelope({
+      ...opened,
+      payload: {
+        event: {
+          ...opened.payload.event,
+          trigger_snapshot: snapshot({ start: 750, end: 1_000 }),
+        },
+      },
+    }),
+    /trigger snapshot must start at triggered_at_ms/,
+  );
 });
 
 test('tracks exact sequence and event lifecycle while allowing reset rehydration', () => {
@@ -215,7 +227,7 @@ test('tracks exact sequence and event lifecycle while allowing reset rehydration
 test('rejects unknown lifecycle transitions without a reset', () => {
   const lifecycle = new LiveEventLifecycle('BTR/USDT:USDT', lifecycleOptions);
   lifecycle.apply(envelope());
-  const lateSnapshot = snapshot({ start: 2_750, end: 3_000 });
+  const lateSnapshot = snapshot({ start: 3_000, end: 3_250 });
   const lateEvent = {
     ...event(),
     triggered_at_ms: 3_000,
@@ -228,7 +240,7 @@ test('rejects unknown lifecycle transitions without a reset', () => {
       id: 'b'.repeat(64),
       kind: 'event_updated',
       payload: { event: lateEvent },
-      eventTime: 3_000,
+      eventTime: 3_250,
     })),
     /unknown event/,
   );
@@ -268,7 +280,7 @@ test('bounds retained lifecycle events and reports exact count and age evictions
     id: eventB,
     sequence: 4,
     kind: 'event_updated',
-    eventTime: 1_000,
+    eventTime: 1_250,
   }));
   assert.equal(ignored.type, 'event_evicted');
   assert.equal(lifecycle.size, 0);
