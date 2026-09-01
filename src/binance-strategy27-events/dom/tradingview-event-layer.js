@@ -84,8 +84,7 @@ function createMarkerPointResolver(chart) {
 
   const resolve = (annotation) => {
     const point = { time: annotation.markerTime, price: annotation.markerPrice };
-    if (annotation.markerShape === 'flag') return point;
-    if (!['arrow_up', 'arrow_down'].includes(annotation.markerShape)) {
+    if (!['flag', 'arrow_up', 'arrow_down'].includes(annotation.markerShape)) {
       throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
     }
 
@@ -96,6 +95,7 @@ function createMarkerPointResolver(chart) {
     if (!Array.isArray(candle) || candle.length < 5 || candle[0] !== annotation.markerTime) {
       throw new Error(`Strategy 27 candle is invalid for ${annotation.markerTime}`);
     }
+    if (annotation.markerShape === 'flag') return point;
     const candleHigh = Number(candle[2]);
     const candleLow = Number(candle[3]);
     if (!Number.isFinite(candleHigh) || !Number.isFinite(candleLow)) {
@@ -125,7 +125,11 @@ function verifyResolvedTime(chart, id, requestedTime) {
   const shape = chart.getShapeById(id);
   const points = shape?.getPoints?.();
   if (!Array.isArray(points) || points.length !== 1 || points[0].time !== requestedTime) {
-    throw new Error(`Strategy 27 chart time alignment failed for ${requestedTime}`);
+    const actualTime = Array.isArray(points) && points.length === 1 ? points[0]?.time : null;
+    const pointCount = Array.isArray(points) ? points.length : null;
+    throw new Error(
+      `Strategy 27 chart time alignment failed: expected ${requestedTime}, received ${actualTime} (point count ${pointCount})`,
+    );
   }
   return shape;
 }

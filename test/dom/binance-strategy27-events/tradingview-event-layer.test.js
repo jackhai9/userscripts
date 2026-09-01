@@ -210,6 +210,33 @@ test('waits for the matching candle data update before placing a directional mar
   assert.equal([...fixture.shapes.values()][0].getPoints()[0].price, 1.192);
 });
 
+test('waits for the matching candle data update before placing a neutral flag', async () => {
+  const fixture = createChartDom({ candle: null });
+  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
+  const layer = createTradingViewEventLayer(target, {
+    maxEvents: 2,
+    maxAgeMs: 60_000,
+    candleWaitMs: 50,
+  });
+
+  const renderPromise = layer.renderOpened('event-a', annotation({
+    markerShape: 'flag',
+    markerColor: '#F0B90B',
+    markerPrice: 1.26,
+  }), 10_000);
+  await Promise.resolve();
+  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.dataUpdatedListenerCount, 1);
+
+  fixture.setCandle([10, 1.25, 1.3, 1.2, 1.25]);
+  fixture.fireDataUpdated();
+
+  assert.equal(await renderPromise, true);
+  assert.equal(fixture.shapes.size, 1);
+  assert.equal(fixture.dataUpdatedListenerCount, 0);
+  assert.equal([...fixture.shapes.values()][0].getPoints()[0].price, 1.26);
+});
+
 test('rejects a directional marker when its matching candle misses the bounded wait', async () => {
   const { dom } = createChartDom({ candle: null });
   const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
@@ -252,7 +279,7 @@ test('removes a shifted entity and reports chart alignment failure', async () =>
 
   await assert.rejects(
     layer.renderOpened('event-a', annotation(), 10_000),
-    /chart time alignment/,
+    /chart time alignment failed: expected 10, received 9 \(point count 1\)/,
   );
   assert.equal(shapes.size, 0);
   assert.equal(removed.length, 1);
