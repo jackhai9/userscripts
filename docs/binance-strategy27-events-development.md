@@ -40,6 +40,10 @@ Every created entity uses the second obtained by flooring the projection's
 update. If TradingView shifts the point to a different bar, the entity is
 removed and visualization stops with an alignment error.
 
+`triggered_at_ms` is the trigger bucket's start boundary. The browser requires
+`trigger_snapshot.bucket_start_ms` to equal it; the bucket end remains the
+exclusive end of that same measurement interval.
+
 The script stores only its own returned entity IDs. Route, symbol, interval,
 epoch, cursor, or sequence discontinuities abort the request and remove only
 those transient entities. Event count and age are bounded in memory and on the
@@ -62,4 +66,3 @@ Live validation must confirm the current Binance main-world chart API, exact
 `1S` resolution, exact route symbol, successful create/readback/remove behavior,
 Tampermonkey source readback, and the actually loaded source after a hard
 reload. A source-level method name alone is not end-to-end proof.
-

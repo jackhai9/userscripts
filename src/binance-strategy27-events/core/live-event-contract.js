@@ -141,7 +141,7 @@ function validateEvent(value) {
   assertSortedUniqueStrings(value.trigger_reasons, 'payload.event.trigger_reasons', { nonEmpty: true });
   validateSnapshot(value.trigger_snapshot, 'payload.event.trigger_snapshot');
   validateSnapshot(value.latest_snapshot, 'payload.event.latest_snapshot');
-  assertCondition(value.trigger_snapshot.bucket_end_ms === value.triggered_at_ms, 'trigger snapshot must end at triggered_at_ms');
+  assertCondition(value.trigger_snapshot.bucket_start_ms === value.triggered_at_ms, 'trigger snapshot must start at triggered_at_ms');
   if (value.event_status === 'active') {
     assertCondition(value.active_end_at_ms === null && value.close_reason === null, 'active event close fields must be null');
   } else {
