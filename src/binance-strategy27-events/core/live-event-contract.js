@@ -315,6 +315,10 @@ export function validateLiveEnvelope(value) {
   }
 
   if (value.message_kind === 'event_opened') {
+    assertCondition(
+      JSON.stringify(value.payload.event.latest_snapshot) === JSON.stringify(value.payload.event.trigger_snapshot),
+      'event_opened latest snapshot must equal trigger snapshot',
+    );
     assertCondition(value.event_time_ms === value.payload.event.triggered_at_ms, 'event_opened time is invalid');
   } else if (value.message_kind === 'event_updated') {
     assertCondition(value.event_time_ms === value.payload.event.latest_snapshot.bucket_end_ms, 'event_updated time is invalid');

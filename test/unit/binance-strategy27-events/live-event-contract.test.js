@@ -183,6 +183,11 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
   oversizedNeutral.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 2_250 });
   oversizedNeutral.event_time_ms = 2_250;
   assert.throws(() => validateLiveEnvelope(oversizedNeutral), /must not exceed one second/);
+
+  const aggregatedOpen = envelope();
+  aggregatedOpen.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 2_000 });
+  aggregatedOpen.payload.event.latest_snapshot.source_bucket_count = 4;
+  assert.throws(() => validateLiveEnvelope(aggregatedOpen), /latest snapshot must equal trigger snapshot/);
 });
 
 test('allows a closed event to retain the last eligible snapshot before its lifecycle boundary', () => {
