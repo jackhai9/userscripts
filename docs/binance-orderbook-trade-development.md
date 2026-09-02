@@ -51,6 +51,7 @@ The build command rewrites `scripts/binance-orderbook-trade.user.js` from `src/b
 src/binance-orderbook-trade/
   index.user.js
   core/
+    bearish-bollinger-pattern.js
     cancel-orders.js
     continuous-ladder.js
     decimal.js
@@ -64,6 +65,7 @@ src/binance-orderbook-trade/
     account-orders.js
     depth-profile.js
     trade-form.js
+    tradingview-bearish-alerts.js
 test/
   unit/
     binance-orderbook-trade/
@@ -83,6 +85,7 @@ scripts/
 - decimal normalization and exact arithmetic
 - quantity allocation and step-size rounding
 - cancel-order text evidence
+- bearish Bollinger/MA60 setup and signal detection
 - orderbook display-step inference
 - public depth snapshot/diff synchronization and bounded reconnect lifecycle
 - ladder action specs
@@ -93,6 +96,7 @@ scripts/
 - active current-orders pane detection
 - vertical depth-profile host discovery and canvas rendering
 - trade form tab and action button filtering
+- TradingView OHLC export and bearish-alert marker ownership
 
 `index.user.js` owns side effects:
 
@@ -103,6 +107,16 @@ scripts/
 - storage
 - panel rendering
 - async execution flow
+
+## Bearish Bollinger Alerts
+
+The chart alert is timeframe-agnostic and evaluates closed bars only. It supports TradingView second, minute, hour, day, and week resolutions; month resolutions are intentionally unsupported because their duration is calendar-dependent. On startup and after a symbol or resolution change, it scans the latest 500 closed bars and renders at most the latest 20 signals. After that initial scan, it exports and recalculates only when a new bar can have closed.
+
+A setup requires the Bollinger middle line to cross down through SMA60 while the band center is declining. In the eight bars before the cross, at least four closes must remain between the lower and middle bands. At most one close may finish above the middle band, and it must be rejected by the next bearish close below the middle. After the cross, a high approaching the declining middle band creates a yellow warning dot. A later bearish bar touching the lower-band tolerance creates a red downward arrow.
+
+The current Binance `trading-platform-30` chart runtime exposes `exportData()` as row-major numeric-keyed OHLC objects. The parser deliberately enforces that observed contract and fails if the schema changes. Every asynchronous export and marker creation revalidates the active chart instance, route symbol, and resolution so a stale task cannot annotate a newly selected chart.
+
+Alert markers use TradingView's drawing API. Current live evidence shows that removing even a `disableSave` marker emits `drawing_event` and `saveChart`, so alert reconciliation pauses during every existing order-line drawing/save owner. Symbol changes, non-trading routes, hidden documents, and page teardown stop or clear the alert lifecycle.
 
 ## Vertical Depth Profile
 
