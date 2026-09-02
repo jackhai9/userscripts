@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.186
+// @version      2.7.187
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -235,6 +235,16 @@ import {
   getBinanceChartOrdersTarget as getBinanceChartOrdersTargetDom,
 } from './dom/chart-orders.js';
 import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
+import {
+  detectBearishBollingerSignals,
+  isBearishBollingerDrawingMutationBlocked,
+} from './core/bearish-bollinger-pattern.js';
+import {
+  createBearishBollingerMarkerLayer,
+  exportClosedTradingViewBars,
+  findBearishBollingerChartTarget,
+  isBearishBollingerChartTargetCurrent,
+} from './dom/tradingview-bearish-alerts.js';
 
 (function () {
   'use strict';
@@ -416,6 +426,8 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   const TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS = 3;
   const TRADE_ACTION_BUTTON_READY_TIMEOUT_MS = TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS * 1000;
   const ROUTE_WATCHDOG_MS = 5000;
+  const BEARISH_BOLLINGER_ALERT_POLL_MS = 1000;
+  const BEARISH_BOLLINGER_ALERT_MAX_MARKERS = 20;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -505,6 +517,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   let depthProfileObserverRoot = null;
   let depthProfileRenderQueued = false;
   let depthProfileSyncQueued = false;
+  let bearishBollingerAlertTimer = null;
+  let bearishBollingerAlertTask = null;
+  let bearishBollingerAlertContext = null;
   const controlledNativeButtons = new Set();
   let lastObservedSymbol = getCurrentSymbol();
 
@@ -561,6 +576,138 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   function err(...args) {
     emit('ERR', ...args);
+  }
+
+  // TradingView still emits drawing_event + saveChart when a disableSave marker is removed.
+  // Keep alert reconciliation outside every native order-line save/coalescing session.
+  function isTradingViewDrawingMutationBusy() {
+    return isBearishBollingerDrawingMutationBlocked({
+      ladderTask,
+      continuousLadderTask,
+      singleOrderTask,
+      cancelCurrentSymbolOpenOrdersTask,
+      chartOrdersRecoveryTask,
+      continuousChartSaveController,
+    });
+  }
+
+  function clearBearishBollingerAlertContext() {
+    if (!bearishBollingerAlertContext) return true;
+    if (isTradingViewDrawingMutationBusy()) return false;
+    bearishBollingerAlertContext.layer.clear();
+    bearishBollingerAlertContext = null;
+    return true;
+  }
+
+  function isBearishBollingerAlertContextCurrent(context) {
+    return (
+      bearishBollingerAlertContext === context
+      && !document.hidden
+      && isFuturesTradingPage()
+      && !isTradingViewDrawingMutationBusy()
+      && getCurrentSymbol() === context.routeSymbol
+      && isBearishBollingerChartTargetCurrent(document, context.target)
+    );
+  }
+
+  function scheduleNextBearishBollingerExport(context, latestClosedBarTime) {
+    const followingBarCloseMs = (
+      latestClosedBarTime + (context.target.resolutionSeconds * 2)
+    ) * 1_000;
+    context.nextExportAtMs = Math.max(Date.now() + BEARISH_BOLLINGER_ALERT_POLL_MS, followingBarCloseMs);
+  }
+
+  async function synchronizeBearishBollingerAlerts() {
+    if (document.hidden || !isFuturesTradingPage() || isTradingViewDrawingMutationBusy()) return;
+    const routeSymbol = getCurrentSymbol();
+    if (!routeSymbol) return;
+
+    if (
+      bearishBollingerAlertContext
+      && bearishBollingerAlertContext.routeSymbol !== routeSymbol
+      && !clearBearishBollingerAlertContext()
+    ) return;
+
+    let target;
+    try {
+      target = findBearishBollingerChartTarget(document, routeSymbol);
+    } catch (error) {
+      clearBearishBollingerAlertContext();
+      err('空头形态预警已停止:', error);
+      return;
+    }
+    if (!target) return;
+
+    const contextMatches = bearishBollingerAlertContext
+      && bearishBollingerAlertContext.target.chart === target.chart
+      && bearishBollingerAlertContext.routeSymbol === routeSymbol
+      && bearishBollingerAlertContext.resolution === target.resolution;
+    if (!contextMatches) {
+      if (!clearBearishBollingerAlertContext()) return;
+      bearishBollingerAlertContext = {
+        routeSymbol,
+        resolution: target.resolution,
+        target,
+        layer: createBearishBollingerMarkerLayer(target),
+        failed: false,
+        cleanupPending: false,
+        lastProcessedClosedBarTime: null,
+        nextExportAtMs: 0,
+      };
+    }
+
+    const context = bearishBollingerAlertContext;
+    if (context.cleanupPending) {
+      context.layer.clear();
+      context.cleanupPending = false;
+    }
+    if (
+      context.failed
+      || bearishBollingerAlertTask
+      || Date.now() < context.nextExportAtMs
+    ) return;
+    const task = (async () => {
+      const bars = await exportClosedTradingViewBars(context.target);
+      if (!bars || !isBearishBollingerAlertContextCurrent(context)) return;
+      if (bars.length === 0) {
+        context.nextExportAtMs = Date.now() + BEARISH_BOLLINGER_ALERT_POLL_MS;
+        return;
+      }
+      const latestClosedBarTime = bars.at(-1).time;
+      scheduleNextBearishBollingerExport(context, latestClosedBarTime);
+      if (latestClosedBarTime === context.lastProcessedClosedBarTime) return;
+      const signals = detectBearishBollingerSignals(bars)
+        .slice(-BEARISH_BOLLINGER_ALERT_MAX_MARKERS);
+      const rendered = await context.layer.render(signals, {
+        isCurrent: () => isBearishBollingerAlertContextCurrent(context),
+      });
+      if (rendered && isBearishBollingerAlertContextCurrent(context)) {
+        context.lastProcessedClosedBarTime = latestClosedBarTime;
+      }
+    })();
+    bearishBollingerAlertTask = task;
+    task.catch((error) => {
+      if (bearishBollingerAlertContext !== context) return;
+      context.failed = true;
+      context.cleanupPending = true;
+      err('空头形态预警已停止:', error);
+    }).finally(() => {
+      if (bearishBollingerAlertTask === task) bearishBollingerAlertTask = null;
+    });
+  }
+
+  function startBearishBollingerAlertMonitor() {
+    if (bearishBollingerAlertTimer || document.hidden || !isFuturesTradingPage()) return;
+    synchronizeBearishBollingerAlerts();
+    bearishBollingerAlertTimer = setInterval(
+      synchronizeBearishBollingerAlerts,
+      BEARISH_BOLLINGER_ALERT_POLL_MS,
+    );
+  }
+
+  function stopBearishBollingerAlertMonitor() {
+    if (bearishBollingerAlertTimer) clearInterval(bearishBollingerAlertTimer);
+    bearishBollingerAlertTimer = null;
   }
 
   function parseJsonSafe(raw) {
@@ -8115,6 +8262,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     removePanel();
     removeDepthProfileRuntimeView();
     stopTradingTimers();
+    clearBearishBollingerAlertContext();
     invalidateTradeButtonCache();
     lastDisplayCloseState = null;
   }
@@ -8570,6 +8718,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   // ── 切换币种 / 首次进入时触发杠杆重置 ──
   function clearSymbolOwnedRuntimeState(symbol) {
     stopDepthProfileSession();
+    clearBearishBollingerAlertContext();
     depthProfileData = null;
     depthProfileFailedSymbol = null;
     depthProfileStatus = { status: 'connecting', detail: '' };
@@ -8617,6 +8766,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     ensureOrderbookPrecisionObserver();
     ensureDepthProfileObserver();
     scheduleDepthProfileSync();
+    startBearishBollingerAlertMonitor();
   }
 
   function stopTradingTimers() {
@@ -8625,6 +8775,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     stopOrderbookPrecisionObserver();
     stopDepthProfileObserver();
     stopDepthProfileSession();
+    stopBearishBollingerAlertMonitor();
     clearTradeUiMutationWait();
   }
 
@@ -8693,6 +8844,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   window.addEventListener('pagehide', () => {
     stopDepthProfileObserver();
     stopDepthProfileSession();
+    stopBearishBollingerAlertMonitor();
     removeDepthProfileRuntimeView();
   }, { once: true });
 
