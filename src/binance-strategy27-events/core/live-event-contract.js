@@ -161,14 +161,26 @@ function validateEvent(value) {
     'trigger snapshot must remain one uncategorized research bucket',
   );
   const latestDurationMs = value.latest_snapshot.bucket_end_ms - value.latest_snapshot.bucket_start_ms;
+  const triggerDurationMs = value.trigger_snapshot.bucket_end_ms - value.trigger_snapshot.bucket_start_ms;
+  assertCondition(
+    1_000 % triggerDurationMs === 0,
+    'trigger bucket duration must divide one second',
+  );
   assertCondition(
     latestDurationMs <= 1_000,
     'latest snapshot duration must not exceed one second',
   );
-  const triggerDurationMs = value.trigger_snapshot.bucket_end_ms - value.trigger_snapshot.bucket_start_ms;
   assertCondition(
     latestDurationMs === triggerDurationMs * value.latest_snapshot.source_bucket_count,
     'latest snapshot source bucket count must match duration',
+  );
+  assertCondition(
+    (value.latest_snapshot.bucket_start_ms - value.trigger_snapshot.bucket_start_ms) % triggerDurationMs === 0,
+    'latest snapshot must align to trigger bucket grid',
+  );
+  assertCondition(
+    value.latest_snapshot.bucket_end_ms >= value.trigger_snapshot.bucket_end_ms,
+    'latest snapshot must not precede trigger bucket',
   );
   assertCondition(
     value.latest_snapshot.candidate_observations.length === 0 || latestDurationMs === 1_000,
@@ -180,6 +192,10 @@ function validateEvent(value) {
   } else {
     assertInteger(value.active_end_at_ms, 'payload.event.active_end_at_ms');
     assertCondition(value.active_end_at_ms >= value.triggered_at_ms, 'event active end must not precede trigger');
+    assertCondition(
+      value.latest_snapshot.bucket_end_ms <= value.active_end_at_ms,
+      'latest snapshot must not follow active end',
+    );
     assertCondition([
       'quiet_period',
       'maximum_duration',
