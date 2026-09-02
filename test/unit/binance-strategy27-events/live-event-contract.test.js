@@ -178,6 +178,11 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
   );
   partialCandidate.payload.event.latest_snapshot.candidate_observations = ['bearish_buy_impact_failure'];
   assert.throws(() => validateLiveEnvelope(partialCandidate), /one complete second/);
+
+  const oversizedNeutral = envelope({ kind: 'event_updated' });
+  oversizedNeutral.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 2_250 });
+  oversizedNeutral.event_time_ms = 2_250;
+  assert.throws(() => validateLiveEnvelope(oversizedNeutral), /must not exceed one second/);
 });
 
 test('allows a closed event to retain the last eligible snapshot before its lifecycle boundary', () => {

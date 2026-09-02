@@ -172,6 +172,10 @@
     );
     const latestDurationMs = value.latest_snapshot.bucket_end_ms - value.latest_snapshot.bucket_start_ms;
     assertCondition(
+      latestDurationMs <= 1e3,
+      "latest snapshot duration must not exceed one second"
+    );
+    assertCondition(
       value.latest_snapshot.candidate_observations.length === 0 || latestDurationMs === 1e3,
       "latest snapshot candidates require one complete second"
     );
