@@ -278,7 +278,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
     });
     title.appendChild(createElement(document, 'span', {
       text: annotation.title,
-      styles: { color: annotation.markerColor, fontWeight: '700', flex: '1' },
+      styles: { color: annotation.markerColor ?? '#EAECEF', fontWeight: '700', flex: '1' },
     }));
     title.appendChild(createElement(document, 'span', {
       text: STATUS_LABELS[annotation.status],
@@ -286,14 +286,17 @@ export function createStrategy27EventPanel(document, chartRoot, {
     }));
     detail.appendChild(title);
     appendDetailLine(document, detail, '时间', formatClock(annotation.eventTimeMs));
-    appendDetailLine(document, detail, '即时响应', annotation.summary, annotation.markerColor);
+    appendDetailLine(document, detail, '统计', annotation.windowText);
+    if (annotation.candidateText) {
+      appendDetailLine(document, detail, '候选观察', annotation.candidateText, annotation.markerColor);
+    }
+    appendDetailLine(document, detail, '即时响应', annotation.summary, annotation.markerColor ?? '#EAECEF');
     for (const row of annotation.forceRows) {
-      appendDetailLine(document, detail, row.label, `${row.value}｜${row.detail}`);
+      appendDetailLine(document, detail, row.label, row.detail ? `${row.value}｜${row.detail}` : row.value);
     }
     appendDetailLine(document, detail, '点差', annotation.priceDetail);
     appendDetailLine(document, detail, '触发', annotation.triggerText);
     if (annotation.closeText) appendDetailLine(document, detail, '结束', annotation.closeText);
-    for (const outcome of annotation.outcomeLines) appendDetailLine(document, detail, '后续', outcome);
     for (const notice of annotation.notices) appendDetailLine(document, detail, '说明', notice, '#F0B90B');
   }
 
@@ -327,7 +330,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
           width: '7px',
           height: '7px',
           borderRadius: '50%',
-          background: annotation.markerColor,
+          background: annotation.markerColor ?? 'transparent',
         },
       }));
       row.appendChild(createElement(document, 'span', {

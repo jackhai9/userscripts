@@ -6,9 +6,11 @@ import { createStrategy27EventPanel } from '../../../src/binance-strategy27-even
 
 function annotation({ time = 1_000, summary = '价格 +4.2 bps · 点差 1.2 bps' } = {}) {
   return {
-    title: '订单流事件',
+    title: '订单流观察',
     eventTimeMs: time,
     markerColor: '#0ECB81',
+    windowText: '统计 1 秒 · 4 桶',
+    candidateText: '卖出推动失效 · 抛压转弱',
     summary,
     forceRows: [
       { label: '主动买', value: '12.3K USDT · 3 笔', detail: '吃 ask 深度 0.41' },
@@ -18,7 +20,6 @@ function annotation({ time = 1_000, summary = '价格 +4.2 bps · 点差 1.2 bps
     ],
     triggerText: '主动买、ask 减',
     closeText: null,
-    outcomeLines: [],
     notices: [],
   };
 }

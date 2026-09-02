@@ -154,7 +154,7 @@ test('one event owns one marker across its complete lifecycle', async () => {
   assert.equal(removed.length, 2);
 });
 
-test('places directional arrows eight pixels outside the matching candle', async () => {
+test('places red and green directional arrows eight pixels outside the matching candle', async () => {
   const { dom, shapes } = createChartDom();
   const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
   const layer = createTradingViewEventLayer(target, { maxEvents: 3, maxAgeMs: 60_000 });
@@ -165,19 +165,12 @@ test('places directional arrows eight pixels outside the matching candle', async
     markerColor: '#F6465D',
     markerPrice: 0.01,
   }), 10_001);
-  await layer.renderOpened('flag', annotation({
-    markerShape: 'flag',
-    markerColor: '#F0B90B',
-    markerPrice: 1.26,
-  }), 10_002);
-
-  const [up, down, flag] = [...shapes.values()];
+  const [up, down] = [...shapes.values()];
   assert.equal(up.getPoints()[0].price, 1.192);
   assert.equal(down.getPoints()[0].price, 1.308);
-  assert.equal(flag.getPoints()[0].price, 1.26);
 });
 
-test('replaces an event marker when its response direction changes', async () => {
+test('keeps the first event marker immutable when later updates change direction', async () => {
   const { dom, shapes, removed } = createChartDom();
   const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
   const layer = createTradingViewEventLayer(target, { maxEvents: 2, maxAgeMs: 60_000 });
@@ -190,10 +183,11 @@ test('replaces an event marker when its response direction changes', async () =>
   }), 11_000);
 
   assert.equal(shapes.size, 1);
-  assert.deepEqual(removed, [originalId]);
-  const replacement = [...shapes.values()][0];
-  assert.equal(replacement.getProperties().shape, 'arrow_down');
-  assert.equal(replacement.getPoints()[0].price, 1.308);
+  assert.deepEqual(removed, []);
+  assert.deepEqual([...shapes.keys()], [originalId]);
+  const marker = [...shapes.values()][0];
+  assert.equal(marker.getProperties().shape, 'arrow_up');
+  assert.equal(marker.getPoints()[0].price, 1.192);
 });
 
 test('waits for the matching candle data update before placing a directional marker', async () => {
@@ -219,7 +213,7 @@ test('waits for the matching candle data update before placing a directional mar
   assert.equal([...fixture.shapes.values()][0].getPoints()[0].price, 1.192);
 });
 
-test('waits for the matching candle data update before placing a neutral flag', async () => {
+test('does not create a marker for a neutral observation', async () => {
   const fixture = createChartDom({ candle: null });
   const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
   const layer = createTradingViewEventLayer(target, {
@@ -228,22 +222,12 @@ test('waits for the matching candle data update before placing a neutral flag', 
     candleWaitMs: 50,
   });
 
-  const renderPromise = layer.renderOpened('event-a', annotation({
-    markerShape: 'flag',
-    markerColor: '#F0B90B',
-    markerPrice: 1.26,
-  }), 10_000);
-  await Promise.resolve();
+  assert.equal(await layer.renderOpened('event-a', annotation({
+    markerShape: null,
+    markerColor: null,
+  }), 10_000), true);
   assert.equal(fixture.shapes.size, 0);
-  assert.equal(fixture.dataUpdatedListenerCount, 1);
-
-  fixture.setCandle([10, 1.25, 1.3, 1.2, 1.25]);
-  fixture.fireDataUpdated();
-
-  assert.equal(await renderPromise, true);
-  assert.equal(fixture.shapes.size, 1);
   assert.equal(fixture.dataUpdatedListenerCount, 0);
-  assert.equal([...fixture.shapes.values()][0].getPoints()[0].price, 1.26);
 });
 
 test('rejects a directional marker when its matching candle misses the bounded wait', async () => {
@@ -261,7 +245,7 @@ test('rejects a directional marker when its matching candle misses the bounded w
   );
 });
 
-test('anchors a neutral event to the latest prior candle when its exact second has no trade', async () => {
+test('does not anchor a neutral observation to a previous candle', async () => {
   const fixture = createChartDom({
     candle: null,
     previousCandle: [9, 1.24, 1.28, 1.18, 1.23],
@@ -274,13 +258,11 @@ test('anchors a neutral event to the latest prior candle when its exact second h
   });
 
   assert.equal(await layer.renderOpened('event-a', annotation({
-    markerShape: 'flag',
-    markerColor: '#F0B90B',
-    markerPrice: 1.26,
+    markerShape: null,
+    markerColor: null,
   }), 10_000), true);
 
-  const marker = [...fixture.shapes.values()][0];
-  assert.deepEqual(marker.getPoints(), [{ time: 9, price: 1.26 }]);
+  assert.equal(fixture.shapes.size, 0);
   assert.equal(fixture.dataUpdatedListenerCount, 0);
 });
 

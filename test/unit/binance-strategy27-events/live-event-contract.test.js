@@ -18,7 +18,9 @@ function snapshot({ start = 1_000, end = 1_250, mid = '1.25' } = {}) {
   return {
     bucket_start_ms: start,
     bucket_end_ms: end,
+    source_bucket_count: 1,
     bucket_trigger_reasons: ['aggressive_buy'],
+    candidate_observations: [],
     aggressive_buy: { notional: '1200', trade_count: 3, to_opposite_depth: '0.4' },
     aggressive_sell: { notional: '200', trade_count: 1, to_opposite_depth: '0.1' },
     bid: {
@@ -72,7 +74,7 @@ function envelope({
   eventTime = 1_000,
 } = {}) {
   return {
-    schema_version: 1,
+    schema_version: 2,
     strategy_id: '27',
     spec_version: '27_2_spec_v10',
     runtime_epoch: epoch,
@@ -165,6 +167,17 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
     }),
     /trigger snapshot must start at triggered_at_ms/,
   );
+
+  const triggerCandidate = envelope();
+  triggerCandidate.payload.event.trigger_snapshot.candidate_observations = ['bearish_buy_impact_failure'];
+  assert.throws(() => validateLiveEnvelope(triggerCandidate), /uncategorized research bucket/);
+
+  const partialCandidate = envelope();
+  partialCandidate.payload.event.latest_snapshot = structuredClone(
+    partialCandidate.payload.event.latest_snapshot,
+  );
+  partialCandidate.payload.event.latest_snapshot.candidate_observations = ['bearish_buy_impact_failure'];
+  assert.throws(() => validateLiveEnvelope(partialCandidate), /one complete second/);
 });
 
 test('allows a closed event to retain the last eligible snapshot before its lifecycle boundary', () => {

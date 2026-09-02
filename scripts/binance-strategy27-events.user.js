@@ -3,9 +3,9 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.5
+// @version      0.3.0
 // @author       jackhai9
-// @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流事件和后续结果
+// @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @exclude      https://www.binance.com/*/my/wallet/futures/*
@@ -39,6 +39,12 @@
   var EVENT_KINDS = /* @__PURE__ */ new Set(["orderflow_event", "price_response_event"]);
   var EVENT_STATUSES = /* @__PURE__ */ new Set(["active", "complete", "incomplete"]);
   var OUTCOME_STATUSES = /* @__PURE__ */ new Set(["complete", "input_gap", "terminated"]);
+  var CANDIDATE_OBSERVATIONS = /* @__PURE__ */ new Set([
+    "bearish_buy_impact_failure",
+    "bullish_sell_impact_failure",
+    "bearish_passive_book_shift",
+    "bullish_passive_book_shift"
+  ]);
   var IMPULSE_DIRECTIONS = /* @__PURE__ */ new Set(["up", "down", "flat"]);
   var DIRECTIONAL_OUTCOMES = /* @__PURE__ */ new Set([
     "continuation",
@@ -114,7 +120,9 @@
     assertExactKeys(value, [
       "bucket_start_ms",
       "bucket_end_ms",
+      "source_bucket_count",
       "bucket_trigger_reasons",
+      "candidate_observations",
       "aggressive_buy",
       "aggressive_sell",
       "bid",
@@ -123,8 +131,14 @@
     ], label);
     assertInteger(value.bucket_start_ms, `${label}.bucket_start_ms`);
     assertInteger(value.bucket_end_ms, `${label}.bucket_end_ms`);
+    assertInteger(value.source_bucket_count, `${label}.source_bucket_count`, { minimum: 1 });
     assertCondition(value.bucket_end_ms > value.bucket_start_ms, `${label} bucket end must follow start`);
     assertSortedUniqueStrings(value.bucket_trigger_reasons, `${label}.bucket_trigger_reasons`);
+    assertSortedUniqueStrings(value.candidate_observations, `${label}.candidate_observations`);
+    assertCondition(
+      value.candidate_observations.every((item) => CANDIDATE_OBSERVATIONS.has(item)),
+      `${label}.candidate_observations contains an unsupported value`
+    );
     validateAggressiveSide(value.aggressive_buy, `${label}.aggressive_buy`);
     validateAggressiveSide(value.aggressive_sell, `${label}.aggressive_sell`);
     validateBookSide(value.bid, `${label}.bid`);
@@ -152,6 +166,15 @@
     assertSortedUniqueStrings(value.trigger_reasons, "payload.event.trigger_reasons", { nonEmpty: true });
     validateSnapshot(value.trigger_snapshot, "payload.event.trigger_snapshot");
     validateSnapshot(value.latest_snapshot, "payload.event.latest_snapshot");
+    assertCondition(
+      value.trigger_snapshot.source_bucket_count === 1 && value.trigger_snapshot.candidate_observations.length === 0,
+      "trigger snapshot must remain one uncategorized research bucket"
+    );
+    const latestDurationMs = value.latest_snapshot.bucket_end_ms - value.latest_snapshot.bucket_start_ms;
+    assertCondition(
+      value.latest_snapshot.candidate_observations.length === 0 || latestDurationMs === 1e3,
+      "latest snapshot candidates require one complete second"
+    );
     assertCondition(value.trigger_snapshot.bucket_start_ms === value.triggered_at_ms, "trigger snapshot must start at triggered_at_ms");
     if (value.event_status === "active") {
       assertCondition(value.active_end_at_ms === null && value.close_reason === null, "active event close fields must be null");
@@ -259,7 +282,7 @@
       "data_status",
       "payload"
     ], "live envelope");
-    assertCondition(value.schema_version === 1, "Live envelope schema_version must be 1");
+    assertCondition(value.schema_version === 2, "Live envelope schema_version must be 2");
     assertCondition(value.strategy_id === "27", "Live envelope strategy_id must be 27");
     assertCondition(value.spec_version === "27_2_spec_v10", "Live envelope spec_version is invalid");
     assertCondition(typeof value.runtime_epoch === "string" && EPOCH_PATTERN.test(value.runtime_epoch), "Live envelope runtime_epoch is invalid");
@@ -632,12 +655,27 @@
   }
 
   // src/binance-strategy27-events/core/event-annotation.js
-  var OUTCOME_LABELS = Object.freeze({
-    continuation: "延续",
-    recovery: "恢复",
-    reversal: "反转",
-    partial_retracement: "部分回撤",
-    not_applicable: "不适用"
+  var CANDIDATE_PRESENTATIONS = Object.freeze({
+    bearish_buy_impact_failure: Object.freeze({
+      label: "买入推动失效 · 承接转弱",
+      markerShape: "arrow_down",
+      markerColor: "#F6465D"
+    }),
+    bearish_passive_book_shift: Object.freeze({
+      label: "主动成交弱 · 承接转弱",
+      markerShape: "arrow_down",
+      markerColor: "#F6465D"
+    }),
+    bullish_sell_impact_failure: Object.freeze({
+      label: "卖出推动失效 · 抛压转弱",
+      markerShape: "arrow_up",
+      markerColor: "#0ECB81"
+    }),
+    bullish_passive_book_shift: Object.freeze({
+      label: "主动成交弱 · 抛压转弱",
+      markerShape: "arrow_up",
+      markerColor: "#0ECB81"
+    })
   });
   var TRIGGER_LABELS = Object.freeze({
     aggressive_buy_to_ask_depth: "主动买",
@@ -692,6 +730,10 @@
     return compactDecimal(numeric, { digits: 1, label });
   }
   function formatForce(label, oppositeSide, force) {
+    const notional = finiteNumber(force.notional, `${label}.notional`);
+    if (notional === 0 && force.trade_count === 0) {
+      return Object.freeze({ label, value: "无主动成交", detail: "" });
+    }
     return Object.freeze({
       label,
       value: `${formatNotional(force.notional, `${label}.notional`)} USDT · ${force.trade_count} 笔`,
@@ -718,34 +760,47 @@
     if (!label) throw new Error(`Unknown Strategy 27 close reason: ${reason}`);
     return label;
   }
-  function outcomeLine(outcome) {
-    if (outcome.outcome_status !== "complete") return null;
-    const directional = OUTCOME_LABELS[outcome.directional_outcome];
-    if (!directional) throw new Error(`Unknown Strategy 27 directional outcome: ${outcome.directional_outcome}`);
-    return `${outcome.window_seconds} 秒：${directional}，收盘响应 ${formatBps(outcome.return_from_active_end_bps, "outcome.return")} bps`;
+  function candidatePresentation(observations) {
+    if (!observations.length) return null;
+    const presentations = observations.map((observation) => {
+      const presentation = CANDIDATE_PRESENTATIONS[observation];
+      if (!presentation) throw new Error(`Unknown Strategy 27 candidate observation: ${observation}`);
+      return presentation;
+    });
+    const markerShape = presentations[0].markerShape;
+    if (presentations.some((presentation) => presentation.markerShape !== markerShape)) {
+      throw new Error("Strategy 27 candidate observations contain conflicting directions");
+    }
+    return Object.freeze({
+      label: presentations.map((presentation) => presentation.label).join("、"),
+      markerShape,
+      markerColor: presentations[0].markerColor
+    });
+  }
+  function formatWindowDuration(snapshot) {
+    const durationMs = snapshot.bucket_end_ms - snapshot.bucket_start_ms;
+    if (durationMs % 1e3 === 0) return `${durationMs / 1e3} 秒`;
+    return `${trimmedFixed(durationMs / 1e3, 2)} 秒`;
   }
   function buildEventAnnotation({
     event,
-    outcomes,
-    rehydrated,
-    eventTimeMs = event.triggered_at_ms,
-    messageKind = event.event_status === "active" ? "event_updated" : "event_closed"
+    rehydrated
   }) {
-    const snapshot = messageKind === "event_opened" ? event.trigger_snapshot : event.latest_snapshot;
+    const snapshot = event.latest_snapshot;
     const response = snapshot.price_response;
-    const midReturn = finiteNumber(response.mid_return_bps, "price_response.mid_return_bps");
-    const markerShape = midReturn > 0 ? "arrow_up" : midReturn < 0 ? "arrow_down" : "flag";
-    const markerColor = midReturn > 0 ? "#0ECB81" : midReturn < 0 ? "#F6465D" : "#F0B90B";
-    const incomplete = event.event_status === "incomplete" || outcomes.some((item) => item.outcome_status !== "complete");
+    const candidate = candidatePresentation(snapshot.candidate_observations);
+    const incomplete = event.event_status === "incomplete";
     const notices = [];
     if (rehydrated) notices.push("此前投影历史不可用");
     if (incomplete) notices.push("数据不完整，不作方向结论");
-    const title = event.event_kind === "orderflow_event" ? "订单流事件" : "价格响应事件";
+    const title = event.event_kind === "orderflow_event" ? "订单流观察" : "价格响应观察";
     const summary = `价格 ${formatBps(response.mid_return_bps, "price_response.mid_return_bps")} bps · 点差 ${formatBps(response.spread_bps, "price_response.spread_bps", { signed: false })} bps`;
     return Object.freeze({
       title,
-      eventTimeMs: event.triggered_at_ms,
+      eventTimeMs: snapshot.bucket_end_ms - 1,
       status: event.event_status,
+      windowText: `统计 ${formatWindowDuration(snapshot)} · ${snapshot.source_bucket_count} 桶`,
+      candidateText: candidate?.label ?? null,
       summary,
       forceRows: Object.freeze([
         formatForce("主动买", "ask", snapshot.aggressive_buy),
@@ -756,14 +811,27 @@
       priceDetail: `点差变化 ${formatBps(response.spread_change_bps, "price_response.spread_change_bps")} bps`,
       triggerText: formatTriggerReasons(event.trigger_reasons),
       closeText: formatCloseReason(event.close_reason),
-      outcomeLines: Object.freeze(incomplete ? [] : outcomes.map(outcomeLine).filter(Boolean)),
       notices: Object.freeze(notices),
-      markerShape,
-      markerColor,
-      markerTime: eventTimeToChartSecond(eventTimeMs),
+      markerShape: candidate?.markerShape ?? null,
+      markerColor: candidate?.markerColor ?? null,
+      markerTime: eventTimeToChartSecond(snapshot.bucket_end_ms - 1),
       markerPrice: finiteNumber(response.mid, "price_response.mid"),
-      liveStatus: `Strategy 27 ${title}｜${summary}`
+      liveStatus: `Strategy 27 ${candidate?.label ?? title}｜${summary}`
     });
+  }
+  function stabilizeCandidatePresentation(presentations, eventId, annotation) {
+    const existing = presentations.get(eventId);
+    if (existing) return Object.freeze({ ...annotation, ...existing });
+    if (!annotation.markerShape) return annotation;
+    const presentation = Object.freeze({
+      candidateText: annotation.candidateText,
+      markerShape: annotation.markerShape,
+      markerColor: annotation.markerColor,
+      markerTime: annotation.markerTime,
+      markerPrice: annotation.markerPrice
+    });
+    presentations.set(eventId, presentation);
+    return annotation;
   }
 
   // src/binance-strategy27-events/dom/tradingview-event-layer.js
@@ -846,7 +914,7 @@
       }
     }
     const resolve = (annotation, { allowPreviousCandle = false } = {}) => {
-      if (!["flag", "arrow_up", "arrow_down"].includes(annotation.markerShape)) {
+      if (!["arrow_up", "arrow_down"].includes(annotation.markerShape)) {
         throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
       }
       const matchMode = allowPreviousCandle ? PREVIOUS_OR_EXACT_TIME_MATCH_MODE : EXACT_TIME_MATCH_MODE;
@@ -860,7 +928,6 @@
         throw new Error(`Strategy 27 candle is invalid for ${annotation.markerTime}`);
       }
       const point = { time: candleTime, price: annotation.markerPrice };
-      if (annotation.markerShape === "flag") return point;
       const candleHigh = Number(candle[2]);
       const candleLow = Number(candle[3]);
       if (!Number.isFinite(candleHigh) || !Number.isFinite(candleLow)) {
@@ -906,15 +973,6 @@
       throw error;
     }
     return id;
-  }
-  function updateAlignedShape(chart, id, point, properties) {
-    const shape = chart.getShapeById(id);
-    if (!shape || typeof shape.setPoints !== "function" || typeof shape.setProperties !== "function") {
-      throw new Error("TradingView shape update contract is unavailable");
-    }
-    shape.setPoints([point]);
-    shape.setProperties(properties);
-    verifyResolvedTime(chart, id, point.time);
   }
   function createTradingViewEventLayer(target, {
     maxEvents,
@@ -1003,46 +1061,27 @@
     }
     async function ensureMarker(eventId, annotation, observedAtMs) {
       let record = registry.get(eventId);
+      if (record) {
+        record.observedAtMs = observedAtMs;
+        return true;
+      }
+      if (annotation.markerShape === null) return true;
       const requestedGeneration = renderGeneration;
       const markerPoint = await waitForMarkerPoint(annotation, requestedGeneration);
       if (!markerPoint || requestedGeneration !== renderGeneration) return false;
-      if (!record) {
-        pruneAge(observedAtMs);
-        ensureCapacityForNew();
-        const markerId = await createAlignedShape(
-          chart,
-          markerPoint,
-          shapeOptions(annotation.markerShape, annotation.markerColor)
-        );
-        if (requestedGeneration !== renderGeneration) {
-          chart.removeEntity(markerId);
-          return false;
-        }
-        record = { markerId, markerShape: annotation.markerShape, observedAtMs };
-        registry.set(eventId, record);
-      } else if (record.markerShape !== annotation.markerShape) {
-        const markerId = await createAlignedShape(
-          chart,
-          markerPoint,
-          shapeOptions(annotation.markerShape, annotation.markerColor)
-        );
-        if (requestedGeneration !== renderGeneration) {
-          chart.removeEntity(markerId);
-          return false;
-        }
-        chart.removeEntity(record.markerId);
-        record.markerId = markerId;
-        record.markerShape = annotation.markerShape;
-        record.observedAtMs = observedAtMs;
-      } else {
-        updateAlignedShape(
-          chart,
-          record.markerId,
-          markerPoint,
-          { color: annotation.markerColor }
-        );
-        record.observedAtMs = observedAtMs;
+      pruneAge(observedAtMs);
+      ensureCapacityForNew();
+      const markerId = await createAlignedShape(
+        chart,
+        markerPoint,
+        shapeOptions(annotation.markerShape, annotation.markerColor)
+      );
+      if (requestedGeneration !== renderGeneration) {
+        chart.removeEntity(markerId);
+        return false;
       }
+      record = { markerId, markerShape: annotation.markerShape, observedAtMs };
+      registry.set(eventId, record);
       return true;
     }
     return Object.freeze({
@@ -1346,7 +1385,7 @@
       });
       title.appendChild(createElement(document, "span", {
         text: annotation.title,
-        styles: { color: annotation.markerColor, fontWeight: "700", flex: "1" }
+        styles: { color: annotation.markerColor ?? "#EAECEF", fontWeight: "700", flex: "1" }
       }));
       title.appendChild(createElement(document, "span", {
         text: STATUS_LABELS[annotation.status],
@@ -1354,14 +1393,17 @@
       }));
       detail.appendChild(title);
       appendDetailLine(document, detail, "时间", formatClock(annotation.eventTimeMs));
-      appendDetailLine(document, detail, "即时响应", annotation.summary, annotation.markerColor);
+      appendDetailLine(document, detail, "统计", annotation.windowText);
+      if (annotation.candidateText) {
+        appendDetailLine(document, detail, "候选观察", annotation.candidateText, annotation.markerColor);
+      }
+      appendDetailLine(document, detail, "即时响应", annotation.summary, annotation.markerColor ?? "#EAECEF");
       for (const row of annotation.forceRows) {
-        appendDetailLine(document, detail, row.label, `${row.value}｜${row.detail}`);
+        appendDetailLine(document, detail, row.label, row.detail ? `${row.value}｜${row.detail}` : row.value);
       }
       appendDetailLine(document, detail, "点差", annotation.priceDetail);
       appendDetailLine(document, detail, "触发", annotation.triggerText);
       if (annotation.closeText) appendDetailLine(document, detail, "结束", annotation.closeText);
-      for (const outcome of annotation.outcomeLines) appendDetailLine(document, detail, "后续", outcome);
       for (const notice of annotation.notices) appendDetailLine(document, detail, "说明", notice, "#F0B90B");
     }
     function renderRecent() {
@@ -1394,7 +1436,7 @@
             width: "7px",
             height: "7px",
             borderRadius: "50%",
-            background: annotation.markerColor
+            background: annotation.markerColor ?? "transparent"
           }
         }));
         row.appendChild(createElement(document, "span", {
@@ -1553,11 +1595,13 @@
       for (const eventId of context.lifecycle.prune(Date.now())) {
         context.layer.remove(eventId);
         context.panel.remove(eventId);
+        context.candidatePresentations.delete(eventId);
       }
       if (response.status === "reset") {
         context.lifecycle.reset(response.reason);
         context.layer.clear();
         context.panel.clear();
+        context.candidatePresentations.clear();
         showStatus(context.target.chartRoot, "Strategy 27 已连接，等待新事件");
         return;
       }
@@ -1566,21 +1610,24 @@
         for (const eventId of action.evictedEventIds ?? []) {
           context.layer.remove(eventId);
           context.panel.remove(eventId);
+          context.candidatePresentations.delete(eventId);
         }
         if (action.type === "stream_reset") {
           context.layer.clear();
           context.panel.clear();
+          context.candidatePresentations.clear();
           showStatus(context.target.chartRoot, "Strategy 27 数据流已恢复，等待新事件");
           continue;
         }
         if (action.type === "event_evicted") continue;
-        const annotation = buildEventAnnotation({
-          event: action.event,
-          outcomes: action.outcomes,
-          rehydrated: action.rehydrated,
-          eventTimeMs: action.eventTimeMs,
-          messageKind: action.messageKind
-        });
+        const annotation = stabilizeCandidatePresentation(
+          context.candidatePresentations,
+          action.eventId,
+          buildEventAnnotation({
+            event: action.event,
+            rehydrated: action.rehydrated
+          })
+        );
         const renderMethod = {
           event_opened: "renderOpened",
           event_updated: "renderUpdated",
@@ -1613,6 +1660,7 @@
           loadPosition: () => GM_getValue(PANEL_POSITION_KEY, null),
           savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position)
         }),
+        candidatePresentations: /* @__PURE__ */ new Map(),
         failed: false
       };
       active = context;
