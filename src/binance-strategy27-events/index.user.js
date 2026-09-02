@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.3.0
+// @version      0.3.1
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -78,6 +78,11 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     setStrategy27Status(statusView, text, state);
   }
 
+  function hideStatus() {
+    removeStrategy27StatusView(pageDocument);
+    statusView = null;
+  }
+
   async function renderGatewayResponse(context, response) {
     if (active !== context) return;
     for (const eventId of context.lifecycle.prune(Date.now())) {
@@ -90,7 +95,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       context.layer.clear();
       context.panel.clear();
       context.candidatePresentations.clear();
-      showStatus(context.target.chartRoot, 'Strategy 27 已连接，等待新事件');
+      hideStatus();
       return;
     }
 
@@ -105,7 +110,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
         context.layer.clear();
         context.panel.clear();
         context.candidatePresentations.clear();
-        showStatus(context.target.chartRoot, 'Strategy 27 数据流已恢复，等待新事件');
+        hideStatus();
         continue;
       }
       if (action.type === 'event_evicted') continue;
@@ -126,7 +131,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       const rendered = await context.layer[renderMethod](action.eventId, annotation, action.observedAtMs);
       if (!rendered || active !== context) continue;
       context.panel.upsert(action.eventId, annotation, action.observedAtMs);
-      showStatus(context.target.chartRoot, annotation.liveStatus);
+      hideStatus();
     }
   }
 
@@ -162,13 +167,11 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       canonicalSymbol,
       onConnectionStateChange: (state) => {
         if (active !== context) return;
-        showStatus(
-          context.target.chartRoot,
-          state === 'reconnecting'
-            ? 'Strategy 27 网关连接中断，正在重连'
-            : 'Strategy 27 已重新连接，等待新事件',
-          state === 'reconnecting' ? 'inactive' : 'normal',
-        );
+        if (state === 'reconnecting') {
+          showStatus(context.target.chartRoot, 'Strategy 27 网关连接中断，正在重连', 'inactive');
+        } else {
+          hideStatus();
+        }
       },
       onResponse: (response) => renderGatewayResponse(context, response),
     });
@@ -270,7 +273,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
   GM_registerMenuCommand('清除 Strategy 27 图表标注', () => {
     active?.layer.clear();
     active?.panel.clear();
-    if (statusView) setStrategy27Status(statusView, 'Strategy 27 标注已清除，继续监听');
+    hideStatus();
   });
 
   const removeRouteListener = installSpaRouteChangeListener(page, restart);
