@@ -1,6 +1,6 @@
 import { findBinanceTradingViewTarget } from './tradingview-target.js';
 
-const MAX_EXPORTED_BARS = 500;
+export const MAX_BEARISH_BOLLINGER_MARKERS = 1_000;
 
 function routeSymbolFromChartSymbol(value) {
   return String(value || '').split('@', 1)[0];
@@ -131,9 +131,14 @@ export function parseClosedTradingViewBars(
       throw new Error(`TradingView bearish alert export order is invalid at ${index}`);
     }
   }
-  return bars
-    .filter((bar) => bar.time + resolutionSeconds <= observedAtSeconds)
-    .slice(-MAX_EXPORTED_BARS);
+  return bars.filter((bar) => bar.time + resolutionSeconds <= observedAtSeconds);
+}
+
+export function buildClosedBarsWindowKey(bars) {
+  if (!Array.isArray(bars) || bars.length === 0) {
+    throw new Error('TradingView bearish alert closed-bar window is empty');
+  }
+  return `${bars.length}:${bars[0].time}:${bars.at(-1).time}`;
 }
 
 export async function exportClosedTradingViewBars(target, observedAtMs = Date.now()) {
@@ -171,6 +176,17 @@ function markerOptions(signal) {
       overrides: {
         color: '#F6465D',
         arrowColor: '#F6465D',
+        fixedSize: true,
+      },
+    };
+  }
+  if (signal.type === 'reversal') {
+    return {
+      ...common,
+      shape: 'arrow_up',
+      overrides: {
+        color: '#0ECB81',
+        arrowColor: '#0ECB81',
         fixedSize: true,
       },
     };
@@ -218,6 +234,11 @@ export function createBearishBollingerMarkerLayer(target) {
   return Object.freeze({
     async render(signals, { isCurrent }) {
       if (!Array.isArray(signals)) throw new Error('TradingView bearish alert signals are invalid');
+      if (signals.length > MAX_BEARISH_BOLLINGER_MARKERS) {
+        throw new Error(
+          `TradingView bearish alert marker limit exceeded: ${signals.length}`,
+        );
+      }
       if (typeof isCurrent !== 'function') {
         throw new Error('TradingView bearish alert current-target validator is unavailable');
       }

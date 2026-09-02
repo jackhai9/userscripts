@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.187
+// @version      2.7.188
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -240,6 +240,7 @@ import {
   isBearishBollingerDrawingMutationBlocked,
 } from './core/bearish-bollinger-pattern.js';
 import {
+  buildClosedBarsWindowKey,
   createBearishBollingerMarkerLayer,
   exportClosedTradingViewBars,
   findBearishBollingerChartTarget,
@@ -427,7 +428,6 @@ import {
   const TRADE_ACTION_BUTTON_READY_TIMEOUT_MS = TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS * 1000;
   const ROUTE_WATCHDOG_MS = 5000;
   const BEARISH_BOLLINGER_ALERT_POLL_MS = 1000;
-  const BEARISH_BOLLINGER_ALERT_MAX_MARKERS = 20;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -610,13 +610,6 @@ import {
     );
   }
 
-  function scheduleNextBearishBollingerExport(context, latestClosedBarTime) {
-    const followingBarCloseMs = (
-      latestClosedBarTime + (context.target.resolutionSeconds * 2)
-    ) * 1_000;
-    context.nextExportAtMs = Math.max(Date.now() + BEARISH_BOLLINGER_ALERT_POLL_MS, followingBarCloseMs);
-  }
-
   async function synchronizeBearishBollingerAlerts() {
     if (document.hidden || !isFuturesTradingPage() || isTradingViewDrawingMutationBusy()) return;
     const routeSymbol = getCurrentSymbol();
@@ -651,8 +644,7 @@ import {
         layer: createBearishBollingerMarkerLayer(target),
         failed: false,
         cleanupPending: false,
-        lastProcessedClosedBarTime: null,
-        nextExportAtMs: 0,
+        lastProcessedClosedBarsWindowKey: null,
       };
     }
 
@@ -661,28 +653,19 @@ import {
       context.layer.clear();
       context.cleanupPending = false;
     }
-    if (
-      context.failed
-      || bearishBollingerAlertTask
-      || Date.now() < context.nextExportAtMs
-    ) return;
+    if (context.failed || bearishBollingerAlertTask) return;
     const task = (async () => {
       const bars = await exportClosedTradingViewBars(context.target);
       if (!bars || !isBearishBollingerAlertContextCurrent(context)) return;
-      if (bars.length === 0) {
-        context.nextExportAtMs = Date.now() + BEARISH_BOLLINGER_ALERT_POLL_MS;
-        return;
-      }
-      const latestClosedBarTime = bars.at(-1).time;
-      scheduleNextBearishBollingerExport(context, latestClosedBarTime);
-      if (latestClosedBarTime === context.lastProcessedClosedBarTime) return;
-      const signals = detectBearishBollingerSignals(bars)
-        .slice(-BEARISH_BOLLINGER_ALERT_MAX_MARKERS);
+      if (bars.length === 0) return;
+      const closedBarsWindowKey = buildClosedBarsWindowKey(bars);
+      if (closedBarsWindowKey === context.lastProcessedClosedBarsWindowKey) return;
+      const signals = detectBearishBollingerSignals(bars);
       const rendered = await context.layer.render(signals, {
         isCurrent: () => isBearishBollingerAlertContextCurrent(context),
       });
       if (rendered && isBearishBollingerAlertContextCurrent(context)) {
-        context.lastProcessedClosedBarTime = latestClosedBarTime;
+        context.lastProcessedClosedBarsWindowKey = closedBarsWindowKey;
       }
     })();
     bearishBollingerAlertTask = task;

@@ -50,6 +50,23 @@ test('route changes are event-driven with one low-frequency watchdog', () => {
   assert.match(visibilityBody, /syncRouteState\(\)/);
 });
 
+test('bearish chart alerts reconcile every loaded closed-bar window without silent truncation', () => {
+  const synchronizeBody = readFunctionBody('synchronizeBearishBollingerAlerts');
+  assert.match(synchronizeBody, /buildClosedBarsWindowKey\(bars\)/);
+  assert.match(synchronizeBody, /lastProcessedClosedBarsWindowKey/);
+  assert.doesNotMatch(synchronizeBody, /lastProcessedClosedBarTime/);
+  assert.doesNotMatch(synchronizeBody, /\.slice\(-BEARISH_BOLLINGER_ALERT_MAX_MARKERS\)/);
+  assert.doesNotMatch(source, /BEARISH_BOLLINGER_ALERT_MAX_MARKERS/);
+  assert.doesNotMatch(source, /nextExportAtMs/);
+});
+
+test('bearish chart alert failures clear stale markers through the fail-closed lifecycle', () => {
+  const synchronizeBody = readFunctionBody('synchronizeBearishBollingerAlerts');
+  assert.match(synchronizeBody, /context\.cleanupPending[\s\S]*context\.layer\.clear\(\)/);
+  assert.match(synchronizeBody, /task\.catch\(\(error\) => \{[\s\S]*context\.failed = true;/);
+  assert.match(synchronizeBody, /task\.catch\(\(error\) => \{[\s\S]*context\.cleanupPending = true;/);
+});
+
 test('permanent trade-mode observer is scoped to the trade tab root', () => {
   const observerBody = readFunctionBody('ensureTradeModeTabObserver');
   assert.doesNotMatch(observerBody, /observe\(document\.body/);
