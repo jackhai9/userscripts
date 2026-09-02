@@ -18,7 +18,9 @@ function snapshot({ start = 1_000, end = 1_250, mid = '1.25' } = {}) {
   return {
     bucket_start_ms: start,
     bucket_end_ms: end,
+    source_bucket_count: 1,
     bucket_trigger_reasons: ['aggressive_buy'],
+    candidate_observations: [],
     aggressive_buy: { notional: '1200', trade_count: 3, to_opposite_depth: '0.4' },
     aggressive_sell: { notional: '200', trade_count: 1, to_opposite_depth: '0.1' },
     bid: {
@@ -72,7 +74,7 @@ function envelope({
   eventTime = 1_000,
 } = {}) {
   return {
-    schema_version: 1,
+    schema_version: 2,
     strategy_id: '27',
     spec_version: '27_2_spec_v10',
     runtime_epoch: epoch,
@@ -165,6 +167,55 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
     }),
     /trigger snapshot must start at triggered_at_ms/,
   );
+
+  const triggerCandidate = envelope();
+  triggerCandidate.payload.event.trigger_snapshot.candidate_observations = ['bearish_buy_impact_failure'];
+  assert.throws(() => validateLiveEnvelope(triggerCandidate), /uncategorized research bucket/);
+
+  const partialCandidate = envelope();
+  partialCandidate.payload.event.latest_snapshot = structuredClone(
+    partialCandidate.payload.event.latest_snapshot,
+  );
+  partialCandidate.payload.event.latest_snapshot.candidate_observations = ['bearish_buy_impact_failure'];
+  assert.throws(() => validateLiveEnvelope(partialCandidate), /one complete second/);
+
+  const oversizedNeutral = envelope({ kind: 'event_updated' });
+  oversizedNeutral.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 2_250 });
+  oversizedNeutral.event_time_ms = 2_250;
+  assert.throws(() => validateLiveEnvelope(oversizedNeutral), /must not exceed one second/);
+
+  const aggregatedOpen = envelope();
+  aggregatedOpen.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 2_000 });
+  aggregatedOpen.payload.event.latest_snapshot.source_bucket_count = 4;
+  assert.throws(() => validateLiveEnvelope(aggregatedOpen), /latest snapshot must equal trigger snapshot/);
+
+  const inconsistentCount = envelope({ kind: 'event_updated', eventTime: 2_000 });
+  inconsistentCount.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 2_000 });
+  assert.throws(() => validateLiveEnvelope(inconsistentCount), /source bucket count must match duration/);
+
+  const indivisibleWidth = envelope({ kind: 'event_updated', eventTime: 1_999 });
+  indivisibleWidth.payload.event.trigger_snapshot = snapshot({ start: 1_000, end: 1_333 });
+  indivisibleWidth.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 1_999 });
+  indivisibleWidth.payload.event.latest_snapshot.source_bucket_count = 3;
+  assert.throws(() => validateLiveEnvelope(indivisibleWidth), /trigger bucket duration must divide one second/);
+
+  const misalignedLatest = envelope({ kind: 'event_updated', eventTime: 1_350 });
+  misalignedLatest.payload.event.latest_snapshot = snapshot({ start: 1_100, end: 1_350 });
+  assert.throws(() => validateLiveEnvelope(misalignedLatest), /must align to trigger bucket grid/);
+
+  const pretriggerLatest = envelope({ kind: 'event_updated', eventTime: 1_000 });
+  pretriggerLatest.payload.event.latest_snapshot = snapshot({ start: 750, end: 1_000 });
+  assert.throws(() => validateLiveEnvelope(pretriggerLatest), /must not precede trigger bucket/);
+
+  const postCloseEvent = event({ status: 'complete', activeEnd: 2_000 });
+  const postCloseLatest = envelope({
+    kind: 'event_closed',
+    payload: { event: postCloseEvent },
+    status: 'complete',
+    eventTime: 2_000,
+  });
+  postCloseLatest.payload.event.latest_snapshot = snapshot({ start: 2_000, end: 2_250 });
+  assert.throws(() => validateLiveEnvelope(postCloseLatest), /must not follow active end/);
 });
 
 test('allows a closed event to retain the last eligible snapshot before its lifecycle boundary', () => {

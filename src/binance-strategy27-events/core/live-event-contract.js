@@ -16,6 +16,12 @@ const DATA_STATUSES = new Set(['ready', 'active', 'complete', 'incomplete', 'inp
 const EVENT_KINDS = new Set(['orderflow_event', 'price_response_event']);
 const EVENT_STATUSES = new Set(['active', 'complete', 'incomplete']);
 const OUTCOME_STATUSES = new Set(['complete', 'input_gap', 'terminated']);
+const CANDIDATE_OBSERVATIONS = new Set([
+  'bearish_buy_impact_failure',
+  'bullish_sell_impact_failure',
+  'bearish_passive_book_shift',
+  'bullish_passive_book_shift',
+]);
 const IMPULSE_DIRECTIONS = new Set(['up', 'down', 'flat']);
 const DIRECTIONAL_OUTCOMES = new Set([
   'continuation',
@@ -102,7 +108,9 @@ function validateSnapshot(value, label) {
   assertExactKeys(value, [
     'bucket_start_ms',
     'bucket_end_ms',
+    'source_bucket_count',
     'bucket_trigger_reasons',
+    'candidate_observations',
     'aggressive_buy',
     'aggressive_sell',
     'bid',
@@ -111,8 +119,14 @@ function validateSnapshot(value, label) {
   ], label);
   assertInteger(value.bucket_start_ms, `${label}.bucket_start_ms`);
   assertInteger(value.bucket_end_ms, `${label}.bucket_end_ms`);
+  assertInteger(value.source_bucket_count, `${label}.source_bucket_count`, { minimum: 1 });
   assertCondition(value.bucket_end_ms > value.bucket_start_ms, `${label} bucket end must follow start`);
   assertSortedUniqueStrings(value.bucket_trigger_reasons, `${label}.bucket_trigger_reasons`);
+  assertSortedUniqueStrings(value.candidate_observations, `${label}.candidate_observations`);
+  assertCondition(
+    value.candidate_observations.every((item) => CANDIDATE_OBSERVATIONS.has(item)),
+    `${label}.candidate_observations contains an unsupported value`,
+  );
   validateAggressiveSide(value.aggressive_buy, `${label}.aggressive_buy`);
   validateAggressiveSide(value.aggressive_sell, `${label}.aggressive_sell`);
   validateBookSide(value.bid, `${label}.bid`);
@@ -141,12 +155,47 @@ function validateEvent(value) {
   assertSortedUniqueStrings(value.trigger_reasons, 'payload.event.trigger_reasons', { nonEmpty: true });
   validateSnapshot(value.trigger_snapshot, 'payload.event.trigger_snapshot');
   validateSnapshot(value.latest_snapshot, 'payload.event.latest_snapshot');
+  assertCondition(
+    value.trigger_snapshot.source_bucket_count === 1
+      && value.trigger_snapshot.candidate_observations.length === 0,
+    'trigger snapshot must remain one uncategorized research bucket',
+  );
+  const latestDurationMs = value.latest_snapshot.bucket_end_ms - value.latest_snapshot.bucket_start_ms;
+  const triggerDurationMs = value.trigger_snapshot.bucket_end_ms - value.trigger_snapshot.bucket_start_ms;
+  assertCondition(
+    1_000 % triggerDurationMs === 0,
+    'trigger bucket duration must divide one second',
+  );
+  assertCondition(
+    latestDurationMs <= 1_000,
+    'latest snapshot duration must not exceed one second',
+  );
+  assertCondition(
+    latestDurationMs === triggerDurationMs * value.latest_snapshot.source_bucket_count,
+    'latest snapshot source bucket count must match duration',
+  );
+  assertCondition(
+    (value.latest_snapshot.bucket_start_ms - value.trigger_snapshot.bucket_start_ms) % triggerDurationMs === 0,
+    'latest snapshot must align to trigger bucket grid',
+  );
+  assertCondition(
+    value.latest_snapshot.bucket_end_ms >= value.trigger_snapshot.bucket_end_ms,
+    'latest snapshot must not precede trigger bucket',
+  );
+  assertCondition(
+    value.latest_snapshot.candidate_observations.length === 0 || latestDurationMs === 1_000,
+    'latest snapshot candidates require one complete second',
+  );
   assertCondition(value.trigger_snapshot.bucket_start_ms === value.triggered_at_ms, 'trigger snapshot must start at triggered_at_ms');
   if (value.event_status === 'active') {
     assertCondition(value.active_end_at_ms === null && value.close_reason === null, 'active event close fields must be null');
   } else {
     assertInteger(value.active_end_at_ms, 'payload.event.active_end_at_ms');
     assertCondition(value.active_end_at_ms >= value.triggered_at_ms, 'event active end must not precede trigger');
+    assertCondition(
+      value.latest_snapshot.bucket_end_ms <= value.active_end_at_ms,
+      'latest snapshot must not follow active end',
+    );
     assertCondition([
       'quiet_period',
       'maximum_duration',
@@ -253,7 +302,7 @@ export function validateLiveEnvelope(value) {
     'data_status',
     'payload',
   ], 'live envelope');
-  assertCondition(value.schema_version === 1, 'Live envelope schema_version must be 1');
+  assertCondition(value.schema_version === 2, 'Live envelope schema_version must be 2');
   assertCondition(value.strategy_id === '27', 'Live envelope strategy_id must be 27');
   assertCondition(value.spec_version === '27_2_spec_v10', 'Live envelope spec_version is invalid');
   assertCondition(typeof value.runtime_epoch === 'string' && EPOCH_PATTERN.test(value.runtime_epoch), 'Live envelope runtime_epoch is invalid');
@@ -287,6 +336,10 @@ export function validateLiveEnvelope(value) {
   }
 
   if (value.message_kind === 'event_opened') {
+    assertCondition(
+      JSON.stringify(value.payload.event.latest_snapshot) === JSON.stringify(value.payload.event.trigger_snapshot),
+      'event_opened latest snapshot must equal trigger snapshot',
+    );
     assertCondition(value.event_time_ms === value.payload.event.triggered_at_ms, 'event_opened time is invalid');
   } else if (value.message_kind === 'event_updated') {
     assertCondition(value.event_time_ms === value.payload.event.latest_snapshot.bucket_end_ms, 'event_updated time is invalid');

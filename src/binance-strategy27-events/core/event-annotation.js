@@ -1,11 +1,26 @@
 import { eventTimeToChartSecond } from './live-event-contract.js';
 
-const OUTCOME_LABELS = Object.freeze({
-  continuation: '延续',
-  recovery: '恢复',
-  reversal: '反转',
-  partial_retracement: '部分回撤',
-  not_applicable: '不适用',
+const CANDIDATE_PRESENTATIONS = Object.freeze({
+  bearish_buy_impact_failure: Object.freeze({
+    label: '买入推动失效 · 承接转弱',
+    markerShape: 'arrow_down',
+    markerColor: '#F6465D',
+  }),
+  bearish_passive_book_shift: Object.freeze({
+    label: '主动成交弱 · 承接转弱',
+    markerShape: 'arrow_down',
+    markerColor: '#F6465D',
+  }),
+  bullish_sell_impact_failure: Object.freeze({
+    label: '卖出推动失效 · 抛压转弱',
+    markerShape: 'arrow_up',
+    markerColor: '#0ECB81',
+  }),
+  bullish_passive_book_shift: Object.freeze({
+    label: '主动成交弱 · 抛压转弱',
+    markerShape: 'arrow_up',
+    markerColor: '#0ECB81',
+  }),
 });
 
 const TRIGGER_LABELS = Object.freeze({
@@ -69,6 +84,10 @@ function formatNotional(value, label) {
 }
 
 function formatForce(label, oppositeSide, force) {
+  const notional = finiteNumber(force.notional, `${label}.notional`);
+  if (notional === 0 && force.trade_count === 0) {
+    return Object.freeze({ label, value: '无主动成交', detail: '' });
+  }
   return Object.freeze({
     label,
     value: `${formatNotional(force.notional, `${label}.notional`)} USDT · ${force.trade_count} 笔`,
@@ -99,37 +118,50 @@ function formatCloseReason(reason) {
   return label;
 }
 
-function outcomeLine(outcome) {
-  if (outcome.outcome_status !== 'complete') return null;
-  const directional = OUTCOME_LABELS[outcome.directional_outcome];
-  if (!directional) throw new Error(`Unknown Strategy 27 directional outcome: ${outcome.directional_outcome}`);
-  return `${outcome.window_seconds} 秒：${directional}，收盘响应 ${formatBps(outcome.return_from_active_end_bps, 'outcome.return')} bps`;
+function candidatePresentation(observations) {
+  if (!observations.length) return null;
+  const presentations = observations.map((observation) => {
+    const presentation = CANDIDATE_PRESENTATIONS[observation];
+    if (!presentation) throw new Error(`Unknown Strategy 27 candidate observation: ${observation}`);
+    return presentation;
+  });
+  const markerShape = presentations[0].markerShape;
+  if (presentations.some((presentation) => presentation.markerShape !== markerShape)) {
+    throw new Error('Strategy 27 candidate observations contain conflicting directions');
+  }
+  return Object.freeze({
+    label: presentations.map((presentation) => presentation.label).join('、'),
+    markerShape,
+    markerColor: presentations[0].markerColor,
+  });
+}
+
+function formatWindowDuration(snapshot) {
+  const durationMs = snapshot.bucket_end_ms - snapshot.bucket_start_ms;
+  if (durationMs % 1_000 === 0) return `${durationMs / 1_000} 秒`;
+  return `${trimmedFixed(durationMs / 1_000, 2)} 秒`;
 }
 
 export function buildEventAnnotation({
   event,
-  outcomes,
   rehydrated,
-  eventTimeMs = event.triggered_at_ms,
-  messageKind = event.event_status === 'active' ? 'event_updated' : 'event_closed',
 }) {
-  const snapshot = messageKind === 'event_opened' ? event.trigger_snapshot : event.latest_snapshot;
+  const snapshot = event.latest_snapshot;
   const response = snapshot.price_response;
-  const midReturn = finiteNumber(response.mid_return_bps, 'price_response.mid_return_bps');
-  const markerShape = midReturn > 0 ? 'arrow_up' : midReturn < 0 ? 'arrow_down' : 'flag';
-  const markerColor = midReturn > 0 ? '#0ECB81' : midReturn < 0 ? '#F6465D' : '#F0B90B';
-  const incomplete = event.event_status === 'incomplete'
-    || outcomes.some((item) => item.outcome_status !== 'complete');
+  const candidate = candidatePresentation(snapshot.candidate_observations);
+  const incomplete = event.event_status === 'incomplete';
   const notices = [];
   if (rehydrated) notices.push('此前投影历史不可用');
   if (incomplete) notices.push('数据不完整，不作方向结论');
 
-  const title = event.event_kind === 'orderflow_event' ? '订单流事件' : '价格响应事件';
+  const title = event.event_kind === 'orderflow_event' ? '订单流观察' : '价格响应观察';
   const summary = `价格 ${formatBps(response.mid_return_bps, 'price_response.mid_return_bps')} bps · 点差 ${formatBps(response.spread_bps, 'price_response.spread_bps', { signed: false })} bps`;
   return Object.freeze({
     title,
-    eventTimeMs: event.triggered_at_ms,
+    eventTimeMs: snapshot.bucket_end_ms - 1,
     status: event.event_status,
+    windowText: `统计 ${formatWindowDuration(snapshot)} · ${snapshot.source_bucket_count} 桶`,
+    candidateText: candidate?.label ?? null,
     summary,
     forceRows: Object.freeze([
       formatForce('主动买', 'ask', snapshot.aggressive_buy),
@@ -140,12 +172,26 @@ export function buildEventAnnotation({
     priceDetail: `点差变化 ${formatBps(response.spread_change_bps, 'price_response.spread_change_bps')} bps`,
     triggerText: formatTriggerReasons(event.trigger_reasons),
     closeText: formatCloseReason(event.close_reason),
-    outcomeLines: Object.freeze(incomplete ? [] : outcomes.map(outcomeLine).filter(Boolean)),
     notices: Object.freeze(notices),
-    markerShape,
-    markerColor,
-    markerTime: eventTimeToChartSecond(eventTimeMs),
+    markerShape: candidate?.markerShape ?? null,
+    markerColor: candidate?.markerColor ?? null,
+    markerTime: eventTimeToChartSecond(snapshot.bucket_end_ms - 1),
     markerPrice: finiteNumber(response.mid, 'price_response.mid'),
-    liveStatus: `Strategy 27 ${title}｜${summary}`,
+    liveStatus: `Strategy 27 ${candidate?.label ?? title}｜${summary}`,
   });
+}
+
+export function stabilizeCandidatePresentation(presentations, eventId, annotation) {
+  const existing = presentations.get(eventId);
+  if (existing) return Object.freeze({ ...annotation, ...existing });
+  if (!annotation.markerShape) return annotation;
+  const presentation = Object.freeze({
+    candidateText: annotation.candidateText,
+    markerShape: annotation.markerShape,
+    markerColor: annotation.markerColor,
+    markerTime: annotation.markerTime,
+    markerPrice: annotation.markerPrice,
+  });
+  presentations.set(eventId, presentation);
+  return annotation;
 }

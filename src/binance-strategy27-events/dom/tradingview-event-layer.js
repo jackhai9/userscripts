@@ -85,7 +85,7 @@ function createMarkerPointResolver(chart) {
   }
 
   const resolve = (annotation, { allowPreviousCandle = false } = {}) => {
-    if (!['flag', 'arrow_up', 'arrow_down'].includes(annotation.markerShape)) {
+    if (!['arrow_up', 'arrow_down'].includes(annotation.markerShape)) {
       throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
     }
 
@@ -104,7 +104,6 @@ function createMarkerPointResolver(chart) {
       throw new Error(`Strategy 27 candle is invalid for ${annotation.markerTime}`);
     }
     const point = { time: candleTime, price: annotation.markerPrice };
-    if (annotation.markerShape === 'flag') return point;
     const candleHigh = Number(candle[2]);
     const candleLow = Number(candle[3]);
     if (!Number.isFinite(candleHigh) || !Number.isFinite(candleLow)) {
@@ -153,16 +152,6 @@ async function createAlignedShape(chart, point, options) {
     throw error;
   }
   return id;
-}
-
-function updateAlignedShape(chart, id, point, properties) {
-  const shape = chart.getShapeById(id);
-  if (!shape || typeof shape.setPoints !== 'function' || typeof shape.setProperties !== 'function') {
-    throw new Error('TradingView shape update contract is unavailable');
-  }
-  shape.setPoints([point]);
-  shape.setProperties(properties);
-  verifyResolvedTime(chart, id, point.time);
 }
 
 export function createTradingViewEventLayer(target, {
@@ -263,46 +252,27 @@ export function createTradingViewEventLayer(target, {
 
   async function ensureMarker(eventId, annotation, observedAtMs) {
     let record = registry.get(eventId);
+    if (record) {
+      record.observedAtMs = observedAtMs;
+      return true;
+    }
+    if (annotation.markerShape === null) return true;
     const requestedGeneration = renderGeneration;
     const markerPoint = await waitForMarkerPoint(annotation, requestedGeneration);
     if (!markerPoint || requestedGeneration !== renderGeneration) return false;
-    if (!record) {
-      pruneAge(observedAtMs);
-      ensureCapacityForNew();
-      const markerId = await createAlignedShape(
-        chart,
-        markerPoint,
-        shapeOptions(annotation.markerShape, annotation.markerColor),
-      );
-      if (requestedGeneration !== renderGeneration) {
-        chart.removeEntity(markerId);
-        return false;
-      }
-      record = { markerId, markerShape: annotation.markerShape, observedAtMs };
-      registry.set(eventId, record);
-    } else if (record.markerShape !== annotation.markerShape) {
-      const markerId = await createAlignedShape(
-        chart,
-        markerPoint,
-        shapeOptions(annotation.markerShape, annotation.markerColor),
-      );
-      if (requestedGeneration !== renderGeneration) {
-        chart.removeEntity(markerId);
-        return false;
-      }
-      chart.removeEntity(record.markerId);
-      record.markerId = markerId;
-      record.markerShape = annotation.markerShape;
-      record.observedAtMs = observedAtMs;
-    } else {
-      updateAlignedShape(
-        chart,
-        record.markerId,
-        markerPoint,
-        { color: annotation.markerColor },
-      );
-      record.observedAtMs = observedAtMs;
+    pruneAge(observedAtMs);
+    ensureCapacityForNew();
+    const markerId = await createAlignedShape(
+      chart,
+      markerPoint,
+      shapeOptions(annotation.markerShape, annotation.markerColor),
+    );
+    if (requestedGeneration !== renderGeneration) {
+      chart.removeEntity(markerId);
+      return false;
     }
+    record = { markerId, markerShape: annotation.markerShape, observedAtMs };
+    registry.set(eventId, record);
     return true;
   }
 
