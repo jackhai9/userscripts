@@ -3,10 +3,12 @@ import test from 'node:test';
 
 import { loadFixtureDom } from '../../helpers/dom.js';
 import {
+  buildClosedBarsWindowKey,
   createBearishBollingerMarkerLayer,
   findBearishBollingerChartTarget,
   isBearishBollingerChartTargetCurrent,
   parseClosedTradingViewBars,
+  MAX_BEARISH_BOLLINGER_MARKERS,
   tradingViewResolutionToSeconds,
 } from '../../../src/binance-orderbook-trade/dom/tradingview-bearish-alerts.js';
 
@@ -132,7 +134,7 @@ test('exports only bars whose resolution-derived end time has passed', () => {
   );
 });
 
-test('keeps exactly the latest 500 closed bars for historical detection', () => {
+test('keeps every closed bar already loaded by TradingView', () => {
   const rows = Array.from({ length: 505 }, (_, index) => ({
     0: (index + 1) * 60,
     1: 10,
@@ -145,12 +147,35 @@ test('keeps exactly the latest 500 closed bars for historical detection', () => 
     observedAtSeconds: 506 * 60,
   });
 
-  assert.equal(bars.length, 500);
-  assert.equal(bars[0].time, 6 * 60);
+  assert.equal(bars.length, 505);
+  assert.equal(bars[0].time, 60);
   assert.equal(bars.at(-1).time, 505 * 60);
 });
 
-test('renders a yellow icon and red downward arrow with exact time alignment', async () => {
+test('changes the closed-bar window key when older history loads without a new latest bar', () => {
+  const recent = [
+    { time: 120, open: 11, high: 13, low: 10, close: 12 },
+    { time: 180, open: 12, high: 14, low: 11, close: 13 },
+  ];
+  const expanded = [
+    { time: 60, open: 10, high: 12, low: 9, close: 11 },
+    ...recent,
+  ];
+
+  assert.notEqual(buildClosedBarsWindowKey(recent), buildClosedBarsWindowKey(expanded));
+  assert.equal(buildClosedBarsWindowKey(recent), '2:120:180');
+  assert.equal(buildClosedBarsWindowKey(expanded), '3:60:180');
+  assert.equal(buildClosedBarsWindowKey(recent), buildClosedBarsWindowKey([...recent]));
+  assert.notEqual(
+    buildClosedBarsWindowKey(recent),
+    buildClosedBarsWindowKey([
+      ...recent,
+      { time: 240, open: 13, high: 15, low: 12, close: 14 },
+    ]),
+  );
+});
+
+test('renders warning, bearish confirmation, and bullish reversal markers', async () => {
   const { dom, shapes, removed } = createChartDom();
   const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
   const layer = createBearishBollingerMarkerLayer(target);
@@ -159,21 +184,63 @@ test('renders a yellow icon and red downward arrow with exact time alignment', a
   assert.equal(await layer.render([
     { id: 'setup:warning', type: 'warning', time: 120, markerPrice: 10 },
     { id: 'setup:confirmed', type: 'confirmed', time: 180, markerPrice: 9 },
+    { id: 'setup:reversal', type: 'reversal', time: 240, markerPrice: 8 },
   ], { isCurrent }), true);
-  assert.equal(shapes.size, 2);
+  assert.equal(shapes.size, 3);
   const records = [...shapes.values()];
   assert.equal(records[0].properties.shape, 'icon');
   assert.equal(records[0].properties.icon, 0xf111);
   assert.equal(records[0].properties.overrides.color, '#F0B90B');
   assert.equal(records[1].properties.shape, 'arrow_down');
   assert.equal(records[1].properties.overrides.arrowColor, '#F6465D');
+  assert.equal(records[2].properties.shape, 'arrow_up');
+  assert.equal(records[2].properties.overrides.arrowColor, '#0ECB81');
+  assert.equal(records[2].point.price, 8);
 
-  await layer.render(
-    [{ id: 'setup:confirmed', type: 'confirmed', time: 180, markerPrice: 9 }],
-    { isCurrent },
+  await layer.render([{ id: 'setup:reversal', type: 'reversal', time: 240, markerPrice: 8 }], {
+    isCurrent,
+  });
+  assert.equal(shapes.size, 1);
+  assert.deepEqual(removed, ['shape-1', 'shape-2']);
+});
+
+test('excludes an unclosed reversal breakout bar from detector input', () => {
+  const exported = exportResult([
+    { 0: 60, 1: 10, 2: 12, 3: 9, 4: 11 },
+    { 0: 120, 1: 11, 2: 14, 3: 10, 4: 13 },
+  ]);
+
+  const bars = parseClosedTradingViewBars(exported, {
+    resolutionSeconds: 60,
+    observedAtSeconds: 150,
+  });
+  assert.deepEqual(bars, [{ time: 60, open: 10, high: 12, low: 9, close: 11 }]);
+});
+
+test('rejects an abnormal marker count before mutating the existing layer', async () => {
+  const { dom, shapes, removed } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBearishBollingerMarkerLayer(target);
+  const isCurrent = () => true;
+  await layer.render([
+    { id: 'stable:warning', type: 'warning', time: 120, markerPrice: 10 },
+  ], { isCurrent });
+  const excessive = Array.from(
+    { length: MAX_BEARISH_BOLLINGER_MARKERS + 1 },
+    (_, index) => ({
+      id: `setup-${index}:warning`,
+      type: 'warning',
+      time: 180 + index,
+      markerPrice: 9,
+    }),
+  );
+
+  await assert.rejects(
+    layer.render(excessive, { isCurrent }),
+    /marker limit exceeded/,
   );
   assert.equal(shapes.size, 1);
-  assert.deepEqual(removed, ['shape-1']);
+  assert.deepEqual(removed, []);
 });
 
 test('removes a shifted marker and fails the alignment contract', async () => {

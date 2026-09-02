@@ -12,6 +12,7 @@ export const BEARISH_BOLLINGER_PATTERN = Object.freeze({
   middleApproachBandFraction: 0.12,
   maxPostCrossCloseAboveMiddleBandFraction: 0.05,
   lowerTouchBandFraction: 0.05,
+  reversalFollowBars: 60,
 });
 
 function assertFiniteNumber(value, label) {
@@ -119,14 +120,30 @@ function isDownwardCross(previous, current) {
 
 function buildSignal(type, setup, bar) {
   const width = bandWidth(bar);
-  const markerGapFraction = type === 'confirmed' ? 0.1 : 0.06;
+  const markerGapFraction = type === 'warning' ? 0.06 : 0.1;
   return Object.freeze({
     id: `${setup.time}:${type}`,
     type,
     setupTime: setup.time,
     time: bar.time,
-    markerPrice: bar.high + (width * markerGapFraction),
+    markerPrice: type === 'reversal'
+      ? bar.low - (width * markerGapFraction)
+      : bar.high + (width * markerGapFraction),
   });
+}
+
+function detectReversalSignal(indicatorBars, setup, warningIndex) {
+  const { reversalFollowBars } = BEARISH_BOLLINGER_PATTERN;
+  const warning = indicatorBars[warningIndex];
+  const endIndex = Math.min(
+    indicatorBars.length - 1,
+    warningIndex + reversalFollowBars,
+  );
+  for (let index = warningIndex + 1; index <= endIndex; index += 1) {
+    const bar = indicatorBars[index];
+    if (bar.close > warning.high) return buildSignal('reversal', setup, bar);
+  }
+  return null;
 }
 
 function detectSetupSignals(indicatorBars, crossIndex) {
@@ -185,7 +202,32 @@ function detectSetupSignals(indicatorBars, crossIndex) {
     }
   }
 
+  if (warningIndex !== null) {
+    const reversal = detectReversalSignal(indicatorBars, setup, warningIndex);
+    if (reversal) signals.push(reversal);
+  }
+
   return signals;
+}
+
+function appendSetupSignals(signals, setupSignals) {
+  for (const signal of setupSignals) {
+    if (signal.type !== 'reversal') {
+      signals.push(signal);
+      continue;
+    }
+    const duplicateIndex = signals.findIndex(
+      (existing) => existing.type === 'reversal' && existing.time === signal.time,
+    );
+    if (duplicateIndex === -1) {
+      signals.push(signal);
+      continue;
+    }
+    // One breakout candle gets one visual arrow; the newest setup owns that shared reversal.
+    if (signal.setupTime > signals[duplicateIndex].setupTime) {
+      signals[duplicateIndex] = signal;
+    }
+  }
 }
 
 export function detectBearishBollingerSignalsFromIndicatorBars(indicatorBars) {
@@ -205,9 +247,12 @@ export function detectBearishBollingerSignalsFromIndicatorBars(indicatorBars) {
     if (!isDownwardCross(previous, current)) continue;
     if (!hasDownwardBandCenter(indicatorBars, index)) continue;
     if (!matchesPreCrossCompression(indicatorBars, index)) continue;
-    signals.push(...detectSetupSignals(indicatorBars, index));
+    appendSetupSignals(signals, detectSetupSignals(indicatorBars, index));
   }
-  return signals;
+  const typeOrder = { warning: 0, confirmed: 1, reversal: 2 };
+  return signals.sort(
+    (left, right) => left.time - right.time || typeOrder[left.type] - typeOrder[right.type],
+  );
 }
 
 export function detectBearishBollingerSignals(bars) {

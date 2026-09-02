@@ -24,7 +24,7 @@ function createIndicatorPattern(secondsPerBar = 60) {
   const crossIndex = 72;
   const warningIndex = 74;
   const confirmationIndex = 77;
-  const bars = Array.from({ length: 90 }, (_, index) => {
+  const bars = Array.from({ length: 145 }, (_, index) => {
     const middle = 110 - (index * 0.1);
     const close = middle - 2;
     return {
@@ -54,6 +54,18 @@ function createIndicatorPattern(secondsPerBar = 60) {
     close: bars[confirmationIndex].middle - 2,
   };
   return { bars, crossIndex, warningIndex, confirmationIndex };
+}
+
+function setReversalBreakout(pattern, index, close = null) {
+  const warningHigh = pattern.bars[pattern.warningIndex].high;
+  const breakoutClose = close ?? warningHigh + 0.1;
+  pattern.bars[index] = {
+    ...pattern.bars[index],
+    open: breakoutClose - 0.3,
+    high: breakoutClose + 0.2,
+    low: breakoutClose - 0.6,
+    close: breakoutClose,
+  };
 }
 
 test('calculates SMA20 Bollinger 2σ and SMA60 from closes through the current bar only', () => {
@@ -102,7 +114,7 @@ test('uses bar counts rather than wall-clock duration across one-minute and one-
 
 test('allows one middle close only when the next bar rejects it bearishly', () => {
   const accepted = createIndicatorPattern();
-  const breachIndex = accepted.warningIndex + 1;
+  const breachIndex = accepted.crossIndex + 1;
   accepted.bars[breachIndex] = {
     ...accepted.bars[breachIndex],
     open: accepted.bars[breachIndex].middle - 0.2,
@@ -130,7 +142,7 @@ test('allows one middle close only when the next bar rejects it bearishly', () =
   };
   assert.deepEqual(
     detectBearishBollingerSignalsFromIndicatorBars(rejected.bars).map((signal) => signal.type),
-    ['warning'],
+    [],
   );
 });
 
@@ -190,21 +202,107 @@ test('accepts four channel closes when the remaining pre-cross bars stay within 
   );
 });
 
-test('later bars cannot rewrite an already confirmed setup', () => {
+test('adds the first strict reversal breakout after confirmation without rewriting prior signals', () => {
   const pattern = createIndicatorPattern();
   const throughConfirmation = pattern.bars.slice(0, pattern.confirmationIndex + 1);
   const original = detectBearishBollingerSignalsFromIndicatorBars(throughConfirmation);
-  const laterBars = pattern.bars.slice(pattern.confirmationIndex + 1).map((bar) => ({
-    ...bar,
-    open: bar.middle + 4,
-    high: bar.middle + 6,
-    low: bar.middle + 3,
-    close: bar.middle + 5,
-  }));
+  const reversalIndex = pattern.warningIndex + 30;
+  setReversalBreakout(pattern, reversalIndex);
+  const updated = detectBearishBollingerSignalsFromIndicatorBars(pattern.bars);
 
+  assert.deepEqual(updated.slice(0, 2), original);
   assert.deepEqual(
-    detectBearishBollingerSignalsFromIndicatorBars([...throughConfirmation, ...laterBars]),
-    original,
+    updated.map(({ id, type, setupTime, time }) => ({ id, type, setupTime, time })),
+    [
+      {
+        id: `${pattern.bars[pattern.crossIndex].time}:warning`,
+        type: 'warning',
+        setupTime: pattern.bars[pattern.crossIndex].time,
+        time: pattern.bars[pattern.warningIndex].time,
+      },
+      {
+        id: `${pattern.bars[pattern.crossIndex].time}:confirmed`,
+        type: 'confirmed',
+        setupTime: pattern.bars[pattern.crossIndex].time,
+        time: pattern.bars[pattern.confirmationIndex].time,
+      },
+      {
+        id: `${pattern.bars[pattern.crossIndex].time}:reversal`,
+        type: 'reversal',
+        setupTime: pattern.bars[pattern.crossIndex].time,
+        time: pattern.bars[reversalIndex].time,
+      },
+    ],
+  );
+  assert.ok(updated[2].markerPrice < pattern.bars[reversalIndex].low);
+});
+
+test('requires a close strictly above the warning candle high', () => {
+  const pattern = createIndicatorPattern();
+  const equalIndex = pattern.warningIndex + 5;
+  const breakoutIndex = equalIndex + 1;
+  setReversalBreakout(pattern, equalIndex, pattern.bars[pattern.warningIndex].high);
+  setReversalBreakout(pattern, breakoutIndex);
+
+  const reversal = detectBearishBollingerSignalsFromIndicatorBars(pattern.bars)
+    .find((signal) => signal.type === 'reversal');
+  assert.equal(reversal.time, pattern.bars[breakoutIndex].time);
+});
+
+test('includes the sixtieth closed bar after warning and excludes the sixty-first', () => {
+  const included = createIndicatorPattern();
+  const includedIndex = included.warningIndex + 60;
+  setReversalBreakout(included, includedIndex);
+  assert.equal(
+    detectBearishBollingerSignalsFromIndicatorBars(included.bars)
+      .find((signal) => signal.type === 'reversal')?.time,
+    included.bars[includedIndex].time,
+  );
+
+  const excluded = createIndicatorPattern();
+  const excludedIndex = excluded.warningIndex + 61;
+  setReversalBreakout(excluded, excludedIndex);
+  assert.equal(
+    detectBearishBollingerSignalsFromIndicatorBars(excluded.bars)
+      .find((signal) => signal.type === 'reversal'),
+    undefined,
+  );
+});
+
+test('deduplicates one shared reversal candle in favor of the newest overlapping setup', () => {
+  const pattern = createIndicatorPattern();
+  const secondCrossIndex = 90;
+  const secondWarningIndex = 92;
+  pattern.bars[secondCrossIndex - 1] = {
+    ...pattern.bars[secondCrossIndex - 1],
+    ma60: pattern.bars[secondCrossIndex - 1].middle - 0.5,
+  };
+  pattern.bars[secondCrossIndex] = {
+    ...pattern.bars[secondCrossIndex],
+    ma60: pattern.bars[secondCrossIndex].middle + 0.5,
+  };
+  pattern.bars[secondWarningIndex] = {
+    ...pattern.bars[secondWarningIndex],
+    open: pattern.bars[secondWarningIndex].middle - 1.2,
+    high: pattern.bars[secondWarningIndex].middle - 0.5,
+    low: pattern.bars[secondWarningIndex].middle - 2.5,
+    close: pattern.bars[secondWarningIndex].middle - 2,
+  };
+  const sharedBreakoutIndex = secondWarningIndex + 5;
+  setReversalBreakout(
+    pattern,
+    sharedBreakoutIndex,
+    pattern.bars[pattern.warningIndex].high + 0.1,
+  );
+
+  const signals = detectBearishBollingerSignalsFromIndicatorBars(pattern.bars);
+  const sharedReversals = signals
+    .filter((signal) => signal.type === 'reversal' && signal.time === pattern.bars[sharedBreakoutIndex].time);
+  assert.equal(sharedReversals.length, 1);
+  assert.equal(sharedReversals[0].setupTime, pattern.bars[secondCrossIndex].time);
+  assert.deepEqual(
+    signals.map((signal) => signal.time),
+    signals.map((signal) => signal.time).toSorted((left, right) => left - right),
   );
 });
 
