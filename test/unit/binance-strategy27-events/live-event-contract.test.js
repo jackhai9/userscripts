@@ -188,6 +188,10 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
   aggregatedOpen.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 2_000 });
   aggregatedOpen.payload.event.latest_snapshot.source_bucket_count = 4;
   assert.throws(() => validateLiveEnvelope(aggregatedOpen), /latest snapshot must equal trigger snapshot/);
+
+  const inconsistentCount = envelope({ kind: 'event_updated', eventTime: 2_000 });
+  inconsistentCount.payload.event.latest_snapshot = snapshot({ start: 1_000, end: 2_000 });
+  assert.throws(() => validateLiveEnvelope(inconsistentCount), /source bucket count must match duration/);
 });
 
 test('allows a closed event to retain the last eligible snapshot before its lifecycle boundary', () => {

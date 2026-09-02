@@ -175,6 +175,11 @@
       latestDurationMs <= 1e3,
       "latest snapshot duration must not exceed one second"
     );
+    const triggerDurationMs = value.trigger_snapshot.bucket_end_ms - value.trigger_snapshot.bucket_start_ms;
+    assertCondition(
+      latestDurationMs === triggerDurationMs * value.latest_snapshot.source_bucket_count,
+      "latest snapshot source bucket count must match duration"
+    );
     assertCondition(
       value.latest_snapshot.candidate_observations.length === 0 || latestDurationMs === 1e3,
       "latest snapshot candidates require one complete second"
