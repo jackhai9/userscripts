@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.189
+// @version      2.7.190
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -4743,7 +4743,7 @@
   }
 
   // src/binance-orderbook-trade/core/bearish-bollinger-pattern.js
-  var BEARISH_BOLLINGER_PATTERN = Object.freeze({
+  var BOLLINGER_PATTERN = Object.freeze({
     bollingerPeriod: 20,
     bollingerStdDev: 2,
     maPeriod: 60,
@@ -4759,24 +4759,72 @@
     lowerTouchBandFraction: 0.05,
     reversalFollowBars: 60
   });
+  var TradingViewBarSnapshotInconsistentError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "TradingViewBarSnapshotInconsistentError";
+    }
+  };
+  function isTradingViewBarSnapshotInconsistentError(error) {
+    return error instanceof TradingViewBarSnapshotInconsistentError;
+  }
+  function applyBollingerAlertTaskFailure(context, error) {
+    if (!context || typeof context !== "object" || typeof context.failed !== "boolean" || typeof context.cleanupPending !== "boolean") {
+      throw new Error("Bollinger alert task context is invalid");
+    }
+    if (isTradingViewBarSnapshotInconsistentError(error)) return "retry";
+    context.failed = true;
+    context.cleanupPending = true;
+    return "fatal";
+  }
   function assertFiniteNumber(value, label) {
     if (!Number.isFinite(value)) throw new Error(`${label} is invalid`);
   }
-  function assertBars(bars) {
-    if (!Array.isArray(bars)) throw new Error("Bearish Bollinger bars must be an array");
+  function assertBars(bars, directionLabel) {
+    if (!Array.isArray(bars)) throw new Error(`${directionLabel} Bollinger bars must be an array`);
     let previousTime = -Infinity;
     for (const [index, bar] of bars.entries()) {
-      if (!bar || typeof bar !== "object") throw new Error(`Bearish Bollinger bar ${index} is invalid`);
-      if (!Number.isInteger(bar.time) || bar.time <= previousTime) {
-        throw new Error(`Bearish Bollinger bar time ${index} is invalid`);
+      if (!bar || typeof bar !== "object") {
+        throw new Error(`${directionLabel} Bollinger bar ${index} is invalid`);
+      }
+      if (!Number.isInteger(bar.time)) {
+        throw new Error(`${directionLabel} Bollinger bar time ${index} is invalid`);
+      }
+      if (bar.time <= previousTime) {
+        throw new TradingViewBarSnapshotInconsistentError(
+          `${directionLabel} Bollinger bar time ${index} is invalid`
+        );
       }
       for (const field of ["open", "high", "low", "close"]) {
-        assertFiniteNumber(bar[field], `Bearish Bollinger bar ${index} ${field}`);
+        assertFiniteNumber(bar[field], `${directionLabel} Bollinger bar ${index} ${field}`);
       }
-      if (bar.high < Math.max(bar.open, bar.close) || bar.low > Math.min(bar.open, bar.close)) {
-        throw new Error(`Bearish Bollinger bar ${index} OHLC range is invalid`);
+      if (bar.high < bar.low || bar.high < Math.max(bar.open, bar.close) || bar.low > Math.min(bar.open, bar.close)) {
+        throw new TradingViewBarSnapshotInconsistentError(
+          `${directionLabel} Bollinger bar ${index} OHLC range is invalid`
+        );
       }
       previousTime = bar.time;
+    }
+  }
+  function assertIndicatorBars(indicatorBars, directionLabel) {
+    if (!Array.isArray(indicatorBars)) {
+      throw new Error(`${directionLabel} Bollinger indicator bars must be an array`);
+    }
+    assertBars(indicatorBars, directionLabel);
+    for (const [index, bar] of indicatorBars.entries()) {
+      const fields = ["middle", "upper", "lower", "ma60"];
+      const nullFields = fields.filter((field) => bar[field] === null);
+      if (nullFields.length !== 0 && nullFields.length !== fields.length) {
+        throw new Error(`${directionLabel} Bollinger indicator bar ${index} is incomplete`);
+      }
+      for (const field of fields) {
+        if (bar[field] !== null) {
+          assertFiniteNumber(
+            bar[field],
+            `${directionLabel} Bollinger indicator bar ${index} ${field}`
+          );
+        }
+      }
     }
   }
   function average(values) {
@@ -4787,9 +4835,9 @@
       values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length
     );
   }
-  function calculateBearishBollingerIndicatorBars(bars) {
-    assertBars(bars);
-    const config = BEARISH_BOLLINGER_PATTERN;
+  function calculateBollingerIndicatorBars(bars, directionLabel) {
+    assertBars(bars, directionLabel);
+    const config = BOLLINGER_PATTERN;
     return bars.map((bar, index) => {
       if (index < config.maPeriod - 1) {
         return { ...bar, middle: null, upper: null, lower: null, ma60: null };
@@ -4809,11 +4857,11 @@
   }
   function bandWidth(bar) {
     const width = bar.upper - bar.lower;
-    if (!(width > 0)) throw new Error(`Bearish Bollinger band width is invalid at ${bar.time}`);
+    if (!(width > 0)) throw new Error(`Bollinger band width is invalid at ${bar.time}`);
     return width;
   }
   function hasDownwardBandCenter(indicatorBars, index) {
-    const { trendLookbackBars, minMiddleDeclineBandFraction } = BEARISH_BOLLINGER_PATTERN;
+    const { trendLookbackBars, minMiddleDeclineBandFraction } = BOLLINGER_PATTERN;
     const current = indicatorBars[index];
     const earlier = indicatorBars[index - trendLookbackBars];
     const averageWidth = (bandWidth(current) + bandWidth(earlier)) / 2;
@@ -4824,7 +4872,7 @@
     return next.close < next.middle && next.close < next.open;
   }
   function matchesPreCrossCompression(indicatorBars, crossIndex) {
-    const config = BEARISH_BOLLINGER_PATTERN;
+    const config = BOLLINGER_PATTERN;
     const start = crossIndex - config.preCrossBars;
     const preCross = indicatorBars.slice(start, crossIndex);
     const channelCloses = preCross.filter(
@@ -4854,7 +4902,7 @@
     });
   }
   function detectReversalSignal(indicatorBars, setup, warningIndex) {
-    const { reversalFollowBars } = BEARISH_BOLLINGER_PATTERN;
+    const { reversalFollowBars } = BOLLINGER_PATTERN;
     const warning = indicatorBars[warningIndex];
     const endIndex = Math.min(
       indicatorBars.length - 1,
@@ -4867,7 +4915,7 @@
     return null;
   }
   function detectSetupSignals(indicatorBars, crossIndex) {
-    const config = BEARISH_BOLLINGER_PATTERN;
+    const config = BOLLINGER_PATTERN;
     const setup = indicatorBars[crossIndex];
     const signals = [];
     let warningIndex = null;
@@ -4926,11 +4974,8 @@
       }
     }
   }
-  function detectBearishBollingerSignalsFromIndicatorBars(indicatorBars) {
-    if (!Array.isArray(indicatorBars)) {
-      throw new Error("Bearish Bollinger indicator bars must be an array");
-    }
-    const config = BEARISH_BOLLINGER_PATTERN;
+  function detectBearishBollingerSignalsFromIndicatorBarsInternal(indicatorBars) {
+    const config = BOLLINGER_PATTERN;
     const firstCrossIndex = Math.max(
       config.maPeriod,
       config.maPeriod - 1 + config.preCrossBars,
@@ -4950,14 +4995,56 @@
       (left, right) => left.time - right.time || typeOrder[left.type] - typeOrder[right.type]
     );
   }
-  function detectBearishBollingerSignals(bars) {
-    return detectBearishBollingerSignalsFromIndicatorBars(
-      calculateBearishBollingerIndicatorBars(bars)
+  function mirrorIndicatorBar(bar) {
+    return {
+      ...bar,
+      open: -bar.open,
+      high: -bar.low,
+      low: -bar.high,
+      close: -bar.close,
+      middle: bar.middle === null ? null : -bar.middle,
+      upper: bar.upper === null ? null : -bar.lower,
+      lower: bar.lower === null ? null : -bar.upper,
+      ma60: bar.ma60 === null ? null : -bar.ma60
+    };
+  }
+  function mapMirroredBullishSignal(signal) {
+    return Object.freeze({
+      ...signal,
+      id: `${signal.setupTime}:bullish:${signal.type}`,
+      direction: "bullish",
+      markerPrice: -signal.markerPrice
+    });
+  }
+  function detectBullishBollingerSignalsFromIndicatorBarsInternal(indicatorBars) {
+    return detectBearishBollingerSignalsFromIndicatorBarsInternal(
+      indicatorBars.map(mirrorIndicatorBar)
+    ).map(mapMirroredBullishSignal);
+  }
+  function compareBollingerSignals(left, right) {
+    const directionOrder = { bearish: 0, bullish: 1 };
+    const typeOrder = { warning: 0, confirmed: 1, reversal: 2 };
+    const leftDirectionOrder = directionOrder[left.direction];
+    const rightDirectionOrder = directionOrder[right.direction];
+    if (leftDirectionOrder === void 0 || rightDirectionOrder === void 0) {
+      throw new Error("Bollinger signal direction is invalid");
+    }
+    return left.time - right.time || leftDirectionOrder - rightDirectionOrder || typeOrder[left.type] - typeOrder[right.type];
+  }
+  function detectBollingerSignalsFromIndicatorBars(indicatorBars) {
+    assertIndicatorBars(indicatorBars, "Bollinger");
+    const bearishSignals = detectBearishBollingerSignalsFromIndicatorBarsInternal(indicatorBars).map((signal) => Object.freeze({ ...signal, direction: "bearish" }));
+    const bullishSignals = detectBullishBollingerSignalsFromIndicatorBarsInternal(indicatorBars);
+    return [...bearishSignals, ...bullishSignals].sort(compareBollingerSignals);
+  }
+  function detectBollingerSignals(bars) {
+    return detectBollingerSignalsFromIndicatorBars(
+      calculateBollingerIndicatorBars(bars, "Bollinger")
     );
   }
-  function isBearishBollingerDrawingMutationBlocked(state) {
+  function isBollingerDrawingMutationBlocked(state) {
     if (!state || typeof state !== "object") {
-      throw new Error("Bearish Bollinger drawing state is invalid");
+      throw new Error("Bollinger drawing state is invalid");
     }
     return [
       state.ladderTask,
@@ -4970,7 +5057,8 @@
   }
 
   // src/binance-orderbook-trade/dom/tradingview-bearish-alerts.js
-  var MAX_BEARISH_BOLLINGER_MARKERS = 1e3;
+  var MAX_BOLLINGER_MARKERS_PER_DIRECTION = 1e3;
+  var MAX_BOLLINGER_MARKERS = MAX_BOLLINGER_MARKERS_PER_DIRECTION * 2;
   function routeSymbolFromChartSymbol(value) {
     return String(value || "").split("@", 1)[0];
   }
@@ -4986,19 +5074,19 @@
       "symbol"
     ]) {
       if (typeof chart?.[method] !== "function") {
-        throw new Error(`TradingView bearish alert method is unavailable: ${method}`);
+        throw new Error(`TradingView Bollinger alert method is unavailable: ${method}`);
       }
     }
   }
   function readLiveShapeIds(chart) {
     const shapes = chart.getAllShapes();
     if (!Array.isArray(shapes)) {
-      throw new Error("TradingView bearish alert shape list is invalid");
+      throw new Error("TradingView Bollinger alert shape list is invalid");
     }
     const ids = /* @__PURE__ */ new Set();
     for (const [index, shape] of shapes.entries()) {
       if (typeof shape?.id !== "string" || shape.id.length === 0) {
-        throw new Error(`TradingView bearish alert shape ${index} id is invalid`);
+        throw new Error(`TradingView Bollinger alert shape ${index} id is invalid`);
       }
       ids.add(shape.id);
     }
@@ -5019,7 +5107,7 @@
       const count = Number(match[1]);
       if (Number.isSafeInteger(count) && count > 0) return count * seconds;
     }
-    throw new Error(`TradingView bearish alert resolution is unsupported: ${resolution}`);
+    throw new Error(`TradingView Bollinger alert resolution is unsupported: ${resolution}`);
   }
   function findBearishBollingerChartTarget(document2, expectedRouteSymbol) {
     const baseTarget = findBinanceTradingViewTarget(document2);
@@ -5032,7 +5120,7 @@
     const routeSymbol = routeSymbolFromChartSymbol(chart.symbol());
     if (routeSymbol !== expectedRouteSymbol) {
       throw new Error(
-        `TradingView bearish alert symbol mismatch: expected ${expectedRouteSymbol}, received ${routeSymbol}`
+        `TradingView Bollinger alert symbol mismatch: expected ${expectedRouteSymbol}, received ${routeSymbol}`
       );
     }
     return {
@@ -5052,16 +5140,16 @@
     return baseTarget.chartRoot === target.chartRoot && baseTarget.tradingViewApi === target.tradingViewApi && chart === target.chart && chart.resolution() === target.resolution && routeSymbolFromChartSymbol(chart.symbol()) === target.routeSymbol;
   }
   function assertExportSchema(schema) {
-    if (!Array.isArray(schema)) throw new Error("TradingView bearish alert export schema is invalid");
+    if (!Array.isArray(schema)) throw new Error("TradingView Bollinger alert export schema is invalid");
     const fields = schema.map((column) => column.plotTitle || column.type);
     const expected = ["time", "open", "high", "low", "close"];
     if (fields.length !== expected.length || fields.some((field, index) => field !== expected[index])) {
-      throw new Error(`TradingView bearish alert export schema mismatch: ${fields.join(",")}`);
+      throw new Error(`TradingView Bollinger alert export schema mismatch: ${fields.join(",")}`);
     }
   }
   function parseExportRow(row, index) {
     if (!row || typeof row !== "object") {
-      throw new Error(`TradingView bearish alert export row ${index} is invalid`);
+      throw new Error(`TradingView Bollinger alert export row ${index} is invalid`);
     }
     const bar = {
       time: row[0],
@@ -5071,65 +5159,113 @@
       close: row[4]
     };
     if (!Number.isInteger(bar.time)) {
-      throw new Error(`TradingView bearish alert export time ${index} is invalid`);
+      throw new Error(`TradingView Bollinger alert export time ${index} is invalid`);
     }
     for (const field of ["open", "high", "low", "close"]) {
       if (!Number.isFinite(bar[field])) {
-        throw new Error(`TradingView bearish alert export ${field} ${index} is invalid`);
+        throw new Error(`TradingView Bollinger alert export ${field} ${index} is invalid`);
       }
     }
     return bar;
   }
   function parseClosedTradingViewBars(exported, { resolutionSeconds, observedAtSeconds }) {
     if (!Number.isSafeInteger(resolutionSeconds) || resolutionSeconds < 1) {
-      throw new Error("TradingView bearish alert resolution seconds are invalid");
+      throw new Error("TradingView Bollinger alert resolution seconds are invalid");
     }
     if (!Number.isFinite(observedAtSeconds)) {
-      throw new Error("TradingView bearish alert observation time is invalid");
+      throw new Error("TradingView Bollinger alert observation time is invalid");
     }
     assertExportSchema(exported?.schema);
     if (!Array.isArray(exported.data)) {
-      throw new Error("TradingView bearish alert export data is invalid");
+      throw new Error("TradingView Bollinger alert export data is invalid");
     }
     const bars = exported.data.map(parseExportRow);
     for (let index = 1; index < bars.length; index += 1) {
       if (bars[index].time <= bars[index - 1].time) {
-        throw new Error(`TradingView bearish alert export order is invalid at ${index}`);
+        throw new TradingViewBarSnapshotInconsistentError(
+          `TradingView Bollinger alert export order is invalid at ${index}`
+        );
       }
     }
     return bars.filter((bar) => bar.time + resolutionSeconds <= observedAtSeconds);
   }
   function buildClosedBarsWindowKey(bars) {
     if (!Array.isArray(bars) || bars.length === 0) {
-      throw new Error("TradingView bearish alert closed-bar window is empty");
+      throw new Error("TradingView Bollinger alert closed-bar window is empty");
     }
     return `${bars.length}:${bars[0].time}:${bars.at(-1).time}`;
+  }
+  function writeClosedBarToSnapshot(values, offset, bar, index) {
+    if (!bar || typeof bar !== "object") {
+      throw new Error(`TradingView Bollinger closed bar ${index} is invalid`);
+    }
+    if (!Number.isInteger(bar.time)) {
+      throw new Error(`TradingView Bollinger closed bar time ${index} is invalid`);
+    }
+    const fields = ["open", "high", "low", "close"];
+    for (const field of fields) {
+      if (!Number.isFinite(bar[field])) {
+        throw new Error(`TradingView Bollinger closed bar ${field} ${index} is invalid`);
+      }
+    }
+    values[offset] = bar.time;
+    values[offset + 1] = bar.open;
+    values[offset + 2] = bar.high;
+    values[offset + 3] = bar.low;
+    values[offset + 4] = bar.close;
+  }
+  function buildClosedBarsContentSnapshot(bars) {
+    const windowKey = buildClosedBarsWindowKey(bars);
+    const values = new Float64Array(bars.length * 5);
+    for (let index = 0; index < bars.length; index += 1) {
+      writeClosedBarToSnapshot(values, index * 5, bars[index], index);
+    }
+    return { windowKey, values };
+  }
+  function matchesClosedBarsContentSnapshot(bars, snapshot) {
+    if (!snapshot || typeof snapshot !== "object" || typeof snapshot.windowKey !== "string" || !(snapshot.values instanceof Float64Array)) {
+      throw new Error("TradingView Bollinger closed-bar snapshot is invalid");
+    }
+    if (buildClosedBarsWindowKey(bars) !== snapshot.windowKey) return false;
+    if (snapshot.values.length !== bars.length * 5) return false;
+    const candidate = new Float64Array(5);
+    for (let index = 0; index < bars.length; index += 1) {
+      writeClosedBarToSnapshot(candidate, 0, bars[index], index);
+      const offset = index * 5;
+      for (let fieldIndex = 0; fieldIndex < candidate.length; fieldIndex += 1) {
+        if (!Object.is(snapshot.values[offset + fieldIndex], candidate[fieldIndex])) return false;
+      }
+    }
+    return true;
   }
   async function reconcileBearishBollingerAlertWindow({
     bars,
     cachedWindowKey,
+    cachedContentSnapshot = null,
     cachedSignals,
     detectSignals,
     renderSignals
   }) {
     if (typeof detectSignals !== "function") {
-      throw new Error("TradingView bearish alert detector is unavailable");
+      throw new Error("TradingView Bollinger alert detector is unavailable");
     }
     if (typeof renderSignals !== "function") {
-      throw new Error("TradingView bearish alert renderer is unavailable");
+      throw new Error("TradingView Bollinger alert renderer is unavailable");
     }
     const closedBarsWindowKey = buildClosedBarsWindowKey(bars);
-    const signals = closedBarsWindowKey === cachedWindowKey ? cachedSignals : detectSignals(bars);
+    const contentUnchanged = closedBarsWindowKey === cachedWindowKey && cachedContentSnapshot !== null && matchesClosedBarsContentSnapshot(bars, cachedContentSnapshot);
+    const signals = contentUnchanged ? cachedSignals : detectSignals(bars);
     if (!Array.isArray(signals)) {
-      throw new Error("Bearish Bollinger signal cache is invalid");
+      throw new Error("Bollinger signal cache is invalid");
     }
     const rendered = await renderSignals(signals);
     if (typeof rendered !== "boolean") {
-      throw new Error("TradingView bearish alert render result is invalid");
+      throw new Error("TradingView Bollinger alert render result is invalid");
     }
     return {
       rendered,
       closedBarsWindowKey,
+      closedBarsContentSnapshot: contentUnchanged ? cachedContentSnapshot : buildClosedBarsContentSnapshot(bars),
       signals
     };
   }
@@ -5142,6 +5278,11 @@
     });
   }
   function markerOptions(signal) {
+    const direction = signal.direction;
+    if (direction !== "bearish" && direction !== "bullish") {
+      throw new Error(`TradingView Bollinger alert signal direction is invalid: ${direction}`);
+    }
+    const isBullish = direction === "bullish";
     const common = {
       lock: true,
       disableSave: true,
@@ -5163,10 +5304,10 @@
     if (signal.type === "confirmed") {
       return {
         ...common,
-        shape: "arrow_down",
+        shape: isBullish ? "arrow_up" : "arrow_down",
         overrides: {
-          color: "#F6465D",
-          arrowColor: "#F6465D",
+          color: isBullish ? "#0ECB81" : "#F6465D",
+          arrowColor: isBullish ? "#0ECB81" : "#F6465D",
           fixedSize: true
         }
       };
@@ -5174,21 +5315,21 @@
     if (signal.type === "reversal") {
       return {
         ...common,
-        shape: "arrow_up",
+        shape: isBullish ? "arrow_down" : "arrow_up",
         overrides: {
-          color: "#0ECB81",
-          arrowColor: "#0ECB81",
+          color: isBullish ? "#F6465D" : "#0ECB81",
+          arrowColor: isBullish ? "#F6465D" : "#0ECB81",
           fixedSize: true
         }
       };
     }
-    throw new Error(`TradingView bearish alert signal type is invalid: ${signal.type}`);
+    throw new Error(`TradingView Bollinger alert signal type is invalid: ${signal.type}`);
   }
   function verifyResolvedTime(chart, id, requestedTime) {
     const shape = chart.getShapeById(id);
     const points = shape?.getPoints?.();
     if (!Array.isArray(points) || points.length !== 1 || points[0].time !== requestedTime) {
-      throw new Error(`TradingView bearish alert time alignment failed for ${requestedTime}`);
+      throw new Error(`TradingView Bollinger alert time alignment failed for ${requestedTime}`);
     }
   }
   async function createAlignedMarker(chart, signal) {
@@ -5197,7 +5338,7 @@
       price: signal.markerPrice
     }, markerOptions(signal));
     if (typeof id !== "string" || id.length === 0) {
-      throw new Error("TradingView returned an invalid bearish alert shape id");
+      throw new Error("TradingView returned an invalid Bollinger alert shape id");
     }
     try {
       verifyResolvedTime(chart, id, signal.time);
@@ -5207,7 +5348,20 @@
     }
     return id;
   }
-  function createBearishBollingerMarkerLayer(target) {
+  function normalizeSignal(signal, index, defaultDirection) {
+    if (!signal || typeof signal !== "object") {
+      throw new Error(`TradingView Bollinger alert signal ${index} is invalid`);
+    }
+    if (typeof signal.id !== "string" || signal.id.length === 0) {
+      throw new Error(`TradingView Bollinger alert signal ${index} id is invalid`);
+    }
+    const direction = signal.direction === void 0 ? defaultDirection : signal.direction;
+    if (direction !== "bearish" && direction !== "bullish") {
+      throw new Error(`TradingView Bollinger alert signal ${index} direction is invalid: ${direction}`);
+    }
+    return signal.direction === direction ? signal : { ...signal, direction };
+  }
+  function createMarkerLayer(target, defaultDirection) {
     const { chart } = target;
     const registry = /* @__PURE__ */ new Map();
     let generation = 0;
@@ -5227,24 +5381,34 @@
     }
     return Object.freeze({
       async render(signals, { isCurrent }) {
-        if (!Array.isArray(signals)) throw new Error("TradingView bearish alert signals are invalid");
-        if (signals.length > MAX_BEARISH_BOLLINGER_MARKERS) {
+        if (!Array.isArray(signals)) throw new Error("TradingView Bollinger alert signals are invalid");
+        if (signals.length > MAX_BOLLINGER_MARKERS) {
           throw new Error(
-            `TradingView bearish alert marker limit exceeded: ${signals.length}`
+            `TradingView Bollinger alert marker limit exceeded: ${signals.length}`
           );
         }
         if (typeof isCurrent !== "function") {
-          throw new Error("TradingView bearish alert current-target validator is unavailable");
+          throw new Error("TradingView Bollinger alert current-target validator is unavailable");
+        }
+        const normalizedSignals = signals.map((signal, index) => normalizeSignal(signal, index, defaultDirection));
+        const directionCounts = { bearish: 0, bullish: 0 };
+        for (const signal of normalizedSignals) {
+          directionCounts[signal.direction] += 1;
+          if (directionCounts[signal.direction] > MAX_BOLLINGER_MARKERS_PER_DIRECTION) {
+            throw new Error(
+              `TradingView Bollinger alert ${signal.direction} marker limit exceeded: ` + directionCounts[signal.direction]
+            );
+          }
         }
         const requestedGeneration = generation;
         if (!isCurrent()) return false;
         const liveShapeIds = readLiveShapeIds(chart);
         discardMissingSignals(liveShapeIds);
-        const nextIds = new Set(signals.map((signal) => signal.id));
+        const nextIds = new Set(normalizedSignals.map((signal) => signal.id));
         for (const signalId of [...registry.keys()]) {
           if (!nextIds.has(signalId)) removeSignal(signalId, liveShapeIds);
         }
-        for (const signal of signals) {
+        for (const signal of normalizedSignals) {
           if (registry.has(signal.id)) continue;
           if (!isCurrent()) return false;
           const markerId = await createAlignedMarker(chart, signal);
@@ -5266,6 +5430,9 @@
         return registry.size;
       }
     });
+  }
+  function createBollingerMarkerLayer(target) {
+    return createMarkerLayer(target, void 0);
   }
 
   // src/binance-orderbook-trade/index.user.js
@@ -5579,7 +5746,7 @@
       emit("ERR", ...args);
     }
     function isTradingViewDrawingMutationBusy() {
-      return isBearishBollingerDrawingMutationBlocked({
+      return isBollingerDrawingMutationBlocked({
         ladderTask,
         continuousLadderTask,
         singleOrderTask,
@@ -5608,7 +5775,7 @@
         target = findBearishBollingerChartTarget(document, routeSymbol);
       } catch (error) {
         clearBearishBollingerAlertContext();
-        err("空头形态预警已停止:", error);
+        err("布林带形态预警已停止:", error);
         return;
       }
       if (!target) return;
@@ -5619,10 +5786,11 @@
           routeSymbol,
           resolution: target.resolution,
           target,
-          layer: createBearishBollingerMarkerLayer(target),
+          layer: createBollingerMarkerLayer(target),
           failed: false,
           cleanupPending: false,
           lastProcessedClosedBarsWindowKey: null,
+          lastProcessedClosedBarsContentSnapshot: null,
           lastProcessedSignals: null
         };
       }
@@ -5639,23 +5807,28 @@
         const result = await reconcileBearishBollingerAlertWindow({
           bars,
           cachedWindowKey: context.lastProcessedClosedBarsWindowKey,
+          cachedContentSnapshot: context.lastProcessedClosedBarsContentSnapshot,
           cachedSignals: context.lastProcessedSignals,
-          detectSignals: detectBearishBollingerSignals,
+          detectSignals: detectBollingerSignals,
           renderSignals: (signals) => context.layer.render(signals, {
             isCurrent: () => isBearishBollingerAlertContextCurrent(context)
           })
         });
         if (result.rendered && isBearishBollingerAlertContextCurrent(context)) {
           context.lastProcessedClosedBarsWindowKey = result.closedBarsWindowKey;
+          context.lastProcessedClosedBarsContentSnapshot = result.closedBarsContentSnapshot;
           context.lastProcessedSignals = result.signals;
         }
       })();
       bearishBollingerAlertTask = task;
       task.catch((error) => {
         if (bearishBollingerAlertContext !== context) return;
-        context.failed = true;
-        context.cleanupPending = true;
-        err("空头形态预警已停止:", error);
+        const failureKind = applyBollingerAlertTaskFailure(context, error);
+        if (failureKind === "retry") {
+          warn("布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:", error);
+          return;
+        }
+        err("布林带形态预警已停止:", error);
       }).finally(() => {
         if (bearishBollingerAlertTask === task) bearishBollingerAlertTask = null;
       });

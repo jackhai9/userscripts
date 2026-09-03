@@ -2,9 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  applyBollingerAlertTaskFailure,
+  calculateBullishBollingerIndicatorBars,
   calculateBearishBollingerIndicatorBars,
+  detectBollingerSignalsFromIndicatorBars,
+  detectBullishBollingerSignalsFromIndicatorBars,
   detectBearishBollingerSignalsFromIndicatorBars,
+  isTradingViewBarSnapshotInconsistentError,
   isBearishBollingerDrawingMutationBlocked,
+  TradingViewBarSnapshotInconsistentError,
 } from '../../../src/binance-orderbook-trade/core/bearish-bollinger-pattern.js';
 
 function createOhlcBars(count, secondsPerBar = 60) {
@@ -68,6 +74,20 @@ function setReversalBreakout(pattern, index, close = null) {
   };
 }
 
+function mirrorIndicatorBars(indicatorBars) {
+  return indicatorBars.map((bar) => ({
+    ...bar,
+    open: -bar.open,
+    high: -bar.low,
+    low: -bar.high,
+    close: -bar.close,
+    middle: bar.middle === null ? null : -bar.middle,
+    upper: bar.upper === null ? null : -bar.lower,
+    lower: bar.lower === null ? null : -bar.upper,
+    ma60: bar.ma60 === null ? null : -bar.ma60,
+  }));
+}
+
 test('calculates SMA20 Bollinger 2σ and SMA60 from closes through the current bar only', () => {
   const indicatorBars = calculateBearishBollingerIndicatorBars(createOhlcBars(60));
   const last = indicatorBars[59];
@@ -76,6 +96,110 @@ test('calculates SMA20 Bollinger 2σ and SMA60 from closes through the current b
   assert.equal(last.ma60, 30.5);
   assert.equal(Number(last.upper.toFixed(12)), 62.032562594671);
   assert.equal(Number(last.lower.toFixed(12)), 38.967437405329);
+});
+
+test('keeps bullish indicator values on the original price axis', () => {
+  const bars = createOhlcBars(60);
+  assert.deepEqual(
+    calculateBullishBollingerIndicatorBars(bars),
+    calculateBearishBollingerIndicatorBars(bars),
+  );
+});
+
+test('implements bullish detection as the strict price-axis mirror of bearish detection', () => {
+  const bearishPattern = createIndicatorPattern();
+  const bullishBars = mirrorIndicatorBars(bearishPattern.bars);
+  const originalBullishBars = structuredClone(bullishBars);
+  const bearishSignals = detectBearishBollingerSignalsFromIndicatorBars(bearishPattern.bars);
+  const bullishSignals = detectBullishBollingerSignalsFromIndicatorBars(bullishBars);
+
+  assert.deepEqual(
+    bullishSignals.map(({ type, setupTime, time, markerPrice, direction }) => ({
+      type,
+      setupTime,
+      time,
+      markerPrice,
+      direction,
+    })),
+    bearishSignals.map((signal) => ({
+      type: signal.type,
+      setupTime: signal.setupTime,
+      time: signal.time,
+      markerPrice: -signal.markerPrice,
+      direction: 'bullish',
+    })),
+  );
+  assert.deepEqual(
+    bullishSignals.map((signal) => signal.id),
+    bearishSignals.map((signal) => `${signal.setupTime}:bullish:${signal.type}`),
+  );
+  assert.deepEqual(bullishBars, originalBullishBars);
+});
+
+test('combined detection keeps opposite-direction setups and distinct signal IDs', () => {
+  const bearishPattern = createIndicatorPattern();
+  const secondPattern = createIndicatorPattern();
+  const bullishBars = mirrorIndicatorBars(secondPattern.bars).map((bar) => ({
+    ...bar,
+    time: bar.time + (200 * 60),
+  }));
+  const signals = detectBollingerSignalsFromIndicatorBars([
+    ...bearishPattern.bars,
+    ...bullishBars,
+  ]);
+
+  assert.deepEqual(new Set(signals.map((signal) => signal.direction)), new Set(['bearish', 'bullish']));
+  assert.equal(new Set(signals.map((signal) => signal.id)).size, signals.length);
+  assert.ok(signals.some((signal) => signal.direction === 'bearish'));
+  assert.ok(signals.some((signal) => signal.direction === 'bullish'));
+});
+
+test('classifies only snapshot ordering and OHLC range races as recoverable', () => {
+  assert.equal(
+    isTradingViewBarSnapshotInconsistentError(
+      new TradingViewBarSnapshotInconsistentError('race'),
+    ),
+    true,
+  );
+  assert.equal(isTradingViewBarSnapshotInconsistentError(new Error('race')), false);
+
+  const invalidRange = createOhlcBars(1);
+  invalidRange[0] = { ...invalidRange[0], high: invalidRange[0].close - 1 };
+  assert.throws(
+    () => calculateBearishBollingerIndicatorBars(invalidRange),
+    (error) => isTradingViewBarSnapshotInconsistentError(error),
+  );
+
+  const invalidTime = createOhlcBars(1);
+  invalidTime[0] = { ...invalidTime[0], time: 1.5 };
+  assert.throws(
+    () => calculateBearishBollingerIndicatorBars(invalidTime),
+    (error) => !isTradingViewBarSnapshotInconsistentError(error),
+  );
+});
+
+test('rejects incomplete indicator bars instead of mirroring undefined values', () => {
+  const bars = createIndicatorPattern().bars;
+  bars[80] = { ...bars[80], upper: undefined };
+  assert.throws(
+    () => detectBullishBollingerSignalsFromIndicatorBars(bars),
+    /indicator bar 80 upper is invalid/,
+  );
+});
+
+test('keeps snapshot task failures retryable and marks contract failures fatal', () => {
+  const context = { failed: false, cleanupPending: false };
+  assert.equal(
+    applyBollingerAlertTaskFailure(
+      context,
+      new TradingViewBarSnapshotInconsistentError('race'),
+    ),
+    'retry',
+  );
+  assert.deepEqual(context, { failed: false, cleanupPending: false });
+
+  assert.equal(applyBollingerAlertTaskFailure(context, new Error('schema')), 'fatal');
+  assert.deepEqual(context, { failed: true, cleanupPending: true });
 });
 
 test('emits one warning and one later bearish lower-band confirmation', () => {

@@ -1,4 +1,4 @@
-export const BEARISH_BOLLINGER_PATTERN = Object.freeze({
+const BOLLINGER_PATTERN = Object.freeze({
   bollingerPeriod: 20,
   bollingerStdDev: 2,
   maPeriod: 60,
@@ -15,25 +15,94 @@ export const BEARISH_BOLLINGER_PATTERN = Object.freeze({
   reversalFollowBars: 60,
 });
 
+export const BEARISH_BOLLINGER_PATTERN = BOLLINGER_PATTERN;
+export const BULLISH_BOLLINGER_PATTERN = BOLLINGER_PATTERN;
+
+export class TradingViewBarSnapshotInconsistentError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'TradingViewBarSnapshotInconsistentError';
+  }
+}
+
+export function isTradingViewBarSnapshotInconsistentError(error) {
+  return error instanceof TradingViewBarSnapshotInconsistentError;
+}
+
+/**
+ * Applies the monitor's task-failure state transition. Snapshot races are
+ * expected feed-update boundaries and must leave a context retryable; every
+ * other error is a terminal contract failure and schedules layer cleanup.
+ */
+export function applyBollingerAlertTaskFailure(context, error) {
+  if (
+    !context
+    || typeof context !== 'object'
+    || typeof context.failed !== 'boolean'
+    || typeof context.cleanupPending !== 'boolean'
+  ) {
+    throw new Error('Bollinger alert task context is invalid');
+  }
+  if (isTradingViewBarSnapshotInconsistentError(error)) return 'retry';
+  context.failed = true;
+  context.cleanupPending = true;
+  return 'fatal';
+}
+
 function assertFiniteNumber(value, label) {
   if (!Number.isFinite(value)) throw new Error(`${label} is invalid`);
 }
 
-function assertBars(bars) {
-  if (!Array.isArray(bars)) throw new Error('Bearish Bollinger bars must be an array');
+function assertBars(bars, directionLabel) {
+  if (!Array.isArray(bars)) throw new Error(`${directionLabel} Bollinger bars must be an array`);
   let previousTime = -Infinity;
   for (const [index, bar] of bars.entries()) {
-    if (!bar || typeof bar !== 'object') throw new Error(`Bearish Bollinger bar ${index} is invalid`);
-    if (!Number.isInteger(bar.time) || bar.time <= previousTime) {
-      throw new Error(`Bearish Bollinger bar time ${index} is invalid`);
+    if (!bar || typeof bar !== 'object') {
+      throw new Error(`${directionLabel} Bollinger bar ${index} is invalid`);
+    }
+    if (!Number.isInteger(bar.time)) {
+      throw new Error(`${directionLabel} Bollinger bar time ${index} is invalid`);
+    }
+    if (bar.time <= previousTime) {
+      throw new TradingViewBarSnapshotInconsistentError(
+        `${directionLabel} Bollinger bar time ${index} is invalid`,
+      );
     }
     for (const field of ['open', 'high', 'low', 'close']) {
-      assertFiniteNumber(bar[field], `Bearish Bollinger bar ${index} ${field}`);
+      assertFiniteNumber(bar[field], `${directionLabel} Bollinger bar ${index} ${field}`);
     }
-    if (bar.high < Math.max(bar.open, bar.close) || bar.low > Math.min(bar.open, bar.close)) {
-      throw new Error(`Bearish Bollinger bar ${index} OHLC range is invalid`);
+    if (
+      bar.high < bar.low
+      || bar.high < Math.max(bar.open, bar.close)
+      || bar.low > Math.min(bar.open, bar.close)
+    ) {
+      throw new TradingViewBarSnapshotInconsistentError(
+        `${directionLabel} Bollinger bar ${index} OHLC range is invalid`,
+      );
     }
     previousTime = bar.time;
+  }
+}
+
+function assertIndicatorBars(indicatorBars, directionLabel) {
+  if (!Array.isArray(indicatorBars)) {
+    throw new Error(`${directionLabel} Bollinger indicator bars must be an array`);
+  }
+  assertBars(indicatorBars, directionLabel);
+  for (const [index, bar] of indicatorBars.entries()) {
+    const fields = ['middle', 'upper', 'lower', 'ma60'];
+    const nullFields = fields.filter((field) => bar[field] === null);
+    if (nullFields.length !== 0 && nullFields.length !== fields.length) {
+      throw new Error(`${directionLabel} Bollinger indicator bar ${index} is incomplete`);
+    }
+    for (const field of fields) {
+      if (bar[field] !== null) {
+        assertFiniteNumber(
+          bar[field],
+          `${directionLabel} Bollinger indicator bar ${index} ${field}`,
+        );
+      }
+    }
   }
 }
 
@@ -47,9 +116,9 @@ function calculatePopulationStdDev(values, mean) {
   );
 }
 
-export function calculateBearishBollingerIndicatorBars(bars) {
-  assertBars(bars);
-  const config = BEARISH_BOLLINGER_PATTERN;
+function calculateBollingerIndicatorBars(bars, directionLabel) {
+  assertBars(bars, directionLabel);
+  const config = BOLLINGER_PATTERN;
   return bars.map((bar, index) => {
     if (index < config.maPeriod - 1) {
       return { ...bar, middle: null, upper: null, lower: null, ma60: null };
@@ -73,14 +142,22 @@ export function calculateBearishBollingerIndicatorBars(bars) {
   });
 }
 
+export function calculateBearishBollingerIndicatorBars(bars) {
+  return calculateBollingerIndicatorBars(bars, 'Bearish');
+}
+
+export function calculateBullishBollingerIndicatorBars(bars) {
+  return calculateBollingerIndicatorBars(bars, 'Bullish');
+}
+
 function bandWidth(bar) {
   const width = bar.upper - bar.lower;
-  if (!(width > 0)) throw new Error(`Bearish Bollinger band width is invalid at ${bar.time}`);
+  if (!(width > 0)) throw new Error(`Bollinger band width is invalid at ${bar.time}`);
   return width;
 }
 
 function hasDownwardBandCenter(indicatorBars, index) {
-  const { trendLookbackBars, minMiddleDeclineBandFraction } = BEARISH_BOLLINGER_PATTERN;
+  const { trendLookbackBars, minMiddleDeclineBandFraction } = BOLLINGER_PATTERN;
   const current = indicatorBars[index];
   const earlier = indicatorBars[index - trendLookbackBars];
   const averageWidth = (bandWidth(current) + bandWidth(earlier)) / 2;
@@ -93,7 +170,7 @@ function isRejectedAboveMiddleClose(indicatorBars, index) {
 }
 
 function matchesPreCrossCompression(indicatorBars, crossIndex) {
-  const config = BEARISH_BOLLINGER_PATTERN;
+  const config = BOLLINGER_PATTERN;
   const start = crossIndex - config.preCrossBars;
   const preCross = indicatorBars.slice(start, crossIndex);
   const channelCloses = preCross.filter(
@@ -133,7 +210,7 @@ function buildSignal(type, setup, bar) {
 }
 
 function detectReversalSignal(indicatorBars, setup, warningIndex) {
-  const { reversalFollowBars } = BEARISH_BOLLINGER_PATTERN;
+  const { reversalFollowBars } = BOLLINGER_PATTERN;
   const warning = indicatorBars[warningIndex];
   const endIndex = Math.min(
     indicatorBars.length - 1,
@@ -147,7 +224,7 @@ function detectReversalSignal(indicatorBars, setup, warningIndex) {
 }
 
 function detectSetupSignals(indicatorBars, crossIndex) {
-  const config = BEARISH_BOLLINGER_PATTERN;
+  const config = BOLLINGER_PATTERN;
   const setup = indicatorBars[crossIndex];
   const signals = [];
   let warningIndex = null;
@@ -230,11 +307,8 @@ function appendSetupSignals(signals, setupSignals) {
   }
 }
 
-export function detectBearishBollingerSignalsFromIndicatorBars(indicatorBars) {
-  if (!Array.isArray(indicatorBars)) {
-    throw new Error('Bearish Bollinger indicator bars must be an array');
-  }
-  const config = BEARISH_BOLLINGER_PATTERN;
+function detectBearishBollingerSignalsFromIndicatorBarsInternal(indicatorBars) {
+  const config = BOLLINGER_PATTERN;
   const firstCrossIndex = Math.max(
     config.maPeriod,
     config.maPeriod - 1 + config.preCrossBars,
@@ -255,15 +329,89 @@ export function detectBearishBollingerSignalsFromIndicatorBars(indicatorBars) {
   );
 }
 
+export function detectBearishBollingerSignalsFromIndicatorBars(indicatorBars) {
+  assertIndicatorBars(indicatorBars, 'Bearish');
+  return detectBearishBollingerSignalsFromIndicatorBarsInternal(indicatorBars);
+}
+
 export function detectBearishBollingerSignals(bars) {
   return detectBearishBollingerSignalsFromIndicatorBars(
     calculateBearishBollingerIndicatorBars(bars),
   );
 }
 
-export function isBearishBollingerDrawingMutationBlocked(state) {
+function mirrorIndicatorBar(bar) {
+  return {
+    ...bar,
+    open: -bar.open,
+    high: -bar.low,
+    low: -bar.high,
+    close: -bar.close,
+    middle: bar.middle === null ? null : -bar.middle,
+    upper: bar.upper === null ? null : -bar.lower,
+    lower: bar.lower === null ? null : -bar.upper,
+    ma60: bar.ma60 === null ? null : -bar.ma60,
+  };
+}
+
+function mapMirroredBullishSignal(signal) {
+  return Object.freeze({
+    ...signal,
+    id: `${signal.setupTime}:bullish:${signal.type}`,
+    direction: 'bullish',
+    markerPrice: -signal.markerPrice,
+  });
+}
+
+function detectBullishBollingerSignalsFromIndicatorBarsInternal(indicatorBars) {
+  return detectBearishBollingerSignalsFromIndicatorBarsInternal(
+    indicatorBars.map(mirrorIndicatorBar),
+  ).map(mapMirroredBullishSignal);
+}
+
+export function detectBullishBollingerSignalsFromIndicatorBars(indicatorBars) {
+  assertIndicatorBars(indicatorBars, 'Bullish');
+  return detectBullishBollingerSignalsFromIndicatorBarsInternal(indicatorBars);
+}
+
+export function detectBullishBollingerSignals(bars) {
+  return detectBullishBollingerSignalsFromIndicatorBars(
+    calculateBullishBollingerIndicatorBars(bars),
+  );
+}
+
+function compareBollingerSignals(left, right) {
+  const directionOrder = { bearish: 0, bullish: 1 };
+  const typeOrder = { warning: 0, confirmed: 1, reversal: 2 };
+  const leftDirectionOrder = directionOrder[left.direction];
+  const rightDirectionOrder = directionOrder[right.direction];
+  if (leftDirectionOrder === undefined || rightDirectionOrder === undefined) {
+    throw new Error('Bollinger signal direction is invalid');
+  }
+  return (
+    left.time - right.time
+    || (leftDirectionOrder - rightDirectionOrder)
+    || (typeOrder[left.type] - typeOrder[right.type])
+  );
+}
+
+export function detectBollingerSignalsFromIndicatorBars(indicatorBars) {
+  assertIndicatorBars(indicatorBars, 'Bollinger');
+  const bearishSignals = detectBearishBollingerSignalsFromIndicatorBarsInternal(indicatorBars)
+    .map((signal) => Object.freeze({ ...signal, direction: 'bearish' }));
+  const bullishSignals = detectBullishBollingerSignalsFromIndicatorBarsInternal(indicatorBars);
+  return [...bearishSignals, ...bullishSignals].sort(compareBollingerSignals);
+}
+
+export function detectBollingerSignals(bars) {
+  return detectBollingerSignalsFromIndicatorBars(
+    calculateBollingerIndicatorBars(bars, 'Bollinger'),
+  );
+}
+
+export function isBollingerDrawingMutationBlocked(state) {
   if (!state || typeof state !== 'object') {
-    throw new Error('Bearish Bollinger drawing state is invalid');
+    throw new Error('Bollinger drawing state is invalid');
   }
   return [
     state.ladderTask,
@@ -274,3 +422,5 @@ export function isBearishBollingerDrawingMutationBlocked(state) {
     state.continuousChartSaveController,
   ].some((value) => value !== null);
 }
+
+export const isBearishBollingerDrawingMutationBlocked = isBollingerDrawingMutationBlocked;
