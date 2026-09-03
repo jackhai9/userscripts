@@ -11,6 +11,7 @@ function assertChartContract(chart) {
     'createShape',
     'dataReady',
     'exportData',
+    'getAllShapes',
     'getShapeById',
     'removeEntity',
     'resolution',
@@ -20,6 +21,21 @@ function assertChartContract(chart) {
       throw new Error(`TradingView bearish alert method is unavailable: ${method}`);
     }
   }
+}
+
+function readLiveShapeIds(chart) {
+  const shapes = chart.getAllShapes();
+  if (!Array.isArray(shapes)) {
+    throw new Error('TradingView bearish alert shape list is invalid');
+  }
+  const ids = new Set();
+  for (const [index, shape] of shapes.entries()) {
+    if (typeof shape?.id !== 'string' || shape.id.length === 0) {
+      throw new Error(`TradingView bearish alert shape ${index} id is invalid`);
+    }
+    ids.add(shape.id);
+  }
+  return ids;
 }
 
 export function tradingViewResolutionToSeconds(resolution) {
@@ -141,6 +157,40 @@ export function buildClosedBarsWindowKey(bars) {
   return `${bars.length}:${bars[0].time}:${bars.at(-1).time}`;
 }
 
+/**
+ * Reuses detector output for an unchanged bar window while still reconciling live markers.
+ */
+export async function reconcileBearishBollingerAlertWindow({
+  bars,
+  cachedWindowKey,
+  cachedSignals,
+  detectSignals,
+  renderSignals,
+}) {
+  if (typeof detectSignals !== 'function') {
+    throw new Error('TradingView bearish alert detector is unavailable');
+  }
+  if (typeof renderSignals !== 'function') {
+    throw new Error('TradingView bearish alert renderer is unavailable');
+  }
+  const closedBarsWindowKey = buildClosedBarsWindowKey(bars);
+  const signals = closedBarsWindowKey === cachedWindowKey
+    ? cachedSignals
+    : detectSignals(bars);
+  if (!Array.isArray(signals)) {
+    throw new Error('Bearish Bollinger signal cache is invalid');
+  }
+  const rendered = await renderSignals(signals);
+  if (typeof rendered !== 'boolean') {
+    throw new Error('TradingView bearish alert render result is invalid');
+  }
+  return {
+    rendered,
+    closedBarsWindowKey,
+    signals,
+  };
+}
+
 export async function exportClosedTradingViewBars(target, observedAtMs = Date.now()) {
   if (!target.chart.dataReady()) return null;
   const exported = await target.chart.exportData({ includedStudies: [] });
@@ -224,10 +274,19 @@ export function createBearishBollingerMarkerLayer(target) {
   const registry = new Map();
   let generation = 0;
 
-  function removeSignal(signalId) {
+  function discardMissingSignals(liveShapeIds) {
+    for (const [signalId, record] of registry) {
+      if (!liveShapeIds.has(record.markerId)) registry.delete(signalId);
+    }
+  }
+
+  function removeSignal(signalId, liveShapeIds) {
     const record = registry.get(signalId);
     if (!record) return;
-    chart.removeEntity(record.markerId);
+    if (liveShapeIds.has(record.markerId)) {
+      chart.removeEntity(record.markerId);
+      liveShapeIds.delete(record.markerId);
+    }
     registry.delete(signalId);
   }
 
@@ -244,9 +303,11 @@ export function createBearishBollingerMarkerLayer(target) {
       }
       const requestedGeneration = generation;
       if (!isCurrent()) return false;
+      const liveShapeIds = readLiveShapeIds(chart);
+      discardMissingSignals(liveShapeIds);
       const nextIds = new Set(signals.map((signal) => signal.id));
       for (const signalId of [...registry.keys()]) {
-        if (!nextIds.has(signalId)) removeSignal(signalId);
+        if (!nextIds.has(signalId)) removeSignal(signalId, liveShapeIds);
       }
       for (const signal of signals) {
         if (registry.has(signal.id)) continue;
@@ -262,7 +323,9 @@ export function createBearishBollingerMarkerLayer(target) {
     },
     clear() {
       generation += 1;
-      for (const signalId of [...registry.keys()]) removeSignal(signalId);
+      const liveShapeIds = readLiveShapeIds(chart);
+      discardMissingSignals(liveShapeIds);
+      for (const signalId of [...registry.keys()]) removeSignal(signalId, liveShapeIds);
     },
     get size() {
       return registry.size;
