@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.189
+// @version      2.7.190
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -236,11 +236,12 @@ import {
 } from './dom/chart-orders.js';
 import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 import {
-  detectBearishBollingerSignals,
-  isBearishBollingerDrawingMutationBlocked,
+  applyBollingerAlertTaskFailure,
+  detectBollingerSignals,
+  isBollingerDrawingMutationBlocked,
 } from './core/bearish-bollinger-pattern.js';
 import {
-  createBearishBollingerMarkerLayer,
+  createBollingerMarkerLayer,
   exportClosedTradingViewBars,
   findBearishBollingerChartTarget,
   isBearishBollingerChartTargetCurrent,
@@ -581,7 +582,7 @@ import {
   // TradingView still emits drawing_event + saveChart when a disableSave marker is removed.
   // Keep alert reconciliation outside every native order-line save/coalescing session.
   function isTradingViewDrawingMutationBusy() {
-    return isBearishBollingerDrawingMutationBlocked({
+    return isBollingerDrawingMutationBlocked({
       ladderTask,
       continuousLadderTask,
       singleOrderTask,
@@ -626,7 +627,7 @@ import {
       target = findBearishBollingerChartTarget(document, routeSymbol);
     } catch (error) {
       clearBearishBollingerAlertContext();
-      err('空头形态预警已停止:', error);
+      err('布林带形态预警已停止:', error);
       return;
     }
     if (!target) return;
@@ -641,10 +642,11 @@ import {
         routeSymbol,
         resolution: target.resolution,
         target,
-        layer: createBearishBollingerMarkerLayer(target),
+        layer: createBollingerMarkerLayer(target),
         failed: false,
         cleanupPending: false,
         lastProcessedClosedBarsWindowKey: null,
+        lastProcessedClosedBarsContentSnapshot: null,
         lastProcessedSignals: null,
       };
     }
@@ -662,23 +664,31 @@ import {
       const result = await reconcileBearishBollingerAlertWindow({
         bars,
         cachedWindowKey: context.lastProcessedClosedBarsWindowKey,
+        cachedContentSnapshot: context.lastProcessedClosedBarsContentSnapshot,
         cachedSignals: context.lastProcessedSignals,
-        detectSignals: detectBearishBollingerSignals,
+        detectSignals: detectBollingerSignals,
         renderSignals: (signals) => context.layer.render(signals, {
           isCurrent: () => isBearishBollingerAlertContextCurrent(context),
         }),
       });
       if (result.rendered && isBearishBollingerAlertContextCurrent(context)) {
         context.lastProcessedClosedBarsWindowKey = result.closedBarsWindowKey;
+        context.lastProcessedClosedBarsContentSnapshot = result.closedBarsContentSnapshot;
         context.lastProcessedSignals = result.signals;
       }
     })();
     bearishBollingerAlertTask = task;
     task.catch((error) => {
       if (bearishBollingerAlertContext !== context) return;
-      context.failed = true;
-      context.cleanupPending = true;
-      err('空头形态预警已停止:', error);
+      const failureKind = applyBollingerAlertTaskFailure(context, error);
+      if (failureKind === 'retry') {
+        // TradingView can expose one feed-update race through exportData(). Keep the
+        // already-rendered layer and retry the next poll instead of turning a transient
+        // snapshot into a permanent failed context.
+        warn('布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:', error);
+        return;
+      }
+      err('布林带形态预警已停止:', error);
     }).finally(() => {
       if (bearishBollingerAlertTask === task) bearishBollingerAlertTask = null;
     });

@@ -3,15 +3,26 @@ import test from 'node:test';
 
 import { loadFixtureDom } from '../../helpers/dom.js';
 import {
+  buildClosedBarsContentKey,
+  buildClosedBarsContentSnapshot,
   buildClosedBarsWindowKey,
+  createBollingerMarkerLayer,
   createBearishBollingerMarkerLayer,
   findBearishBollingerChartTarget,
   isBearishBollingerChartTargetCurrent,
   parseClosedTradingViewBars,
   reconcileBearishBollingerAlertWindow,
+  MAX_BOLLINGER_MARKERS,
+  MAX_BOLLINGER_MARKERS_PER_DIRECTION,
   MAX_BEARISH_BOLLINGER_MARKERS,
+  matchesClosedBarsContentSnapshot,
   tradingViewResolutionToSeconds,
 } from '../../../src/binance-orderbook-trade/dom/tradingview-bearish-alerts.js';
+import {
+  applyBollingerAlertTaskFailure,
+  isTradingViewBarSnapshotInconsistentError,
+  TradingViewBarSnapshotInconsistentError,
+} from '../../../src/binance-orderbook-trade/core/bearish-bollinger-pattern.js';
 
 function createChartDom({
   resolution = '1',
@@ -150,6 +161,19 @@ test('exports only bars whose resolution-derived end time has passed', () => {
   );
 });
 
+test('classifies a non-monotonic export as a recoverable TradingView snapshot race', () => {
+  assert.throws(
+    () => parseClosedTradingViewBars(exportResult([
+      { 0: 120, 1: 11, 2: 13, 3: 10, 4: 12 },
+      { 0: 60, 1: 10, 2: 12, 3: 9, 4: 11 },
+    ]), {
+      resolutionSeconds: 60,
+      observedAtSeconds: 180,
+    }),
+    (error) => isTradingViewBarSnapshotInconsistentError(error),
+  );
+});
+
 test('keeps every closed bar already loaded by TradingView', () => {
   const rows = Array.from({ length: 505 }, (_, index) => ({
     0: (index + 1) * 60,
@@ -191,6 +215,23 @@ test('changes the closed-bar window key when older history loads without a new l
   );
 });
 
+test('changes the content key when OHLC changes inside the same closed-bar window', () => {
+  const bars = [
+    { time: 120, open: 11, high: 13, low: 10, close: 12 },
+    { time: 180, open: 12, high: 14, low: 11, close: 13 },
+  ];
+  const corrected = [
+    bars[0],
+    { ...bars[1], high: 15 },
+  ];
+
+  assert.equal(buildClosedBarsWindowKey(bars), buildClosedBarsWindowKey(corrected));
+  assert.notEqual(buildClosedBarsContentKey(bars), buildClosedBarsContentKey(corrected));
+  const snapshot = buildClosedBarsContentSnapshot(bars);
+  assert.equal(matchesClosedBarsContentSnapshot(bars, snapshot), true);
+  assert.equal(matchesClosedBarsContentSnapshot(corrected, snapshot), false);
+});
+
 test('renders warning, bearish confirmation, and bullish reversal markers', async () => {
   const { dom, shapes, removed } = createChartDom();
   const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
@@ -218,6 +259,225 @@ test('renders warning, bearish confirmation, and bullish reversal markers', asyn
   });
   assert.equal(shapes.size, 1);
   assert.deepEqual(removed, ['shape-1', 'shape-2']);
+});
+
+test('renders mirrored bullish marker shapes and colors in the shared layer', async () => {
+  const { dom, shapes } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBearishBollingerMarkerLayer(target);
+
+  await layer.render([
+    {
+      id: 'setup:bullish:warning',
+      direction: 'bullish',
+      type: 'warning',
+      time: 120,
+      markerPrice: 10,
+    },
+    {
+      id: 'setup:bullish:confirmed',
+      direction: 'bullish',
+      type: 'confirmed',
+      time: 180,
+      markerPrice: 9,
+    },
+    {
+      id: 'setup:bullish:reversal',
+      direction: 'bullish',
+      type: 'reversal',
+      time: 240,
+      markerPrice: 8,
+    },
+  ], { isCurrent: () => true });
+
+  const records = [...shapes.values()];
+  assert.equal(records[0].properties.shape, 'icon');
+  assert.equal(records[0].properties.overrides.color, '#F0B90B');
+  assert.equal(records[1].properties.shape, 'arrow_up');
+  assert.equal(records[1].properties.overrides.arrowColor, '#0ECB81');
+  assert.equal(records[2].properties.shape, 'arrow_down');
+  assert.equal(records[2].properties.overrides.arrowColor, '#F6465D');
+});
+
+test('keeps opposite-direction signals on the same candle as distinct markers', async () => {
+  const { dom, shapes } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBollingerMarkerLayer(target);
+
+  await layer.render([
+    {
+      id: 'setup:bearish:reversal',
+      direction: 'bearish',
+      type: 'reversal',
+      time: 240,
+      markerPrice: 8,
+    },
+    {
+      id: 'setup:bullish:reversal',
+      direction: 'bullish',
+      type: 'reversal',
+      time: 240,
+      markerPrice: 12,
+    },
+  ], { isCurrent: () => true });
+
+  assert.equal(shapes.size, 2);
+  const records = [...shapes.values()];
+  assert.deepEqual(
+    records.map((record) => [record.point.time, record.point.price, record.properties.shape]),
+    [[240, 8, 'arrow_up'], [240, 12, 'arrow_down']],
+  );
+});
+
+test('requires explicit direction when using the shared marker layer', async () => {
+  const { dom, shapes } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBollingerMarkerLayer(target);
+
+  await assert.rejects(
+    layer.render([{
+      id: 'missing-direction',
+      type: 'warning',
+      time: 120,
+      markerPrice: 10,
+    }], { isCurrent: () => true }),
+    /direction is invalid/,
+  );
+  assert.equal(shapes.size, 0);
+});
+
+test('keeps existing markers through a recoverable snapshot error and retries next tick', async () => {
+  const { dom, shapes } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBollingerMarkerLayer(target);
+  const signal = {
+    id: 'bearish:warning',
+    direction: 'bearish',
+    type: 'warning',
+    time: 120,
+    markerPrice: 10,
+  };
+  const bars = [
+    { time: 60, open: 10, high: 12, low: 9, close: 11 },
+    { time: 120, open: 11, high: 13, low: 10, close: 12 },
+  ];
+  await layer.render([signal], { isCurrent: () => true });
+  assert.equal(shapes.size, 1);
+
+  let detectorCalls = 0;
+  await assert.rejects(
+    reconcileBearishBollingerAlertWindow({
+      bars,
+      cachedWindowKey: null,
+      cachedSignals: null,
+      detectSignals: () => {
+        detectorCalls += 1;
+        throw new TradingViewBarSnapshotInconsistentError('snapshot race');
+      },
+      renderSignals: (signals) => layer.render(signals, { isCurrent: () => true }),
+    }),
+    /snapshot race/,
+  );
+  assert.equal(detectorCalls, 1);
+  assert.equal(shapes.size, 1);
+
+  await reconcileBearishBollingerAlertWindow({
+    bars,
+    cachedWindowKey: null,
+    cachedSignals: null,
+    detectSignals: () => [
+      signal,
+      {
+        id: 'bullish:warning',
+        direction: 'bullish',
+        type: 'warning',
+        time: 180,
+        markerPrice: 9,
+      },
+    ],
+    renderSignals: (signals) => layer.render(signals, { isCurrent: () => true }),
+  });
+  assert.equal(shapes.size, 2);
+});
+
+test('keeps the task context retryable across malformed-to-valid snapshots', async () => {
+  const { dom, shapes } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBollingerMarkerLayer(target);
+  const signal = {
+    id: 'stable:warning',
+    direction: 'bearish',
+    type: 'warning',
+    time: 120,
+    markerPrice: 10,
+  };
+  const stableBars = [
+    { time: 60, open: 10, high: 12, low: 9, close: 11 },
+    { time: 120, open: 11, high: 13, low: 10, close: 12 },
+  ];
+  const malformedBars = [
+    stableBars[0],
+    { ...stableBars[1], high: 9 },
+  ];
+  const validBars = [
+    stableBars[0],
+    { ...malformedBars[1], high: 14 },
+  ];
+  const context = {
+    failed: false,
+    cleanupPending: false,
+    lastProcessedClosedBarsWindowKey: buildClosedBarsWindowKey(stableBars),
+    lastProcessedClosedBarsContentSnapshot: buildClosedBarsContentSnapshot(stableBars),
+    lastProcessedSignals: [signal],
+  };
+  await layer.render([signal], { isCurrent: () => true });
+
+  let detectorCalls = 0;
+  let snapshotError = null;
+  await assert.rejects(
+    reconcileBearishBollingerAlertWindow({
+      bars: malformedBars,
+      cachedWindowKey: context.lastProcessedClosedBarsWindowKey,
+      cachedContentSnapshot: context.lastProcessedClosedBarsContentSnapshot,
+      cachedSignals: context.lastProcessedSignals,
+      detectSignals: () => {
+        detectorCalls += 1;
+        throw new TradingViewBarSnapshotInconsistentError('snapshot race');
+      },
+      renderSignals: (signals) => layer.render(signals, { isCurrent: () => true }),
+    }),
+    (error) => {
+      snapshotError = error;
+      return /snapshot race/.test(error.message);
+    },
+  );
+  assert.equal(applyBollingerAlertTaskFailure(context, snapshotError), 'retry');
+
+  assert.equal(detectorCalls, 1);
+  assert.equal(context.failed, false);
+  assert.equal(context.cleanupPending, false);
+  assert.equal(layer.size, 1);
+
+  const result = await reconcileBearishBollingerAlertWindow({
+    bars: validBars,
+    cachedWindowKey: context.lastProcessedClosedBarsWindowKey,
+    cachedContentSnapshot: context.lastProcessedClosedBarsContentSnapshot,
+    cachedSignals: context.lastProcessedSignals,
+    detectSignals: () => {
+      detectorCalls += 1;
+      return [signal, {
+        id: 'stable:bullish:warning',
+        direction: 'bullish',
+        type: 'warning',
+        time: 180,
+        markerPrice: 9,
+      }];
+    },
+    renderSignals: (signals) => layer.render(signals, { isCurrent: () => true }),
+  });
+  assert.equal(result.rendered, true);
+  assert.equal(detectorCalls, 2);
+  assert.equal(layer.size, 2);
 });
 
 test('recreates a marker that TradingView evicted outside the alert layer', async () => {
@@ -269,12 +529,14 @@ test('same closed-bar window reuses detection and still restores an evicted mark
   let detectorCalls = 0;
   let rendererCalls = 0;
   let cachedWindowKey = null;
+  let cachedContentSnapshot = null;
   let cachedSignals = null;
 
   async function runMonitorTick() {
     const result = await reconcileBearishBollingerAlertWindow({
       bars,
       cachedWindowKey,
+      cachedContentSnapshot,
       cachedSignals,
       detectSignals: () => {
         detectorCalls += 1;
@@ -287,6 +549,7 @@ test('same closed-bar window reuses detection and still restores an evicted mark
     });
     if (result.rendered) {
       cachedWindowKey = result.closedBarsWindowKey;
+      cachedContentSnapshot = result.closedBarsContentSnapshot;
       cachedSignals = result.signals;
     }
   }
@@ -403,6 +666,67 @@ test('rejects an abnormal marker count before mutating the existing layer', asyn
   );
   assert.equal(shapes.size, 1);
   assert.deepEqual(removed, []);
+});
+
+test('applies the marker limit to the combined bullish and bearish layer', async () => {
+  const { dom, shapes, removed } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBollingerMarkerLayer(target);
+  const signals = Array.from({ length: MAX_BOLLINGER_MARKERS }, (_, index) => ({
+    id: `combined-${index}`,
+    direction: index % 2 === 0 ? 'bearish' : 'bullish',
+    type: 'warning',
+    time: 120 + index,
+    markerPrice: 10,
+  }));
+
+  assert.equal(await layer.render(signals, { isCurrent: () => true }), true);
+  assert.equal(shapes.size, MAX_BOLLINGER_MARKERS);
+
+  await assert.rejects(
+    layer.render([
+      ...signals,
+      {
+        id: 'combined-overflow',
+        direction: 'bullish',
+        type: 'warning',
+        time: 120 + MAX_BOLLINGER_MARKERS,
+        markerPrice: 10,
+      },
+    ], { isCurrent: () => true }),
+    /marker limit exceeded/,
+  );
+  assert.equal(shapes.size, MAX_BOLLINGER_MARKERS);
+  assert.deepEqual(removed, []);
+});
+
+test('preserves the full per-direction capacity when both directions are present', async () => {
+  const { dom, shapes } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBollingerMarkerLayer(target);
+  const bearishSignals = Array.from(
+    { length: MAX_BOLLINGER_MARKERS_PER_DIRECTION },
+    (_, index) => ({
+      id: `bearish-capacity-${index}`,
+      direction: 'bearish',
+      type: 'warning',
+      time: 120 + index,
+      markerPrice: 10,
+    }),
+  );
+
+  await layer.render([
+    ...bearishSignals,
+    {
+      id: 'bullish-capacity-0',
+      direction: 'bullish',
+      type: 'warning',
+      time: 10000,
+      markerPrice: 10,
+    },
+  ], { isCurrent: () => true });
+
+  assert.equal(shapes.size, MAX_BOLLINGER_MARKERS_PER_DIRECTION + 1);
 });
 
 test('removes a shifted marker and fails the alignment contract', async () => {
