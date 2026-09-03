@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.188
+// @version      2.7.189
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -4979,6 +4979,7 @@
       "createShape",
       "dataReady",
       "exportData",
+      "getAllShapes",
       "getShapeById",
       "removeEntity",
       "resolution",
@@ -4988,6 +4989,20 @@
         throw new Error(`TradingView bearish alert method is unavailable: ${method}`);
       }
     }
+  }
+  function readLiveShapeIds(chart) {
+    const shapes = chart.getAllShapes();
+    if (!Array.isArray(shapes)) {
+      throw new Error("TradingView bearish alert shape list is invalid");
+    }
+    const ids = /* @__PURE__ */ new Set();
+    for (const [index, shape] of shapes.entries()) {
+      if (typeof shape?.id !== "string" || shape.id.length === 0) {
+        throw new Error(`TradingView bearish alert shape ${index} id is invalid`);
+      }
+      ids.add(shape.id);
+    }
+    return ids;
   }
   function tradingViewResolutionToSeconds(resolution) {
     const value = String(resolution || "").toUpperCase();
@@ -5090,6 +5105,34 @@
     }
     return `${bars.length}:${bars[0].time}:${bars.at(-1).time}`;
   }
+  async function reconcileBearishBollingerAlertWindow({
+    bars,
+    cachedWindowKey,
+    cachedSignals,
+    detectSignals,
+    renderSignals
+  }) {
+    if (typeof detectSignals !== "function") {
+      throw new Error("TradingView bearish alert detector is unavailable");
+    }
+    if (typeof renderSignals !== "function") {
+      throw new Error("TradingView bearish alert renderer is unavailable");
+    }
+    const closedBarsWindowKey = buildClosedBarsWindowKey(bars);
+    const signals = closedBarsWindowKey === cachedWindowKey ? cachedSignals : detectSignals(bars);
+    if (!Array.isArray(signals)) {
+      throw new Error("Bearish Bollinger signal cache is invalid");
+    }
+    const rendered = await renderSignals(signals);
+    if (typeof rendered !== "boolean") {
+      throw new Error("TradingView bearish alert render result is invalid");
+    }
+    return {
+      rendered,
+      closedBarsWindowKey,
+      signals
+    };
+  }
   async function exportClosedTradingViewBars(target, observedAtMs = Date.now()) {
     if (!target.chart.dataReady()) return null;
     const exported = await target.chart.exportData({ includedStudies: [] });
@@ -5168,10 +5211,18 @@
     const { chart } = target;
     const registry = /* @__PURE__ */ new Map();
     let generation = 0;
-    function removeSignal(signalId) {
+    function discardMissingSignals(liveShapeIds) {
+      for (const [signalId, record] of registry) {
+        if (!liveShapeIds.has(record.markerId)) registry.delete(signalId);
+      }
+    }
+    function removeSignal(signalId, liveShapeIds) {
       const record = registry.get(signalId);
       if (!record) return;
-      chart.removeEntity(record.markerId);
+      if (liveShapeIds.has(record.markerId)) {
+        chart.removeEntity(record.markerId);
+        liveShapeIds.delete(record.markerId);
+      }
       registry.delete(signalId);
     }
     return Object.freeze({
@@ -5187,9 +5238,11 @@
         }
         const requestedGeneration = generation;
         if (!isCurrent()) return false;
+        const liveShapeIds = readLiveShapeIds(chart);
+        discardMissingSignals(liveShapeIds);
         const nextIds = new Set(signals.map((signal) => signal.id));
         for (const signalId of [...registry.keys()]) {
-          if (!nextIds.has(signalId)) removeSignal(signalId);
+          if (!nextIds.has(signalId)) removeSignal(signalId, liveShapeIds);
         }
         for (const signal of signals) {
           if (registry.has(signal.id)) continue;
@@ -5205,7 +5258,9 @@
       },
       clear() {
         generation += 1;
-        for (const signalId of [...registry.keys()]) removeSignal(signalId);
+        const liveShapeIds = readLiveShapeIds(chart);
+        discardMissingSignals(liveShapeIds);
+        for (const signalId of [...registry.keys()]) removeSignal(signalId, liveShapeIds);
       },
       get size() {
         return registry.size;
@@ -5567,7 +5622,8 @@
           layer: createBearishBollingerMarkerLayer(target),
           failed: false,
           cleanupPending: false,
-          lastProcessedClosedBarsWindowKey: null
+          lastProcessedClosedBarsWindowKey: null,
+          lastProcessedSignals: null
         };
       }
       const context = bearishBollingerAlertContext;
@@ -5580,14 +5636,18 @@
         const bars = await exportClosedTradingViewBars(context.target);
         if (!bars || !isBearishBollingerAlertContextCurrent(context)) return;
         if (bars.length === 0) return;
-        const closedBarsWindowKey = buildClosedBarsWindowKey(bars);
-        if (closedBarsWindowKey === context.lastProcessedClosedBarsWindowKey) return;
-        const signals = detectBearishBollingerSignals(bars);
-        const rendered = await context.layer.render(signals, {
-          isCurrent: () => isBearishBollingerAlertContextCurrent(context)
+        const result = await reconcileBearishBollingerAlertWindow({
+          bars,
+          cachedWindowKey: context.lastProcessedClosedBarsWindowKey,
+          cachedSignals: context.lastProcessedSignals,
+          detectSignals: detectBearishBollingerSignals,
+          renderSignals: (signals) => context.layer.render(signals, {
+            isCurrent: () => isBearishBollingerAlertContextCurrent(context)
+          })
         });
-        if (rendered && isBearishBollingerAlertContextCurrent(context)) {
-          context.lastProcessedClosedBarsWindowKey = closedBarsWindowKey;
+        if (result.rendered && isBearishBollingerAlertContextCurrent(context)) {
+          context.lastProcessedClosedBarsWindowKey = result.closedBarsWindowKey;
+          context.lastProcessedSignals = result.signals;
         }
       })();
       bearishBollingerAlertTask = task;

@@ -52,8 +52,9 @@ test('route changes are event-driven with one low-frequency watchdog', () => {
 
 test('bearish chart alerts reconcile every loaded closed-bar window without silent truncation', () => {
   const synchronizeBody = readFunctionBody('synchronizeBearishBollingerAlerts');
-  assert.match(synchronizeBody, /buildClosedBarsWindowKey\(bars\)/);
+  assert.match(synchronizeBody, /reconcileBearishBollingerAlertWindow\(\{/);
   assert.match(synchronizeBody, /lastProcessedClosedBarsWindowKey/);
+  assert.match(synchronizeBody, /lastProcessedSignals/);
   assert.doesNotMatch(synchronizeBody, /lastProcessedClosedBarTime/);
   assert.doesNotMatch(synchronizeBody, /\.slice\(-BEARISH_BOLLINGER_ALERT_MAX_MARKERS\)/);
   assert.doesNotMatch(source, /BEARISH_BOLLINGER_ALERT_MAX_MARKERS/);

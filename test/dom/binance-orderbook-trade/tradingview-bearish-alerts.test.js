@@ -8,6 +8,7 @@ import {
   findBearishBollingerChartTarget,
   isBearishBollingerChartTargetCurrent,
   parseClosedTradingViewBars,
+  reconcileBearishBollingerAlertWindow,
   MAX_BEARISH_BOLLINGER_MARKERS,
   tradingViewResolutionToSeconds,
 } from '../../../src/binance-orderbook-trade/dom/tradingview-bearish-alerts.js';
@@ -41,7 +42,12 @@ function createChartDom({
       return id;
     },
     getShapeById: (id) => shapes.get(id),
+    getAllShapes: () => [...shapes.entries()].map(([id, record]) => ({
+      id,
+      name: record.properties.shape,
+    })),
     removeEntity(id) {
+      assert.equal(shapes.has(id), true, `shape ${id} should exist before removal`);
       removed.push(id);
       shapes.delete(id);
     },
@@ -60,6 +66,16 @@ function createChartDom({
     setActiveChart: (value) => { activeChart = value; },
     setResolution: (value) => { currentResolution = value; },
     setSymbol: (value) => { currentSymbol = value; },
+    evictShape: (id) => { shapes.delete(id); },
+    addForeignShape(id = 'foreign-shape') {
+      assert.equal(shapes.has(id), false, `shape ${id} should not already exist`);
+      shapes.set(id, {
+        point: { time: 0, price: 0 },
+        properties: { shape: 'trend_line' },
+        getPoints() { return [this.point]; },
+      });
+      return id;
+    },
   };
 }
 
@@ -202,6 +218,152 @@ test('renders warning, bearish confirmation, and bullish reversal markers', asyn
   });
   assert.equal(shapes.size, 1);
   assert.deepEqual(removed, ['shape-1', 'shape-2']);
+});
+
+test('recreates a marker that TradingView evicted outside the alert layer', async () => {
+  const {
+    dom,
+    shapes,
+    removed,
+    evictShape,
+  } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBearishBollingerMarkerLayer(target);
+  const signals = [{
+    id: 'setup:warning',
+    type: 'warning',
+    time: 120,
+    markerPrice: 10,
+  }];
+
+  assert.equal(await layer.render(signals, { isCurrent: () => true }), true);
+  assert.equal(shapes.has('shape-1'), true);
+
+  evictShape('shape-1');
+
+  assert.equal(await layer.render(signals, { isCurrent: () => true }), true);
+  assert.equal(shapes.has('shape-1'), false);
+  assert.equal(shapes.has('shape-2'), true);
+  assert.deepEqual(removed, []);
+});
+
+test('same closed-bar window reuses detection and still restores an evicted marker', async () => {
+  const {
+    dom,
+    shapes,
+    removed,
+    evictShape,
+  } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBearishBollingerMarkerLayer(target);
+  const bars = [
+    { time: 60, open: 10, high: 12, low: 9, close: 11 },
+    { time: 120, open: 11, high: 13, low: 10, close: 12 },
+  ];
+  const expectedSignals = [{
+    id: 'setup:warning',
+    type: 'warning',
+    time: 120,
+    markerPrice: 10,
+  }];
+  let detectorCalls = 0;
+  let rendererCalls = 0;
+  let cachedWindowKey = null;
+  let cachedSignals = null;
+
+  async function runMonitorTick() {
+    const result = await reconcileBearishBollingerAlertWindow({
+      bars,
+      cachedWindowKey,
+      cachedSignals,
+      detectSignals: () => {
+        detectorCalls += 1;
+        return expectedSignals;
+      },
+      renderSignals: (signals) => {
+        rendererCalls += 1;
+        return layer.render(signals, { isCurrent: () => true });
+      },
+    });
+    if (result.rendered) {
+      cachedWindowKey = result.closedBarsWindowKey;
+      cachedSignals = result.signals;
+    }
+  }
+
+  await runMonitorTick();
+  assert.equal(shapes.has('shape-1'), true);
+  evictShape('shape-1');
+
+  await runMonitorTick();
+
+  assert.equal(detectorCalls, 1);
+  assert.equal(rendererCalls, 2);
+  assert.equal(shapes.has('shape-1'), false);
+  assert.equal(shapes.has('shape-2'), true);
+  assert.deepEqual(removed, []);
+});
+
+test('reconciliation, signal removal, and clear preserve foreign drawings', async () => {
+  const {
+    dom,
+    shapes,
+    removed,
+    evictShape,
+    addForeignShape,
+  } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBearishBollingerMarkerLayer(target);
+  const foreignId = addForeignShape();
+  const signal = {
+    id: 'setup:warning',
+    type: 'warning',
+    time: 120,
+    markerPrice: 10,
+  };
+
+  await layer.render([signal], { isCurrent: () => true });
+  evictShape('shape-1');
+  await layer.render([signal], { isCurrent: () => true });
+
+  assert.equal(shapes.has(foreignId), true);
+  assert.deepEqual(removed, []);
+
+  await layer.render([], { isCurrent: () => true });
+  assert.equal(shapes.has(foreignId), true);
+  assert.deepEqual(removed, ['shape-2']);
+
+  await layer.render([signal], { isCurrent: () => true });
+  layer.clear();
+
+  assert.equal(shapes.size, 1);
+  assert.equal(shapes.has(foreignId), true);
+  assert.deepEqual(removed, ['shape-2', 'shape-3']);
+});
+
+test('clear forgets an externally evicted marker without removing a missing entity', async () => {
+  const {
+    dom,
+    shapes,
+    removed,
+    evictShape,
+  } = createChartDom();
+  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
+  const layer = createBearishBollingerMarkerLayer(target);
+
+  await layer.render([{
+    id: 'setup:warning',
+    type: 'warning',
+    time: 120,
+    markerPrice: 10,
+  }], { isCurrent: () => true });
+  evictShape('shape-1');
+
+  layer.clear();
+
+  assert.equal(layer.size, 0);
+  assert.equal(shapes.size, 0);
+  assert.deepEqual(removed, []);
 });
 
 test('excludes an unclosed reversal breakout bar from detector input', () => {
