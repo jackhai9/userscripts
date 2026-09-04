@@ -57,6 +57,7 @@ function installTradingViewApi(frame, {
   };
   frame.contentWindow.tradingViewApi = {
     activeChart: () => ({
+      hasModel: () => true,
       getAllPanesHeight: () => [height, 80, 120],
       getPanes: () => [{ getMainSourcePriceScale: () => scale }],
     }),
@@ -126,6 +127,92 @@ test('maps prices correctly on logarithmic and inverted TradingView scales', () 
   const invertedGeometry = getTradingViewDepthProfileGeometry(invertedFrame);
   assert.equal(invertedGeometry.inverted, true);
   assert.ok(Math.abs(invertedGeometry.priceToCoordinate(100) - 50) < 0.02);
+});
+
+test('waits for the native chart model before reading panes and recovers when ready', () => {
+  const frame = createChartDom().window.document.querySelector('iframe');
+  installTradingViewApi(frame);
+  const chart = frame.contentWindow.tradingViewApi.activeChart();
+  frame.contentWindow.tradingViewApi.activeChart = () => chart;
+  const readHeights = chart.getAllPanesHeight;
+  const readPanes = chart.getPanes;
+  let ready = false;
+  let paneReads = 0;
+  chart.hasModel = () => ready;
+  chart.getAllPanesHeight = () => {
+    paneReads += 1;
+    assert.equal(ready, true, 'pane height requires a ready model');
+    return readHeights();
+  };
+  chart.getPanes = () => {
+    paneReads += 1;
+    assert.equal(ready, true, 'pane access requires a ready model');
+    return readPanes();
+  };
+  assert.equal(getTradingViewDepthProfileGeometry(frame), null);
+  assert.equal(paneReads, 0);
+  ready = true;
+  const geometry = getTradingViewDepthProfileGeometry(frame);
+  assert.equal(paneReads, 2);
+  assert.ok(Math.abs(geometry.priceToCoordinate(100) - 100) < 0.02);
+  delete chart.hasModel;
+  assert.equal(getTradingViewDepthProfileGeometry(frame), null);
+  assert.equal(paneReads, 2);
+});
+
+test('reuses native scale samples within one geometry without changing binary-search coordinates', () => {
+  for (const variant of [
+    { mode: 0, inverted: false, convert: (y) => 110 - y / 10 },
+    { mode: 1, inverted: false, convert: (y) => 1000 * (0.1 ** (y / 200)) },
+    { mode: 0, inverted: true, convert: (y) => 90 + y / 10 },
+  ]) {
+    const frame = createChartDom().window.document.querySelector('iframe');
+    const reads = new Map();
+    installTradingViewApi(frame, {
+      ...variant,
+      coordinateToPrice: (y) => {
+        reads.set(y, (reads.get(y) || 0) + 1);
+        return variant.convert(y);
+      },
+    });
+    const geometry = getTradingViewDepthProfileGeometry(frame);
+    const prices = Array.from({ length: 1000 }, (_, i) => variant.convert(20 + i * 0.03));
+    for (const price of prices) {
+      let low = 0;
+      let high = 200;
+      for (let step = 0; step < 13; step += 1) {
+        const middle = (low + high) / 2;
+        const middlePrice = variant.convert(middle);
+        if (variant.inverted ? middlePrice < price : middlePrice > price) low = middle;
+        else high = middle;
+      }
+      assert.equal(geometry.priceToCoordinate(price), (low + high) / 2);
+    }
+    assert.equal(Math.max(...reads.values()), 1);
+    assert.ok(reads.size < prices.length * 13 / 4);
+  }
+});
+
+test('a new geometry samples the changed native scale instead of reusing the previous frame', () => {
+  const frame = createChartDom().window.document.querySelector('iframe');
+  const scale = installTradingViewApi(frame);
+  const before = getTradingViewDepthProfileGeometry(frame);
+  const oldY = before.priceToCoordinate(100);
+  let reads = 0;
+  scale.coordinateToPrice = (y) => { reads += 1; return 120 - y / 5; };
+  const after = getTradingViewDepthProfileGeometry(frame);
+  assert.ok(Math.abs(after.priceToCoordinate(110) - 50) < 0.02);
+  assert.ok(reads > 5);
+  assert.ok(Math.abs(oldY - 100) < 0.02);
+});
+
+test('invalid native samples inside the binary search still fail explicitly', () => {
+  const frame = createChartDom().window.document.querySelector('iframe');
+  installTradingViewApi(frame, {
+    coordinateToPrice: (y) => y === 25 ? NaN : 110 - y / 10,
+  });
+  const geometry = getTradingViewDepthProfileGeometry(frame);
+  assert.throws(() => geometry.priceToCoordinate(108), /TradingView price coordinate is invalid/);
 });
 
 test('fails closed when the TradingView price-scale adapter is unavailable', () => {

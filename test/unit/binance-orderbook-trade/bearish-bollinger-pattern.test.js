@@ -106,6 +106,27 @@ test('keeps bullish indicator values on the original price axis', () => {
   );
 });
 
+test('preserves exact indicator arithmetic without allocating sliced close windows', () => {
+  for (const scale of [0.000001, 1, 100000000]) {
+    const bars = createOhlcBars(512).map((bar, index) => {
+      const close = scale * (3 + Math.sin(index / 7) + Math.cos(index / 31));
+      return { ...bar, open: close, high: close + scale, low: close - scale, close };
+    });
+    const expected = bars.map((bar, index) => {
+      if (index < 59) return { ...bar, middle: null, upper: null, lower: null, ma60: null };
+      const closes = bars.slice(index - 19, index + 1).map(item => item.close);
+      const maCloses = bars.slice(index - 59, index + 1).map(item => item.close);
+      const middle = closes.reduce((sum, close) => sum + close, 0) / 20;
+      const deviation = Math.sqrt(closes.reduce((sum, close) => sum + ((close - middle) ** 2), 0) / 20) * 2;
+      return { ...bar, middle, upper: middle + deviation, lower: middle - deviation, ma60: maCloses.reduce((sum, close) => sum + close, 0) / 60 };
+    });
+    let slices = 0;
+    bars.slice = (...args) => { slices += 1; return Array.prototype.slice.apply(bars, args); };
+    assert.deepEqual(calculateBearishBollingerIndicatorBars(bars), expected);
+    assert.equal(slices, 0);
+  }
+});
+
 test('implements bullish detection as the strict price-axis mirror of bearish detection', () => {
   const bearishPattern = createIndicatorPattern();
   const bullishBars = mirrorIndicatorBars(bearishPattern.bars);

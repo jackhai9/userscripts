@@ -1,4 +1,5 @@
 import { findBinanceTradingViewTarget } from './tradingview-target.js';
+import { installTradingViewMarkerSaveController } from '../core/chart-marker-save-controller.js';
 import {
   TradingViewBarSnapshotInconsistentError,
 } from '../core/bearish-bollinger-pattern.js';
@@ -18,6 +19,9 @@ function assertChartContract(chart) {
     'exportData',
     'getAllShapes',
     'getShapeById',
+    'hasModel',
+    'onDataLoaded',
+    'onIntervalChanged',
     'removeEntity',
     'resolution',
     'symbol',
@@ -28,17 +32,17 @@ function assertChartContract(chart) {
   }
 }
 
-function readLiveShapeIds(chart) {
+function readLiveShapes(chart) {
   const shapes = chart.getAllShapes();
   if (!Array.isArray(shapes)) {
     throw new Error('TradingView Bollinger alert shape list is invalid');
   }
-  const ids = new Set();
+  const ids = new Map();
   for (const [index, shape] of shapes.entries()) {
-    if (typeof shape?.id !== 'string' || shape.id.length === 0) {
+    if (typeof shape?.id !== 'string' || shape.id.length === 0 || typeof shape.name !== 'string') {
       throw new Error(`TradingView Bollinger alert shape ${index} id is invalid`);
     }
-    ids.add(shape.id);
+    ids.set(shape.id, shape.name);
   }
   return ids;
 }
@@ -61,12 +65,75 @@ export function tradingViewResolutionToSeconds(resolution) {
   throw new Error(`TradingView Bollinger alert resolution is unsupported: ${resolution}`);
 }
 
+/** Native drawings must stay hidden outside their originating interval, including while saves defer removal. */
+export function bollingerIntervalVisibility(resolution) {
+  const seconds = tradingViewResolutionToSeconds(resolution);
+  const value = String(resolution).toUpperCase();
+  const visibility = {
+    ticks: false, seconds: false, minutes: false, hours: false,
+    days: false, weeks: false, months: false, ranges: false,
+  };
+  let unit;
+  let count;
+  if (value.endsWith('W')) { unit = 'weeks'; count = seconds / 604800; }
+  else if (value.endsWith('D')) { unit = 'days'; count = seconds / 86400; }
+  else if (seconds < 60) { unit = 'seconds'; count = seconds; }
+  else if (value.endsWith('S') || seconds < 3600) { unit = 'minutes'; count = Math.floor(seconds / 60); }
+  else { unit = 'hours'; count = Math.floor(seconds / 3600); }
+  // TradingView groups 60+ minute intervals into integer-hour visibility buckets.
+  visibility[unit] = true;
+  visibility[`${unit}From`] = count;
+  visibility[`${unit}To`] = count;
+  return visibility;
+}
+
+/**
+ * dataReady() in Binance's chart runtime only checks for nonempty data. A revision
+ * and the data-completed event are needed to exclude old bars during A -> B -> A.
+ * Event callbacks never export or mutate drawings: interval notification precedes
+ * the host's data reset, and drawing/save owners may still be busy.
+ */
+export function createBollingerIntervalSession(chart) {
+  const intervalChanged = chart.onIntervalChanged();
+  const dataLoaded = chart.onDataLoaded();
+  for (const subscription of [intervalChanged, dataLoaded]) {
+    if (typeof subscription?.subscribe !== 'function' || typeof subscription.unsubscribe !== 'function') {
+      throw new Error('TradingView Bollinger interval subscription is unavailable');
+    }
+  }
+  let revision = 0;
+  let disposed = false;
+  let awaitingData = !chart.dataReady();
+  // Binance clears its null-owned listeners when rebinding chart callbacks.
+  // A private owner keeps that host cleanup from deleting our readiness session.
+  const owner = {};
+  function invalidate() { revision += 1; awaitingData = true; }
+  function complete() { awaitingData = false; }
+  intervalChanged.subscribe(owner, invalidate);
+  dataLoaded.subscribe(owner, complete);
+  return Object.freeze({
+    get revision() { return revision; },
+    isCurrent(candidate) {
+      return !disposed && !awaitingData && candidate === revision && chart.dataReady();
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      revision += 1;
+      intervalChanged.unsubscribe(owner, invalidate);
+      dataLoaded.unsubscribe(owner, complete);
+    },
+  });
+}
+
 export function findBearishBollingerChartTarget(document, expectedRouteSymbol) {
   const baseTarget = findBinanceTradingViewTarget(document);
   if (!baseTarget) return null;
   const chart = baseTarget.tradingViewApi.activeChart?.();
   if (!chart) return null;
   assertChartContract(chart);
+  // The API object is exposed before its model exists during first refresh.
+  if (!chart.hasModel()) return null;
   const resolution = chart.resolution();
   const resolutionSeconds = tradingViewResolutionToSeconds(resolution);
   const routeSymbol = routeSymbolFromChartSymbol(chart.symbol());
@@ -90,6 +157,7 @@ export function isBearishBollingerChartTargetCurrent(document, target) {
   const chart = baseTarget.tradingViewApi.activeChart?.();
   if (!chart) return false;
   assertChartContract(chart);
+  if (!chart.hasModel()) return false;
   return (
     baseTarget.chartRoot === target.chartRoot
     && baseTarget.tradingViewApi === target.tradingViewApi
@@ -132,7 +200,7 @@ function parseExportRow(row, index) {
 
 export function parseClosedTradingViewBars(
   exported,
-  { resolutionSeconds, observedAtSeconds },
+  { resolutionSeconds, observedAtSeconds, resolution },
 ) {
   if (!Number.isSafeInteger(resolutionSeconds) || resolutionSeconds < 1) {
     throw new Error('TradingView Bollinger alert resolution seconds are invalid');
@@ -147,10 +215,28 @@ export function parseClosedTradingViewBars(
   // Binance's current trading-platform-30 runtime exports one numeric-keyed object per bar.
   // This deliberately follows that live contract instead of TradingView's generic column model.
   const bars = exported.data.map(parseExportRow);
+  // Multi-day/week feeds need not share the Unix epoch's phase. Intraday bars use
+  // UTC boundaries; D/W bars start at UTC midnight, with weekly bars on Monday.
+  const gridSeconds = Math.min(resolutionSeconds, 86400);
+  for (const [index, bar] of bars.entries()) {
+    if (
+      bar.time % gridSeconds !== 0
+      || (String(resolution).toUpperCase().endsWith('W') && new Date(bar.time * 1000).getUTCDay() !== 1)
+    ) {
+      throw new TradingViewBarSnapshotInconsistentError(
+        `TradingView Bollinger alert export interval grid is invalid at ${index}`,
+      );
+    }
+  }
   for (let index = 1; index < bars.length; index += 1) {
     if (bars[index].time <= bars[index - 1].time) {
       throw new TradingViewBarSnapshotInconsistentError(
         `TradingView Bollinger alert export order is invalid at ${index}`,
+      );
+    }
+    if ((bars[index].time - bars[index - 1].time) % resolutionSeconds !== 0) {
+      throw new TradingViewBarSnapshotInconsistentError(
+        `TradingView Bollinger alert export interval spacing is invalid at ${index}`,
       );
     }
   }
@@ -264,16 +350,22 @@ export async function reconcileBearishBollingerAlertWindow({
   };
 }
 
-export async function exportClosedTradingViewBars(target, observedAtMs = Date.now()) {
-  if (!target.chart.dataReady()) return null;
+export async function exportClosedTradingViewBars(target, session, observedAtMs = Date.now()) {
+  const revision = session.revision;
+  const isCurrent = () => session.isCurrent(revision)
+    && target.chart.resolution() === target.resolution
+    && routeSymbolFromChartSymbol(target.chart.symbol()) === target.routeSymbol;
+  if (!isCurrent()) return null;
   const exported = await target.chart.exportData({ includedStudies: [] });
+  if (!isCurrent()) return null;
   return parseClosedTradingViewBars(exported, {
     resolutionSeconds: target.resolutionSeconds,
+    resolution: target.resolution,
     observedAtSeconds: observedAtMs / 1_000,
   });
 }
 
-function markerOptions(signal) {
+function markerOptions(signal, resolution) {
   const direction = signal.direction;
   if (direction !== 'bearish' && direction !== 'bullish') {
     throw new Error(`TradingView Bollinger alert signal direction is invalid: ${direction}`);
@@ -292,6 +384,8 @@ function markerOptions(signal) {
       shape: 'icon',
       icon: 0xf111,
       overrides: {
+        visible: true,
+        intervalsVisibilities: bollingerIntervalVisibility(resolution),
         color: isBullish ? '#0ECB81' : '#F6465D',
         size: 10,
       },
@@ -302,9 +396,10 @@ function markerOptions(signal) {
       ...common,
       shape: isBullish ? 'arrow_up' : 'arrow_down',
       overrides: {
+        visible: true,
+        intervalsVisibilities: bollingerIntervalVisibility(resolution),
         color: isBullish ? '#0ECB81' : '#F6465D',
         arrowColor: isBullish ? '#0ECB81' : '#F6465D',
-        fixedSize: true,
       },
     };
   }
@@ -313,38 +408,36 @@ function markerOptions(signal) {
       ...common,
       shape: isBullish ? 'arrow_down' : 'arrow_up',
       overrides: {
+        visible: true,
+        intervalsVisibilities: bollingerIntervalVisibility(resolution),
         color: isBullish ? '#F6465D' : '#0ECB81',
         arrowColor: isBullish ? '#F6465D' : '#0ECB81',
-        fixedSize: true,
       },
     };
   }
   throw new Error(`TradingView Bollinger alert signal type is invalid: ${signal.type}`);
 }
 
-function verifyResolvedTime(chart, id, requestedTime) {
-  const shape = chart.getShapeById(id);
+function readMarkerPoint(shape) {
   const points = shape?.getPoints?.();
-  if (!Array.isArray(points) || points.length !== 1 || points[0].time !== requestedTime) {
-    throw new Error(`TradingView Bollinger alert time alignment failed for ${requestedTime}`);
+  if (!Array.isArray(points) || points.length !== 1 || !Number.isInteger(points[0].time) || !Number.isFinite(points[0].price)) {
+    throw new Error('TradingView Bollinger alert marker point is invalid');
   }
+  return points[0];
 }
 
-async function createAlignedMarker(chart, signal) {
-  const id = await chart.createShape({
-    time: signal.time,
-    price: signal.markerPrice,
-  }, markerOptions(signal));
-  if (typeof id !== 'string' || id.length === 0) {
-    throw new Error('TradingView returned an invalid Bollinger alert shape id');
+function markerPropertiesMatch(shape, options) {
+  const properties = shape.getProperties();
+  if (!properties || typeof properties !== 'object') {
+    throw new Error('TradingView Bollinger alert marker properties are invalid');
   }
-  try {
-    verifyResolvedTime(chart, id, signal.time);
-  } catch (error) {
-    chart.removeEntity(id);
-    throw error;
+  if (options.icon !== undefined && properties.icon !== options.icon) return false;
+  for (const [key, expected] of Object.entries(options.overrides)) {
+    if (key === 'intervalsVisibilities') {
+      if (!properties[key] || Object.entries(expected).some(([unit, value]) => properties[key][unit] !== value)) return false;
+    } else if (properties[key] !== expected) return false;
   }
-  return id;
+  return true;
 }
 
 function normalizeSignal(signal, index, defaultDirection) {
@@ -361,10 +454,32 @@ function normalizeSignal(signal, index, defaultDirection) {
   return signal.direction === direction ? signal : { ...signal, direction };
 }
 
-function createMarkerLayer(target, defaultDirection) {
+function createMarkerLayer(target, defaultDirection, {
+  canMutate: canMutateExternally = () => true,
+  onSaveError,
+  yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0)),
+} = {}) {
   const { chart } = target;
+  const saveController = installTradingViewMarkerSaveController(target.tradingViewApi, { onError: onSaveError });
+  const canMutate = () => canMutateExternally() && saveController.canMutate();
   const registry = new Map();
+  const pendingMarkers = new Set();
   let generation = 0;
+  let creating = 0;
+
+  function mutate(action) {
+    const finish = saveController.beginMutation();
+    try { return action(); } finally { finish(); }
+  }
+
+  function removePendingMarkers() {
+    if (pendingMarkers.size === 0 || !canMutate()) return;
+    const liveShapeIds = readLiveShapes(chart);
+    for (const id of pendingMarkers) {
+      if (liveShapeIds.has(id)) mutate(() => chart.removeEntity(id));
+      pendingMarkers.delete(id);
+    }
+  }
 
   function discardMissingSignals(liveShapeIds) {
     for (const [signalId, record] of registry) {
@@ -376,7 +491,7 @@ function createMarkerLayer(target, defaultDirection) {
     const record = registry.get(signalId);
     if (!record) return;
     if (liveShapeIds.has(record.markerId)) {
-      chart.removeEntity(record.markerId);
+      mutate(() => chart.removeEntity(record.markerId));
       liveShapeIds.delete(record.markerId);
     }
     registry.delete(signalId);
@@ -407,41 +522,104 @@ function createMarkerLayer(target, defaultDirection) {
         }
       }
       const requestedGeneration = generation;
-      if (!isCurrent()) return false;
-      const liveShapeIds = readLiveShapeIds(chart);
+      if (!isCurrent() || !canMutate()) return false;
+      removePendingMarkers();
+      let liveShapeIds = readLiveShapes(chart);
       discardMissingSignals(liveShapeIds);
       const nextIds = new Set(normalizedSignals.map((signal) => signal.id));
       for (const signalId of [...registry.keys()]) {
         if (!nextIds.has(signalId)) removeSignal(signalId, liveShapeIds);
       }
+      let batchStartedAt = performance.now();
+      let batchOps = 0;
       for (const signal of normalizedSignals) {
-        if (registry.has(signal.id)) continue;
-        if (!isCurrent()) return false;
-        const markerId = await createAlignedMarker(chart, signal);
-        if (requestedGeneration !== generation || !isCurrent()) {
-          chart.removeEntity(markerId);
-          return false;
+        // Awaiting native shape creation may resolve as a microtask. Explicitly
+        // yield large audits/rebuilds so input and paint can run between batches.
+        if (batchOps > 0 && (batchOps >= 32 || performance.now() - batchStartedAt >= 8)) {
+          await yieldToBrowser();
+          if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
+          liveShapeIds = readLiveShapes(chart);
+          discardMissingSignals(liveShapeIds);
+          batchStartedAt = performance.now();
+          batchOps = 0;
         }
-        registry.set(signal.id, { markerId });
+        if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
+        batchOps += 1;
+        const options = markerOptions(signal, target.resolution);
+        const existing = registry.get(signal.id);
+        if (existing) {
+          const shape = chart.getShapeById(existing.markerId);
+          const point = readMarkerPoint(shape);
+          if (
+            point.time === signal.time && point.price === existing.resolvedPrice
+            && existing.markerPrice === signal.markerPrice
+            && existing.type === signal.type && existing.direction === signal.direction
+            && liveShapeIds.get(existing.markerId) === options.shape
+            && markerPropertiesMatch(shape, options)
+          ) continue;
+          removeSignal(signal.id, liveShapeIds);
+        }
+        const finishCreation = saveController.beginMutation();
+        creating += 1;
+        try {
+          // Native creation enables the interval active after its async loader.
+          // Keep pending drawings hidden until the originating session can publish.
+          const markerId = await chart.createShape({ time: signal.time, price: signal.markerPrice }, {
+            ...options,
+            overrides: { ...options.overrides, visible: false },
+          });
+          if (typeof markerId !== 'string' || markerId.length === 0) {
+            throw new Error('TradingView returned an invalid Bollinger alert shape id');
+          }
+          // Own the result before checking the epoch. Late results may need to wait
+          // for a trade/save owner, and must never become untracked foreign drawings.
+          pendingMarkers.add(markerId);
+          if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
+          const shape = chart.getShapeById(markerId);
+          const point = readMarkerPoint(shape);
+          if (point.time !== signal.time) {
+            throw new Error(`TradingView Bollinger alert time alignment failed for ${signal.time}`);
+          }
+          if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
+          mutate(() => shape.setProperties(options.overrides, false));
+          if (!markerPropertiesMatch(shape, options)) {
+            throw new Error('TradingView Bollinger alert marker properties were not applied');
+          }
+          registry.set(signal.id, {
+            markerId, resolvedPrice: point.price, markerPrice: signal.markerPrice,
+            type: signal.type, direction: signal.direction,
+          });
+          pendingMarkers.delete(markerId);
+        } finally {
+          finishCreation();
+          creating -= 1;
+          removePendingMarkers();
+        }
       }
       return true;
     },
     clear() {
       generation += 1;
-      const liveShapeIds = readLiveShapeIds(chart);
+      if (!canMutate()) return false;
+      removePendingMarkers();
+      const liveShapeIds = readLiveShapes(chart);
       discardMissingSignals(liveShapeIds);
       for (const signalId of [...registry.keys()]) removeSignal(signalId, liveShapeIds);
+      return creating === 0 && pendingMarkers.size === 0;
     },
     get size() {
       return registry.size;
     },
+    get saveStats() {
+      return saveController.getStats();
+    },
   });
 }
 
-export function createBollingerMarkerLayer(target) {
-  return createMarkerLayer(target, undefined);
+export function createBollingerMarkerLayer(target, options) {
+  return createMarkerLayer(target, undefined, options);
 }
 
-export function createBearishBollingerMarkerLayer(target) {
-  return createMarkerLayer(target, 'bearish');
+export function createBearishBollingerMarkerLayer(target, options) {
+  return createMarkerLayer(target, 'bearish', options);
 }
