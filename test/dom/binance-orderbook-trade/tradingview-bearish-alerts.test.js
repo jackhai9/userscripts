@@ -247,7 +247,7 @@ test('renders warning, bearish confirmation, and bullish reversal markers', asyn
   const records = [...shapes.values()];
   assert.equal(records[0].properties.shape, 'icon');
   assert.equal(records[0].properties.icon, 0xf111);
-  assert.equal(records[0].properties.overrides.color, '#F0B90B');
+  assert.equal(records[0].properties.overrides.color, '#F6465D');
   assert.equal(records[1].properties.shape, 'arrow_down');
   assert.equal(records[1].properties.overrides.arrowColor, '#F6465D');
   assert.equal(records[2].properties.shape, 'arrow_up');
@@ -292,7 +292,7 @@ test('renders mirrored bullish marker shapes and colors in the shared layer', as
 
   const records = [...shapes.values()];
   assert.equal(records[0].properties.shape, 'icon');
-  assert.equal(records[0].properties.overrides.color, '#F0B90B');
+  assert.equal(records[0].properties.overrides.color, '#0ECB81');
   assert.equal(records[1].properties.shape, 'arrow_up');
   assert.equal(records[1].properties.overrides.arrowColor, '#0ECB81');
   assert.equal(records[2].properties.shape, 'arrow_down');

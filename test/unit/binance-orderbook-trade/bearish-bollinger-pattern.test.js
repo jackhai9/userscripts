@@ -133,6 +133,10 @@ test('implements bullish detection as the strict price-axis mirror of bearish de
     bullishSignals.map((signal) => signal.id),
     bearishSignals.map((signal) => `${signal.setupTime}:bullish:${signal.type}`),
   );
+  const bearishWarning = bearishSignals.find((signal) => signal.type === 'warning');
+  const bullishWarning = bullishSignals.find((signal) => signal.type === 'warning');
+  assert.ok(bearishWarning.markerPrice > bearishPattern.bars[bearishPattern.warningIndex].high);
+  assert.ok(bullishWarning.markerPrice < bullishBars[bearishPattern.warningIndex].low);
   assert.deepEqual(bullishBars, originalBullishBars);
 });
 

@@ -292,7 +292,7 @@ function markerOptions(signal) {
       shape: 'icon',
       icon: 0xf111,
       overrides: {
-        color: '#F0B90B',
+        color: isBullish ? '#0ECB81' : '#F6465D',
         size: 10,
       },
     };
