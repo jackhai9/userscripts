@@ -16,9 +16,26 @@ function routeSymbolFromChartSymbol(value) {
 }
 
 function assertChartContract(chart) {
-  for (const method of ['createShape', 'getShapeById', 'removeEntity', 'resolution', 'symbol']) {
+  for (const method of ['createShape', 'getAllShapes', 'getShapeById', 'removeEntity', 'resolution', 'symbol']) {
     if (typeof chart?.[method] !== 'function') throw new Error(`TradingView chart method is unavailable: ${method}`);
   }
+}
+
+/** The host can evict transient entities without notifying their owner. */
+export function readLiveShapeIds(chart) {
+  const shapes = chart.getAllShapes();
+  if (!Array.isArray(shapes)) throw new Error('Strategy 27 chart shape list is invalid');
+  return new Set(shapes.map((shape) => {
+    if (typeof shape?.id !== 'string' || shape.id.length === 0) throw new Error('Strategy 27 chart shape id is invalid');
+    return shape.id;
+  }));
+}
+
+/** Check the native context around repair awaits, before the next context tick. */
+export function pinMarkerChartContext(chart) {
+  const symbol = chart.symbol();
+  const resolution = chart.resolution();
+  return () => chart.symbol() === symbol && chart.resolution() === resolution;
 }
 
 export function findStrategy27ChartTarget(document, expectedRouteSymbol) {
@@ -246,15 +263,18 @@ export function createTradingViewEventLayer(target, {
   if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error('Strategy 27 maxAgeMs is invalid');
   const { chart } = target;
   const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
+  const isChartCurrent = pinMarkerChartContext(chart);
   const registry = new Map();
-  const pendingCandleWaits = new Set();
+  const pendingRenders = new Map();
   let renderGeneration = 0;
+  let reconciliation = null;
 
   function removeRecord(eventId) {
+    pendingRenders.get(eventId)?.abort();
     const record = registry.get(eventId);
     if (!record) return;
-    chart.removeEntity(record.markerId);
     registry.delete(eventId);
+    if (readLiveShapeIds(chart).has(record.markerId)) chart.removeEntity(record.markerId);
   }
 
   function pruneAge(observedAtMs) {
@@ -267,37 +287,65 @@ export function createTradingViewEventLayer(target, {
     while (registry.size >= maxEvents) removeRecord(registry.keys().next().value);
   }
 
+  function restoreMarker(eventId, record, liveIds) {
+    if (record.restoring) return record.restoring;
+    const current = () => registry.get(eventId) === record && isChartCurrent();
+    if (!current()) return Promise.resolve(false);
+    if (liveIds.has(record.markerId)) return Promise.resolve(true);
+    record.restoring = (async () => {
+      const markerId = await createAlignedShape(chart, record.markerPoint, record.options);
+      if (!current()) {
+        if (readLiveShapeIds(chart).has(markerId)) chart.removeEntity(markerId);
+        return false;
+      }
+      record.markerId = markerId;
+      return true;
+    })().finally(() => { record.restoring = null; });
+    return record.restoring;
+  }
+
+  function reconcile() {
+    if (reconciliation) return reconciliation;
+    reconciliation = (async () => {
+      let liveIds = readLiveShapeIds(chart);
+      for (const [eventId, record] of [...registry]) {
+        if (registry.get(eventId) !== record || !isChartCurrent()) continue;
+        if (!record.restoring && liveIds.has(record.markerId)) continue;
+        await restoreMarker(eventId, record, liveIds);
+        // A native create yields; refresh before examining another record.
+        liveIds = readLiveShapeIds(chart);
+      }
+    })().finally(() => { reconciliation = null; });
+    return reconciliation;
+  }
+
   async function ensureMarker(eventId, annotation, observedAtMs) {
     let record = registry.get(eventId);
     if (record) {
       record.observedAtMs = observedAtMs;
-      return true;
+      return restoreMarker(eventId, record, readLiveShapeIds(chart));
     }
     if (annotation.markerShape === null) return true;
     const requestedGeneration = renderGeneration;
     const controller = new AbortController();
-    pendingCandleWaits.add(controller);
-    let markerPoint;
+    pendingRenders.set(eventId, controller);
     try {
-      markerPoint = await placement.wait(annotation, { signal: controller.signal });
+      const markerPoint = await placement.wait(annotation, { signal: controller.signal });
+      if (!markerPoint || controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) return false;
+      pruneAge(observedAtMs);
+      ensureCapacityForNew();
+      const options = shapeOptions(annotation.markerShape, annotation.markerColor);
+      const markerId = await createAlignedShape(chart, markerPoint, options);
+      if (controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) {
+        if (readLiveShapeIds(chart).has(markerId)) chart.removeEntity(markerId);
+        return false;
+      }
+      record = { markerId, markerPoint, options, observedAtMs, restoring: null };
+      registry.set(eventId, record);
+      return true;
     } finally {
-      pendingCandleWaits.delete(controller);
+      if (pendingRenders.get(eventId) === controller) pendingRenders.delete(eventId);
     }
-    if (!markerPoint || requestedGeneration !== renderGeneration) return false;
-    pruneAge(observedAtMs);
-    ensureCapacityForNew();
-    const markerId = await createAlignedShape(
-      chart,
-      markerPoint,
-      shapeOptions(annotation.markerShape, annotation.markerColor),
-    );
-    if (requestedGeneration !== renderGeneration) {
-      chart.removeEntity(markerId);
-      return false;
-    }
-    record = { markerId, markerShape: annotation.markerShape, observedAtMs };
-    registry.set(eventId, record);
-    return true;
   }
 
   return Object.freeze({
@@ -307,9 +355,10 @@ export function createTradingViewEventLayer(target, {
     renderOutcome: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
     remove: removeRecord,
     prune: pruneAge,
+    reconcile,
     clear() {
       renderGeneration += 1;
-      for (const controller of [...pendingCandleWaits]) controller.abort();
+      for (const controller of pendingRenders.values()) controller.abort();
       for (const eventId of [...registry.keys()]) removeRecord(eventId);
     },
     get size() {

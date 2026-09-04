@@ -88,13 +88,26 @@ discontinuities abort the request and remove only those transient entities.
 Marker count and age are bounded on the chart; the panel retains at most eight
 events.
 
+The existing one-second context check also reconciles retained records with
+TradingView's `getAllShapes()` list. A host-evicted ordinary marker is restored
+using its original resolved point and drawing options, even when no new gateway
+message arrives. Compound candidates restore only missing parts of their
+icon/label pair, preserving the original slot and surviving entity IDs. Each
+record shares one in-flight repair across timer and message callbacks. Cleanup
+skips IDs proven absent, while native removal failures still stop the owning job.
+Clear, reset, context changes and retention eviction invalidate repair ownership;
+late-created entities are removed instead of resurrecting retired records.
+Reconciliation does not refresh retention timestamps or persist drawings across
+reloads. A panel history reset is a separate lifecycle event, not evidence of
+native entity eviction.
+
 ## Compound Candidate Extension
 
 ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.4.0 with identical metadata headers.
+generated install artifact are version 0.4.1 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
@@ -136,7 +149,8 @@ Do not treat source unit tests or the panel fixture as deployment evidence.
   Manual clear preserves replay bookkeeping but invalidates pending presentation.
   Age eviction also invalidates a pending draw, and a second age check runs after
   drawing before publication to the panel. The existing context timer calls
-  `prune()`; there is no second timer. Route/interval changes and disappearance
+  `reconcile()`, which prunes before repairing missing entities; there is no
+  second timer. Route/interval changes and disappearance
   of the visible chart stop both clients before destroying the shared panel.
   The clear menu clears both views without restarting either client.
 - Native cleanup attempts every owned entity once and aggregates failures.

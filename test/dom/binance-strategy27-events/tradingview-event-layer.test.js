@@ -40,6 +40,7 @@ function createChartDom({
       return id;
     },
     getShapeById: (id) => shapes.get(id),
+    getAllShapes: () => [...shapes.keys()].map((id) => ({ id })),
     removeEntity(id) { removed.push(id); shapes.delete(id); },
     getSeries: () => ({
       data: () => ({
@@ -337,4 +338,77 @@ test('clear removes a marker whose asynchronous creation finishes late', async (
   assert.equal(layer.size, 0);
   assert.equal(shapes.size, 0);
   assert.equal(removed.length, 1);
+});
+
+test('an update restores an externally evicted marker with its original immutable presentation', async () => {
+  const f = createChartDom();
+  const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 2, maxAgeMs: 60000 });
+  await layer.renderOpened('a', annotation(), 10000);
+  const [oldId] = f.shapes.keys();
+  const point = f.shapes.get(oldId).getPoints();
+  f.shapes.delete(oldId);
+  assert.equal(await layer.renderUpdated('a', annotation({ markerShape: 'arrow_down', markerColor: '#F6465D' }), 11000), true);
+  assert.equal(f.shapes.size, 1);
+  const [id, shape] = [...f.shapes][0];
+  assert.notEqual(id, oldId);
+  assert.deepEqual(shape.getPoints(), point);
+  assert.equal(shape.getProperties().shape, 'arrow_up');
+  assert.equal(shape.getProperties().overrides.color, '#0ECB81');
+  assert.equal(layer.size, 1);
+  assert.deepEqual(f.removed, []);
+});
+
+test('reconciliation restores missing ordinary markers without an event and never revives a cleared record', async () => {
+  const f = createChartDom();
+  const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 2, maxAgeMs: 60000 });
+  f.shapes.set('foreign', {});
+  await layer.renderOpened('a', annotation(), 10000);
+  f.shapes.delete('shape-1');
+  await layer.reconcile();
+  assert.deepEqual([...f.shapes.keys()], ['foreign', 'shape-2']);
+  await layer.reconcile();
+  assert.deepEqual([...f.shapes.keys()], ['foreign', 'shape-2']);
+  f.shapes.delete('shape-2');
+  layer.clear();
+  await layer.reconcile();
+  assert.deepEqual([...f.shapes.keys()], ['foreign']);
+  assert.deepEqual(f.removed, []);
+  assert.equal(layer.size, 0);
+});
+
+test('ordinary timer and gateway repair share a single creation and cancel stale results', async () => {
+  for (const action of ['retain', 'clear', 'remove', 'expire', 'interval', 'symbol']) {
+    const f = createChartDom();
+    const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 2, maxAgeMs: 60000 });
+    await layer.renderOpened('a', annotation(), 10000);
+    f.shapes.delete('shape-1');
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const nativeCreate = f.chart.createShape;
+    let creates = 0;
+    f.chart.createShape = async (...args) => {
+      creates += 1;
+      entered.resolve();
+      await release.promise;
+      return nativeCreate(...args);
+    };
+    const repair = layer.reconcile();
+    await entered.promise;
+    const update = layer.renderUpdated('a', annotation(), 11000);
+    const anotherTick = layer.reconcile();
+    if (action === 'clear') layer.clear();
+    if (action === 'remove') layer.remove('a');
+    if (action === 'expire') layer.prune(7200000);
+    if (action === 'interval') f.chart.resolution = () => '1';
+    if (action === 'symbol') f.chart.symbol = () => 'BTCUSDT';
+    release.resolve();
+    assert.equal(await update, action === 'retain', action);
+    await Promise.all([repair, anotherTick]);
+    assert.equal(creates, 1, action);
+    assert.equal(f.shapes.size, action === 'retain' ? 1 : 0, action);
+    if (['clear', 'remove', 'expire'].includes(action)) assert.equal(layer.size, 0);
+    layer.clear();
+    await layer.reconcile();
+    assert.equal(f.shapes.size, 0);
+  }
 });

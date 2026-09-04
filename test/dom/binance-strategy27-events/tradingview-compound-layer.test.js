@@ -14,6 +14,8 @@ function fixture({ bars = [[10, 1.25, 1.3, 1.2, 1.25]], beforeCreate, shiftSecon
   const removed = [];
   let counter = 0;
   const chart = {
+    symbol: () => 'BTRUSDT',
+    resolution: () => '1S',
     async createShape(point, options) {
       counter += 1;
       const id = `owned-${counter}`;
@@ -26,6 +28,7 @@ function fixture({ bars = [[10, 1.25, 1.3, 1.2, 1.25]], beforeCreate, shiftSecon
       return id;
     },
     getShapeById: (id) => shapes.get(id),
+    getAllShapes: () => [...shapes.keys()].map((id) => ({ id })),
     removeEntity(id) {
       assert.notEqual(id, 'user-owned');
       removed.push(id);
@@ -188,4 +191,77 @@ test('80 compound pairs plus 80 ordinary markers have a strict 240-entity budget
   assert.equal(f.removed.length, 160);
   ordinary.clear();
   assert.deepEqual([...f.shapes.keys()], ['user-owned']);
+});
+
+test('compound reconciliation restores only missing parts in their original slots', async () => {
+  const f = fixture();
+  const layer = f.layer();
+  await layer.renderCandidate('a', annotation(), 11000);
+  await layer.renderCandidate('b', annotation(), 11000);
+  f.shapes.delete('owned-1');
+  f.shapes.delete('owned-3');
+  f.shapes.delete('owned-4');
+  await layer.reconcile();
+  assert.equal(layer.size, 2);
+  assert.equal(f.created.length, 7);
+  assert.equal(f.shapes.has('owned-2'), true);
+  assert.deepEqual(f.created.slice(4).map((drawing) => drawing.point), [f.created[0].point, f.created[2].point, f.created[3].point]);
+  assert.deepEqual(f.removed, []);
+  await layer.reconcile();
+  assert.equal(f.created.length, 7);
+  layer.clear();
+  await layer.reconcile();
+  assert.deepEqual([...f.shapes.keys()], ['user-owned']);
+});
+
+test('a repeated candidate restores externally removed entities', async () => {
+  const f = fixture();
+  const layer = f.layer();
+  await layer.renderCandidate('a', annotation(), 11000);
+  f.shapes.delete('owned-1');
+  f.shapes.delete('owned-2');
+  assert.equal(await layer.renderCandidate('a', annotation(), 11000), true);
+  assert.equal(f.created.length, 4);
+  assert.equal(layer.size, 1);
+  assert.equal(f.shapes.size, 3);
+});
+
+test('compound timer and replay share a single repair and discard late parts after invalidation', async () => {
+  for (const action of ['retain', 'clear', 'remove', 'interval', 'symbol']) {
+    const entered = deferred();
+    const release = deferred();
+    const f = fixture({ beforeCreate: async (count) => { if (count === 3) { entered.resolve(); await release.promise; } } });
+    const layer = f.layer();
+    await layer.renderCandidate('a', annotation(), 11000);
+    f.shapes.delete('owned-1');
+    const repair = layer.reconcile();
+    await entered.promise;
+    const replay = layer.renderCandidate('a', annotation(), 11000);
+    const anotherTick = layer.reconcile();
+    if (action === 'clear') layer.clear();
+    if (action === 'remove') layer.remove('a');
+    if (action === 'interval') f.chart.resolution = () => '1';
+    if (action === 'symbol') f.chart.symbol = () => 'BTCUSDT';
+    release.resolve();
+    assert.equal(await replay, action === 'retain', action);
+    await Promise.all([repair, anotherTick]);
+    assert.equal(f.created.length, 3, action);
+    assert.equal(f.shapes.has('owned-3'), action === 'retain', action);
+    if (action === 'retain') assert.equal(f.shapes.has('owned-2'), true);
+    layer.clear();
+    await layer.reconcile();
+    assert.deepEqual([...f.shapes.keys()], ['user-owned']);
+  }
+});
+
+test('cleanup skips evicted compound parts and still reports a live part removal failure', async () => {
+  const f = fixture({ removeError: new Error('fixture removal failure') });
+  const layer = f.layer();
+  await layer.renderCandidate('a', annotation(), 11000);
+  f.shapes.delete('owned-1');
+  assert.throws(() => layer.clear(), (error) => error instanceof AggregateError && error.errors.length === 1);
+  assert.deepEqual(f.removed, ['owned-2']);
+  assert.equal(layer.size, 0);
+  layer.clear();
+  assert.deepEqual(f.removed, ['owned-2']);
 });
