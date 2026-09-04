@@ -158,10 +158,12 @@ function appendDetailLine(document, parent, label, value, color = '#EAECEF') {
 
 export function createStrategy27EventPanel(document, chartRoot, {
   maxEvents,
+  maxCompoundEvents,
   loadPosition,
   savePosition,
 }) {
   if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error('Strategy 27 panel maxEvents is invalid');
+  if (!Number.isInteger(maxCompoundEvents) || maxCompoundEvents < 1 || maxCompoundEvents > 8) throw new Error('Strategy 27 panel maxCompoundEvents is invalid');
   if (typeof loadPosition !== 'function') throw new Error('Strategy 27 panel loadPosition is invalid');
   if (typeof savePosition !== 'function') throw new Error('Strategy 27 panel savePosition is invalid');
   document.getElementById(PANEL_ID)?.remove();
@@ -243,7 +245,20 @@ export function createStrategy27EventPanel(document, chartRoot, {
     role: 'event-list',
     styles: { display: 'grid', gap: '2px', padding: '0 6px 7px' },
   });
-  body.append(detail, recentTitle, recent);
+  const compoundTitle = createElement(document, 'strong', {
+    text: '复合候选',
+    styles: { display: 'block', padding: '7px 9px 4px', borderTop: '1px solid rgba(132, 142, 156, .18)' },
+  });
+  const compoundStatus = createElement(document, 'div', {
+    text: '复合候选等待连接',
+    role: 'compound-status',
+    styles: { padding: '0 9px 5px', color: '#848E9C', fontSize: '11px', overflowWrap: 'anywhere' },
+  });
+  const compoundRecent = createElement(document, 'div', {
+    role: 'compound-list',
+    styles: { display: 'grid', gap: '2px', padding: '0 6px 7px' },
+  });
+  body.append(detail, compoundTitle, compoundStatus, compoundRecent, recentTitle, recent);
   panel.appendChild(body);
   document.body.appendChild(panel);
   const initialPosition = assertPanelPosition(loadPosition()) ?? createDefaultPosition(chartRoot);
@@ -251,20 +266,40 @@ export function createStrategy27EventPanel(document, chartRoot, {
   const cleanupDrag = setupPanelDrag(document, panel, header, savePosition);
 
   const records = new Map();
+  const compoundRecords = new Map();
   let selectedEventId = null;
+  let selectedKind = 'ordinary';
   let followLatest = true;
   let collapsed = false;
 
-  function orderedEntries() {
-    return [...records.entries()].sort((left, right) => (
+  function orderedEntries(collection = records) {
+    return [...collection.entries()].sort((left, right) => (
       right[1].annotation.eventTimeMs - left[1].annotation.eventTimeMs
       || right[1].observedAtMs - left[1].observedAtMs
     ));
   }
 
+  function selectedCollection() {
+    return selectedKind === 'compound' ? compoundRecords : records;
+  }
+
+  function selectLatest() {
+    const all = [
+      ...orderedEntries().map(([id, record]) => ({ id, record, kind: 'ordinary' })),
+      ...orderedEntries(compoundRecords).map(([id, record]) => ({ id, record, kind: 'compound' })),
+    ].sort((a, b) => b.record.annotation.eventTimeMs - a.record.annotation.eventTimeMs || b.record.observedAtMs - a.record.observedAtMs);
+    selectedEventId = all[0]?.id ?? null;
+    selectedKind = all[0]?.kind ?? 'ordinary';
+  }
+
+  function reconcileSelection() {
+    if (!selectedCollection().has(selectedEventId)) followLatest = true;
+    if (followLatest) selectLatest();
+  }
+
   function renderDetail() {
     detail.replaceChildren();
-    const record = records.get(selectedEventId);
+    const record = selectedCollection().get(selectedEventId);
     if (!record) {
       detail.appendChild(createElement(document, 'span', {
         text: '等待新事件',
@@ -278,14 +313,26 @@ export function createStrategy27EventPanel(document, chartRoot, {
     });
     title.appendChild(createElement(document, 'span', {
       text: annotation.title,
-      styles: { color: annotation.markerColor ?? '#EAECEF', fontWeight: '700', flex: '1' },
+      styles: { color: selectedKind === 'compound' ? annotation.titleColor : annotation.markerColor ?? '#EAECEF', fontWeight: '700', flex: '1' },
     }));
     title.appendChild(createElement(document, 'span', {
-      text: STATUS_LABELS[annotation.status],
+      text: selectedKind === 'compound' ? '探索版' : STATUS_LABELS[annotation.status],
       styles: { color: '#848E9C', fontSize: '11px' },
     }));
     detail.appendChild(title);
     appendDetailLine(document, detail, '时间', formatClock(annotation.eventTimeMs));
+    if (selectedKind === 'compound') {
+      for (const row of annotation.detailRows) appendDetailLine(document, detail, row.label, row.value);
+      const identity = createElement(document, 'details', { role: 'compound-identity', styles: { color: '#848E9C' } });
+      identity.appendChild(createElement(document, 'summary', { text: '规则与候选 ID', styles: { cursor: 'pointer' } }));
+      identity.appendChild(createElement(document, 'div', {
+        text: `规则 ${annotation.ruleIdentity}\n候选 ${annotation.candidateId}`,
+        styles: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text', fontSize: '10px' },
+      }));
+      detail.appendChild(identity);
+      for (const notice of annotation.notices) appendDetailLine(document, detail, '说明', notice, '#848E9C');
+      return;
+    }
     appendDetailLine(document, detail, '统计', annotation.windowText);
     if (annotation.candidateText) {
       appendDetailLine(document, detail, '候选观察', annotation.candidateText, annotation.markerColor);
@@ -300,12 +347,12 @@ export function createStrategy27EventPanel(document, chartRoot, {
     for (const notice of annotation.notices) appendDetailLine(document, detail, '说明', notice, '#F0B90B');
   }
 
-  function renderRecent() {
-    recent.replaceChildren();
-    for (const [eventId, record] of orderedEntries()) {
+  function renderRecent(container, collection, kind) {
+    container.replaceChildren();
+    for (const [eventId, record] of orderedEntries(collection)) {
       const { annotation } = record;
       const row = createElement(document, 'button', {
-        role: 'event-row',
+        role: kind === 'compound' ? 'compound-row' : 'event-row',
         styles: {
           display: 'grid',
           gridTemplateColumns: '7px 54px minmax(0, 1fr)',
@@ -315,7 +362,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
           border: '0',
           borderRadius: '5px',
           padding: '5px 6px',
-          background: eventId === selectedEventId ? 'rgba(132, 142, 156, .18)' : 'transparent',
+          background: kind === selectedKind && eventId === selectedEventId ? 'rgba(132, 142, 156, .18)' : 'transparent',
           color: '#EAECEF',
           font: '11px/16px BinancePlex, ui-sans-serif, system-ui, sans-serif',
           textAlign: 'left',
@@ -331,6 +378,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
           height: '7px',
           borderRadius: '50%',
           background: annotation.markerColor ?? 'transparent',
+          outline: kind === 'compound' ? '1px solid #EAECEF' : 'none',
         },
       }));
       row.appendChild(createElement(document, 'span', {
@@ -343,22 +391,24 @@ export function createStrategy27EventPanel(document, chartRoot, {
       }));
       row.addEventListener('click', () => {
         selectedEventId = eventId;
+        selectedKind = kind;
         followLatest = false;
         render();
       });
-      recent.appendChild(row);
+      container.appendChild(row);
     }
   }
 
   function render() {
     latestButton.style.color = followLatest ? '#F0B90B' : '#EAECEF';
     renderDetail();
-    renderRecent();
+    renderRecent(recent, records, 'ordinary');
+    renderRecent(compoundRecent, compoundRecords, 'compound');
   }
 
   latestButton.addEventListener('click', () => {
     followLatest = true;
-    selectedEventId = orderedEntries()[0]?.[0] ?? null;
+    selectLatest();
     render();
   });
   collapseButton.addEventListener('click', () => {
@@ -368,39 +418,60 @@ export function createStrategy27EventPanel(document, chartRoot, {
   });
 
   render();
+  function upsertRecord(collection, capacity, eventId, annotation, observedAtMs) {
+    collection.set(eventId, { annotation, observedAtMs });
+    const ordered = orderedEntries(collection);
+    while (ordered.length > capacity) collection.delete(ordered.pop()[0]);
+    reconcileSelection();
+    render();
+  }
+
+  function removeRecord(collection, eventId) {
+    collection.delete(eventId);
+    reconcileSelection();
+    render();
+  }
+
   return Object.freeze({
     upsert(eventId, annotation, observedAtMs) {
-      records.set(eventId, { annotation, observedAtMs });
-      const ordered = orderedEntries();
-      while (ordered.length > maxEvents) {
-        const [expiredId] = ordered.pop();
-        records.delete(expiredId);
-      }
-      if (!records.has(selectedEventId)) followLatest = true;
-      if (followLatest) selectedEventId = orderedEntries()[0]?.[0] ?? null;
-      render();
+      upsertRecord(records, maxEvents, eventId, annotation, observedAtMs);
+    },
+    upsertCompound(eventId, annotation, observedAtMs) {
+      upsertRecord(compoundRecords, maxCompoundEvents, eventId, annotation, observedAtMs);
     },
     remove(eventId) {
-      records.delete(eventId);
-      if (selectedEventId === eventId) {
-        followLatest = true;
-        selectedEventId = orderedEntries()[0]?.[0] ?? null;
-      }
-      render();
+      removeRecord(records, eventId);
+    },
+    removeCompound(eventId) {
+      removeRecord(compoundRecords, eventId);
     },
     clear() {
       records.clear();
-      selectedEventId = null;
-      followLatest = true;
+      reconcileSelection();
       render();
+    },
+    clearCompound() {
+      compoundRecords.clear();
+      reconcileSelection();
+      render();
+    },
+    setCompoundStatus(text, state) {
+      if (typeof text !== 'string' || !['normal', 'inactive', 'error'].includes(state)) throw new Error('Strategy 27 compound panel status is invalid');
+      compoundStatus.textContent = text;
+      compoundStatus.dataset.state = state;
+      compoundStatus.style.color = state === 'error' ? '#F6465D' : '#848E9C';
     },
     destroy() {
       records.clear();
+      compoundRecords.clear();
       cleanupDrag();
       panel.remove();
     },
     get size() {
       return records.size;
+    },
+    get compoundSize() {
+      return compoundRecords.size;
     },
   });
 }

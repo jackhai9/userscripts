@@ -27,6 +27,7 @@ function annotation({ time = 1_000, summary = '价格 +4.2 bps · 点差 1.2 bps
 function panelOptions(maxEvents, overrides = {}) {
   return {
     maxEvents,
+    maxCompoundEvents: maxEvents,
     loadPosition: () => null,
     savePosition: () => {},
     ...overrides,
@@ -49,6 +50,75 @@ test('renders one fixed detail panel and a bounded recent-event list', () => {
   assert.match(document.querySelector('[data-role="event-detail"]').textContent, /12\.3K USDT/);
   assert.doesNotMatch(document.body.textContent, /12345\.6789/);
   assert.equal(panel.size, 2);
+});
+
+function compoundAnnotation(time, family = '买入推动失效') {
+  return {
+    kind: 'compound',
+    title: '复合候选高',
+    titleColor: '#FF718A',
+    eventTimeMs: time,
+    markerColor: '#B71C3B',
+    ruleIdentity: `impact_failure/high/${'a'.repeat(64)}`,
+    candidateId: 'b'.repeat(64),
+    summary: family,
+    detailRows: [
+      { label: '规则', value: family },
+      { label: '证据', value: '上涨背景 → 买入未推动 → 后续转弱' },
+      { label: '参数版本', value: 'compound-exploration-1' },
+    ],
+    notices: ['探索候选，尚未验证预测能力'],
+  };
+}
+
+test('ordinary and compound histories have independent bounds and reset ownership', () => {
+  const dom = loadFixtureDom('<div class="chart-widget-root"></div>');
+  const { document } = dom.window;
+  const panel = createStrategy27EventPanel(document, document.querySelector('.chart-widget-root'), panelOptions(8));
+  for (let i = 0; i < 9; i += 1) {
+    panel.upsert(`event-${i}`, annotation({ time: 1000 + i }), 2000 + i);
+    panel.upsertCompound(`candidate-${i}`, compoundAnnotation(1000 + i), 2000 + i);
+  }
+  assert.equal(panel.size, 8);
+  assert.equal(panel.compoundSize, 8);
+  assert.equal(document.querySelectorAll('[data-role="event-row"]').length, 8);
+  assert.equal(document.querySelectorAll('[data-role="compound-row"]').length, 8);
+  assert.equal(document.querySelector('[data-event-id="candidate-0"]'), null);
+  panel.clear();
+  assert.equal(panel.size, 0);
+  assert.equal(panel.compoundSize, 8);
+  assert.equal(document.querySelectorAll('[data-role="compound-row"]').length, 8);
+  panel.upsert('retained-ordinary', annotation({ time: 3000 }), 3000);
+  panel.clearCompound();
+  assert.equal(panel.compoundSize, 0);
+  assert.equal(panel.size, 1);
+  assert.equal(document.querySelector('[data-role="event-row"]').dataset.eventId, 'retained-ordinary');
+  panel.destroy();
+});
+
+test('compound connection status survives ordinary updates and both streams expose selectable detail', () => {
+  const dom = loadFixtureDom('<div class="chart-widget-root"></div>');
+  const { document } = dom.window;
+  const panel = createStrategy27EventPanel(document, document.querySelector('.chart-widget-root'), panelOptions(8));
+  panel.upsertCompound('impact', compoundAnnotation(7000), 8000);
+  panel.upsertCompound('passive', compoundAnnotation(7000, '被动承接转弱'), 8000);
+  panel.setCompoundStatus('复合候选不可用，正在重连', 'inactive');
+  panel.upsert('ordinary', annotation({ time: 9000 }), 9000);
+  assert.equal(document.querySelector('[data-role="compound-status"]').textContent, '复合候选不可用，正在重连');
+  const rows = [...document.querySelectorAll('[data-role="compound-row"]')];
+  assert.equal(rows.length, 2);
+  assert.deepEqual(new Set(rows.map((row) => row.dataset.eventId)), new Set(['impact', 'passive']));
+  rows.find((row) => row.dataset.eventId === 'passive').click();
+  assert.match(document.querySelector('[data-role="event-detail"]').textContent, /被动承接转弱/);
+  panel.upsert('ordinary-new', annotation({ time: 10000 }), 10000);
+  assert.match(document.querySelector('[data-role="event-detail"]').textContent, /被动承接转弱/);
+  panel.removeCompound('impact');
+  assert.match(document.querySelector('[data-role="event-detail"]').textContent, /被动承接转弱/);
+  document.querySelector('[data-role="follow-latest"]').click();
+  assert.match(document.querySelector('[data-role="event-detail"]').textContent, /订单流观察/);
+  panel.setCompoundStatus('复合候选已连接', 'normal');
+  assert.equal(document.querySelector('[data-role="compound-status"]').textContent, '复合候选已连接');
+  panel.destroy();
 });
 
 test('keeps a manually selected event until follow-latest is restored', () => {

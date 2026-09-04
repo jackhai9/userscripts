@@ -84,7 +84,8 @@ function createMarkerPointResolver(chart) {
     }
   }
 
-  const resolve = (annotation, { allowPreviousCandle = false } = {}) => {
+  const resolve = (annotation, { allowPreviousCandle = false, gapPx = DIRECTIONAL_MARKER_GAP_PX } = {}) => {
+    if (!Number.isFinite(gapPx)) throw new Error('Strategy 27 marker pixel gap is invalid');
     if (!['arrow_up', 'arrow_down'].includes(annotation.markerShape)) {
       throw new Error(`Unsupported Strategy 27 marker shape: ${annotation.markerShape}`);
     }
@@ -103,7 +104,6 @@ function createMarkerPointResolver(chart) {
     if (!Array.isArray(candle) || candle.length < 5 || !timeMatches) {
       throw new Error(`Strategy 27 candle is invalid for ${annotation.markerTime}`);
     }
-    const point = { time: candleTime, price: annotation.markerPrice };
     const candleHigh = Number(candle[2]);
     const candleLow = Number(candle[3]);
     if (!Number.isFinite(candleHigh) || !Number.isFinite(candleLow)) {
@@ -118,7 +118,7 @@ function createMarkerPointResolver(chart) {
     }
     const direction = annotation.markerShape === 'arrow_up' ? 1 : -1;
     const markerPrice = priceScale.coordinateToPrice(
-      edgeCoordinate + (direction * DIRECTIONAL_MARKER_GAP_PX),
+      edgeCoordinate + (direction * gapPx),
       firstValue,
     );
     if (!Number.isFinite(markerPrice)) {
@@ -126,7 +126,15 @@ function createMarkerPointResolver(chart) {
     }
     return { time: candleTime, price: markerPrice };
   };
-  return { dataUpdated, resolve };
+  function shift(point, deltaPixels) {
+    if (!Number.isFinite(deltaPixels)) throw new Error('Strategy 27 marker pixel shift is invalid');
+    const firstValue = mainSeries.firstValue();
+    const y = priceScale.priceToCoordinate(point.price, firstValue);
+    const price = priceScale.coordinateToPrice(y + deltaPixels, firstValue);
+    if (!Number.isFinite(y) || !Number.isFinite(price)) throw new Error('Strategy 27 shifted marker coordinate is invalid');
+    return { time: point.time, price };
+  }
+  return { dataUpdated, resolve, shift };
 }
 
 function verifyResolvedTime(chart, id, requestedTime) {
@@ -142,7 +150,7 @@ function verifyResolvedTime(chart, id, requestedTime) {
   return shape;
 }
 
-async function createAlignedShape(chart, point, options) {
+export async function createAlignedShape(chart, point, options) {
   const id = await chart.createShape(point, options);
   if (typeof id !== 'string' || id.length === 0) throw new Error('TradingView returned an invalid shape id');
   try {
@@ -154,24 +162,18 @@ async function createAlignedShape(chart, point, options) {
   return id;
 }
 
-export function createTradingViewEventLayer(target, {
-  maxEvents,
-  maxAgeMs,
+/** Shared causal candle placement; each caller owns cancellation of its wait. */
+export function createTradingViewMarkerPlacement(chart, {
   candleWaitMs = DEFAULT_CANDLE_WAIT_MS,
-}) {
-  if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error('Strategy 27 maxEvents is invalid');
-  if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error('Strategy 27 maxAgeMs is invalid');
+} = {}) {
   if (!Number.isInteger(candleWaitMs) || candleWaitMs < 1) {
     throw new Error('Strategy 27 candleWaitMs is invalid');
   }
-  const { chart } = target;
-  const { dataUpdated, resolve: resolveMarkerPoint } = createMarkerPointResolver(chart);
-  const registry = new Map();
-  const pendingCandleWaits = new Set();
-  let renderGeneration = 0;
+  const { dataUpdated, resolve: resolveMarkerPoint, shift } = createMarkerPointResolver(chart);
 
-  function waitForMarkerPoint(annotation, requestedGeneration) {
-    const immediate = resolveMarkerPoint(annotation);
+  function wait(annotation, { signal, gapPx = DIRECTIONAL_MARKER_GAP_PX }) {
+    if (signal.aborted) return Promise.resolve(null);
+    const immediate = resolveMarkerPoint(annotation, { gapPx });
     if (immediate) return Promise.resolve(immediate);
 
     return new Promise((resolve, reject) => {
@@ -182,7 +184,7 @@ export function createTradingViewEventLayer(target, {
       const cleanup = () => {
         clearTimeout(timeoutId);
         dataUpdated.unsubscribe(owner, onDataUpdated);
-        pendingCandleWaits.delete(cancel);
+        signal.removeEventListener('abort', cancel);
       };
       const finish = (value) => {
         if (settled) return;
@@ -198,12 +200,12 @@ export function createTradingViewEventLayer(target, {
       };
       const cancel = () => finish(null);
       const onDataUpdated = () => {
-        if (requestedGeneration !== renderGeneration) {
+        if (signal.aborted) {
           cancel();
           return;
         }
         try {
-          const point = resolveMarkerPoint(annotation);
+          const point = resolveMarkerPoint(annotation, { gapPx });
           if (point) finish(point);
         } catch (error) {
           fail(error);
@@ -215,7 +217,7 @@ export function createTradingViewEventLayer(target, {
           // Order-book events can occur during seconds with no trades, so a
           // one-second chart may never create the exact candle. Anchor those
           // events to the latest causal candle instead of a future bar.
-          const previousPoint = resolveMarkerPoint(annotation, { allowPreviousCandle: true });
+          const previousPoint = resolveMarkerPoint(annotation, { allowPreviousCandle: true, gapPx });
           if (previousPoint) {
             finish(previousPoint);
             return;
@@ -227,11 +229,26 @@ export function createTradingViewEventLayer(target, {
           fail(error);
         }
       }, candleWaitMs);
-      pendingCandleWaits.add(cancel);
+      signal.addEventListener('abort', cancel, { once: true });
       dataUpdated.subscribe(owner, onDataUpdated);
       onDataUpdated();
     });
   }
+  return Object.freeze({ wait, shift });
+}
+
+export function createTradingViewEventLayer(target, {
+  maxEvents,
+  maxAgeMs,
+  candleWaitMs = DEFAULT_CANDLE_WAIT_MS,
+}) {
+  if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error('Strategy 27 maxEvents is invalid');
+  if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error('Strategy 27 maxAgeMs is invalid');
+  const { chart } = target;
+  const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
+  const registry = new Map();
+  const pendingCandleWaits = new Set();
+  let renderGeneration = 0;
 
   function removeRecord(eventId) {
     const record = registry.get(eventId);
@@ -258,7 +275,14 @@ export function createTradingViewEventLayer(target, {
     }
     if (annotation.markerShape === null) return true;
     const requestedGeneration = renderGeneration;
-    const markerPoint = await waitForMarkerPoint(annotation, requestedGeneration);
+    const controller = new AbortController();
+    pendingCandleWaits.add(controller);
+    let markerPoint;
+    try {
+      markerPoint = await placement.wait(annotation, { signal: controller.signal });
+    } finally {
+      pendingCandleWaits.delete(controller);
+    }
     if (!markerPoint || requestedGeneration !== renderGeneration) return false;
     pruneAge(observedAtMs);
     ensureCapacityForNew();
@@ -285,7 +309,7 @@ export function createTradingViewEventLayer(target, {
     prune: pruneAge,
     clear() {
       renderGeneration += 1;
-      for (const cancel of [...pendingCandleWaits]) cancel();
+      for (const controller of [...pendingCandleWaits]) controller.abort();
       for (const eventId of [...registry.keys()]) removeRecord(eventId);
     },
     get size() {

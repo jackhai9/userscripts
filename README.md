@@ -40,7 +40,7 @@ This repository is the source of truth and distribution point for the scripts. G
 | Binance orderbook one-click order entry | Binance Futures | Click an orderbook price, infer the current open/close tab, fill quantity, and submit an order with a multiplier panel | This repository | [Install][install-binance-orderbook-trade] |
 | Binance Futures data panel | Binance Futures | Overlay open interest, long/short ratios, funding rate, basis, and directional signals | This repository | [Install][install-binance-trading-data] |
 | Binance CoinMarketCap data panel | Binance Futures | Show CoinMarketCap valuation, supply, and liquidity data for the current symbol | This repository | [Install][install-binance-coinmarketcap-data] |
-| Binance Strategy 27 event annotations | Binance Futures | Draw VPS-computed Strategy 27 event markers and outcome notes on the matching one-second chart | This repository | [Install][install-binance-strategy27-events] |
+| Binance Strategy 27 event annotations | Binance Futures | Draw VPS-computed order-flow observations and exploratory compound candidates on the matching one-second chart | This repository | [Install][install-binance-strategy27-events] |
 | Auto refresh | Any page | Refresh selected pages on a configurable schedule | This repository | [Install][install-auto-refresh] |
 | CoinMarketCap valuation labels | CoinMarketCap | Label and highlight circulating market cap and FDV / total valuation in the Chinese UI | This repository | [Install][install-coinmarketcap-valuation-helper] |
 | m3u8 downloader | Video pages | Enhanced m3u8 detection and export workflow for allowlisted video sites | This repository | [Install][install-m3u8] |
