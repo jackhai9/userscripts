@@ -836,7 +836,8 @@ test('continuous close captures only owned order-line saves and restores the cha
   assert.match(startCoalescingBody, /CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS/);
   assert.match(startCoalescingBody, /CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS/);
   assert.match(startCoalescingBody, /CONTINUOUS_CHART_SUBMIT_EVENT_WAIT_MS/);
-  assert.match(continuousBody, /const chartSaveCoalescer = startContinuousChartSaveCoalescing\(\)/);
+  assert.match(continuousBody, /let chartSaveCoalescer = null/);
+  assert.match(continuousBody, /chartSaveCoalescer = await startContinuousChartSaveCoalescing\(abortController.signal, actionSymbol\)/);
   assert.match(continuousBody, /startLadder\(\s*actionType,\s*continuousProgress,\s*chartSaveCoalescer/);
   assert.match(continuousBody, /stopContinuousChartSaveCoalescing\(chartSaveCoalescer\)/);
   assert.match(stopCoalescingBody, /coalescer\.stop\(\)/);

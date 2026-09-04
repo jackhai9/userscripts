@@ -106,16 +106,6 @@ function assertIndicatorBars(indicatorBars, directionLabel) {
   }
 }
 
-function average(values) {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function calculatePopulationStdDev(values, mean) {
-  return Math.sqrt(
-    values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / values.length,
-  );
-}
-
 function calculateBollingerIndicatorBars(bars, directionLabel) {
   assertBars(bars, directionLabel);
   const config = BOLLINGER_PATTERN;
@@ -123,21 +113,25 @@ function calculateBollingerIndicatorBars(bars, directionLabel) {
     if (index < config.maPeriod - 1) {
       return { ...bar, middle: null, upper: null, lower: null, ma60: null };
     }
-    const bollingerCloses = bars
-      .slice(index - config.bollingerPeriod + 1, index + 1)
-      .map((item) => item.close);
-    const maCloses = bars
-      .slice(index - config.maPeriod + 1, index + 1)
-      .map((item) => item.close);
-    const middle = average(bollingerCloses);
-    const deviation = calculatePopulationStdDev(bollingerCloses, middle)
-      * config.bollingerStdDev;
+    // Preserve the original ascending summation order at threshold boundaries,
+    // without allocating four temporary window arrays per historical candle.
+    const start = index - config.bollingerPeriod + 1;
+    let closeSum = 0;
+    for (let cursor = start; cursor <= index; cursor += 1) closeSum += bars[cursor].close;
+    const middle = closeSum / config.bollingerPeriod;
+    let squaredDeviationSum = 0;
+    for (let cursor = start; cursor <= index; cursor += 1) {
+      squaredDeviationSum += (bars[cursor].close - middle) ** 2;
+    }
+    const deviation = Math.sqrt(squaredDeviationSum / config.bollingerPeriod) * config.bollingerStdDev;
+    let maSum = 0;
+    for (let cursor = index - config.maPeriod + 1; cursor <= index; cursor += 1) maSum += bars[cursor].close;
     return {
       ...bar,
       middle,
       upper: middle + deviation,
       lower: middle - deviation,
-      ma60: average(maCloses),
+      ma60: maSum / config.maPeriod,
     };
   });
 }

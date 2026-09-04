@@ -38,6 +38,8 @@ export function getTradingViewDepthProfileGeometry(frame) {
   // fail closed when its runtime contract changes instead of drawing against an invented scale.
   const chart = frame?.contentWindow?.tradingViewApi?.activeChart?.();
   if (!chart) return null;
+  // Binance exposes the chart API before its model; pane access requires that model.
+  if (typeof chart.hasModel !== 'function' || !chart.hasModel()) return null;
   const paneHeights = chart.getAllPanesHeight?.();
   const panes = chart.getPanes?.();
   if (!Array.isArray(paneHeights) || !Array.isArray(panes) || !panes.length) return null;
@@ -70,8 +72,17 @@ export function getTradingViewDepthProfileGeometry(frame) {
   const visibleRange = scale.getVisiblePriceRange();
   const mode = scale.getMode();
   const inverted = scale.isInverted();
+  // Each synchronous render takes a fresh geometry. Reuse shared search-tree
+  // samples only within that snapshot, never across zoom or scale changes.
+  const coordinatePriceCache = new Map();
+  function readCoordinatePrice(coordinate) {
+    if (!coordinatePriceCache.has(coordinate)) {
+      coordinatePriceCache.set(coordinate, Number(scale.coordinateToPrice(coordinate)));
+    }
+    return coordinatePriceCache.get(coordinate);
+  }
   const sampledPrices = [0, height / 4, height / 2, height * 3 / 4, height]
-    .map((coordinate) => Number(scale.coordinateToPrice(coordinate)));
+    .map(readCoordinatePrice);
   const [topPrice, , , , bottomPrice] = sampledPrices;
   if (
     !visibleRange
@@ -109,7 +120,7 @@ export function getTradingViewDepthProfileGeometry(frame) {
       let high = height;
       for (let index = 0; index < PRICE_COORDINATE_SEARCH_STEPS; index += 1) {
         const middle = (low + high) / 2;
-        const middlePrice = Number(scale.coordinateToPrice(middle));
+        const middlePrice = readCoordinatePrice(middle);
         if (!Number.isFinite(middlePrice)) {
           throw new Error('TradingView price coordinate is invalid');
         }

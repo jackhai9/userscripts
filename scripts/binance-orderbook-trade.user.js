@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.191
+// @version      2.7.198
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3400,6 +3400,166 @@
     return { chartRoot, tradingViewApi: tradingViewApis[0] };
   }
 
+  // src/binance-orderbook-trade/core/chart-marker-save-controller.js
+  var controllers = /* @__PURE__ */ new WeakMap();
+  var QUIET_MS = 150;
+  var MAX_BURST_MS = 1e3;
+  var DRAIN_TIMEOUT_MS = 2e3;
+  function installTradingViewMarkerSaveController(api, {
+    onError = (error) => {
+      throw error;
+    },
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout
+  } = {}) {
+    if (controllers.has(api)) return controllers.get(api);
+    if (typeof api?.saveChart !== "function") {
+      throw new Error("TradingView marker save API is unavailable");
+    }
+    const originalSaveChart = api.saveChart;
+    let burst = null;
+    let tailTimer = null;
+    let mutations = 0;
+    let draining = 0;
+    let saveRequests = 0;
+    let serializations = 0;
+    let callbackCount = 0;
+    let failureCount = 0;
+    const idleWaiters = /* @__PURE__ */ new Set();
+    const busy = () => burst !== null || mutations !== 0 || tailTimer !== null;
+    function notifyIdle() {
+      if (busy()) return;
+      for (const resolve of idleWaiters) resolve();
+      idleWaiters.clear();
+    }
+    function reportErrors(errors) {
+      if (errors.length === 0) return;
+      failureCount += errors.length;
+      setTimeoutFn(() => onError(new AggregateError(errors, "TradingView marker save burst failed")), 0);
+    }
+    function flush() {
+      const pending = burst;
+      if (!pending) return;
+      burst = null;
+      clearTimeoutFn(pending.quietTimer);
+      clearTimeoutFn(pending.maxTimer);
+      const errors = [];
+      try {
+        if (pending.callbacks.length > 0) {
+          serializations += 1;
+          originalSaveChart.call(api, (snapshot) => {
+            const json = JSON.stringify(snapshot);
+            for (const callback of pending.callbacks) {
+              try {
+                callbackCount += 1;
+                callback(JSON.parse(json));
+              } catch (error) {
+                errors.push(error);
+              }
+            }
+          });
+        }
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        pending.callbacks.length = 0;
+        notifyIdle();
+        reportErrors(errors);
+      }
+    }
+    function scheduleQuiet() {
+      clearTimeoutFn(burst.quietTimer);
+      burst.quietTimer = setTimeoutFn(flush, QUIET_MS);
+    }
+    function markMutation() {
+      if (tailTimer !== null) clearTimeoutFn(tailTimer);
+      tailTimer = setTimeoutFn(() => {
+        tailTimer = null;
+        notifyIdle();
+      }, QUIET_MS);
+      if (!burst) {
+        burst = { callbacks: [], quietTimer: null, maxTimer: setTimeoutFn(flush, MAX_BURST_MS) };
+      }
+      scheduleQuiet();
+    }
+    function markerSaveChart(...args) {
+      const defaultCall = this === api && args.length <= 2 && typeof args[0] === "function" && args[1] === void 0;
+      if (api.saveChart !== markerSaveChart || !defaultCall) {
+        flush();
+        return originalSaveChart.apply(this, args);
+      }
+      if (!burst) return originalSaveChart.apply(this, args);
+      saveRequests += 1;
+      burst.callbacks.push(args[0]);
+      scheduleQuiet();
+      return void 0;
+    }
+    api.saveChart = markerSaveChart;
+    if (api.saveChart !== markerSaveChart) {
+      throw new Error("TradingView marker save wrapper could not be installed");
+    }
+    const controller = Object.freeze({
+      canMutate: () => draining === 0 && api.saveChart === markerSaveChart,
+      beginMutation() {
+        if (!controller.canMutate()) {
+          throw new Error("TradingView marker mutation overlaps a chart save owner");
+        }
+        mutations += 1;
+        markMutation();
+        let finished = false;
+        return () => {
+          if (finished) throw new Error("TradingView marker mutation finished twice");
+          finished = true;
+          mutations -= 1;
+          markMutation();
+        };
+      },
+      async runAfterIdle(action, { signal } = {}) {
+        throwIfAborted(signal);
+        draining += 1;
+        let timeout = null;
+        let wake = null;
+        try {
+          if (busy()) {
+            await waitForPromiseOrAbort(new Promise((resolve, reject) => {
+              wake = resolve;
+              idleWaiters.add(wake);
+              timeout = setTimeoutFn(() => {
+                const error = new Error("TradingView marker saves did not finish before the chart operation");
+                error.name = "TradingViewMarkerSaveDrainTimeoutError";
+                reject(error);
+              }, DRAIN_TIMEOUT_MS);
+            }), signal);
+          }
+          if (busy()) throw new Error("TradingView marker save drain was invalidated");
+          throwIfAborted(signal);
+          return await action();
+        } finally {
+          if (timeout !== null) clearTimeoutFn(timeout);
+          if (wake !== null) idleWaiters.delete(wake);
+          draining -= 1;
+        }
+      },
+      getStats: () => ({
+        busy: busy(),
+        mutations,
+        draining,
+        saveRequests,
+        serializations,
+        callbackCount,
+        failureCount,
+        pendingCallbacks: burst?.callbacks.length || 0
+      })
+    });
+    controllers.set(api, controller);
+    return controller;
+  }
+  function afterTradingViewMarkerSaves(api, action, options) {
+    throwIfAborted(options?.signal);
+    const controller = controllers.get(api);
+    return controller ? controller.runAfterIdle(action, options) : action();
+  }
+
   // src/binance-orderbook-trade/core/depth-profile-book.js
   var DepthProfileSequenceError = class extends Error {
     constructor(message) {
@@ -3921,6 +4081,7 @@
   function getTradingViewDepthProfileGeometry(frame) {
     const chart = frame?.contentWindow?.tradingViewApi?.activeChart?.();
     if (!chart) return null;
+    if (typeof chart.hasModel !== "function" || !chart.hasModel()) return null;
     const paneHeights = chart.getAllPanesHeight?.();
     const panes = chart.getPanes?.();
     if (!Array.isArray(paneHeights) || !Array.isArray(panes) || !panes.length) return null;
@@ -3940,7 +4101,14 @@
     const visibleRange = scale.getVisiblePriceRange();
     const mode = scale.getMode();
     const inverted = scale.isInverted();
-    const sampledPrices = [0, height / 4, height / 2, height * 3 / 4, height].map((coordinate) => Number(scale.coordinateToPrice(coordinate)));
+    const coordinatePriceCache = /* @__PURE__ */ new Map();
+    function readCoordinatePrice(coordinate) {
+      if (!coordinatePriceCache.has(coordinate)) {
+        coordinatePriceCache.set(coordinate, Number(scale.coordinateToPrice(coordinate)));
+      }
+      return coordinatePriceCache.get(coordinate);
+    }
+    const sampledPrices = [0, height / 4, height / 2, height * 3 / 4, height].map(readCoordinatePrice);
     const [topPrice, , , , bottomPrice] = sampledPrices;
     if (!visibleRange || !Number.isFinite(Number(visibleRange.from)) || !Number.isFinite(Number(visibleRange.to)) || !Number.isInteger(mode) || typeof inverted !== "boolean" || !Number.isFinite(topPrice) || !Number.isFinite(bottomPrice) || topPrice === bottomPrice) return null;
     const minPrice = Math.min(topPrice, bottomPrice);
@@ -3963,7 +4131,7 @@
         let high = height;
         for (let index = 0; index < PRICE_COORDINATE_SEARCH_STEPS; index += 1) {
           const middle = (low + high) / 2;
-          const middlePrice = Number(scale.coordinateToPrice(middle));
+          const middlePrice = readCoordinatePrice(middle);
           if (!Number.isFinite(middlePrice)) {
             throw new Error("TradingView price coordinate is invalid");
           }
@@ -4827,14 +4995,6 @@
       }
     }
   }
-  function average(values) {
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
-  }
-  function calculatePopulationStdDev(values, mean) {
-    return Math.sqrt(
-      values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length
-    );
-  }
   function calculateBollingerIndicatorBars(bars, directionLabel) {
     assertBars(bars, directionLabel);
     const config = BOLLINGER_PATTERN;
@@ -4842,16 +5002,23 @@
       if (index < config.maPeriod - 1) {
         return { ...bar, middle: null, upper: null, lower: null, ma60: null };
       }
-      const bollingerCloses = bars.slice(index - config.bollingerPeriod + 1, index + 1).map((item) => item.close);
-      const maCloses = bars.slice(index - config.maPeriod + 1, index + 1).map((item) => item.close);
-      const middle = average(bollingerCloses);
-      const deviation = calculatePopulationStdDev(bollingerCloses, middle) * config.bollingerStdDev;
+      const start = index - config.bollingerPeriod + 1;
+      let closeSum = 0;
+      for (let cursor = start; cursor <= index; cursor += 1) closeSum += bars[cursor].close;
+      const middle = closeSum / config.bollingerPeriod;
+      let squaredDeviationSum = 0;
+      for (let cursor = start; cursor <= index; cursor += 1) {
+        squaredDeviationSum += (bars[cursor].close - middle) ** 2;
+      }
+      const deviation = Math.sqrt(squaredDeviationSum / config.bollingerPeriod) * config.bollingerStdDev;
+      let maSum = 0;
+      for (let cursor = index - config.maPeriod + 1; cursor <= index; cursor += 1) maSum += bars[cursor].close;
       return {
         ...bar,
         middle,
         upper: middle + deviation,
         lower: middle - deviation,
-        ma60: average(maCloses)
+        ma60: maSum / config.maPeriod
       };
     });
   }
@@ -5069,6 +5236,9 @@
       "exportData",
       "getAllShapes",
       "getShapeById",
+      "hasModel",
+      "onDataLoaded",
+      "onIntervalChanged",
       "removeEntity",
       "resolution",
       "symbol"
@@ -5078,17 +5248,17 @@
       }
     }
   }
-  function readLiveShapeIds(chart) {
+  function readLiveShapes(chart) {
     const shapes = chart.getAllShapes();
     if (!Array.isArray(shapes)) {
       throw new Error("TradingView Bollinger alert shape list is invalid");
     }
-    const ids = /* @__PURE__ */ new Set();
+    const ids = /* @__PURE__ */ new Map();
     for (const [index, shape] of shapes.entries()) {
-      if (typeof shape?.id !== "string" || shape.id.length === 0) {
+      if (typeof shape?.id !== "string" || shape.id.length === 0 || typeof shape.name !== "string") {
         throw new Error(`TradingView Bollinger alert shape ${index} id is invalid`);
       }
-      ids.add(shape.id);
+      ids.set(shape.id, shape.name);
     }
     return ids;
   }
@@ -5109,12 +5279,86 @@
     }
     throw new Error(`TradingView Bollinger alert resolution is unsupported: ${resolution}`);
   }
+  function bollingerIntervalVisibility(resolution) {
+    const seconds = tradingViewResolutionToSeconds(resolution);
+    const value = String(resolution).toUpperCase();
+    const visibility = {
+      ticks: false,
+      seconds: false,
+      minutes: false,
+      hours: false,
+      days: false,
+      weeks: false,
+      months: false,
+      ranges: false
+    };
+    let unit;
+    let count;
+    if (value.endsWith("W")) {
+      unit = "weeks";
+      count = seconds / 604800;
+    } else if (value.endsWith("D")) {
+      unit = "days";
+      count = seconds / 86400;
+    } else if (seconds < 60) {
+      unit = "seconds";
+      count = seconds;
+    } else if (value.endsWith("S") || seconds < 3600) {
+      unit = "minutes";
+      count = Math.floor(seconds / 60);
+    } else {
+      unit = "hours";
+      count = Math.floor(seconds / 3600);
+    }
+    visibility[unit] = true;
+    visibility[`${unit}From`] = count;
+    visibility[`${unit}To`] = count;
+    return visibility;
+  }
+  function createBollingerIntervalSession(chart) {
+    const intervalChanged = chart.onIntervalChanged();
+    const dataLoaded = chart.onDataLoaded();
+    for (const subscription of [intervalChanged, dataLoaded]) {
+      if (typeof subscription?.subscribe !== "function" || typeof subscription.unsubscribe !== "function") {
+        throw new Error("TradingView Bollinger interval subscription is unavailable");
+      }
+    }
+    let revision = 0;
+    let disposed = false;
+    let awaitingData = !chart.dataReady();
+    const owner = {};
+    function invalidate() {
+      revision += 1;
+      awaitingData = true;
+    }
+    function complete() {
+      awaitingData = false;
+    }
+    intervalChanged.subscribe(owner, invalidate);
+    dataLoaded.subscribe(owner, complete);
+    return Object.freeze({
+      get revision() {
+        return revision;
+      },
+      isCurrent(candidate) {
+        return !disposed && !awaitingData && candidate === revision && chart.dataReady();
+      },
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        revision += 1;
+        intervalChanged.unsubscribe(owner, invalidate);
+        dataLoaded.unsubscribe(owner, complete);
+      }
+    });
+  }
   function findBearishBollingerChartTarget(document2, expectedRouteSymbol) {
     const baseTarget = findBinanceTradingViewTarget(document2);
     if (!baseTarget) return null;
     const chart = baseTarget.tradingViewApi.activeChart?.();
     if (!chart) return null;
     assertChartContract(chart);
+    if (!chart.hasModel()) return null;
     const resolution = chart.resolution();
     const resolutionSeconds = tradingViewResolutionToSeconds(resolution);
     const routeSymbol = routeSymbolFromChartSymbol(chart.symbol());
@@ -5137,6 +5381,7 @@
     const chart = baseTarget.tradingViewApi.activeChart?.();
     if (!chart) return false;
     assertChartContract(chart);
+    if (!chart.hasModel()) return false;
     return baseTarget.chartRoot === target.chartRoot && baseTarget.tradingViewApi === target.tradingViewApi && chart === target.chart && chart.resolution() === target.resolution && routeSymbolFromChartSymbol(chart.symbol()) === target.routeSymbol;
   }
   function assertExportSchema(schema) {
@@ -5168,7 +5413,7 @@
     }
     return bar;
   }
-  function parseClosedTradingViewBars(exported, { resolutionSeconds, observedAtSeconds }) {
+  function parseClosedTradingViewBars(exported, { resolutionSeconds, observedAtSeconds, resolution }) {
     if (!Number.isSafeInteger(resolutionSeconds) || resolutionSeconds < 1) {
       throw new Error("TradingView Bollinger alert resolution seconds are invalid");
     }
@@ -5180,10 +5425,23 @@
       throw new Error("TradingView Bollinger alert export data is invalid");
     }
     const bars = exported.data.map(parseExportRow);
+    const gridSeconds = Math.min(resolutionSeconds, 86400);
+    for (const [index, bar] of bars.entries()) {
+      if (bar.time % gridSeconds !== 0 || String(resolution).toUpperCase().endsWith("W") && new Date(bar.time * 1e3).getUTCDay() !== 1) {
+        throw new TradingViewBarSnapshotInconsistentError(
+          `TradingView Bollinger alert export interval grid is invalid at ${index}`
+        );
+      }
+    }
     for (let index = 1; index < bars.length; index += 1) {
       if (bars[index].time <= bars[index - 1].time) {
         throw new TradingViewBarSnapshotInconsistentError(
           `TradingView Bollinger alert export order is invalid at ${index}`
+        );
+      }
+      if ((bars[index].time - bars[index - 1].time) % resolutionSeconds !== 0) {
+        throw new TradingViewBarSnapshotInconsistentError(
+          `TradingView Bollinger alert export interval spacing is invalid at ${index}`
         );
       }
     }
@@ -5269,15 +5527,19 @@
       signals
     };
   }
-  async function exportClosedTradingViewBars(target, observedAtMs = Date.now()) {
-    if (!target.chart.dataReady()) return null;
+  async function exportClosedTradingViewBars(target, session, observedAtMs = Date.now()) {
+    const revision = session.revision;
+    const isCurrent = () => session.isCurrent(revision) && target.chart.resolution() === target.resolution && routeSymbolFromChartSymbol(target.chart.symbol()) === target.routeSymbol;
+    if (!isCurrent()) return null;
     const exported = await target.chart.exportData({ includedStudies: [] });
+    if (!isCurrent()) return null;
     return parseClosedTradingViewBars(exported, {
       resolutionSeconds: target.resolutionSeconds,
+      resolution: target.resolution,
       observedAtSeconds: observedAtMs / 1e3
     });
   }
-  function markerOptions(signal) {
+  function markerOptions(signal, resolution) {
     const direction = signal.direction;
     if (direction !== "bearish" && direction !== "bullish") {
       throw new Error(`TradingView Bollinger alert signal direction is invalid: ${direction}`);
@@ -5296,6 +5558,8 @@
         shape: "icon",
         icon: 61713,
         overrides: {
+          visible: true,
+          intervalsVisibilities: bollingerIntervalVisibility(resolution),
           color: isBullish ? "#0ECB81" : "#F6465D",
           size: 10
         }
@@ -5306,9 +5570,10 @@
         ...common,
         shape: isBullish ? "arrow_up" : "arrow_down",
         overrides: {
+          visible: true,
+          intervalsVisibilities: bollingerIntervalVisibility(resolution),
           color: isBullish ? "#0ECB81" : "#F6465D",
-          arrowColor: isBullish ? "#0ECB81" : "#F6465D",
-          fixedSize: true
+          arrowColor: isBullish ? "#0ECB81" : "#F6465D"
         }
       };
     }
@@ -5317,36 +5582,34 @@
         ...common,
         shape: isBullish ? "arrow_down" : "arrow_up",
         overrides: {
+          visible: true,
+          intervalsVisibilities: bollingerIntervalVisibility(resolution),
           color: isBullish ? "#F6465D" : "#0ECB81",
-          arrowColor: isBullish ? "#F6465D" : "#0ECB81",
-          fixedSize: true
+          arrowColor: isBullish ? "#F6465D" : "#0ECB81"
         }
       };
     }
     throw new Error(`TradingView Bollinger alert signal type is invalid: ${signal.type}`);
   }
-  function verifyResolvedTime(chart, id, requestedTime) {
-    const shape = chart.getShapeById(id);
+  function readMarkerPoint(shape) {
     const points = shape?.getPoints?.();
-    if (!Array.isArray(points) || points.length !== 1 || points[0].time !== requestedTime) {
-      throw new Error(`TradingView Bollinger alert time alignment failed for ${requestedTime}`);
+    if (!Array.isArray(points) || points.length !== 1 || !Number.isInteger(points[0].time) || !Number.isFinite(points[0].price)) {
+      throw new Error("TradingView Bollinger alert marker point is invalid");
     }
+    return points[0];
   }
-  async function createAlignedMarker(chart, signal) {
-    const id = await chart.createShape({
-      time: signal.time,
-      price: signal.markerPrice
-    }, markerOptions(signal));
-    if (typeof id !== "string" || id.length === 0) {
-      throw new Error("TradingView returned an invalid Bollinger alert shape id");
+  function markerPropertiesMatch(shape, options) {
+    const properties = shape.getProperties();
+    if (!properties || typeof properties !== "object") {
+      throw new Error("TradingView Bollinger alert marker properties are invalid");
     }
-    try {
-      verifyResolvedTime(chart, id, signal.time);
-    } catch (error) {
-      chart.removeEntity(id);
-      throw error;
+    if (options.icon !== void 0 && properties.icon !== options.icon) return false;
+    for (const [key, expected] of Object.entries(options.overrides)) {
+      if (key === "intervalsVisibilities") {
+        if (!properties[key] || Object.entries(expected).some(([unit, value]) => properties[key][unit] !== value)) return false;
+      } else if (properties[key] !== expected) return false;
     }
-    return id;
+    return true;
   }
   function normalizeSignal(signal, index, defaultDirection) {
     if (!signal || typeof signal !== "object") {
@@ -5361,10 +5624,34 @@
     }
     return signal.direction === direction ? signal : { ...signal, direction };
   }
-  function createMarkerLayer(target, defaultDirection) {
+  function createMarkerLayer(target, defaultDirection, {
+    canMutate: canMutateExternally = () => true,
+    onSaveError,
+    yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0))
+  } = {}) {
     const { chart } = target;
+    const saveController = installTradingViewMarkerSaveController(target.tradingViewApi, { onError: onSaveError });
+    const canMutate = () => canMutateExternally() && saveController.canMutate();
     const registry = /* @__PURE__ */ new Map();
+    const pendingMarkers = /* @__PURE__ */ new Set();
     let generation = 0;
+    let creating = 0;
+    function mutate(action) {
+      const finish = saveController.beginMutation();
+      try {
+        return action();
+      } finally {
+        finish();
+      }
+    }
+    function removePendingMarkers() {
+      if (pendingMarkers.size === 0 || !canMutate()) return;
+      const liveShapeIds = readLiveShapes(chart);
+      for (const id of pendingMarkers) {
+        if (liveShapeIds.has(id)) mutate(() => chart.removeEntity(id));
+        pendingMarkers.delete(id);
+      }
+    }
     function discardMissingSignals(liveShapeIds) {
       for (const [signalId, record] of registry) {
         if (!liveShapeIds.has(record.markerId)) registry.delete(signalId);
@@ -5374,7 +5661,7 @@
       const record = registry.get(signalId);
       if (!record) return;
       if (liveShapeIds.has(record.markerId)) {
-        chart.removeEntity(record.markerId);
+        mutate(() => chart.removeEntity(record.markerId));
         liveShapeIds.delete(record.markerId);
       }
       registry.delete(signalId);
@@ -5401,38 +5688,92 @@
           }
         }
         const requestedGeneration = generation;
-        if (!isCurrent()) return false;
-        const liveShapeIds = readLiveShapeIds(chart);
+        if (!isCurrent() || !canMutate()) return false;
+        removePendingMarkers();
+        let liveShapeIds = readLiveShapes(chart);
         discardMissingSignals(liveShapeIds);
         const nextIds = new Set(normalizedSignals.map((signal) => signal.id));
         for (const signalId of [...registry.keys()]) {
           if (!nextIds.has(signalId)) removeSignal(signalId, liveShapeIds);
         }
+        let batchStartedAt = performance.now();
+        let batchOps = 0;
         for (const signal of normalizedSignals) {
-          if (registry.has(signal.id)) continue;
-          if (!isCurrent()) return false;
-          const markerId = await createAlignedMarker(chart, signal);
-          if (requestedGeneration !== generation || !isCurrent()) {
-            chart.removeEntity(markerId);
-            return false;
+          if (batchOps > 0 && (batchOps >= 32 || performance.now() - batchStartedAt >= 8)) {
+            await yieldToBrowser();
+            if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
+            liveShapeIds = readLiveShapes(chart);
+            discardMissingSignals(liveShapeIds);
+            batchStartedAt = performance.now();
+            batchOps = 0;
           }
-          registry.set(signal.id, { markerId });
+          if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
+          batchOps += 1;
+          const options = markerOptions(signal, target.resolution);
+          const existing = registry.get(signal.id);
+          if (existing) {
+            const shape = chart.getShapeById(existing.markerId);
+            const point = readMarkerPoint(shape);
+            if (point.time === signal.time && point.price === existing.resolvedPrice && existing.markerPrice === signal.markerPrice && existing.type === signal.type && existing.direction === signal.direction && liveShapeIds.get(existing.markerId) === options.shape && markerPropertiesMatch(shape, options)) continue;
+            removeSignal(signal.id, liveShapeIds);
+          }
+          const finishCreation = saveController.beginMutation();
+          creating += 1;
+          try {
+            const markerId = await chart.createShape({ time: signal.time, price: signal.markerPrice }, {
+              ...options,
+              overrides: { ...options.overrides, visible: false }
+            });
+            if (typeof markerId !== "string" || markerId.length === 0) {
+              throw new Error("TradingView returned an invalid Bollinger alert shape id");
+            }
+            pendingMarkers.add(markerId);
+            if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
+            const shape = chart.getShapeById(markerId);
+            const point = readMarkerPoint(shape);
+            if (point.time !== signal.time) {
+              throw new Error(`TradingView Bollinger alert time alignment failed for ${signal.time}`);
+            }
+            if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
+            mutate(() => shape.setProperties(options.overrides, false));
+            if (!markerPropertiesMatch(shape, options)) {
+              throw new Error("TradingView Bollinger alert marker properties were not applied");
+            }
+            registry.set(signal.id, {
+              markerId,
+              resolvedPrice: point.price,
+              markerPrice: signal.markerPrice,
+              type: signal.type,
+              direction: signal.direction
+            });
+            pendingMarkers.delete(markerId);
+          } finally {
+            finishCreation();
+            creating -= 1;
+            removePendingMarkers();
+          }
         }
         return true;
       },
       clear() {
         generation += 1;
-        const liveShapeIds = readLiveShapeIds(chart);
+        if (!canMutate()) return false;
+        removePendingMarkers();
+        const liveShapeIds = readLiveShapes(chart);
         discardMissingSignals(liveShapeIds);
         for (const signalId of [...registry.keys()]) removeSignal(signalId, liveShapeIds);
+        return creating === 0 && pendingMarkers.size === 0;
       },
       get size() {
         return registry.size;
+      },
+      get saveStats() {
+        return saveController.getStats();
       }
     });
   }
-  function createBollingerMarkerLayer(target) {
-    return createMarkerLayer(target, void 0);
+  function createBollingerMarkerLayer(target, options) {
+    return createMarkerLayer(target, void 0, options);
   }
 
   // src/binance-orderbook-trade/index.user.js
@@ -5699,6 +6040,8 @@
     let bearishBollingerAlertTimer = null;
     let bearishBollingerAlertTask = null;
     let bearishBollingerAlertContext = null;
+    let bollingerIntervalSession = null;
+    const retiredBollingerLayers = /* @__PURE__ */ new Set();
     const controlledNativeButtons = /* @__PURE__ */ new Set();
     let lastObservedSymbol = getCurrentSymbol();
     const MODE_HINT_ID = "jh-binance-trade-mode-hint";
@@ -5756,37 +6099,69 @@
       });
     }
     function clearBearishBollingerAlertContext() {
-      if (!bearishBollingerAlertContext) return true;
+      if (bearishBollingerAlertContext) {
+        retiredBollingerLayers.add(bearishBollingerAlertContext.layer);
+        bearishBollingerAlertContext = null;
+      }
+      return clearRetiredBollingerLayers();
+    }
+    function clearRetiredBollingerLayers() {
       if (isTradingViewDrawingMutationBusy()) return false;
-      bearishBollingerAlertContext.layer.clear();
-      bearishBollingerAlertContext = null;
-      return true;
+      for (const layer of retiredBollingerLayers) {
+        if (layer.clear()) retiredBollingerLayers.delete(layer);
+      }
+      return retiredBollingerLayers.size === 0;
+    }
+    function disposeBollingerIntervalSession() {
+      if (bollingerIntervalSession) {
+        bollingerIntervalSession.session.dispose();
+        bollingerIntervalSession = null;
+      }
     }
     function isBearishBollingerAlertContextCurrent(context) {
-      return bearishBollingerAlertContext === context && !document.hidden && isFuturesTradingPage() && !isTradingViewDrawingMutationBusy() && getCurrentSymbol() === context.routeSymbol && isBearishBollingerChartTargetCurrent(document, context.target);
+      return bearishBollingerAlertContext === context && context.intervalSession === bollingerIntervalSession?.session && context.intervalSession.isCurrent(context.intervalRevision) && !document.hidden && isFuturesTradingPage() && !isTradingViewDrawingMutationBusy() && getCurrentSymbol() === context.routeSymbol && isBearishBollingerChartTargetCurrent(document, context.target);
     }
     async function synchronizeBearishBollingerAlerts() {
-      if (document.hidden || !isFuturesTradingPage() || isTradingViewDrawingMutationBusy()) return;
+      if (document.hidden || !isFuturesTradingPage()) return;
       const routeSymbol = getCurrentSymbol();
       if (!routeSymbol) return;
-      if (bearishBollingerAlertContext && bearishBollingerAlertContext.routeSymbol !== routeSymbol && !clearBearishBollingerAlertContext()) return;
       let target;
       try {
         target = findBearishBollingerChartTarget(document, routeSymbol);
       } catch (error) {
+        disposeBollingerIntervalSession();
         clearBearishBollingerAlertContext();
-        err("布林带形态预警已停止:", error);
+        err("Bollinger chart lookup failed for this sample:", error);
         return;
       }
-      if (!target) return;
-      const contextMatches = bearishBollingerAlertContext && bearishBollingerAlertContext.target.chart === target.chart && bearishBollingerAlertContext.routeSymbol === routeSymbol && bearishBollingerAlertContext.resolution === target.resolution;
+      if (!target) {
+        disposeBollingerIntervalSession();
+        clearBearishBollingerAlertContext();
+        return;
+      }
+      if (!bollingerIntervalSession || bollingerIntervalSession.chart !== target.chart || bollingerIntervalSession.routeSymbol !== routeSymbol) {
+        disposeBollingerIntervalSession();
+        bollingerIntervalSession = {
+          chart: target.chart,
+          routeSymbol,
+          session: createBollingerIntervalSession(target.chart)
+        };
+      }
+      const intervalSession = bollingerIntervalSession.session;
+      const contextMatches = bearishBollingerAlertContext && bearishBollingerAlertContext.target.chart === target.chart && bearishBollingerAlertContext.target.chartRoot === target.chartRoot && bearishBollingerAlertContext.target.tradingViewApi === target.tradingViewApi && bearishBollingerAlertContext.routeSymbol === routeSymbol && bearishBollingerAlertContext.resolution === target.resolution && bearishBollingerAlertContext.intervalSession === intervalSession && bearishBollingerAlertContext.intervalRevision === intervalSession.revision;
       if (!contextMatches) {
         if (!clearBearishBollingerAlertContext()) return;
+        if (!intervalSession.isCurrent(intervalSession.revision) || isTradingViewDrawingMutationBusy()) return;
         bearishBollingerAlertContext = {
           routeSymbol,
           resolution: target.resolution,
+          intervalSession,
+          intervalRevision: intervalSession.revision,
           target,
-          layer: createBollingerMarkerLayer(target),
+          layer: createBollingerMarkerLayer(target, {
+            canMutate: () => !isTradingViewDrawingMutationBusy(),
+            onSaveError: (error) => err("Bollinger chart save failed:", error)
+          }),
           failed: false,
           cleanupPending: false,
           lastProcessedClosedBarsWindowKey: null,
@@ -5794,6 +6169,7 @@
           lastProcessedSignals: null
         };
       }
+      if (isTradingViewDrawingMutationBusy() || !clearRetiredBollingerLayers()) return;
       const context = bearishBollingerAlertContext;
       if (context.cleanupPending) {
         context.layer.clear();
@@ -5801,7 +6177,7 @@
       }
       if (context.failed || bearishBollingerAlertTask) return;
       const task = (async () => {
-        const bars = await exportClosedTradingViewBars(context.target);
+        const bars = await exportClosedTradingViewBars(context.target, context.intervalSession);
         if (!bars || !isBearishBollingerAlertContextCurrent(context)) return;
         if (bars.length === 0) return;
         const result = await reconcileBearishBollingerAlertWindow({
@@ -5822,7 +6198,7 @@
       })();
       bearishBollingerAlertTask = task;
       task.catch((error) => {
-        if (bearishBollingerAlertContext !== context) return;
+        if (bearishBollingerAlertContext !== context || context.intervalSession !== bollingerIntervalSession?.session || context.intervalRevision !== context.intervalSession.revision) return;
         const failureKind = applyBollingerAlertTaskFailure(context, error);
         if (failureKind === "retry") {
           warn("布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:", error);
@@ -5844,6 +6220,42 @@
     function stopBearishBollingerAlertMonitor() {
       if (bearishBollingerAlertTimer) clearInterval(bearishBollingerAlertTimer);
       bearishBollingerAlertTimer = null;
+      disposeBollingerIntervalSession();
+      clearBearishBollingerAlertContext();
+    }
+    function getBollingerAlertDiagnostics() {
+      const context = bearishBollingerAlertContext;
+      const session = bollingerIntervalSession?.session || null;
+      const chart = bollingerIntervalSession?.chart || context?.target.chart || null;
+      const nativeModelReady = chart ? chart.hasModel() : null;
+      const ownerFlags = {
+        ladderTask: ladderTask !== null,
+        continuousLadderTask: continuousLadderTask !== null,
+        singleOrderTask: singleOrderTask !== null,
+        cancelCurrentSymbolOpenOrdersTask: cancelCurrentSymbolOpenOrdersTask !== null,
+        chartOrdersRecoveryTask: chartOrdersRecoveryTask !== null,
+        continuousChartSaveController: continuousChartSaveController !== null
+      };
+      return {
+        timerRunning: bearishBollingerAlertTimer !== null,
+        taskPending: bearishBollingerAlertTask !== null,
+        contextPresent: context !== null,
+        failed: context ? context.failed : null,
+        cleanupPending: context ? context.cleanupPending : null,
+        cachedSignalCount: context?.lastProcessedSignals === null || !context ? null : context.lastProcessedSignals.length,
+        layerSize: context ? context.layer.size : null,
+        markerSaveStats: context ? context.layer.saveStats : null,
+        retiredCount: retiredBollingerLayers.size,
+        sessionPresent: session !== null,
+        sessionRevision: session ? session.revision : null,
+        contextIntervalRevision: context ? context.intervalRevision : null,
+        sessionMatchesContext: context && session ? context.intervalSession === session : null,
+        sessionCurrent: session && nativeModelReady ? session.isCurrent(session.revision) : null,
+        nativeModelReady,
+        nativeDataReady: nativeModelReady ? chart.dataReady() : null,
+        mutationBlocked: Object.values(ownerFlags).some(Boolean),
+        ownerFlags
+      };
     }
     function parseJsonSafe(raw) {
       if (!raw || typeof raw !== "string") return null;
@@ -8596,16 +9008,23 @@
         formatContinuousLadderProgress(label, phase, progress, titleReason)
       );
     }
-    function startContinuousChartSaveCoalescing() {
+    async function startContinuousChartSaveCoalescing(signal, actionSymbol) {
       try {
         const target = findBinanceTradingViewTarget(document);
         if (!target) return null;
-        return createTradingViewContinuousSaveController(target.tradingViewApi, {
-          settleQuietMs: CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS,
-          maxWaitMs: CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS,
-          submitEventDiscoveryMs: CONTINUOUS_CHART_SUBMIT_EVENT_WAIT_MS
-        });
+        return await afterTradingViewMarkerSaves(target.tradingViewApi, () => {
+          throwIfAborted(signal);
+          if (!isCurrentObservedSymbol(actionSymbol) || findBinanceTradingViewTarget(document)?.tradingViewApi !== target.tradingViewApi) {
+            throw createLadderStoppedError();
+          }
+          return createTradingViewContinuousSaveController(target.tradingViewApi, {
+            settleQuietMs: CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS,
+            maxWaitMs: CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS,
+            submitEventDiscoveryMs: CONTINUOUS_CHART_SUBMIT_EVENT_WAIT_MS
+          });
+        }, { signal });
       } catch (error) {
+        if (isLadderStoppedError(error) || error.name === "TradingViewMarkerSaveDrainTimeoutError") throw error;
         warn("未启用连续交易图表保存合并:", error?.message || error);
         return null;
       }
@@ -8639,12 +9058,16 @@
       const abortController = new AbortController();
       const continuousProgress = createContinuousLadderProgress();
       const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
-      const chartSaveCoalescer = startContinuousChartSaveCoalescing();
+      let chartSaveCoalescer = null;
       continuousLadderAbortController = abortController;
       continuousChartSaveController = chartSaveCoalescer;
       activeContinuousLadderActionType = actionType;
       activeContinuousLadderProgress = continuousProgress;
       const executionTask = (async () => {
+        await Promise.resolve();
+        chartSaveCoalescer = await startContinuousChartSaveCoalescing(abortController.signal, actionSymbol);
+        continuousChartSaveController = chartSaveCoalescer;
+        throwIfAborted(abortController.signal);
         while (true) {
           throwIfAborted(abortController.signal);
           const outcome = await startLadder(
@@ -9853,15 +10276,20 @@
         throw new Error("图表“显示当前委托”菜单未关闭");
       }
     }
-    async function toggleBinanceChartOrdersWithCoalescedSave(target, checkbox, expectedChecked, expectDrawingEvents) {
+    async function toggleBinanceChartOrdersWithCoalescedSave(target, expectedChecked, expectDrawingEvents) {
       if (typeof expectDrawingEvents !== "boolean") {
         throw new Error("图表委托线保存参数异常");
       }
       let popoverCloseOutcomePromise = null;
-      const coalescingOutcome = await coalesceTradingViewDrawingSaves(
+      const coalescingOutcome = await afterTradingViewMarkerSaves(target.tradingViewApi, () => coalesceTradingViewDrawingSaves(
         target.tradingViewApi,
         async () => {
-          checkbox.click();
+          assertSameBinanceChartOrdersTarget(target, getBinanceChartOrdersTarget2());
+          const current = findActiveBinanceChartOrdersPopover(document, target, isVisibleElement);
+          if (!current || current.checked === expectedChecked) {
+            throw new Error("Chart orders checkbox changed while waiting for marker saves");
+          }
+          current.checkbox.click();
           await waitForBinanceChartOrdersPopover(target, expectedChecked);
           popoverCloseOutcomePromise = closeBinanceChartOrdersPopover(target).then(
             () => null,
@@ -9869,7 +10297,7 @@
           );
         },
         expectDrawingEvents ? {} : { eventDiscoveryTimeoutMs: 0 }
-      ).then(
+      )).then(
         (result2) => ({ result: result2, error: null }),
         (error) => ({ result: null, error })
       );
@@ -9889,7 +10317,6 @@
       if (!current.checked) {
         await toggleBinanceChartOrdersWithCoalescedSave(
           target,
-          current.checkbox,
           true,
           true
         );
@@ -10061,6 +10488,18 @@
           setLadderStatus(message);
           return { ok: false, status: "cancel_button_not_found", message };
         }
+        const saveTarget = findBinanceTradingViewTarget(document);
+        if (saveTarget) await afterTradingViewMarkerSaves(saveTarget.tradingViewApi, () => {
+        });
+        if (!isCurrentObservedSymbol(symbol)) {
+          throw new Error("Symbol changed while waiting for chart marker saves");
+        }
+        openOrdersScope = await waitForActiveOpenOrdersScope();
+        if (!isCurrentObservedSymbol(symbol) || !openOrdersScope || !isOpenOrdersScopeConfirmedForSymbol(openOrdersScope, symbol)) {
+          throw new Error("Current-symbol orders scope changed while waiting for chart marker saves");
+        }
+        cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope);
+        if (!cancelAllButton) throw new Error("Cancel control changed while waiting for chart marker saves");
         const dialogDecisionWatcher = createBinanceCancelAllDialogDecisionWatcher({
           onConfirmed: armChartSaveCoalescing
         });
@@ -12671,6 +13110,7 @@
     installUiSyncObservers();
     function clearSymbolOwnedRuntimeState(symbol) {
       stopDepthProfileSession();
+      disposeBollingerIntervalSession();
       clearBearishBollingerAlertContext();
       depthProfileData = null;
       depthProfileFailedSymbol = null;
@@ -12815,6 +13255,9 @@
     }
     window.__TM_CLOSE_LONG_DEBUG__ = {
       cfg: CFG,
+      get bollingerAlertState() {
+        return getBollingerAlertDiagnostics();
+      },
       get continuousChartSaveStats() {
         return continuousChartSaveController?.getStats() || null;
       },

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.191
+// @version      2.7.198
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -204,6 +204,9 @@ import {
   createTradingViewRemovalSaveController,
 } from './core/chart-save-coalescer.js';
 import { findBinanceTradingViewTarget } from './dom/tradingview-target.js';
+import {
+  afterTradingViewMarkerSaves,
+} from './core/chart-marker-save-controller.js';
 import { installBinanceNativeDepthSource } from './core/binance-native-depth-source.js';
 import { createDepthProfileSession } from './core/depth-profile-session.js';
 import {
@@ -241,6 +244,7 @@ import {
   isBollingerDrawingMutationBlocked,
 } from './core/bearish-bollinger-pattern.js';
 import {
+  createBollingerIntervalSession,
   createBollingerMarkerLayer,
   exportClosedTradingViewBars,
   findBearishBollingerChartTarget,
@@ -521,6 +525,8 @@ import {
   let bearishBollingerAlertTimer = null;
   let bearishBollingerAlertTask = null;
   let bearishBollingerAlertContext = null;
+  let bollingerIntervalSession = null;
+  const retiredBollingerLayers = new Set();
   const controlledNativeButtons = new Set();
   let lastObservedSymbol = getCurrentSymbol();
 
@@ -593,16 +599,33 @@ import {
   }
 
   function clearBearishBollingerAlertContext() {
-    if (!bearishBollingerAlertContext) return true;
+    if (bearishBollingerAlertContext) {
+      retiredBollingerLayers.add(bearishBollingerAlertContext.layer);
+      bearishBollingerAlertContext = null;
+    }
+    return clearRetiredBollingerLayers();
+  }
+
+  function clearRetiredBollingerLayers() {
     if (isTradingViewDrawingMutationBusy()) return false;
-    bearishBollingerAlertContext.layer.clear();
-    bearishBollingerAlertContext = null;
-    return true;
+    for (const layer of retiredBollingerLayers) {
+      if (layer.clear()) retiredBollingerLayers.delete(layer);
+    }
+    return retiredBollingerLayers.size === 0;
+  }
+
+  function disposeBollingerIntervalSession() {
+    if (bollingerIntervalSession) {
+      bollingerIntervalSession.session.dispose();
+      bollingerIntervalSession = null;
+    }
   }
 
   function isBearishBollingerAlertContextCurrent(context) {
     return (
       bearishBollingerAlertContext === context
+      && context.intervalSession === bollingerIntervalSession?.session
+      && context.intervalSession.isCurrent(context.intervalRevision)
       && !document.hidden
       && isFuturesTradingPage()
       && !isTradingViewDrawingMutationBusy()
@@ -612,37 +635,60 @@ import {
   }
 
   async function synchronizeBearishBollingerAlerts() {
-    if (document.hidden || !isFuturesTradingPage() || isTradingViewDrawingMutationBusy()) return;
+    if (document.hidden || !isFuturesTradingPage()) return;
     const routeSymbol = getCurrentSymbol();
     if (!routeSymbol) return;
-
-    if (
-      bearishBollingerAlertContext
-      && bearishBollingerAlertContext.routeSymbol !== routeSymbol
-      && !clearBearishBollingerAlertContext()
-    ) return;
 
     let target;
     try {
       target = findBearishBollingerChartTarget(document, routeSymbol);
     } catch (error) {
+      disposeBollingerIntervalSession();
       clearBearishBollingerAlertContext();
-      err('布林带形态预警已停止:', error);
+      err('Bollinger chart lookup failed for this sample:', error);
       return;
     }
-    if (!target) return;
+    if (!target) {
+      disposeBollingerIntervalSession();
+      clearBearishBollingerAlertContext();
+      return;
+    }
+
+    if (
+      !bollingerIntervalSession
+      || bollingerIntervalSession.chart !== target.chart
+      || bollingerIntervalSession.routeSymbol !== routeSymbol
+    ) {
+      disposeBollingerIntervalSession();
+      bollingerIntervalSession = {
+        chart: target.chart,
+        routeSymbol,
+        session: createBollingerIntervalSession(target.chart),
+      };
+    }
+    const intervalSession = bollingerIntervalSession.session;
 
     const contextMatches = bearishBollingerAlertContext
       && bearishBollingerAlertContext.target.chart === target.chart
+      && bearishBollingerAlertContext.target.chartRoot === target.chartRoot
+      && bearishBollingerAlertContext.target.tradingViewApi === target.tradingViewApi
       && bearishBollingerAlertContext.routeSymbol === routeSymbol
-      && bearishBollingerAlertContext.resolution === target.resolution;
+      && bearishBollingerAlertContext.resolution === target.resolution
+      && bearishBollingerAlertContext.intervalSession === intervalSession
+      && bearishBollingerAlertContext.intervalRevision === intervalSession.revision;
     if (!contextMatches) {
       if (!clearBearishBollingerAlertContext()) return;
+      if (!intervalSession.isCurrent(intervalSession.revision) || isTradingViewDrawingMutationBusy()) return;
       bearishBollingerAlertContext = {
         routeSymbol,
         resolution: target.resolution,
+        intervalSession,
+        intervalRevision: intervalSession.revision,
         target,
-        layer: createBollingerMarkerLayer(target),
+        layer: createBollingerMarkerLayer(target, {
+          canMutate: () => !isTradingViewDrawingMutationBusy(),
+          onSaveError: (error) => err('Bollinger chart save failed:', error),
+        }),
         failed: false,
         cleanupPending: false,
         lastProcessedClosedBarsWindowKey: null,
@@ -651,6 +697,8 @@ import {
       };
     }
 
+    if (isTradingViewDrawingMutationBusy() || !clearRetiredBollingerLayers()) return;
+
     const context = bearishBollingerAlertContext;
     if (context.cleanupPending) {
       context.layer.clear();
@@ -658,7 +706,7 @@ import {
     }
     if (context.failed || bearishBollingerAlertTask) return;
     const task = (async () => {
-      const bars = await exportClosedTradingViewBars(context.target);
+      const bars = await exportClosedTradingViewBars(context.target, context.intervalSession);
       if (!bars || !isBearishBollingerAlertContextCurrent(context)) return;
       if (bars.length === 0) return;
       const result = await reconcileBearishBollingerAlertWindow({
@@ -679,7 +727,11 @@ import {
     })();
     bearishBollingerAlertTask = task;
     task.catch((error) => {
-      if (bearishBollingerAlertContext !== context) return;
+      if (
+        bearishBollingerAlertContext !== context
+        || context.intervalSession !== bollingerIntervalSession?.session
+        || context.intervalRevision !== context.intervalSession.revision
+      ) return;
       const failureKind = applyBollingerAlertTaskFailure(context, error);
       if (failureKind === 'retry') {
         // TradingView can expose one feed-update race through exportData(). Keep the
@@ -706,6 +758,46 @@ import {
   function stopBearishBollingerAlertMonitor() {
     if (bearishBollingerAlertTimer) clearInterval(bearishBollingerAlertTimer);
     bearishBollingerAlertTimer = null;
+    // Invalidate even while a trade/save owner defers physical marker removal.
+    disposeBollingerIntervalSession();
+    clearBearishBollingerAlertContext();
+  }
+
+  /** On-demand lifecycle diagnostics; never exports market data or mutates drawings. */
+  function getBollingerAlertDiagnostics() {
+    const context = bearishBollingerAlertContext;
+    const session = bollingerIntervalSession?.session || null;
+    const chart = bollingerIntervalSession?.chart || context?.target.chart || null;
+    const nativeModelReady = chart ? chart.hasModel() : null;
+    const ownerFlags = {
+      ladderTask: ladderTask !== null,
+      continuousLadderTask: continuousLadderTask !== null,
+      singleOrderTask: singleOrderTask !== null,
+      cancelCurrentSymbolOpenOrdersTask: cancelCurrentSymbolOpenOrdersTask !== null,
+      chartOrdersRecoveryTask: chartOrdersRecoveryTask !== null,
+      continuousChartSaveController: continuousChartSaveController !== null,
+    };
+    return {
+      timerRunning: bearishBollingerAlertTimer !== null,
+      taskPending: bearishBollingerAlertTask !== null,
+      contextPresent: context !== null,
+      failed: context ? context.failed : null,
+      cleanupPending: context ? context.cleanupPending : null,
+      cachedSignalCount: context?.lastProcessedSignals === null || !context
+        ? null : context.lastProcessedSignals.length,
+      layerSize: context ? context.layer.size : null,
+      markerSaveStats: context ? context.layer.saveStats : null,
+      retiredCount: retiredBollingerLayers.size,
+      sessionPresent: session !== null,
+      sessionRevision: session ? session.revision : null,
+      contextIntervalRevision: context ? context.intervalRevision : null,
+      sessionMatchesContext: context && session ? context.intervalSession === session : null,
+      sessionCurrent: session && nativeModelReady ? session.isCurrent(session.revision) : null,
+      nativeModelReady,
+      nativeDataReady: nativeModelReady ? chart.dataReady() : null,
+      mutationBlocked: Object.values(ownerFlags).some(Boolean),
+      ownerFlags,
+    };
   }
 
   function parseJsonSafe(raw) {
@@ -4009,16 +4101,24 @@ import {
     );
   }
 
-  function startContinuousChartSaveCoalescing() {
+  async function startContinuousChartSaveCoalescing(signal, actionSymbol) {
     try {
       const target = findBinanceTradingViewTarget(document);
       if (!target) return null;
-      return createTradingViewContinuousSaveController(target.tradingViewApi, {
-        settleQuietMs: CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS,
-        maxWaitMs: CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS,
-        submitEventDiscoveryMs: CONTINUOUS_CHART_SUBMIT_EVENT_WAIT_MS,
-      });
+      return await afterTradingViewMarkerSaves(target.tradingViewApi, () => {
+        throwIfAborted(signal);
+        if (!isCurrentObservedSymbol(actionSymbol)
+          || findBinanceTradingViewTarget(document)?.tradingViewApi !== target.tradingViewApi) {
+          throw createLadderStoppedError();
+        }
+        return createTradingViewContinuousSaveController(target.tradingViewApi, {
+          settleQuietMs: CONTINUOUS_CHART_REMOVE_SAVE_QUIET_MS,
+          maxWaitMs: CONTINUOUS_CHART_REMOVE_SAVE_MAX_WAIT_MS,
+          submitEventDiscoveryMs: CONTINUOUS_CHART_SUBMIT_EVENT_WAIT_MS,
+        });
+      }, { signal });
     } catch (error) {
+      if (isLadderStoppedError(error) || error.name === 'TradingViewMarkerSaveDrainTimeoutError') throw error;
       warn('未启用连续交易图表保存合并:', error?.message || error);
       return null;
     }
@@ -4056,13 +4156,18 @@ import {
     const abortController = new AbortController();
     const continuousProgress = createContinuousLadderProgress();
     const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
-    const chartSaveCoalescer = startContinuousChartSaveCoalescing();
+    let chartSaveCoalescer = null;
     continuousLadderAbortController = abortController;
     continuousChartSaveController = chartSaveCoalescer;
     activeContinuousLadderActionType = actionType;
     activeContinuousLadderProgress = continuousProgress;
 
     const executionTask = (async () => {
+      // Publish the single-flight task before waiting, blocking new marker work.
+      await Promise.resolve();
+      chartSaveCoalescer = await startContinuousChartSaveCoalescing(abortController.signal, actionSymbol);
+      continuousChartSaveController = chartSaveCoalescer;
+      throwIfAborted(abortController.signal);
       while (true) {
         throwIfAborted(abortController.signal);
         const outcome = await startLadder(
@@ -5483,7 +5588,6 @@ import {
 
   async function toggleBinanceChartOrdersWithCoalescedSave(
     target,
-    checkbox,
     expectedChecked,
     expectDrawingEvents,
   ) {
@@ -5491,10 +5595,15 @@ import {
       throw new Error('图表委托线保存参数异常');
     }
     let popoverCloseOutcomePromise = null;
-    const coalescingOutcome = await coalesceTradingViewDrawingSaves(
+    const coalescingOutcome = await afterTradingViewMarkerSaves(target.tradingViewApi, () => coalesceTradingViewDrawingSaves(
       target.tradingViewApi,
       async () => {
-        checkbox.click();
+        assertSameBinanceChartOrdersTarget(target, getBinanceChartOrdersTarget());
+        const current = findActiveBinanceChartOrdersPopover(document, target, isVisibleElement);
+        if (!current || current.checked === expectedChecked) {
+          throw new Error('Chart orders checkbox changed while waiting for marker saves');
+        }
+        current.checkbox.click();
         await waitForBinanceChartOrdersPopover(target, expectedChecked);
         // Start hiding native setup UI immediately, but keep its failure outside
         // the action so the coalescer can still replay the final chart snapshot.
@@ -5504,7 +5613,7 @@ import {
         );
       },
       expectDrawingEvents ? {} : { eventDiscoveryTimeoutMs: 0 },
-    ).then(
+    )).then(
       (result) => ({ result, error: null }),
       (error) => ({ result: null, error }),
     );
@@ -5528,7 +5637,6 @@ import {
     if (!current.checked) {
       await toggleBinanceChartOrdersWithCoalescedSave(
         target,
-        current.checkbox,
         true,
         true,
       );
@@ -5718,6 +5826,21 @@ import {
         return { ok: false, status: 'cancel_button_not_found', message };
       }
 
+      // Drain before opening the native confirmation; its onConfirmed hook must
+      // remain synchronous and must never delay or replay a financial click.
+      const saveTarget = findBinanceTradingViewTarget(document);
+      if (saveTarget) await afterTradingViewMarkerSaves(saveTarget.tradingViewApi, () => {});
+      if (!isCurrentObservedSymbol(symbol)) {
+        throw new Error('Symbol changed while waiting for chart marker saves');
+      }
+      // React may replace the control during the bounded drain.
+      openOrdersScope = await waitForActiveOpenOrdersScope();
+      if (!isCurrentObservedSymbol(symbol) || !openOrdersScope
+        || !isOpenOrdersScopeConfirmedForSymbol(openOrdersScope, symbol)) {
+        throw new Error('Current-symbol orders scope changed while waiting for chart marker saves');
+      }
+      cancelAllButton = findCurrentSymbolCancelAllButton(openOrdersScope);
+      if (!cancelAllButton) throw new Error('Cancel control changed while waiting for chart marker saves');
       const dialogDecisionWatcher = createBinanceCancelAllDialogDecisionWatcher({
         onConfirmed: armChartSaveCoalescing,
       });
@@ -8716,6 +8839,7 @@ import {
   // ── 切换币种 / 首次进入时触发杠杆重置 ──
   function clearSymbolOwnedRuntimeState(symbol) {
     stopDepthProfileSession();
+    disposeBollingerIntervalSession();
     clearBearishBollingerAlertContext();
     depthProfileData = null;
     depthProfileFailedSymbol = null;
@@ -8875,6 +8999,7 @@ import {
 
   window.__TM_CLOSE_LONG_DEBUG__ = {
     cfg: CFG,
+    get bollingerAlertState() { return getBollingerAlertDiagnostics(); },
     get continuousChartSaveStats() {
       return continuousChartSaveController?.getStats() || null;
     },
