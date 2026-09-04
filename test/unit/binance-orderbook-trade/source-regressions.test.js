@@ -3,7 +3,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const source = await readFile(new URL('../../../src/binance-orderbook-trade/index.user.js', import.meta.url), 'utf8');
-const bollingerPatternSource = await readFile(new URL('../../../src/binance-orderbook-trade/core/bearish-bollinger-pattern.js', import.meta.url), 'utf8');
 const generatedSource = await readFile(new URL('../../../scripts/binance-orderbook-trade.user.js', import.meta.url), 'utf8');
 const ladderPlanSource = await readFile(new URL('../../../src/binance-orderbook-trade/core/ladder-plan.js', import.meta.url), 'utf8');
 const chartSaveCoalescerSource = await readFile(new URL('../../../src/binance-orderbook-trade/core/chart-save-coalescer.js', import.meta.url), 'utf8');
@@ -51,27 +50,6 @@ test('route changes are event-driven with one low-frequency watchdog', () => {
   assert.match(visibilityBody, /syncRouteState\(\)/);
 });
 
-test('bearish chart alerts reconcile every loaded closed-bar window without silent truncation', () => {
-  const synchronizeBody = readFunctionBody('synchronizeBearishBollingerAlerts');
-  assert.match(synchronizeBody, /reconcileBearishBollingerAlertWindow\(\{/);
-  assert.match(synchronizeBody, /lastProcessedClosedBarsWindowKey/);
-  assert.match(synchronizeBody, /lastProcessedSignals/);
-  assert.doesNotMatch(synchronizeBody, /lastProcessedClosedBarTime/);
-  assert.doesNotMatch(synchronizeBody, /\.slice\(-BEARISH_BOLLINGER_ALERT_MAX_MARKERS\)/);
-  assert.doesNotMatch(source, /BEARISH_BOLLINGER_ALERT_MAX_MARKERS/);
-  assert.doesNotMatch(source, /nextExportAtMs/);
-});
-
-test('Bollinger chart alert failures distinguish snapshot races from contract failures', () => {
-  const synchronizeBody = readFunctionBody('synchronizeBearishBollingerAlerts');
-  const snapshotBranchStart = synchronizeBody.indexOf("failureKind === 'retry'");
-  assert.ok(snapshotBranchStart >= 0);
-  assert.match(synchronizeBody, /applyBollingerAlertTaskFailure\(context, error\)/);
-  assert.match(synchronizeBody, /failureKind === 'retry'[\s\S]*等待下一次采样/);
-  assert.match(synchronizeBody, /context\.cleanupPending[\s\S]*context\.layer\.clear\(\)/);
-  assert.match(bollingerPatternSource, /context\.failed = true;/);
-  assert.match(bollingerPatternSource, /context\.cleanupPending = true;/);
-});
 
 test('permanent trade-mode observer is scoped to the trade tab root', () => {
   const observerBody = readFunctionBody('ensureTradeModeTabObserver');

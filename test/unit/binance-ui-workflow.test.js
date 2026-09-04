@@ -12,6 +12,11 @@ test('Binance UI workflow gates the complete deterministic and live test toolcha
     'test/unit/binance-*.test.js',
     'test/unit/binance-orderbook-trade/**',
     'test/dom/binance-orderbook-trade/**',
+    'src/binance-strategy29-bollinger/**',
+    'test/unit/binance-strategy29-bollinger/**',
+    'test/dom/binance-strategy29-bollinger/**',
+    'src/shared/chart-marker-save-controller.js',
+    'src/shared/chart-mutation-owners.js',
   ]) {
     assert.ok(workflow.includes(`- "${pathPattern}"`), `Missing workflow path: ${pathPattern}`);
   }

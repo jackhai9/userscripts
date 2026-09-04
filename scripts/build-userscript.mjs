@@ -6,6 +6,10 @@ import * as esbuild from 'esbuild';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const TARGETS = {
+  'binance-strategy29-bollinger': {
+    entry: 'src/binance-strategy29-bollinger/index.user.js',
+    output: 'scripts/binance-strategy29-bollinger.user.js',
+  },
   'binance-orderbook-trade': {
     entry: 'src/binance-orderbook-trade/index.user.js',
     output: 'scripts/binance-orderbook-trade.user.js',

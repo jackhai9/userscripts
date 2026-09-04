@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as subject from '../../../src/binance-orderbook-trade/core/chart-marker-save-controller.js';
+import * as subject from '../../../src/shared/chart-marker-save-controller.js';
 
 function fixture() {
   let now = 0;

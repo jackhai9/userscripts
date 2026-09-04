@@ -37,6 +37,7 @@ This repository is the source of truth and distribution point for the scripts. G
 
 | Script | Target | Description | Source of truth | Install |
 | --- | --- | --- | --- | --- |
+| Binance Strategy 29 Bollinger signals | Binance Futures | Annotate native loaded candles with mirrored Bollinger/SMA60 signals; standalone or alongside orderbook 2.7.199+ | This repository | [Install][install-binance-strategy29-bollinger] |
 | Binance orderbook one-click order entry | Binance Futures | Click an orderbook price, infer the current open/close tab, fill quantity, and submit an order with a multiplier panel | This repository | [Install][install-binance-orderbook-trade] |
 | Binance Futures data panel | Binance Futures | Overlay open interest, long/short ratios, funding rate, basis, and directional signals | This repository | [Install][install-binance-trading-data] |
 | Binance CoinMarketCap data panel | Binance Futures | Show CoinMarketCap valuation, supply, and liquidity data for the current symbol | This repository | [Install][install-binance-coinmarketcap-data] |
@@ -94,7 +95,7 @@ npm run build:binance-userscripts
 ## Maintenance Rules
 
 1. Each script has exactly one source of truth.
-2. `src/binance-orderbook-trade/`, `src/binance-trading-data/`, `src/binance-coinmarketcap-data/`, `src/binance-strategy27-events/`, and `src/m3u8-downloader/` are source directories for the corresponding generated scripts.
+2. `src/binance-orderbook-trade/`, `src/binance-trading-data/`, `src/binance-coinmarketcap-data/`, `src/binance-strategy27-events/`, `src/binance-strategy29-bollinger/`, and `src/m3u8-downloader/` are source directories for the corresponding generated scripts.
 3. Public install entry points remain generated files under `scripts/*.user.js`.
 4. Do not copy script source into secondary repositories.
 5. Bump `@version` when behavior changes.
@@ -103,6 +104,7 @@ npm run build:binance-userscripts
 ## Documentation
 
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
+- [Binance Strategy 29 Bollinger signals and migration](docs/binance-strategy29-bollinger-development.md)
 - [Binance orderbook UI automation](docs/binance-orderbook-trade-ui-automation.md)
 - [Userscript validation and maintenance](docs/userscript-validation.md)
 - [Binance Strategy 27 event annotations](docs/binance-strategy27-events-development.md)
@@ -113,6 +115,7 @@ npm run build:binance-userscripts
 MIT. See [LICENSE](LICENSE).
 
 [install-binance-orderbook-trade]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
+[install-binance-strategy29-bollinger]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy29-bollinger.user.js
 [install-binance-trading-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-trading-data.user.js
 [install-binance-coinmarketcap-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-coinmarketcap-data.user.js
 [install-binance-strategy27-events]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy27-events.user.js

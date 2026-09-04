@@ -14,6 +14,26 @@ const source = await readFile(artifactPath, 'utf8');
 const strategy27ArtifactPath = new URL('../../scripts/binance-strategy27-events.user.js', import.meta.url);
 const strategy27Source = await readFile(strategy27ArtifactPath, 'utf8');
 
+test('Strategy29 has an independent observation-only install identity', async () => {
+  const artifact = new URL('../../scripts/binance-strategy29-bollinger.user.js', import.meta.url);
+  const text = await readFile(artifact, 'utf8');
+  const contract = createUserscriptReleaseContract(text, artifact.pathname);
+  const metadata = parseUserscriptMetadata(text);
+  assert.equal(contract.name, '【自写】Binance Strategy 29 布林带信号');
+  assert.equal(contract.namespace, 'binance.strategy29.bollinger');
+  assert.equal(contract.version, '0.1.0');
+  assert.equal(contract.runAt, 'document-start');
+  assert.equal(contract.updateURL, 'https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy29-bollinger.user.js');
+  assert.equal(contract.downloadURL, contract.updateURL);
+  assert.deepEqual(metadata.get('grant'), ['none']);
+  assert.equal(metadata.has('connect'), false);
+  for (const forbidden of ['new WebSocket', 'fetch(', 'place-order', 'detectBollingerSignals']) {
+    if (forbidden === 'detectBollingerSignals') {
+      assert.equal(source.includes(forbidden), false, 'orderbook must not bundle the detector');
+    } else assert.equal(text.includes(forbidden), false);
+  }
+});
+
 test('release contract identifies the generated Binance orderbook artifact', () => {
   const contract = createUserscriptReleaseContract(source, artifactPath.pathname);
 

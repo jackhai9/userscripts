@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.198
+// @version      2.7.199
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -116,7 +116,7 @@ import {
 import {
   throwIfAborted,
   waitForPromiseOrAbort,
-} from './core/abort.js';
+} from '../shared/abort.js';
 import { formatStatusBaseAsset } from './core/status-symbol.js';
 import { selectFarthestOpenOrders } from './core/open-order-capacity.js';
 import {
@@ -203,10 +203,11 @@ import {
   createTradingViewContinuousSaveController,
   createTradingViewRemovalSaveController,
 } from './core/chart-save-coalescer.js';
-import { findBinanceTradingViewTarget } from './dom/tradingview-target.js';
+import { findBinanceTradingViewTarget } from '../shared/tradingview-target.js';
+import { registerChartMutationOwner } from '../shared/chart-mutation-owners.js';
 import {
   afterTradingViewMarkerSaves,
-} from './core/chart-marker-save-controller.js';
+} from '../shared/chart-marker-save-controller.js';
 import { installBinanceNativeDepthSource } from './core/binance-native-depth-source.js';
 import { createDepthProfileSession } from './core/depth-profile-session.js';
 import {
@@ -238,19 +239,6 @@ import {
   getBinanceChartOrdersTarget as getBinanceChartOrdersTargetDom,
 } from './dom/chart-orders.js';
 import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
-import {
-  applyBollingerAlertTaskFailure,
-  detectBollingerSignals,
-  isBollingerDrawingMutationBlocked,
-} from './core/bearish-bollinger-pattern.js';
-import {
-  createBollingerIntervalSession,
-  createBollingerMarkerLayer,
-  exportClosedTradingViewBars,
-  findBearishBollingerChartTarget,
-  isBearishBollingerChartTargetCurrent,
-  reconcileBearishBollingerAlertWindow,
-} from './dom/tradingview-bearish-alerts.js';
 
 (function () {
   'use strict';
@@ -432,7 +420,6 @@ import {
   const TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS = 3;
   const TRADE_ACTION_BUTTON_READY_TIMEOUT_MS = TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS * 1000;
   const ROUTE_WATCHDOG_MS = 5000;
-  const BEARISH_BOLLINGER_ALERT_POLL_MS = 1000;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -522,11 +509,6 @@ import {
   let depthProfileObserverRoot = null;
   let depthProfileRenderQueued = false;
   let depthProfileSyncQueued = false;
-  let bearishBollingerAlertTimer = null;
-  let bearishBollingerAlertTask = null;
-  let bearishBollingerAlertContext = null;
-  let bollingerIntervalSession = null;
-  const retiredBollingerLayers = new Set();
   const controlledNativeButtons = new Set();
   let lastObservedSymbol = getCurrentSymbol();
 
@@ -587,218 +569,20 @@ import {
 
   // TradingView still emits drawing_event + saveChart when a disableSave marker is removed.
   // Keep alert reconciliation outside every native order-line save/coalescing session.
-  function isTradingViewDrawingMutationBusy() {
-    return isBollingerDrawingMutationBlocked({
+  const unregisterChartMutationOwner = registerChartMutationOwner(window, 'orderbook', () => {
+    return [
       ladderTask,
       continuousLadderTask,
       singleOrderTask,
       cancelCurrentSymbolOpenOrdersTask,
       chartOrdersRecoveryTask,
       continuousChartSaveController,
-    });
-  }
+    ].some(value => value !== null);
+  });
+  window.addEventListener('pagehide', event => {
+    if (!event.persisted) unregisterChartMutationOwner();
+  });
 
-  function clearBearishBollingerAlertContext() {
-    if (bearishBollingerAlertContext) {
-      retiredBollingerLayers.add(bearishBollingerAlertContext.layer);
-      bearishBollingerAlertContext = null;
-    }
-    return clearRetiredBollingerLayers();
-  }
-
-  function clearRetiredBollingerLayers() {
-    if (isTradingViewDrawingMutationBusy()) return false;
-    for (const layer of retiredBollingerLayers) {
-      if (layer.clear()) retiredBollingerLayers.delete(layer);
-    }
-    return retiredBollingerLayers.size === 0;
-  }
-
-  function disposeBollingerIntervalSession() {
-    if (bollingerIntervalSession) {
-      bollingerIntervalSession.session.dispose();
-      bollingerIntervalSession = null;
-    }
-  }
-
-  function isBearishBollingerAlertContextCurrent(context) {
-    return (
-      bearishBollingerAlertContext === context
-      && context.intervalSession === bollingerIntervalSession?.session
-      && context.intervalSession.isCurrent(context.intervalRevision)
-      && !document.hidden
-      && isFuturesTradingPage()
-      && !isTradingViewDrawingMutationBusy()
-      && getCurrentSymbol() === context.routeSymbol
-      && isBearishBollingerChartTargetCurrent(document, context.target)
-    );
-  }
-
-  async function synchronizeBearishBollingerAlerts() {
-    if (document.hidden || !isFuturesTradingPage()) return;
-    const routeSymbol = getCurrentSymbol();
-    if (!routeSymbol) return;
-
-    let target;
-    try {
-      target = findBearishBollingerChartTarget(document, routeSymbol);
-    } catch (error) {
-      disposeBollingerIntervalSession();
-      clearBearishBollingerAlertContext();
-      err('Bollinger chart lookup failed for this sample:', error);
-      return;
-    }
-    if (!target) {
-      disposeBollingerIntervalSession();
-      clearBearishBollingerAlertContext();
-      return;
-    }
-
-    if (
-      !bollingerIntervalSession
-      || bollingerIntervalSession.chart !== target.chart
-      || bollingerIntervalSession.routeSymbol !== routeSymbol
-    ) {
-      disposeBollingerIntervalSession();
-      bollingerIntervalSession = {
-        chart: target.chart,
-        routeSymbol,
-        session: createBollingerIntervalSession(target.chart),
-      };
-    }
-    const intervalSession = bollingerIntervalSession.session;
-
-    const contextMatches = bearishBollingerAlertContext
-      && bearishBollingerAlertContext.target.chart === target.chart
-      && bearishBollingerAlertContext.target.chartRoot === target.chartRoot
-      && bearishBollingerAlertContext.target.tradingViewApi === target.tradingViewApi
-      && bearishBollingerAlertContext.routeSymbol === routeSymbol
-      && bearishBollingerAlertContext.resolution === target.resolution
-      && bearishBollingerAlertContext.intervalSession === intervalSession
-      && bearishBollingerAlertContext.intervalRevision === intervalSession.revision;
-    if (!contextMatches) {
-      if (!clearBearishBollingerAlertContext()) return;
-      if (!intervalSession.isCurrent(intervalSession.revision) || isTradingViewDrawingMutationBusy()) return;
-      bearishBollingerAlertContext = {
-        routeSymbol,
-        resolution: target.resolution,
-        intervalSession,
-        intervalRevision: intervalSession.revision,
-        target,
-        layer: createBollingerMarkerLayer(target, {
-          canMutate: () => !isTradingViewDrawingMutationBusy(),
-          onSaveError: (error) => err('Bollinger chart save failed:', error),
-        }),
-        failed: false,
-        cleanupPending: false,
-        lastProcessedClosedBarsWindowKey: null,
-        lastProcessedClosedBarsContentSnapshot: null,
-        lastProcessedSignals: null,
-      };
-    }
-
-    if (isTradingViewDrawingMutationBusy() || !clearRetiredBollingerLayers()) return;
-
-    const context = bearishBollingerAlertContext;
-    if (context.cleanupPending) {
-      context.layer.clear();
-      context.cleanupPending = false;
-    }
-    if (context.failed || bearishBollingerAlertTask) return;
-    const task = (async () => {
-      const bars = await exportClosedTradingViewBars(context.target, context.intervalSession);
-      if (!bars || !isBearishBollingerAlertContextCurrent(context)) return;
-      if (bars.length === 0) return;
-      const result = await reconcileBearishBollingerAlertWindow({
-        bars,
-        cachedWindowKey: context.lastProcessedClosedBarsWindowKey,
-        cachedContentSnapshot: context.lastProcessedClosedBarsContentSnapshot,
-        cachedSignals: context.lastProcessedSignals,
-        detectSignals: detectBollingerSignals,
-        renderSignals: (signals) => context.layer.render(signals, {
-          isCurrent: () => isBearishBollingerAlertContextCurrent(context),
-        }),
-      });
-      if (result.rendered && isBearishBollingerAlertContextCurrent(context)) {
-        context.lastProcessedClosedBarsWindowKey = result.closedBarsWindowKey;
-        context.lastProcessedClosedBarsContentSnapshot = result.closedBarsContentSnapshot;
-        context.lastProcessedSignals = result.signals;
-      }
-    })();
-    bearishBollingerAlertTask = task;
-    task.catch((error) => {
-      if (
-        bearishBollingerAlertContext !== context
-        || context.intervalSession !== bollingerIntervalSession?.session
-        || context.intervalRevision !== context.intervalSession.revision
-      ) return;
-      const failureKind = applyBollingerAlertTaskFailure(context, error);
-      if (failureKind === 'retry') {
-        // TradingView can expose one feed-update race through exportData(). Keep the
-        // already-rendered layer and retry the next poll instead of turning a transient
-        // snapshot into a permanent failed context.
-        warn('布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:', error);
-        return;
-      }
-      err('布林带形态预警已停止:', error);
-    }).finally(() => {
-      if (bearishBollingerAlertTask === task) bearishBollingerAlertTask = null;
-    });
-  }
-
-  function startBearishBollingerAlertMonitor() {
-    if (bearishBollingerAlertTimer || document.hidden || !isFuturesTradingPage()) return;
-    synchronizeBearishBollingerAlerts();
-    bearishBollingerAlertTimer = setInterval(
-      synchronizeBearishBollingerAlerts,
-      BEARISH_BOLLINGER_ALERT_POLL_MS,
-    );
-  }
-
-  function stopBearishBollingerAlertMonitor() {
-    if (bearishBollingerAlertTimer) clearInterval(bearishBollingerAlertTimer);
-    bearishBollingerAlertTimer = null;
-    // Invalidate even while a trade/save owner defers physical marker removal.
-    disposeBollingerIntervalSession();
-    clearBearishBollingerAlertContext();
-  }
-
-  /** On-demand lifecycle diagnostics; never exports market data or mutates drawings. */
-  function getBollingerAlertDiagnostics() {
-    const context = bearishBollingerAlertContext;
-    const session = bollingerIntervalSession?.session || null;
-    const chart = bollingerIntervalSession?.chart || context?.target.chart || null;
-    const nativeModelReady = chart ? chart.hasModel() : null;
-    const ownerFlags = {
-      ladderTask: ladderTask !== null,
-      continuousLadderTask: continuousLadderTask !== null,
-      singleOrderTask: singleOrderTask !== null,
-      cancelCurrentSymbolOpenOrdersTask: cancelCurrentSymbolOpenOrdersTask !== null,
-      chartOrdersRecoveryTask: chartOrdersRecoveryTask !== null,
-      continuousChartSaveController: continuousChartSaveController !== null,
-    };
-    return {
-      timerRunning: bearishBollingerAlertTimer !== null,
-      taskPending: bearishBollingerAlertTask !== null,
-      contextPresent: context !== null,
-      failed: context ? context.failed : null,
-      cleanupPending: context ? context.cleanupPending : null,
-      cachedSignalCount: context?.lastProcessedSignals === null || !context
-        ? null : context.lastProcessedSignals.length,
-      layerSize: context ? context.layer.size : null,
-      markerSaveStats: context ? context.layer.saveStats : null,
-      retiredCount: retiredBollingerLayers.size,
-      sessionPresent: session !== null,
-      sessionRevision: session ? session.revision : null,
-      contextIntervalRevision: context ? context.intervalRevision : null,
-      sessionMatchesContext: context && session ? context.intervalSession === session : null,
-      sessionCurrent: session && nativeModelReady ? session.isCurrent(session.revision) : null,
-      nativeModelReady,
-      nativeDataReady: nativeModelReady ? chart.dataReady() : null,
-      mutationBlocked: Object.values(ownerFlags).some(Boolean),
-      ownerFlags,
-    };
-  }
 
   function parseJsonSafe(raw) {
     if (!raw || typeof raw !== 'string') return null;
@@ -8383,7 +8167,6 @@ import {
     removePanel();
     removeDepthProfileRuntimeView();
     stopTradingTimers();
-    clearBearishBollingerAlertContext();
     invalidateTradeButtonCache();
     lastDisplayCloseState = null;
   }
@@ -8839,8 +8622,6 @@ import {
   // ── 切换币种 / 首次进入时触发杠杆重置 ──
   function clearSymbolOwnedRuntimeState(symbol) {
     stopDepthProfileSession();
-    disposeBollingerIntervalSession();
-    clearBearishBollingerAlertContext();
     depthProfileData = null;
     depthProfileFailedSymbol = null;
     depthProfileStatus = { status: 'connecting', detail: '' };
@@ -8888,7 +8669,6 @@ import {
     ensureOrderbookPrecisionObserver();
     ensureDepthProfileObserver();
     scheduleDepthProfileSync();
-    startBearishBollingerAlertMonitor();
   }
 
   function stopTradingTimers() {
@@ -8897,7 +8677,6 @@ import {
     stopOrderbookPrecisionObserver();
     stopDepthProfileObserver();
     stopDepthProfileSession();
-    stopBearishBollingerAlertMonitor();
     clearTradeUiMutationWait();
   }
 
@@ -8966,7 +8745,6 @@ import {
   window.addEventListener('pagehide', () => {
     stopDepthProfileObserver();
     stopDepthProfileSession();
-    stopBearishBollingerAlertMonitor();
     removeDepthProfileRuntimeView();
   }, { once: true });
 
@@ -8999,7 +8777,6 @@ import {
 
   window.__TM_CLOSE_LONG_DEBUG__ = {
     cfg: CFG,
-    get bollingerAlertState() { return getBollingerAlertDiagnostics(); },
     get continuousChartSaveStats() {
       return continuousChartSaveController?.getStats() || null;
     },

@@ -35,6 +35,7 @@
 
 | 脚本 | 适用场景 | 说明 | 源码真源 | 安装 |
 |---|---|---|---|---|
+| 【自写】Binance Strategy 29 布林带信号 | Binance Futures | Annotate native loaded candles with mirrored Bollinger/SMA60 signals; standalone or alongside orderbook 2.7.199+ | This repository | [Install][install-binance-strategy29-bollinger] |
 | 【自写】Binance 订单簿单击下单 | Binance Futures | 单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
 | 【自写】Binance 合约交易数据面板 | Binance Futures | 在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号 | 本仓库 | [`点击安装`][install-binance-trading-data] |
 | 【自写】Binance CoinMarketCap 数据面板 | Binance Futures | 在 Binance 合约页面显示当前币种的 CoinMarketCap 估值、供应量和流动性数据 | 本仓库 | [`点击安装`][install-binance-coinmarketcap-data] |
@@ -92,7 +93,7 @@ npm run build:binance-userscripts
 ## 维护规则
 
 1. 同一脚本只允许一个真源仓库改代码。
-2. `src/binance-orderbook-trade/`、`src/binance-trading-data/`、`src/binance-coinmarketcap-data/`、`src/binance-strategy27-events/`、`src/m3u8-downloader/` 是对应脚本的开发真源。
+2. `src/binance-orderbook-trade/`、`src/binance-trading-data/`、`src/binance-coinmarketcap-data/`、`src/binance-strategy27-events/`、`src/binance-strategy29-bollinger/`、`src/m3u8-downloader/` 是对应脚本的开发真源。
 3. 公开安装入口仍是生成后的 `scripts/*.user.js`；修改对应 `src/` 后运行 `npm run build:binance-userscripts` 或单脚本 build 命令。
 4. 非真源仓库只放安装链接，不复制脚本源码。
 5. 行为变更时递增 `@version`；纯文档变更不需要 bump，并保留 `@updateURL/@downloadURL` 指向真源 raw 地址。
@@ -107,6 +108,7 @@ npm run build:binance-userscripts
 - [Brooks media sync workflow](docs/brooks-media-sync-workflow.md)
 
 [install-binance-orderbook-trade]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
+[install-binance-strategy29-bollinger]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy29-bollinger.user.js
 [install-binance-trading-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-trading-data.user.js
 [install-binance-coinmarketcap-data]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-coinmarketcap-data.user.js
 [install-binance-strategy27-events]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy27-events.user.js

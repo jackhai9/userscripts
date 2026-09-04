@@ -5,7 +5,7 @@ import { loadFixtureDom } from '../../helpers/dom.js';
 import {
   findBinanceTradingViewTarget,
   getBinanceTradingViewTarget,
-} from '../../../src/binance-orderbook-trade/dom/tradingview-target.js';
+} from '../../../src/shared/tradingview-target.js';
 
 function createChartMarkup({ mode = 'tradingview' } = {}) {
   const chartBody = mode === 'tradingview'

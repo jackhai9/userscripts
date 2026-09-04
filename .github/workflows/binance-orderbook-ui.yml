@@ -8,6 +8,14 @@ on:
       - "package-lock.json"
       - "playwright.config.js"
       - "src/binance-orderbook-trade/**"
+      - "src/binance-strategy29-bollinger/**"
+      - "scripts/binance-strategy29-bollinger.user.js"
+      - "src/shared/abort.js"
+      - "src/shared/tradingview-target.js"
+      - "src/shared/chart-marker-save-controller.js"
+      - "src/shared/chart-mutation-owners.js"
+      - "test/unit/binance-strategy29-bollinger/**"
+      - "test/dom/binance-strategy29-bollinger/**"
       - "scripts/binance-orderbook-trade.user.js"
       - "scripts/binance-*.mjs"
       - "e2e/binance-orderbook/**"
@@ -23,6 +31,14 @@ on:
       - "package-lock.json"
       - "playwright.config.js"
       - "src/binance-orderbook-trade/**"
+      - "src/binance-strategy29-bollinger/**"
+      - "scripts/binance-strategy29-bollinger.user.js"
+      - "src/shared/abort.js"
+      - "src/shared/tradingview-target.js"
+      - "src/shared/chart-marker-save-controller.js"
+      - "src/shared/chart-mutation-owners.js"
+      - "test/unit/binance-strategy29-bollinger/**"
+      - "test/dom/binance-strategy29-bollinger/**"
       - "scripts/binance-orderbook-trade.user.js"
       - "scripts/binance-*.mjs"
       - "e2e/binance-orderbook/**"
@@ -47,7 +63,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:binance-orderbook-ui-toolchain
       - run: npm run build:binance-orderbook-trade
-      - run: git diff --exit-code -- scripts/binance-orderbook-trade.user.js
+      - run: npm run build:binance-strategy29-bollinger
+      - run: git diff --exit-code -- scripts/binance-orderbook-trade.user.js scripts/binance-strategy29-bollinger.user.js
       - run: npm run test:ui
       - name: Upload Playwright report
         if: failure()

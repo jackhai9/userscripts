@@ -5,7 +5,7 @@ import {
 import {
   throwIfAborted,
   waitForPromiseOrAbort,
-} from '../core/abort.js';
+} from '../../shared/abort.js';
 
 const CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR =
   '[role="dialog"], [class*="modal"], [class*="Modal"]';

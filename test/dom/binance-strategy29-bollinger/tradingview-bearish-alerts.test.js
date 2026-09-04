@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import * as alertApi from '../../../src/binance-orderbook-trade/dom/tradingview-bearish-alerts.js';
-import { getTradingViewMarkerSaveController } from '../../../src/binance-orderbook-trade/core/chart-marker-save-controller.js';
+import * as alertApi from '../../../src/binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
+import { getTradingViewMarkerSaveController } from '../../../src/shared/chart-marker-save-controller.js';
 
 import { loadFixtureDom } from '../../helpers/dom.js';
 import {
@@ -20,14 +20,14 @@ import {
   MAX_BEARISH_BOLLINGER_MARKERS,
   matchesClosedBarsContentSnapshot,
   tradingViewResolutionToSeconds,
-} from '../../../src/binance-orderbook-trade/dom/tradingview-bearish-alerts.js';
+} from '../../../src/binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
 import {
   applyBollingerAlertTaskFailure,
   isTradingViewBarSnapshotInconsistentError,
   TradingViewBarSnapshotInconsistentError,
-} from '../../../src/binance-orderbook-trade/core/bearish-bollinger-pattern.js';
+} from '../../../src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js';
 
-const monitorSource = await readFile(new URL('../../../src/binance-orderbook-trade/index.user.js', import.meta.url), 'utf8');
+const monitorSource = await readFile(new URL('../../../src/binance-strategy29-bollinger/monitor.js', import.meta.url), 'utf8');
 
 test('native marker creation and clear save bursts preserve foreign drawings without arming stable audits', async () => {
   const fixture = createChartDom();
@@ -96,7 +96,7 @@ test('an outer save drain waits for native creation, leaves its late result hidd
 /** Execute the production monitor functions, without the unrelated trading/bootstrap side effects. */
 function createMonitorHarness(fixture, dependencyOverrides = {}) {
   const start = monitorSource.indexOf('  function clearBearishBollingerAlertContext()');
-  const end = monitorSource.indexOf('  function parseJsonSafe(', start);
+  const end = monitorSource.indexOf('  return Object.freeze(', start);
   assert.ok(start > 0 && end > start);
   let busy = false;
   let hidden = false;
@@ -119,11 +119,9 @@ function createMonitorHarness(fixture, dependencyOverrides = {}) {
     warn: () => {},
     setInterval: () => 1,
     clearInterval: () => {},
-    BEARISH_BOLLINGER_ALERT_POLL_MS: 1000,
     ...dependencyOverrides,
   };
   const factory = new Function(...Object.keys(dependencies), `
-    let bearishBollingerAlertTimer = null;
     let bearishBollingerAlertTask = null;
     let bearishBollingerAlertContext = null;
     let bollingerIntervalSession = null;
@@ -668,16 +666,13 @@ test('on-demand diagnostics distinguish active, awaiting-data and torn-down stat
   fixture.chart.getAllShapes = () => { throw new Error('Diagnostics must not audit drawings'); };
   fixture.chart.exportData = () => { throw new Error('Diagnostics must not export data'); };
   assert.deepEqual(harness.monitor.diagnostics, {
-    timerRunning: false, taskPending: false, contextPresent: true, failed: false,
+    taskPending: false, contextPresent: true, failed: false,
     cleanupPending: false, cachedSignalCount: 1, layerSize: 1, retiredCount: 0,
     markerSaveStats: { busy: true, mutations: 0, draining: 0, saveRequests: 0,
       serializations: 0, callbackCount: 0, failureCount: 0, pendingCallbacks: 0 },
     sessionPresent: true, sessionRevision: 0, contextIntervalRevision: 0,
     sessionMatchesContext: true, sessionCurrent: true,
     nativeModelReady: true, nativeDataReady: true, mutationBlocked: false,
-    ownerFlags: { ladderTask: false, continuousLadderTask: false, singleOrderTask: false,
-      cancelCurrentSymbolOpenOrdersTask: false, chartOrdersRecoveryTask: false,
-      continuousChartSaveController: false },
   });
   fixture.setResolution('5');
   assert.equal(harness.monitor.diagnostics.sessionRevision, 1);
