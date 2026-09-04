@@ -1,63 +1,101 @@
 ---
 name: userscript-review
-version: 1.0.0
-description: Review userscript changes for regressions and race conditions.
+description: Review userscript source and generated artifacts for regressions, stale state, unsafe actions, and race conditions.
 ---
 
 # userscript-review
 
-Use this skill when reviewing code changes in this repository.
+Use this skill for a read-only review of userscript changes in this repository.
+Do not edit files, regenerate artifacts, stage changes, commit, push, merge, release,
+or operate a live trading account while reviewing.
 
 ## Workflow
 
-1. Read `AGENTS.md` first.
-2. Identify changed files and focus on `scripts/*.user.js`.
-3. Run `node --check` on each changed userscript.
-4. Review for functional issues before style concerns.
-5. Output findings ordered by severity, with file references.
+1. Read the repository AGENTS.md and inspect git status --short --branch.
+2. Identify the changed source files, generated artifacts, tests, and any user-owned
+   changes. Review the source of truth first; treat generated files as build output
+   to compare, not as the feature-edit target.
+3. Read the detailed document for the affected area:
+   - orderbook architecture: docs/binance-orderbook-trade-development.md;
+   - orderbook UI/CDP/live paths: docs/binance-orderbook-trade-ui-automation.md;
+   - Strategy 27: docs/binance-strategy27-events-development.md;
+   - Brooks/m3u8: docs/brooks-media-sync-workflow.md;
+   - trading-data, CoinMarketCap-data, auto-refresh, or cross-script lifecycle:
+     docs/userscript-validation.md.
+4. Run the smallest relevant syntax, unit, DOM, and read-only generated-artifact
+   checks that are safe and available. Do not run a build that rewrites the
+   worktree during review; report it as missing validation unless an isolated
+   output path is available. A review may report missing validation; it must not
+   silently treat an unrun check as passed.
+5. Review functional and safety findings before style. Report findings ordered by
+   severity, with file references and concrete evidence. Put Notes after Findings;
+   if there are no issues, say No new functional findings.
 
 ## Review Priorities
 
-### `scripts/binance-orderbook-trade.user.js`
+### Shared checks
 
-Check these first:
+- source-of-truth and generated-artifact identity remain consistent;
+- behavior-changing metadata version and raw install URLs are correct;
+- stale async work cannot overwrite a newer symbol, route, epoch, or lifecycle;
+- recovery/retry paths are explicit and cannot duplicate an unknown external action;
+- errors preserve the observed reason and invalid state is not hidden by a default;
+- tests assert concrete behavior rather than only existence or truthiness.
 
-- symbol 切换后是否可能读取旧规则、旧 DOM、旧 tab 状态
-- `LIMIT` / `MARKET` 是否使用了各自正确的规则
-- `LOT_SIZE`、`MARKET_LOT_SIZE`、`MIN_NOTIONAL` 是否按当前 symbol 闭合
-- 规则未 ready 时是否拒绝下单，而不是 fallback 去猜
-- 前后台切换、面板渲染、observer、兜底轮询是否引入竞态
-- Binance UI 操作是否按业务区域收窄，而不是全局按文本匹配同名 tab 或按钮
-- 使用 `aria-controls` / pane `id` 定位 Binance 面板时，是否校验 pane 内存在目标业务控件；不要假设 `bn-tab-pane-*` id 全局唯一
-- `当前委托`、`隐藏其他合约`、`全撤` 等控件是否用现网 DOM / accessibility tree 验证过语义；不要假设可见文字一定在 `button`
-- 撤单类破坏性动作是否只打开 Binance 原生确认弹窗，不自动点击原生确认
-- 撤单入口是否在点击后实时切到当前委托并校验当前 symbol 挂单；不要让按钮可用性依赖当前委托区域是否已预先渲染
-- 临时切换 `当前委托`、改动 `隐藏其他合约` 等页面状态时，是否记录原值并在原生流程结束或提前停止后恢复；不要覆盖用户原本偏好；勾选判断不能只依赖 `aria-checked`，必要时要用可见委托行的合约代码兜底确认
-- 阶梯挂单运行中是否禁用启动类按钮，避免并行启动多个全局 `ladderTask`
-- 订单簿 DOM 深度不足时，价格推导是否基于当前显示精度的相邻价格差，而不是直接用交易所 `tickSize`
-- 高频路径是否避免全页面 DOM 扫描；全局扫描只能用于低频动作并保持候选范围明确
+### binance-orderbook-trade
 
-### `scripts/binance-trading-data.user.js`
+- current-symbol and current-mode rules are used for LIMIT and MARKET;
+- LOT_SIZE, MARKET_LOT_SIZE, and MIN_NOTIONAL remain closed over the current
+  symbol, and rules-not-ready refuses to submit;
+- DOM automation is scoped to the correct account/orderbook region and reacquires
+  nodes after host replacement;
+- live UI changes have current DOM/source evidence, do not auto-confirm destructive
+  dialogs, preserve the user's page state, and never cancel unrelated orders;
+- ladder replacement is current-symbol, same-direction, and basic-order only;
+- running controls are single-flight and hot paths avoid unbounded full-page scans.
+  Read the UI automation manual for selector, CDP, and live-capture details.
 
-Check these first:
+### binance-trading-data
 
-- 5 分钟周期边界、重试节奏、serverTime 对齐是否正确
-- hidden tab、面板关闭、恢复前台时 timer 是否正确停启
-- stale request 是否会污染共享状态
-- 缓存命中是否会被误当成新数据
-- 复合信号是否错误统计 cached / neutral / non-voting 指标
+- five-minute boundaries, server-time alignment, retry semantics, hidden-tab and
+  closed-panel lifecycle are correct;
+- stale requests cannot publish into the active symbol;
+- cached, neutral, and non-voting results are not presented as fresh or counted as
+  directional votes.
 
-### `scripts/auto_refresh.user.js`
+### binance-coinmarketcap-data
 
-Check these first:
+- the current Binance symbol maps deterministically to the intended CMC asset;
+- page matching and injection are scoped so another route or symbol cannot receive
+  the panel;
+- missing or ambiguous mappings fail visibly instead of selecting a guessed asset.
 
-- URL 匹配逻辑是否过宽或过窄
-- 时间计算是否会因为手动刷新、focus、visibility 产生重复刷新或漏刷新
+### binance-strategy27-events
 
-## Output Format
+- route, TradingView symbol, 1S interval, epoch, cursor, sequence, and entity
+  ownership are validated before create/update/remove;
+- incomplete or input-gap facts do not receive a directional conclusion;
+- marker and panel state remain bounded, and the script does not open an
+  unauthorized Binance data stream or expose the gateway secret.
 
-- 先写 `Findings`
-- 再写 `Notes`
-- 如果没有问题，明确写“没有新的功能性问题”
+### m3u8-downloader
 
-不要把总结放在 findings 前面。
+- links remains the original full list; records, failures, and retry indexes retain
+  original identity;
+- paused partial exports continue the normal queue, while retry-only mode is
+  available only for completed exports with failures;
+- elapsed time measures active runtime, reset discards without auto-starting, and
+  caption URLs use the detected media host while preserving required query values;
+- direct Bunny and same-origin success paths share one queue-advance contract.
+  Read the Brooks workflow for the complete state model and validation matrix.
+
+### auto_refresh
+
+- URL matching is neither broader nor narrower than the intended page set;
+- target-time calculation remains correct after manual refresh, focus changes,
+  visibility changes, and repeated scheduling.
+
+### Hand-maintained scripts
+
+- run node --check <file> and verify that the header version changes only when
+  behavior changes.

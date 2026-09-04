@@ -1,5 +1,14 @@
 # Binance Orderbook Userscript UI Automation
 
+This manual is the canonical source for orderbook browser test layers,
+Tampermonkey, CDP, performance, L2, L3, and L4 validation. Source layout and
+semantic DOM contracts belong to the development manual, and release mutation
+steps belong to skills/userscript-release/SKILL.md.
+
+The procedures here describe evidence collection; they do not by themselves
+authorize a remote release, Tampermonkey write, order placement, cancellation,
+or other financial action.
+
 ## Goal
 
 Build a repeatable UI verification system for `binance-orderbook-trade` that covers
@@ -65,6 +74,51 @@ Every cancel-current-symbol scenario must assert all applicable invariants:
 8. The action provides prompt feedback and finishes in a stable final state.
 9. No uncaught userscript error, leaked observer, or residual test-owned order remains.
 10. The loaded userscript version and source hash match the generated artifact.
+
+## Live UI Evidence
+
+Before changing Binance page automation, inspect the current live DOM,
+accessibility tree or screenshot, and the relevant Binance frontend bundle/source.
+This applies to selectors, click targets, dropdown open/close behavior, tab
+selection, dialogs, disabled state, input state, visibility, and event dispatch.
+Page labels, old selectors, historical notes, and prior memory are hypotheses
+until the current page and source confirm the structure and trigger path.
+
+When a page-context operation can be tested directly, first run the smallest
+JavaScript prototype in Chrome DevTools Console/Snippets or an equivalent live
+page debugger. It must prove selector matches, event dispatch, state transition,
+and failure behavior. Port the verified selector, event path, and state checks
+to the userscript; do not make the userscript change first and rely on live
+trial-and-error.
+
+Every UI automation change records the live DOM/state evidence, source/chunk and
+selector/event evidence, verified transition, and paths not manually tested. If
+the live page or source was not inspected, report that explicitly and do not
+present the behavior as proven.
+
+The orderbook precision control is a fragile closed-dropdown path. The current
+semantic contract is documented in the development manual; browser validation
+must exercise the closed control, dispatch the verified pointer/mouse sequence,
+wait for the control-owned visible option list, select the exact native option,
+and verify the displayed precision changed. Do not use a generic page-wide option
+selector or treat an already-open dropdown as proof that the script's Apply or
+decade-adjustment path works.
+
+When clicking or navigation becomes unreliable, switch to state-based evidence:
+read the accessibility tree, DOM/status text, open-order row count, toast, and
+task phase rather than repeating blind clicks. A successful live check is a
+semantic state transition, not merely a click call returning.
+
+Opening a raw GitHub install URL or landing on Tampermonkey's intermediate
+installation page does not prove that the new source is active. Confirm the
+installed version and exact source through Tampermonkey read-back, the panel's
+behavior, or loaded-source evidence after a hard reload.
+
+Live checks must first pin the target symbol, mode, precision, and test scope.
+Use the smallest reversible path that proves the contract, keep user-owned and
+test-owned orders distinct, and restore temporary page state. Any financial or
+destructive action still requires the current request's explicit authorization
+and native confirmation boundary.
 
 ## Performance Contract
 
@@ -391,8 +445,10 @@ it cannot silently turn a regression into a passing comparison.
 2. Fix the source and rebuild the generated userscript.
 3. Run `npm run test:binance-orderbook-trade` and the affected L2 matrix.
 4. Review retained trace and performance artifacts for failures.
-5. Merge through a PR.
-6. Complete L3 and the affected L4 release path.
+5. If the current request includes a release, follow
+   `skills/userscript-release/SKILL.md`; otherwise stop after validation.
+6. Complete L3 and the affected L4 path only when that validation is requested
+   and authorized.
 7. Store any production regression as a permanent named scenario.
 
 Retries must not turn a failing scenario green. A retry may diagnose flakiness, but a

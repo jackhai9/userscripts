@@ -16,8 +16,13 @@ This repository contains browser automation and trading-page helper scripts. Ple
 - `src/binance-orderbook-trade/` generates `scripts/binance-orderbook-trade.user.js`.
 - `src/binance-trading-data/` generates `scripts/binance-trading-data.user.js`.
 - `src/binance-coinmarketcap-data/` generates `scripts/binance-coinmarketcap-data.user.js`.
+- `src/binance-strategy27-events/` generates `scripts/binance-strategy27-events.user.js`.
 - `src/m3u8-downloader/` generates `scripts/m3u8-downloader.user.js`.
 - Scripts that have not migrated to `src/` still live directly under `scripts/`.
+
+The repository `AGENTS.md` is the entry point for project gates. Use
+`docs/userscript-validation.md` for cross-script checks and the specialized
+manuals or skills it links when a change needs deeper procedure.
 
 ## Development Setup
 
@@ -42,7 +47,8 @@ npm run build:binance-userscripts
 
 - Explain which script or shared helper changed.
 - List the build and test commands you ran.
-- Bump the affected userscript `@version` when behavior changes.
+- Bump the affected userscript `@version` when behavior changes; documentation-only
+  changes do not require a version bump.
 - Keep `@updateURL` and `@downloadURL` pointing at this repository's raw install URLs.
 - Update README or docs when install steps, behavior, or safety assumptions change.
 
