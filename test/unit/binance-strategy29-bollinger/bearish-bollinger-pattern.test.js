@@ -11,7 +11,7 @@ import {
   isTradingViewBarSnapshotInconsistentError,
   isBearishBollingerDrawingMutationBlocked,
   TradingViewBarSnapshotInconsistentError,
-} from '../../../src/binance-orderbook-trade/core/bearish-bollinger-pattern.js';
+} from '../../../src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js';
 
 function createOhlcBars(count, secondsPerBar = 60) {
   return Array.from({ length: count }, (_, index) => {

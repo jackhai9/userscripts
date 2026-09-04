@@ -19,7 +19,7 @@ export function readScenarioEvidence(page) {
   return evidenceByPage.get(page) || null;
 }
 
-export async function openUserscriptScenario(page, scenario) {
+export async function openUserscriptScenario(page, scenario, { beforeOrderbook = '', afterOrderbook = '' } = {}) {
   const errors = [];
   page.on('pageerror', (error) => errors.push(String(error?.stack || error)));
   const userscriptSource = await readFile(USERSCRIPT_PATH, 'utf8');
@@ -35,7 +35,7 @@ export async function openUserscriptScenario(page, scenario) {
       await route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: userscriptSource,
+        body: beforeOrderbook + '\n' + userscriptSource + '\n' + afterOrderbook,
       });
       return;
     }

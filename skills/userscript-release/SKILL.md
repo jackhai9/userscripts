@@ -18,6 +18,7 @@ remote repository, Tampermonkey, a browser page, or a trading account.
    - orderbook source, architecture, or build: `docs/binance-orderbook-trade-development.md`;
    - orderbook browser, Tampermonkey, CDP, or live validation: `docs/binance-orderbook-trade-ui-automation.md`;
    - Strategy 27 annotations: `docs/binance-strategy27-events-development.md`;
+   - Strategy 29 Bollinger signals: `docs/binance-strategy29-bollinger-development.md`;
    - Brooks or m3u8 export behavior: `docs/brooks-media-sync-workflow.md`;
    - trading-data, CoinMarketCap-data, auto-refresh, or cross-script lifecycle:
      `docs/userscript-validation.md`.
@@ -29,6 +30,7 @@ remote repository, Tampermonkey, a browser page, or a trading account.
 | `src/binance-orderbook-trade/**` | `src/binance-orderbook-trade/index.user.js` | `npm run build:binance-orderbook-trade` |
 | `src/binance-trading-data/**`, `src/binance-coinmarketcap-data/**`, or `src/shared/**` | the metadata header of every affected generated artifact | `npm run build:binance-userscripts` (or the affected single-script build) |
 | `src/binance-strategy27-events/**` | `src/binance-strategy27-events/index.user.js` | `npm run build:binance-strategy27-events` |
+| `src/binance-strategy29-bollinger/**` | `src/binance-strategy29-bollinger/index.user.js` | `npm run build:binance-strategy29-bollinger` |
 | `src/m3u8-downloader/**` | `src/m3u8-downloader/index.user.js` | `npm run build:m3u8-downloader` |
 | An unmigrated `scripts/*.user.js` | that userscript file | no build; bump its header directly |
 
@@ -40,6 +42,7 @@ readable, non-compressed, non-obfuscated, and preserve its `@updateURL` and
    - orderbook: `npm test`, `npm run check:binance-orderbook-trade`;
    - migrated Binance userscripts: `npm test`, `npm run check:binance-userscripts`;
    - Strategy 27: `npm run test:binance-strategy27-events`;
+   - Strategy 29: `npm run test:binance-strategy29-bollinger`;
    - m3u8: `node --test test/unit/m3u8-downloader-course-export.test.js`,
      `npm run check:m3u8-downloader`;
    - unmigrated scripts: `node --check <file>`.

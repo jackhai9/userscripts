@@ -12,7 +12,7 @@ import {
 import {
   throwIfAborted,
   waitForPromiseOrAbort,
-} from '../core/abort.js';
+} from '../../shared/abort.js';
 
 function getNormalizedText(el) {
   return normalizeText(el?.textContent || '');

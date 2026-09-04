@@ -1,5 +1,5 @@
-import { findBinanceTradingViewTarget } from './tradingview-target.js';
-import { installTradingViewMarkerSaveController } from '../core/chart-marker-save-controller.js';
+import { findBinanceTradingViewTarget } from '../../shared/tradingview-target.js';
+import { installTradingViewMarkerSaveController } from '../../shared/chart-marker-save-controller.js';
 import {
   TradingViewBarSnapshotInconsistentError,
 } from '../core/bearish-bollinger-pattern.js';

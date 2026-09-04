@@ -1,4 +1,4 @@
-import { findBinanceTradingViewTarget } from './tradingview-target.js';
+import { findBinanceTradingViewTarget } from '../../shared/tradingview-target.js';
 
 const ACTIVE_POPOVER_SELECTOR = '.bn-bubble.active';
 const OPEN_ORDERS_LABEL_PATTERN = /^(?:当前委托|Open Orders)$/i;

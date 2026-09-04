@@ -1,6 +1,16 @@
 import { throwIfAborted, waitForPromiseOrAbort } from './abort.js';
 
-const controllers = new WeakMap();
+const CONTROLLER_SLOT = Symbol.for('jh-userscripts.chart-marker-save-controller');
+const PROTOCOL_VERSION = 1;
+
+function readController(api) {
+  const record = api[CONTROLLER_SLOT];
+  if (record === undefined) return null;
+  if (record.version !== PROTOCOL_VERSION || typeof record.controller?.runAfterIdle !== 'function') {
+    throw new Error('Incompatible TradingView marker save protocol; update both scripts and reload');
+  }
+  return record.controller;
+}
 const QUIET_MS = 150;
 const MAX_BURST_MS = 1000;
 const DRAIN_TIMEOUT_MS = 2000;
@@ -17,7 +27,8 @@ export function installTradingViewMarkerSaveController(api, {
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
 } = {}) {
-  if (controllers.has(api)) return controllers.get(api);
+  const existing = readController(api);
+  if (existing) return existing;
   if (typeof api?.saveChart !== 'function') {
     throw new Error('TradingView marker save API is unavailable');
   }
@@ -158,17 +169,17 @@ export function installTradingViewMarkerSaveController(api, {
       failureCount, pendingCallbacks: burst?.callbacks.length || 0,
     }),
   });
-  controllers.set(api, controller);
+  Object.defineProperty(api, CONTROLLER_SLOT, { value: Object.freeze({ version: PROTOCOL_VERSION, controller }) });
   return controller;
 }
 
 export function getTradingViewMarkerSaveController(api) {
-  return controllers.get(api) || null;
+  return readController(api);
 }
 
 /** Call the outer owner's installer in the same continuation that confirms idle. */
 export function afterTradingViewMarkerSaves(api, action, options) {
   throwIfAborted(options?.signal);
-  const controller = controllers.get(api);
+  const controller = readController(api);
   return controller ? controller.runAfterIdle(action, options) : action();
 }

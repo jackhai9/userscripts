@@ -1,7 +1,7 @@
 import {
   throwIfAborted,
   waitForPromiseOrAbort,
-} from './abort.js';
+} from '../../shared/abort.js';
 import { snapshotLadderProgress } from './ladder-progress.js';
 import {
   combineLocalizedText,

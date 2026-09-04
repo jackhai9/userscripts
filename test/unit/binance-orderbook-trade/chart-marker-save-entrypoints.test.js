@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { throwIfAborted } from '../../../src/binance-orderbook-trade/core/abort.js';
+import { throwIfAborted } from '../../../src/shared/abort.js';
 import {
   afterTradingViewMarkerSaves,
   installTradingViewMarkerSaveController,
-} from '../../../src/binance-orderbook-trade/core/chart-marker-save-controller.js';
+} from '../../../src/shared/chart-marker-save-controller.js';
 
 const source = await readFile(new URL('../../../src/binance-orderbook-trade/index.user.js', import.meta.url), 'utf8');
 

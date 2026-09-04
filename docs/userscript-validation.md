@@ -12,6 +12,7 @@ are owned by `skills/userscript-release/SKILL.md`.
 
 | Script | Editable source | Artifact | Focused checks | Detailed guide |
 | --- | --- | --- | --- | --- |
+| Binance Strategy 29 Bollinger | `src/binance-strategy29-bollinger/` | `scripts/binance-strategy29-bollinger.user.js` | `npm run test:binance-strategy29-bollinger`, `npm run build:binance-strategy29-bollinger`, `npm run check:binance-strategy29-bollinger` | `docs/binance-strategy29-bollinger-development.md` |
 | Binance orderbook trade | `src/binance-orderbook-trade/` | `scripts/binance-orderbook-trade.user.js` | `npm run test:binance-orderbook-trade`, `npm run build:binance-orderbook-trade`, `npm run check:binance-orderbook-trade` | `docs/binance-orderbook-trade-development.md` and `docs/binance-orderbook-trade-ui-automation.md` |
 | Binance trading data | `src/binance-trading-data/` | `scripts/binance-trading-data.user.js` | `node --test test/unit/binance-data-panel-*.test.js`, `npm run build:binance-trading-data`, `node --check scripts/binance-trading-data.user.js` | this document |
 | Binance CoinMarketCap data | `src/binance-coinmarketcap-data/` | `scripts/binance-coinmarketcap-data.user.js` | `node --test test/unit/binance-data-panel-*.test.js`, `npm run build:binance-coinmarketcap-data`, `node --check scripts/binance-coinmarketcap-data.user.js` | this document |
