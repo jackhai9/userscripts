@@ -88,7 +88,7 @@ discontinuities abort the request and remove only those transient entities.
 Marker count and age are bounded on the chart; the panel retains at most eight
 events.
 
-## Compound Candidate Extension (Local Implementation)
+## Compound Candidate Extension
 
 ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
@@ -97,7 +97,10 @@ controller are wired into the entrypoint and tested together. The source and
 generated install artifact are version 0.4.0 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
-Publication and Binance operator-page validation remain outstanding.
+Binance operator-page validation remains outstanding. Server/gateway rollout
+must precede browser publication; release status is tracked in
+[CorsairQuant PR 324](https://github.com/jackhai9/CorsairQuant/pull/324) and
+[userscripts PR 267](https://github.com/jackhai9/userscripts/pull/267).
 Do not treat source unit tests or the panel fixture as deployment evidence.
 
 - The compound client has a separate cursor for
