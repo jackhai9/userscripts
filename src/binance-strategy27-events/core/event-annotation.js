@@ -75,9 +75,10 @@ function formatRatio(value, label) {
   return compactDecimal(value, { digits: 2, label });
 }
 
-function formatNotional(value, label) {
+export function formatNotional(value, label) {
   const numeric = finiteNumber(value, label);
   const absolute = Math.abs(numeric);
+  if (absolute > 0 && absolute < 0.1) return numeric.toLocaleString('en-US', { maximumSignificantDigits: 2, useGrouping: false });
   if (absolute >= 1_000_000) return `${compactDecimal(numeric / 1_000_000, { digits: 2, label })}M`;
   if (absolute >= 1_000) return `${compactDecimal(numeric / 1_000, { digits: 1, label })}K`;
   return compactDecimal(numeric, { digits: 1, label });

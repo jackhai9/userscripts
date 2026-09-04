@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.3.1
+// @version      0.4.0
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -44,6 +44,8 @@ import {
   setStrategy27Status,
 } from './dom/tradingview-event-layer.js';
 import { createStrategy27EventPanel } from './dom/strategy27-event-panel.js';
+import { createCompoundCandidateController } from './core/compound-candidate-controller.js';
+import { createTradingViewCompoundLayer } from './dom/tradingview-compound-layer.js';
 import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 
@@ -67,6 +69,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
   function stopActive(resetReason) {
     if (!active) return;
     active.controller.abort();
+    active.compound.stop(resetReason);
     active.lifecycle.reset(resetReason);
     active.layer.clear();
     active.panel.destroy();
@@ -152,6 +155,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       }),
       panel: createStrategy27EventPanel(pageDocument, target.chartRoot, {
         maxEvents: MAX_PANEL_EVENTS,
+        maxCompoundEvents: MAX_PANEL_EVENTS,
         loadPosition: () => GM_getValue(PANEL_POSITION_KEY, null),
         savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position),
       }),
@@ -159,6 +163,13 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       failed: false,
     };
     active = context;
+    context.compound = createCompoundCandidateController({
+      request, gatewayBaseUrl: gatewayOrigin, authSecret, canonicalSymbol,
+      panel: context.panel, isCurrent: () => active === context,
+      maxCandidates: MAX_RETAINED_EVENTS, maxAgeMs: MAX_EVENT_AGE_MS,
+      createLayer: () => createTradingViewCompoundLayer(target, { maxCandidates: MAX_RETAINED_EVENTS }),
+    });
+    void context.compound.run();
     showStatus(target.chartRoot, 'Strategy 27 正在连接');
     const client = createLiveEventClient({
       request,
@@ -194,7 +205,11 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     }
 
     const chartRoot = findStrategy27ChartRoot(pageDocument);
-    if (!chartRoot) return;
+    if (!chartRoot) {
+      stopActive('interval_changed');
+      hideStatus();
+      return;
+    }
     let canonicalSymbol;
     try {
       canonicalSymbol = routeSymbolToCanonical(routeSymbol);
@@ -232,6 +247,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       && active.target.chart === target.chart
       && active.target.chartRoot === target.chartRoot
     ) {
+      active.compound.prune();
       return;
     }
     stopActive('route_changed');
@@ -271,6 +287,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     restart();
   });
   GM_registerMenuCommand('清除 Strategy 27 图表标注', () => {
+    active?.compound.clear();
     active?.layer.clear();
     active?.panel.clear();
     hideStatus();

@@ -38,11 +38,12 @@ still stop immediately.
 
 ## Rendering Contract
 
-- Every event owns exactly one chart marker throughout its lifecycle. Updates,
-  closure, and later outcomes update that marker without creating TradingView
-  text shapes.
+- An ordinary event receives one chart marker when a directional observation
+  first appears. Its first marker direction, color, time and position remain
+  immutable. Neutral observations do not create yellow flags. Later updates
+  refresh panel facts without changing that directional marker.
 - Every time-based marker waits for its exact matching one-second candle before
-  creation, including neutral flags, because TradingView otherwise adjusts a
+  creation, because TradingView otherwise adjusts a
   missing timestamp to the nearest available bar. Directional markers use that
   candle for placement instead of the event response midpoint: an up arrow sits
   eight screen pixels below the candle low, and a down arrow sits eight screen
@@ -53,8 +54,8 @@ still stop immediately.
   it never depends on a future bar. A malformed candle or the absence of both an
   exact and prior candle stops rendering with an explicit contract error.
 - A single draggable panel shows the selected event's four-force facts,
-  immediate price response, trigger reasons, close reason, and ordered outcome
-  horizons. Dragging the header keeps the panel inside the viewport and stores
+  immediate price response, trigger reasons and close reason, but no future
+  outcome horizons. Dragging the header keeps the panel inside the viewport and stores
   its last position in Tampermonkey private storage. This prevents persistent
   multiline notes from overlapping one-second bars while preserving the
   operator's preferred placement across chart context changes and reloads.
@@ -86,6 +87,97 @@ panel records. Route, symbol, interval, epoch, cursor, or sequence
 discontinuities abort the request and remove only those transient entities.
 Marker count and age are bounded on the chart; the panel retains at most eight
 events.
+
+## Compound Candidate Extension (Local Implementation)
+
+ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
+browser does not reconstruct candidates from ordinary events or recalculate
+market evidence. The client, lifecycle, panel, native chart layer and optional-job
+controller are wired into the entrypoint and tested together. The source and
+generated install artifact are version 0.4.0 with identical metadata headers.
+The generated artifact passes syntax, release-contract and isolated execution
+checks, including candidate delivery, paired entities, clear and context stop.
+Publication and Binance operator-page validation remain outstanding.
+Do not treat source unit tests or the panel fixture as deployment evidence.
+
+- The compound client has a separate cursor for
+  `/v1/strategy27/compound-candidates`. Non-JSON HTTP 404 disables only that
+  client until restart. Validated HTTP 503 `compound_unavailable` and
+  `redis_unavailable` clear only compound state and retry after two seconds.
+  Typed request transport failures retain the cursor. Other contract failures
+  are not retried. Cancellation is checked after request and async validation
+  boundaries so a stopped context cannot publish a late status.
+- Canonical Python/JavaScript SHA-256 identities are checked against synthetic
+  Python detector fixtures. Wire decimals remain exact strings for validation;
+  numeric conversion is limited to presentation. Small nonzero display
+  amounts retain significant digits instead of rounding to zero.
+- The independent lifecycle holds at most 80 candidates for two hours measured
+  from the original decision time. Exact replay does not refresh that age or
+  create another marker. Heartbeats do not clear history. Epoch changes require
+  `stream_state`; symbol filtering permits increasing sequence gaps, not
+  regressions. Capacity eviction follows decision time and candidate ID with a
+  monotonic cutoff so old replay cannot resurrect evicted observations.
+- Base rule identity is `(family, direction, profile_id)`. Reinforcement also
+  includes `parent_candidate_id` in its displayed lineage identity. Each
+  occurrence has its own candidate ID; different rules or parents at the same
+  second are never collapsed into one record.
+- The same draggable panel has independent eight-row ordinary and compound
+  histories. Ordinary clear/update operations do not clear compound history or
+  its connection-status element. Both histories can be selected; follow-latest
+  chooses the latest observation without removing either list.
+- The compound controller owns its request cancellation and terminal error
+  boundary. It constructs its chart layer only on the first accepted candidate,
+  so a missing compound chart capability cannot fail ordinary startup. A stream
+  state clears compound views without erasing the newly accepted epoch/sequence;
+  a gateway reset or explicit unavailability resets both lifecycle and view.
+  Manual clear preserves replay bookkeeping but invalidates pending presentation.
+  Age eviction also invalidates a pending draw, and a second age check runs after
+  drawing before publication to the panel. The existing context timer calls
+  `prune()`; there is no second timer. Route/interval changes and disappearance
+  of the visible chart stop both clients before destroying the shared panel.
+  The clear menu clears both views without restarting either client.
+- Native cleanup attempts every owned entity once and aggregates failures.
+  Cleanup failure stops only the compound job, clears its panel records and
+  reports the original and cleanup errors without interrupting ordinary
+  shutdown. An asynchronous drawing failure after context retirement is retained
+  as the controller's `lastError`, without writing into a retired panel.
+- Each candidate owns a 36-pixel native icon arrow and a short text label:
+  dark red down/`候选高` above the candle, dark green up/`候选低` below it.
+  Annotation direction remains `arrow_down`/`arrow_up`; native drawing options
+  use `shape: icon` and supported arrow icons. The first icon center is 26 pixels
+  from the candle edge (18-pixel half-size plus an eight-pixel gap).
+  Candidates sharing a resolved candle and direction receive independent slots
+  64 pixels apart. Removing one does not move surviving candidates. The slot
+  key uses the actual prior candle when multiple no-trade seconds resolve there.
+  The budget is 80 compound candidates / 160 native entities, plus 80 ordinary
+  markers: at most 240 owned chart entities in total.
+- Compound detail shows the actual background, seed, confirmation and optional
+  reinforcement evidence windows. Complete IDs are selectable inside a
+  collapsed details section. Low candidates disclose the unvalidated mirror
+  assumption; all candidates retain exploratory wording. No confidence score
+  or future-outcome fields are displayed.
+
+For an isolated render of the actual panel module using synthetic records:
+
+```bash
+node test/manual/strategy27-compound-panel-preview.mjs
+```
+
+This uses a disposable headless Chromium page without a dev server or access
+to the operator's browser/account. It verifies both directions, eight-row
+retention, selection, collapse, status and viewport bounds, and prints the
+temporary screenshot directory. It does not verify native TradingView entities,
+gateway connectivity, loaded userscript source, or prediction accuracy.
+
+`test/manual/strategy27-native-drawing-probe.mjs` loads the actual compound chart
+module in a disposable official TradingView demo. It draws two independent
+candidates on each side, reads back their points/properties, captures the native
+render after drawing resources finish loading, and verifies that cleanup removes
+all eight owned entities while preserving baseline drawings. Visual inspection
+confirms the arrows and short labels, including distinct same-candle slots.
+This demo runs at its own one-hour resolution; it does not establish Binance
+`1S` compatibility or loaded userscript identity. It uses public market data and
+is never an authenticated operator page.
 
 ## Development
 
