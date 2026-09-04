@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.0
+// @version      0.4.1
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -889,9 +889,22 @@
     return String(value || "").split("@", 1)[0];
   }
   function assertChartContract(chart) {
-    for (const method of ["createShape", "getShapeById", "removeEntity", "resolution", "symbol"]) {
+    for (const method of ["createShape", "getAllShapes", "getShapeById", "removeEntity", "resolution", "symbol"]) {
       if (typeof chart?.[method] !== "function") throw new Error(`TradingView chart method is unavailable: ${method}`);
     }
+  }
+  function readLiveShapeIds(chart) {
+    const shapes = chart.getAllShapes();
+    if (!Array.isArray(shapes)) throw new Error("Strategy 27 chart shape list is invalid");
+    return new Set(shapes.map((shape) => {
+      if (typeof shape?.id !== "string" || shape.id.length === 0) throw new Error("Strategy 27 chart shape id is invalid");
+      return shape.id;
+    }));
+  }
+  function pinMarkerChartContext(chart) {
+    const symbol = chart.symbol();
+    const resolution = chart.resolution();
+    return () => chart.symbol() === symbol && chart.resolution() === resolution;
   }
   function findStrategy27ChartTarget(document, expectedRouteSymbol) {
     const chartRoot = findStrategy27ChartRoot(document);
@@ -1096,14 +1109,17 @@
     if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error("Strategy 27 maxAgeMs is invalid");
     const { chart } = target;
     const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
+    const isChartCurrent = pinMarkerChartContext(chart);
     const registry = /* @__PURE__ */ new Map();
-    const pendingCandleWaits = /* @__PURE__ */ new Set();
+    const pendingRenders = /* @__PURE__ */ new Map();
     let renderGeneration = 0;
+    let reconciliation = null;
     function removeRecord(eventId) {
+      pendingRenders.get(eventId)?.abort();
       const record = registry.get(eventId);
       if (!record) return;
-      chart.removeEntity(record.markerId);
       registry.delete(eventId);
+      if (readLiveShapeIds(chart).has(record.markerId)) chart.removeEntity(record.markerId);
     }
     function pruneAge(observedAtMs) {
       for (const [eventId, record] of registry) {
@@ -1113,37 +1129,66 @@
     function ensureCapacityForNew() {
       while (registry.size >= maxEvents) removeRecord(registry.keys().next().value);
     }
+    function restoreMarker(eventId, record, liveIds) {
+      if (record.restoring) return record.restoring;
+      const current = () => registry.get(eventId) === record && isChartCurrent();
+      if (!current()) return Promise.resolve(false);
+      if (liveIds.has(record.markerId)) return Promise.resolve(true);
+      record.restoring = (async () => {
+        const markerId = await createAlignedShape(chart, record.markerPoint, record.options);
+        if (!current()) {
+          if (readLiveShapeIds(chart).has(markerId)) chart.removeEntity(markerId);
+          return false;
+        }
+        record.markerId = markerId;
+        return true;
+      })().finally(() => {
+        record.restoring = null;
+      });
+      return record.restoring;
+    }
+    function reconcile() {
+      if (reconciliation) return reconciliation;
+      reconciliation = (async () => {
+        let liveIds = readLiveShapeIds(chart);
+        for (const [eventId, record] of [...registry]) {
+          if (registry.get(eventId) !== record || !isChartCurrent()) continue;
+          if (!record.restoring && liveIds.has(record.markerId)) continue;
+          await restoreMarker(eventId, record, liveIds);
+          liveIds = readLiveShapeIds(chart);
+        }
+      })().finally(() => {
+        reconciliation = null;
+      });
+      return reconciliation;
+    }
     async function ensureMarker(eventId, annotation, observedAtMs) {
       let record = registry.get(eventId);
       if (record) {
         record.observedAtMs = observedAtMs;
-        return true;
+        return restoreMarker(eventId, record, readLiveShapeIds(chart));
       }
       if (annotation.markerShape === null) return true;
       const requestedGeneration = renderGeneration;
       const controller = new AbortController();
-      pendingCandleWaits.add(controller);
-      let markerPoint;
+      pendingRenders.set(eventId, controller);
       try {
-        markerPoint = await placement.wait(annotation, { signal: controller.signal });
+        const markerPoint = await placement.wait(annotation, { signal: controller.signal });
+        if (!markerPoint || controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) return false;
+        pruneAge(observedAtMs);
+        ensureCapacityForNew();
+        const options = shapeOptions(annotation.markerShape, annotation.markerColor);
+        const markerId = await createAlignedShape(chart, markerPoint, options);
+        if (controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) {
+          if (readLiveShapeIds(chart).has(markerId)) chart.removeEntity(markerId);
+          return false;
+        }
+        record = { markerId, markerPoint, options, observedAtMs, restoring: null };
+        registry.set(eventId, record);
+        return true;
       } finally {
-        pendingCandleWaits.delete(controller);
+        if (pendingRenders.get(eventId) === controller) pendingRenders.delete(eventId);
       }
-      if (!markerPoint || requestedGeneration !== renderGeneration) return false;
-      pruneAge(observedAtMs);
-      ensureCapacityForNew();
-      const markerId = await createAlignedShape(
-        chart,
-        markerPoint,
-        shapeOptions(annotation.markerShape, annotation.markerColor)
-      );
-      if (requestedGeneration !== renderGeneration) {
-        chart.removeEntity(markerId);
-        return false;
-      }
-      record = { markerId, markerShape: annotation.markerShape, observedAtMs };
-      registry.set(eventId, record);
-      return true;
     }
     return Object.freeze({
       renderOpened: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
@@ -1152,9 +1197,10 @@
       renderOutcome: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
       remove: removeRecord,
       prune: pruneAge,
+      reconcile,
       clear() {
         renderGeneration += 1;
-        for (const controller of [...pendingCandleWaits]) controller.abort();
+        for (const controller of pendingRenders.values()) controller.abort();
         for (const eventId of [...registry.keys()]) removeRecord(eventId);
       },
       get size() {
@@ -2209,6 +2255,14 @@
           failJob(error);
         }
       },
+      async reconcile() {
+        try {
+          prune();
+          if (current() && layer !== null) await layer.reconcile();
+        } catch (error) {
+          failJob(error);
+        }
+      },
       stop(reason) {
         if (abortController.signal.aborted) return;
         abortController.abort();
@@ -2245,12 +2299,16 @@
     if (!Number.isSafeInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 80) throw new Error("Compound chart capacity must be 1..80");
     const { chart } = target;
     const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
+    const isChartCurrent = pinMarkerChartContext(chart);
     const records = /* @__PURE__ */ new Map();
     let pending = null;
+    let reconciliation = null;
     function dispose(recordsToRemove) {
       const errors = [];
+      const liveIds = readLiveShapeIds(chart);
       for (const record of recordsToRemove) {
         for (const id of record.ids.splice(0)) {
+          if (!liveIds.has(id)) continue;
           try {
             chart.removeEntity(id);
           } catch (error) {
@@ -2259,6 +2317,61 @@
         }
       }
       if (errors.length) throw new AggregateError(errors, `Compound chart cleanup failed: ${errors.map((error) => error.message).join("; ")}`);
+    }
+    async function createDrawing(point, drawing) {
+      const entityId = await createAlignedShape(chart, point, drawing);
+      try {
+        const properties = chart.getShapeById(entityId).getProperties();
+        const matched = properties.color === drawing.overrides.color && (drawing.shape === "icon" ? properties.icon === drawing.icon && properties.size === ICON_SIZE_PX : properties.text === drawing.text && properties.fontsize === 12);
+        if (!matched) throw new Error("Compound chart drawing properties did not match the requested icon/label");
+      } catch (error) {
+        try {
+          dispose([{ ids: [entityId] }]);
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
+        }
+        throw error;
+      }
+      return entityId;
+    }
+    function restoreCandidate(id, record, liveIds) {
+      if (record.restoring) return record.restoring;
+      const current = () => records.get(id) === record && isChartCurrent();
+      if (!current()) return Promise.resolve(false);
+      if (record.ids.every((entityId) => liveIds.has(entityId))) return Promise.resolve(true);
+      record.restoring = (async () => {
+        for (let index = 0; index < record.drawings.length; index += 1) {
+          if (!current()) return false;
+          if (liveIds.has(record.ids[index])) continue;
+          const [point, drawing] = record.drawings[index];
+          const entityId = await createDrawing(point, drawing);
+          if (!current()) {
+            dispose([{ ids: [entityId] }]);
+            return false;
+          }
+          record.ids[index] = entityId;
+          liveIds = readLiveShapeIds(chart);
+        }
+        return true;
+      })().finally(() => {
+        record.restoring = null;
+      });
+      return record.restoring;
+    }
+    function reconcile() {
+      if (reconciliation) return reconciliation;
+      reconciliation = (async () => {
+        let liveIds = readLiveShapeIds(chart);
+        for (const [id, record] of [...records]) {
+          if (records.get(id) !== record || !isChartCurrent()) continue;
+          if (!record.restoring && record.ids.every((entityId) => liveIds.has(entityId))) continue;
+          await restoreCandidate(id, record, liveIds);
+          liveIds = readLiveShapeIds(chart);
+        }
+      })().finally(() => {
+        reconciliation = null;
+      });
+      return reconciliation;
     }
     function remove(id) {
       const removals = [];
@@ -2281,8 +2394,9 @@
       dispose(removals);
     }
     async function renderCandidate(id, annotation, decisionAtMs) {
+      const existing = records.get(id);
+      if (existing) return restoreCandidate(id, existing, readLiveShapeIds(chart));
       if (pending !== null) throw new Error("Compound chart rendering must be serial");
-      if (records.has(id)) return true;
       if (records.size >= maxCandidates) throw new Error("Compound chart capacity exceeded before eviction");
       if (typeof id !== "string" || id.length === 0 || !Number.isSafeInteger(decisionAtMs) || decisionAtMs < 1) throw new Error("Compound chart candidate identity/time is invalid");
       const icon = ICONS[annotation.markerShape];
@@ -2294,7 +2408,7 @@
           signal: operation.controller.signal,
           gapPx: CANDLE_GAP_PX + ICON_SIZE_PX / 2
         });
-        if (!base || operation.controller.signal.aborted) return false;
+        if (!base || operation.controller.signal.aborted || !isChartCurrent()) return false;
         const group = `${base.time}/${annotation.markerShape}`;
         const occupied = new Set([...records.values()].filter((record) => record.group === group).map((record) => record.slot));
         let slot = 0;
@@ -2308,17 +2422,14 @@
           [labelPoint, { ...options, shape: "text", text: annotation.markerLabel, overrides: { ...options.overrides, fontsize: 12, bold: true, fillBackground: false, drawBorder: false } }]
         ];
         for (const [drawingPoint, drawing] of drawings) {
-          const entityId = await createAlignedShape(chart, drawingPoint, drawing);
+          const entityId = await createDrawing(drawingPoint, drawing);
           operation.ids.push(entityId);
-          if (operation.controller.signal.aborted) {
+          if (operation.controller.signal.aborted || !isChartCurrent()) {
             dispose([operation]);
             return false;
           }
-          const properties = chart.getShapeById(entityId).getProperties();
-          const matched = properties.color === annotation.markerColor && (drawing.shape === "icon" ? properties.icon === icon && properties.size === ICON_SIZE_PX : properties.text === annotation.markerLabel && properties.fontsize === 12);
-          if (!matched) throw new Error("Compound chart drawing properties did not match the requested icon/label");
         }
-        records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs });
+        records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, drawings, restoring: null });
         return true;
       } catch (error) {
         try {
@@ -2331,7 +2442,7 @@
         pending = null;
       }
     }
-    return Object.freeze({ renderCandidate, remove, clear, get size() {
+    return Object.freeze({ renderCandidate, reconcile, remove, clear, get size() {
       return records.size;
     } });
   }
@@ -2423,13 +2534,41 @@
       removeStrategy27StatusView(pageDocument);
       statusView = null;
     }
-    async function renderGatewayResponse(context, response) {
-      if (active !== context) return;
+    function pruneOrdinaryEvents(context) {
       for (const eventId of context.lifecycle.prune(Date.now())) {
         context.layer.remove(eventId);
         context.panel.remove(eventId);
         context.candidatePresentations.delete(eventId);
       }
+    }
+    function failOrdinary(context, error) {
+      if (error.name === "AbortError" || active !== context || context.failed) return;
+      context.failed = true;
+      context.controller.abort();
+      let failure = error;
+      try {
+        context.layer.clear();
+      } catch (cleanupError) {
+        failure = new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
+      }
+      context.panel.clear();
+      showStatus(context.target.chartRoot, `Strategy 27 已停止：${failure.message}`, "error");
+    }
+    function reconcileOrdinary(context) {
+      if (context.failed) return;
+      try {
+        pruneOrdinaryEvents(context);
+        if (context.reconciliation) return;
+        context.reconciliation = context.layer.reconcile().catch((error) => failOrdinary(context, error)).finally(() => {
+          context.reconciliation = null;
+        });
+      } catch (error) {
+        failOrdinary(context, error);
+      }
+    }
+    async function renderGatewayResponse(context, response) {
+      if (active !== context || context.failed) return;
+      pruneOrdinaryEvents(context);
       if (response.status === "reset") {
         context.lifecycle.reset(response.reason);
         context.layer.clear();
@@ -2439,6 +2578,7 @@
         return;
       }
       for (const message of response.messages) {
+        if (active !== context || context.failed) return;
         const action = context.lifecycle.apply(message);
         for (const eventId of action.evictedEventIds ?? []) {
           context.layer.remove(eventId);
@@ -2468,7 +2608,7 @@
           event_outcome: "renderOutcome"
         }[action.messageKind];
         const rendered = await context.layer[renderMethod](action.eventId, annotation, action.observedAtMs);
-        if (!rendered || active !== context) continue;
+        if (!rendered || active !== context || context.failed) continue;
         context.panel.upsert(action.eventId, annotation, action.observedAtMs);
         hideStatus();
       }
@@ -2495,6 +2635,7 @@
           savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position)
         }),
         candidatePresentations: /* @__PURE__ */ new Map(),
+        reconciliation: null,
         failed: false
       };
       active = context;
@@ -2526,13 +2667,7 @@
         },
         onResponse: (response) => renderGatewayResponse(context, response)
       });
-      client.run(context.controller.signal).catch((error) => {
-        if (error.name === "AbortError" || active !== context) return;
-        context.failed = true;
-        context.layer.clear();
-        context.panel.clear();
-        showStatus(target.chartRoot, `Strategy 27 已停止：${error.message}`, "error");
-      });
+      client.run(context.controller.signal).catch((error) => failOrdinary(context, error));
     }
     function synchronizeContext() {
       const routeSymbol = parseFuturesTradingSymbolFromPathname(page.location.pathname);
@@ -2578,7 +2713,8 @@
         return;
       }
       if (active && active.routeSymbol === routeSymbol && active.target.chart === target.chart && active.target.chartRoot === target.chartRoot) {
-        active.compound.prune();
+        reconcileOrdinary(active);
+        void active.compound.reconcile();
         return;
       }
       stopActive("route_changed");

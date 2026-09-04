@@ -21,7 +21,7 @@ const state = (sequence, epoch = EPOCH) => ({
 });
 const deferred = () => Promise.withResolvers();
 
-function harness(t, steps, { render, createError, removeError, clearError, maxAgeMs = 7200000, maxCandidates = 80 } = {}) {
+function harness(t, steps, { render, reconcile, createError, removeError, clearError, maxAgeMs = 7200000, maxCandidates = 80 } = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"></div>');
   const panel = createStrategy27EventPanel(dom.window.document, dom.window.document.querySelector('.chart-widget-root'), {
     maxEvents: 8, maxCompoundEvents: 8, loadPosition: () => null, savePosition: () => {},
@@ -60,6 +60,7 @@ function harness(t, steps, { render, createError, removeError, clearError, maxAg
       layerCreates += 1;
       if (createError) throw createError;
       return {
+        async reconcile() { if (reconcile) await reconcile(); },
         async renderCandidate(id, annotation, decisionAtMs) {
           const token = { id, generation, cancelled: false };
           pending = token;
@@ -375,4 +376,19 @@ test('late drawing failure after context retirement remains inspectable without 
   assert.equal(h.status(), retiredStatus);
   assert.equal(h.panel.compoundSize, 0);
   assert.equal(h.panel.size, 1);
+});
+
+test('timer repair failures stop only the compound job and retain ordinary history', async (t) => {
+  const h = harness(t, [reset(), batch([envelope()])], {
+    reconcile: async () => { throw new Error('fixture native repair failure'); },
+  });
+  h.run();
+  await h.parked;
+  await h.controller.reconcile();
+  assert.equal(h.panel.size, 1);
+  assert.equal(h.panel.compoundSize, 0);
+  assert.equal(h.shapes.size, 0);
+  assert.equal(h.statusKind(), 'error');
+  assert.match(h.status(), /fixture native repair failure/);
+  assert.match(h.controller.lastError.message, /fixture native repair failure/);
 });

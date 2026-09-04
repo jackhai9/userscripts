@@ -150,6 +150,15 @@ export function createCompoundCandidateController({
         failJob(error);
       }
     },
+    async reconcile() {
+      // Recovery belongs to the same optional-job boundary as incoming draws.
+      try {
+        prune();
+        if (current() && layer !== null) await layer.reconcile();
+      } catch (error) {
+        failJob(error);
+      }
+    },
     stop(reason) {
       if (abortController.signal.aborted) return;
       abortController.abort();

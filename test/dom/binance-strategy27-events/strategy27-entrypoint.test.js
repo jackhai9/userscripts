@@ -15,7 +15,7 @@ async function until(predicate) {
   }
 }
 
-async function harness(t, { generated = false } = {}) {
+async function harness(t, { generated = false, beforeCreate } = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"><iframe></iframe></div>');
   dom.reconfigure({ url: 'https://www.binance.com/zh-CN/futures/BTCUSDT' });
   const page = dom.window;
@@ -26,10 +26,12 @@ async function harness(t, { generated = false } = {}) {
     resolution: () => resolution, symbol: () => 'BTCUSDT',
     createShape: async (point, options) => {
       const id = `entry-owned-${++shapeSequence}`;
+      if (beforeCreate) await beforeCreate();
       shapes.set(id, { getPoints: () => [point], getProperties: () => ({ ...options.overrides, icon: options.icon, text: options.text }) });
       return id;
     },
     getShapeById: (id) => shapes.get(id),
+    getAllShapes: () => [...shapes.keys()].map((id) => ({ id })),
     removeEntity: (id) => { assert.notEqual(id, 'user-owned'); assert.equal(shapes.delete(id), true); },
     getSeries: () => ({ data: () => ({ valueAt: (time) => [time, 100, 101, 99, 100] }) }),
     _chartWidget: { model: () => ({ model: () => ({
@@ -185,4 +187,96 @@ test('generated install artifact receives a candidate and cleans up its paired e
   h.tick();
   assert.equal(h.pending('ordinary').length, 0);
   assert.equal(h.pending('compound').length, 0);
+});
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} context timer restores externally evicted candidates without gateway traffic`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.reset();
+    await h.candidate();
+    const oldIds = [...h.shapes.keys()].filter((id) => id !== 'user-owned');
+    for (const id of oldIds) h.shapes.delete(id);
+    h.tick();
+    await until(() => h.shapes.size === 3);
+    assert.equal(h.rows(), 1);
+    assert.equal(oldIds.some((id) => h.shapes.has(id)), false);
+    const repairedIds = [...h.shapes.keys()];
+    h.tick();
+    await new Promise(setImmediate);
+    assert.deepEqual([...h.shapes.keys()], repairedIds);
+    h.clear();
+    h.tick();
+    await new Promise(setImmediate);
+    assert.equal(h.shapes.size, 1);
+    assert.equal(h.rows(), 0);
+    await h.candidate(2, '2-0', '3-0');
+    assert.equal(h.rows(), 0);
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+  });
+}
+
+function ordinaryMessage() {
+  const snapshot = {
+    bucket_start_ms: 1000, bucket_end_ms: 1250, source_bucket_count: 1,
+    bucket_trigger_reasons: ['aggressive_buy_to_ask_depth'],
+    candidate_observations: ['bullish_sell_impact_failure'],
+    aggressive_buy: { notional: '1200', trade_count: 3, to_opposite_depth: '0.4' },
+    aggressive_sell: { notional: '200', trade_count: 1, to_opposite_depth: '0.1' },
+    bid: { observed_addition_notional: '300', observed_decrease_notional: '100', best_price_migration_bps: '0.2', addition_to_depth: '0.3', decrease_to_depth: '0.1' },
+    ask: { observed_addition_notional: '100', observed_decrease_notional: '500', best_price_migration_bps: '-0.4', addition_to_depth: '0.1', decrease_to_depth: '0.5' },
+    price_response: { mid: '100', mid_return_bps: '2.5', spread_bps: '1.2', spread_change_bps: '-0.2' },
+  };
+  return {
+    schema_version: 2, strategy_id: '27', spec_version: '27_2_spec_v10', runtime_epoch: 'a'.repeat(32),
+    sequence: 1, message_kind: 'event_updated', symbol: 'BTC/USDT:USDT', event_id: 'b'.repeat(64),
+    observed_at_ms: 2000, event_time_ms: 2000, data_status: 'active',
+    payload: { event: {
+      event_kind: 'orderflow_event', analysis_start_at_ms: 0, triggered_at_ms: 1000,
+      active_end_at_ms: null, event_status: 'active', close_reason: null,
+      trigger_reasons: ['aggressive_buy_to_ask_depth'],
+      trigger_snapshot: { ...snapshot, candidate_observations: [] },
+      latest_snapshot: { ...snapshot, source_bucket_count: 4, bucket_end_ms: 2000 },
+    } },
+  };
+}
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} timer restores ordinary drawings and prunes both lifecycles before repair`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.respond('ordinary', { schema_version: 1, status: 'reset', reason: 'initial_cursor', requested_cursor: null, next_cursor: '1-0', messages: [] });
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
+    await until(() => h.shapes.size === 2 || h.page.document.getElementById('jh-strategy27-event-status')?.dataset.state === 'error');
+    assert.equal(h.shapes.size, 2, h.page.document.getElementById('jh-strategy27-event-status')?.textContent);
+    const oldOrdinary = [...h.shapes.keys()].find((id) => id !== 'user-owned');
+    h.shapes.delete(oldOrdinary);
+    h.tick();
+    await until(() => h.shapes.size === 2);
+    assert.equal(h.shapes.has(oldOrdinary), false);
+    assert.equal(h.pending('ordinary').length, 1);
+    await h.reset();
+    await h.candidate();
+    assert.equal(h.shapes.size, 4);
+    for (const id of [...h.shapes.keys()]) if (id !== 'user-owned') h.shapes.delete(id);
+    h.setNow(7207001);
+    h.tick();
+    await new Promise(setImmediate);
+    assert.equal(h.rows(), 0);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+  });
+}
+
+test('timer expiry cancels an ordinary first creation that is still awaiting TradingView', async (t) => {
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const h = await harness(t, { beforeCreate: async () => { entered.resolve(); await release.promise; } });
+  await h.respond('ordinary', { schema_version: 1, status: 'reset', reason: 'initial_cursor', requested_cursor: null, next_cursor: '1-0', messages: [] });
+  await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
+  await entered.promise;
+  h.setNow(7207001);
+  h.tick();
+  release.resolve();
+  await until(() => h.pending('ordinary').length === 1);
+  assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+  assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
 });
