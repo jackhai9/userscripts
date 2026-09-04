@@ -1,5 +1,9 @@
 # Binance Strategy 27 Event Annotations
 
+This document owns the Strategy 27 gateway, chart-rendering, and entity
+contracts. Generic Codex/tool timeout and connection policy belongs to the global
+rule and shared knowledge runbook.
+
 ## Purpose
 
 `binance-strategy27-events.user.js` is a rendering client for the Strategy 27

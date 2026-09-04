@@ -1,5 +1,9 @@
 # Brooks Media Sync Plan
 
+This document owns Brooks-specific indexing, export-state, timing, and media URL
+semantics. Generic Codex/Chrome fault-layer and timeout policy belongs to the
+shared knowledge runbook.
+
 ## Goal
 
 Audit the local Brooks Trading Course archive against the currently available course media before downloading or replacing anything.
@@ -331,29 +335,24 @@ Implication: validation must either run or navigate to the Bunny embed from an a
 
 ## Codex Chrome Verification Surfaces
 
-The Codex Chrome extension exposes more than one JavaScript execution surface. Treat the historical Playwright evaluation sandbox and raw CDP as separate capabilities.
+The shared runbook at
+`~/.dotfiles/knowledge/shared/CODEX_TOOL_TIMEOUT_TRIAGE.md` owns generic
+execution-surface, fault-layer, timeout, ownership, and cleanup policy.
 
-Observed on 2026-06-03 in the extension-backed Playwright evaluation sandbox:
+Brooks-specific validation keeps only these boundaries:
 
-- `document.querySelector()` and layout inspection worked.
-- `fetch`, `XMLHttpRequest`, `DOMParser`, `document.createElement`, `window.addEventListener`, and `window.performance` were unavailable or not callable from that evaluation sandbox.
-- This limitation belongs to the automation surface, not necessarily to the target Brooks page.
-
-Revalidated on 2026-08-23 with raw CDP on the authenticated Brooks course index:
-
-- `Runtime.evaluate` executed in the live page context.
-- Same-origin `XMLHttpRequest` returned a video page with HTTP 200, and `DOMParser` extracted its Bunny iframe.
-- `document.createElement`, DOM insertion/removal, event listeners, `postMessage`, and `performance` worked.
-- CDP network events observed the Bunny embed, playlist, resolution m3u8, and CN/EN caption requests and responses.
-
-Use raw CDP for direct page-context verification when it is available. If raw CDP is unavailable or the target browser lacks the required authenticated state, use layered evidence instead of assuming the page cannot run the code:
-
-1. Use Chrome automation for read-only live DOM, iframe attributes, layout, screenshots, and console logs.
-2. Use command-line `curl` with and without `Referer` to verify server-side access-control behavior.
-3. Use unit tests or jsdom for deterministic parser/state-machine behavior.
-4. Use the actual Tampermonkey script or a purpose-built helper extension for full in-page execution of XHR, DOM mutation, iframe creation, and `postMessage`.
-
-Computer-use style clicking can confirm visible UI state, but it does not bypass JavaScript execution-world or extension sandbox limits. For full programmatic validation, prefer raw CDP, then DevTools Console/Snippets, the installed userscript, or a temporary helper extension.
+- Treat the Playwright evaluation sandbox and raw CDP as separate capabilities.
+  A missing API in one evaluation surface does not prove that the authenticated
+  Brooks page cannot run it.
+- Prefer raw CDP for page-context XHR, DOM mutation, iframe, event, and network
+  verification when it is available.
+- If raw CDP is unavailable or the required login state is missing, combine
+  read-only live DOM/screenshots, referer-aware HTTP, deterministic unit/jsdom
+  tests, and the actual Tampermonkey or helper-extension runtime. Record which
+  surface was used and do not call a layered result end-to-end proof unless it
+  exercised the relevant page context.
+- Computer-use clicking proves visible UI state only; it does not bypass an
+  execution-world or extension-sandbox boundary.
 
 ## Local Audit Workflow
 

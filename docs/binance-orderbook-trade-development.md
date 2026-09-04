@@ -1,5 +1,11 @@
 # Binance Orderbook Trade Development Manual
 
+This manual owns the orderbook source layout, deterministic business contracts,
+semantic DOM contracts, and project-level development checks. Browser/CDP and
+live-capture procedures are owned by
+docs/binance-orderbook-trade-ui-automation.md; release mutations are owned by
+skills/userscript-release/SKILL.md.
+
 ## Source Of Truth
 
 `src/binance-orderbook-trade/` is the development source for the Binance orderbook userscript.
@@ -181,11 +187,9 @@ Do not bump for docs-only changes.
 
 Do not infer trading semantics from stale DOM or old symbol state. Anything involving quantity rules must be derived from the current symbol.
 
-Before changing Binance UI automation behavior, collect current live evidence. This applies to DOM selectors, click targets, dropdown open/close behavior, tab selection, dialogs, button disabled state, input state, visibility checks, and event dispatch. Inspect the live DOM, accessibility tree or screenshot, and Binance's current frontend bundle/source for the relevant component structure and event path. Treat page labels, old notes, historical selectors, and prior memory as hypotheses until the current page/source confirms them.
-
-For page-context UI operations that can be validated directly, prototype the minimal JavaScript in Chrome DevTools Console/Snippets or an equivalent live-page debugger before editing the userscript. The prototype must prove selector matches, event dispatch, state transition, and failure behavior on the live Binance page. Port the verified selector, event path, and state checks back into the userscript; do not make the userscript change first and rely on production trial-and-error.
-
-Every Binance UI automation change must report the evidence used: live DOM or state inspected, Binance source/chunk/selector/event evidence, verified click or state transition, and any paths not manually tested. If the live source or DOM was not inspected, say that explicitly and do not present the behavior as proven.
+Live DOM/source evidence, DevTools prototypes, state-based browser validation,
+and the evidence report contract are owned by
+`docs/binance-orderbook-trade-ui-automation.md`.
 
 Do not auto-confirm destructive Binance dialogs. The script may open Binance's native cancel confirmation, but final confirmation remains manual.
 
@@ -225,15 +229,9 @@ Numeric panel profiles are scoped by current symbol, Binance orderbook precision
 
 Binance's orderbook precision dropdown is not the generic `bn-sdd-option` select path. Current live source renders the orderbook header as `.orderbook-tickSize`, wraps the clickable trigger in `.tick-content`, and renders precision choices inside the same control's unique visible `.ob-ticksize-overlay` as `.ob-ticksize-item`. Precision selection must stay inside that concrete overlay; do not scan generic option, dropdown, popup, or menu selectors elsewhere on the page.
 
-Do not validate orderbook precision selection by opening the dropdown manually first. The bug-prone path is the closed-dropdown path triggered by the script's Apply or decade-adjustment buttons. The current verified sequence is to dispatch `pointerdown`, `mousedown`, `pointerup`, `mouseup`, and `click` on `#futuresOrderbook .orderbook-tickSize` or its `.tick-content`, wait for that control's visible `.ob-ticksize-overlay`, select its exact `.ob-ticksize-item`, and then wait until `.tick-content` displays the target value. Apply, decrease, and increase share one selection task so they cannot race for the same native menu. Decrease and increase may select only an exact native divide-by-10 or multiply-by-10 option; they must not synthesize a value or treat an arbitrary sorted neighbor as a decade step.
-
-Live Tampermonkey verification must prove the new userscript is actually active. Opening a raw GitHub URL or landing on Tampermonkey's `script_installation.php` intermediate page is not enough. Confirm through the extension update UI, the userscript panel behavior, or live DOM/status evidence.
-
-After a Binance userscript release, continue through the full local validation loop without waiting for a separate user reminder: patch the existing Tampermonkey script through MCP, read it back, hard-reload the signed-in Chrome trading tab, use raw CDP to confirm the loaded userscript source and version, and exercise the live path directly affected by the change. Stop only for a concrete access, connection, page-state, unresolved-risk, or current financial-confirmation boundary.
-
-For live Binance tests, confirm the target symbol, order mode, script quantity multiplier, orderbook display precision, and far-away test prices before clicking trade controls. When the user says the zoom/precision should be `1` or max, that refers to the Binance orderbook price-display precision dropdown, not the script quantity multiplier. Set the orderbook precision to the largest/coarsest option, such as `1`, so test orders are placed farther from the live price. Do not treat another open futures tab or another symbol's orders as evidence for the current test.
-
-When browser clicking or navigation becomes unreliable, switch to state-based verification instead of repeatedly clicking: inspect the accessibility tree, DOM text, script status, open-order row count, and Binance toast/status changes. For replacement-order flows, useful evidence includes the old error disappearing, a cancel toast appearing, current-symbol rows changing, and the ladder task reaching a completion status.
+Closed-dropdown precision interaction, Tampermonkey source activation, live test
+scope, and state-based browser evidence are specified in
+`docs/binance-orderbook-trade-ui-automation.md`.
 
 ## Manual Test Matrix
 
@@ -270,22 +268,10 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 
 If a path was not manually tested, state that in the final summary.
 
-## Release Checklist
+## Release Handoff
 
-Before release:
-
-```bash
-npm run build:binance-orderbook-trade
-npm test
-npm run check:binance-orderbook-trade
-git diff --check
-```
-
-Then verify:
-
-- generated artifact is committed with matching source
-- `@version` was bumped for behavior changes
-- install URL remains unchanged
-- README still points users to the generated single-file userscript
-- release reaches `main` through a GitHub PR merged with `gh pr merge`
-- do not publish by locally merging into `main` and direct-pushing `main`
+Remote release, commit, PR, and publish sequencing is owned by
+`skills/userscript-release/SKILL.md`. Keep this manual focused on the orderbook
+source and business contracts; use the release skill when the current request
+explicitly includes a release. Browser/Tampermonkey post-release validation is
+owned by `docs/binance-orderbook-trade-ui-automation.md`.

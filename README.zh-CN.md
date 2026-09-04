@@ -95,12 +95,14 @@ npm run build:binance-userscripts
 2. `src/binance-orderbook-trade/`、`src/binance-trading-data/`、`src/binance-coinmarketcap-data/`、`src/binance-strategy27-events/`、`src/m3u8-downloader/` 是对应脚本的开发真源。
 3. 公开安装入口仍是生成后的 `scripts/*.user.js`；修改对应 `src/` 后运行 `npm run build:binance-userscripts` 或单脚本 build 命令。
 4. 非真源仓库只放安装链接，不复制脚本源码。
-5. 每次发布递增 `@version`，并保留 `@updateURL/@downloadURL` 指向真源 raw 地址。
+5. 行为变更时递增 `@version`；纯文档变更不需要 bump，并保留 `@updateURL/@downloadURL` 指向真源 raw 地址。
 6. Tampermonkey 统一用安装链接重装，不在面板里手改代码。
 
 开发手册：
 
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
+- [Binance orderbook UI automation](docs/binance-orderbook-trade-ui-automation.md)
+- [Userscript validation and maintenance](docs/userscript-validation.md)
 - [Binance Strategy 27 event annotations](docs/binance-strategy27-events-development.md)
 - [Brooks media sync workflow](docs/brooks-media-sync-workflow.md)
 

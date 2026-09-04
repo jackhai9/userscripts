@@ -103,6 +103,8 @@ npm run build:binance-userscripts
 ## Documentation
 
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
+- [Binance orderbook UI automation](docs/binance-orderbook-trade-ui-automation.md)
+- [Userscript validation and maintenance](docs/userscript-validation.md)
 - [Binance Strategy 27 event annotations](docs/binance-strategy27-events-development.md)
 - [Brooks media sync workflow](docs/brooks-media-sync-workflow.md)
 
