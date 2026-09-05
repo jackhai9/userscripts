@@ -282,7 +282,11 @@ test('creates a non-interactive canvas with an independently clickable toggle', 
   assert.match(styleText, /pointer-events: auto/);
   assert.match(
     styleText,
-    /background: linear-gradient\(90deg, transparent, color-mix\(in srgb, var\(--color-BasicBg, #fff\) 24%, transparent\)\)/,
+    /\.jh-depth-profile-canvas\s*\{[^}]*background: transparent;/,
+  );
+  assert.doesNotMatch(
+    styleText,
+    /\.jh-depth-profile-canvas\s*\{[^}]*color-mix\(/,
   );
   assert.doesNotMatch(
     styleText,
@@ -373,8 +377,8 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
   assert.equal(root.style.height, '240px');
   assert.equal(calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').length, 2);
   assert.deepEqual(fillStyles, [
-    'rgba(246, 70, 93, .62)',
-    'rgba(14, 203, 129, .62)',
+    '#f6465d',
+    '#0ecb81',
   ]);
   assert.deepEqual(
     calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').map((call) => call[2]),
