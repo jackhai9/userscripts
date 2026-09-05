@@ -37,7 +37,7 @@ This repository is the source of truth and distribution point for the scripts. G
 
 | Script | Target | Description | Source of truth | Install |
 | --- | --- | --- | --- | --- |
-| Binance Strategy 29 Bollinger signals | Binance Futures | Annotate native loaded candles with mirrored Bollinger/SMA60 signals; standalone or alongside orderbook 2.7.199+ | This repository | [Install][install-binance-strategy29-bollinger] |
+| Binance Strategy 29 Bollinger signals | Binance Futures | Annotate native loaded candles and optionally show the authenticated cross-timeframe server summary; standalone or alongside orderbook 2.7.199+ | This repository | [Install][install-binance-strategy29-bollinger] |
 | Binance orderbook one-click order entry | Binance Futures | Click an orderbook price, infer the current open/close tab, fill quantity, and submit an order with a multiplier panel | This repository | [Install][install-binance-orderbook-trade] |
 | Binance Futures data panel | Binance Futures | Overlay open interest, long/short ratios, funding rate, basis, and directional signals | This repository | [Install][install-binance-trading-data] |
 | Binance CoinMarketCap data panel | Binance Futures | Show CoinMarketCap valuation, supply, and liquidity data for the current symbol | This repository | [Install][install-binance-coinmarketcap-data] |

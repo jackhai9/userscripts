@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "spec_version": "29_2_spec_v1",
+  "observed_at_ms": 1788580805000,
+  "units": [
+    {
+      "symbol": "BTC/USDT:USDT",
+      "timeframe": "1m",
+      "status": "ready",
+      "reason": "current",
+      "last_processed_open_ms": 1788580740000,
+      "last_data_at_ms": 1788580800000,
+      "last_event_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "symbol": "BTC/USDT:USDT",
+      "timeframe": "1h",
+      "status": "stale",
+      "reason": "observer_progress_stale",
+      "last_processed_open_ms": 1788573600000,
+      "last_data_at_ms": 1788577200000,
+      "last_event_id": null
+    },
+    {
+      "symbol": "ETH/USDT:USDT",
+      "timeframe": "5m",
+      "status": "warming",
+      "reason": "awaiting_initial_baseline",
+      "last_processed_open_ms": null,
+      "last_data_at_ms": null,
+      "last_event_id": null
+    }
+  ],
+  "delivery_counts": {
+    "pending": 1,
+    "sending": 0,
+    "sent": 4,
+    "unknown": 1,
+    "expired": 2,
+    "failed": 0
+  }
+}

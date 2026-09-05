@@ -5,10 +5,22 @@ import { openUserscriptScenario } from '../helpers/userscript-page.js';
 
 const strategy29 = await readFile(new URL('../../../scripts/binance-strategy29-bollinger.user.js', import.meta.url), 'utf8');
 
+function strategy29Sandbox(source) {
+  return `{
+    const unsafeWindow = window;
+    const GM_xmlhttpRequest = () => { throw new Error('Strategy29 remote summary must remain disabled in this fixture'); };
+    const GM_getValue = (_key, fallback) => fallback;
+    const GM_setValue = () => {};
+    const GM_registerMenuCommand = () => {};
+    ${source}
+  }`;
+}
+
 for (const first of [true, false]) {
   test(`independent generated scripts share chart coordination (Strategy29 first=${first})`, async ({ page }) => {
+    const sandboxedStrategy29 = strategy29Sandbox(strategy29);
     const { errors } = await openUserscriptScenario(page, createCancelScenario(), first
-      ? { beforeOrderbook: strategy29 } : { afterOrderbook: strategy29 });
+      ? { beforeOrderbook: sandboxedStrategy29 } : { afterOrderbook: sandboxedStrategy29 });
     await page.evaluate(symbol => {
       const api = document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi;
       const shapes = new Map();
@@ -52,7 +64,7 @@ for (const first of [true, false]) {
       owners: [...window[Symbol.for('jh-userscripts.chart-mutation-owners')].predicates.keys()],
     }))).toEqual({ embedded: false, controller: 1, owners: ['orderbook'] });
     // Reinjecting the complete standalone artifact must reuse its page singleton.
-    await page.addScriptTag({ content: strategy29 });
+    await page.addScriptTag({ content: sandboxedStrategy29 });
     expect(await page.evaluate(() => window.__TM_STRATEGY29_DEBUG__.diagnostics.layerSize)).toBe(9);
     await page.evaluate(() => window.__TM_STRATEGY29_DEBUG__.dispose());
     expect(await page.evaluate(() => document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi.activeChart().getAllShapes())).toEqual([]);

@@ -13,6 +13,15 @@ async function bundle() {
   return vm.runInThisContext(result.outputFiles[0].text + '; coordination;');
 }
 
+async function ownerBundle(context) {
+  const result = await build({
+    stdin: { contents: "export * from './src/shared/chart-mutation-owners.js';",
+      resolveDir: process.cwd(), sourcefile: 'coordination-sandbox-test.js' },
+    bundle: true, write: false, format: 'iife', globalName: 'coordination',
+  });
+  return vm.runInContext(`${result.outputFiles[0].text}; coordination;`, context);
+}
+
 test('independent bundles share one exact API controller and either order sees the same drain', async () => {
   const a = await bundle(), b = await bundle();
   for (const [first, second] of [[a, b], [b, a]]) {
@@ -37,7 +46,7 @@ test('independent bundles share one exact API controller and either order sees t
 });
 
 test('independent bundles expose only a live boolean and unregister their own owner', async () => {
-  const a = await bundle(), b = await bundle(), view = {};
+  const a = await bundle(), b = await bundle(), view = { Map };
   assert.equal(b.isChartMutationBlocked(view), false);
   let busy = false;
   const remove = a.registerChartMutationOwner(view, 'orderbook', () => busy);
@@ -51,12 +60,35 @@ test('independent bundles expose only a live boolean and unregister their own ow
   assert.throws(() => b.isChartMutationBlocked(view), /boolean/);
 });
 
+test('page and userscript realms share the page-owned Map in either load order', async () => {
+  for (const strategy29First of [false, true]) {
+    const pageContext = vm.createContext({});
+    const sandboxContext = vm.createContext({});
+    const view = vm.runInContext('globalThis', pageContext);
+    const pageBundle = await ownerBundle(pageContext);
+    const strategy29Bundle = await ownerBundle(sandboxContext);
+    assert.notEqual(view.Map, vm.runInContext('Map', sandboxContext));
+    if (strategy29First) {
+      assert.equal(strategy29Bundle.isChartMutationBlocked(view), false);
+      assert.equal(view[Symbol.for('jh-userscripts.chart-mutation-owners')], undefined);
+    }
+    let busy = false;
+    const remove = pageBundle.registerChartMutationOwner(view, `orderbook-${strategy29First}`, () => busy);
+    const record = view[Symbol.for('jh-userscripts.chart-mutation-owners')];
+    assert.equal(record.predicates instanceof view.Map, true);
+    assert.equal(strategy29Bundle.isChartMutationBlocked(view), false);
+    busy = true;
+    assert.equal(strategy29Bundle.isChartMutationBlocked(view), true);
+    remove();
+  }
+});
+
 test('incompatible shared protocols fail without overwriting an owner', async () => {
   const a = await bundle();
   const record = { version: 99 };
   const api = { [Symbol.for('jh-userscripts.chart-marker-save-controller')]: record };
   assert.throws(() => a.installTradingViewMarkerSaveController(api), /Incompatible/);
   assert.equal(api[Symbol.for('jh-userscripts.chart-marker-save-controller')], record);
-  const view = { [Symbol.for('jh-userscripts.chart-mutation-owners')]: record };
+  const view = { Map, [Symbol.for('jh-userscripts.chart-mutation-owners')]: record };
   assert.throws(() => a.isChartMutationBlocked(view), /Incompatible/);
 });

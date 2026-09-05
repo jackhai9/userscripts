@@ -2,8 +2,10 @@ import { createBollingerMonitor } from './monitor.js';
 import { isChartMutationBlocked } from '../shared/chart-mutation-owners.js';
 import { isFuturesTradingPathname, parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 import { ensureSpaRouteChangePatched, installSpaRouteChangeListener } from '../shared/spa-route-change.js';
+import { createStrategy29RemoteSummary } from './remote-summary.js';
 
 const INSTANCE = Symbol.for('jh-userscripts.strategy29-bollinger');
+const RUNTIME_VERSION = 2;
 const CONFLICT = 'Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.';
 
 /** This is a migration refusal, not compatibility with the old independently owned save wrapper. */
@@ -12,10 +14,10 @@ export function hasEmbeddedBollinger(view) {
   return !!debug && Object.getOwnPropertyDescriptor(debug, 'bollingerAlertState') !== undefined;
 }
 
-/** Page-context singleton: independent installation, no exchange/account/network operations. */
-export function installStrategy29(view) {
+/** Page-context singleton with no exchange/account operations and an optional loopback read projection. */
+export function installStrategy29(view, remoteAdapters = null) {
   if (view[INSTANCE] !== undefined) {
-    if (view[INSTANCE].version !== 1) throw new Error('Incompatible Strategy 29 runtime; reload the page');
+    if (view[INSTANCE].version !== RUNTIME_VERSION) throw new Error('Incompatible Strategy 29 runtime; reload the page');
     return view[INSTANCE].runtime;
   }
   const document = view.document;
@@ -23,6 +25,9 @@ export function installStrategy29(view) {
   let failed = null;
   let disposed = false;
   let removeRouteListener = null;
+  const remoteSummary = remoteAdapters === null
+    ? null
+    : createStrategy29RemoteSummary({ view, ...remoteAdapters });
   const noticeId = 'jh-strategy29-bollinger-status';
   function showFailure() {
     if (!failed || !document.body) return;
@@ -48,6 +53,7 @@ export function installStrategy29(view) {
     if (timer !== null) view.clearInterval(timer);
     timer = null;
     monitor.stop();
+    remoteSummary?.pause();
   }
   function fail(message) {
     failed = message;
@@ -58,6 +64,7 @@ export function installStrategy29(view) {
     if (disposed || failed || document.hidden) return;
     if (hasEmbeddedBollinger(view)) { fail(CONFLICT); return; }
     ensureSpaRouteChangePatched(view);
+    void remoteSummary?.sample(Date.now());
     if (!isFuturesTradingPathname(view.location.pathname)) { monitor.stop(); return; }
     // Job boundary: unexpected synchronization errors stop this observer only.
     void monitor.tick().catch(error => fail(`Strategy 29 stopped: ${error.message}`));
@@ -71,11 +78,20 @@ export function installStrategy29(view) {
   function onPageHide(event) { if (event.persisted) pause(); else runtime.dispose(); }
   function onPageShow() { resume(); }
   const runtime = Object.freeze({
-    get diagnostics() { return { ...monitor.diagnostics, runtimeFailure: failed, disposed, timerRunning: timer !== null }; },
+    get diagnostics() {
+      return {
+        ...monitor.diagnostics,
+        runtimeFailure: failed,
+        disposed,
+        timerRunning: timer !== null,
+        remoteSummary: remoteSummary?.diagnostics ?? Object.freeze({ enabled: false, state: 'unavailable_in_this_installation' }),
+      };
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
       pause();
+      remoteSummary?.dispose();
       removeRouteListener();
       document.removeEventListener('visibilitychange', onVisibility);
       document.removeEventListener('DOMContentLoaded', showFailure);
@@ -84,7 +100,7 @@ export function installStrategy29(view) {
       document.getElementById(noticeId)?.remove();
     },
   });
-  Object.defineProperty(view, INSTANCE, { value: Object.freeze({ version: 1, runtime }) });
+  Object.defineProperty(view, INSTANCE, { value: Object.freeze({ version: RUNTIME_VERSION, runtime }) });
   Object.defineProperty(view, '__TM_STRATEGY29_DEBUG__', { value: runtime });
   removeRouteListener = installSpaRouteChangeListener(view, sample);
   document.addEventListener('visibilitychange', onVisibility);

@@ -14,6 +14,15 @@ function owners(view) {
   return record.predicates;
 }
 
+function existingOwners(view) {
+  const record = view[OWNER_SLOT];
+  if (record === undefined) return null;
+  if (typeof view?.Map !== 'function' || record.version !== VERSION || !(record.predicates instanceof view.Map)) {
+    throw new Error('Incompatible chart mutation protocol; update both scripts and reload');
+  }
+  return record.predicates;
+}
+
 /** Only a synchronous boolean crosses the script boundary, never task or account data. */
 export function registerChartMutationOwner(view, name, predicate) {
   const registry = owners(view);
@@ -24,7 +33,9 @@ export function registerChartMutationOwner(view, name, predicate) {
 }
 
 export function isChartMutationBlocked(view) {
-  for (const predicate of owners(view).values()) {
+  const registry = existingOwners(view);
+  if (registry === null) return false;
+  for (const predicate of registry.values()) {
     const blocked = predicate();
     if (typeof blocked !== 'boolean') throw new Error('Chart mutation owner must return a boolean');
     if (blocked) return true;

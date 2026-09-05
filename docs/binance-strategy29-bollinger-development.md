@@ -2,13 +2,14 @@
 
 ## Scope and Installation
 
-The standalone `binance-strategy29-bollinger.user.js` owns the existing local
-Bollinger/SMA60 observer. Source is `src/binance-strategy29-bollinger/`.
-It reads already-loaded native chart candles and has no account, order,
-exchange-network, Telegram or server-gateway operations. The server summary is
-a separate future integration, not part of this local extraction.
+The standalone `binance-strategy29-bollinger.user.js` owns the local
+Bollinger/SMA60 observer and an optional read-only Strategy29 server summary.
+Source is `src/binance-strategy29-bollinger/`. The local observer reads only
+already-loaded native chart candles. The optional summary reads the authenticated
+loopback observer gateway; it does not call Binance market-data or account APIs,
+submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.1.0 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.2.0 with orderbook 2.7.199 or later, or use it alone.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
@@ -16,8 +17,10 @@ If the old script loads later, existing markers can remain because its private
 save owner can block safe cleanup. This is not a supported compatibility mode;
 Strategy29 never removes old-script or user drawings.
 
-Both supported scripts run with `@grant none` in the same page context.
-The orderbook registers a synchronous boolean drawing-busy predicate under
+The orderbook runs in page context. Strategy29 0.2.0 runs in a Tampermonkey
+sandbox so its gateway secret remains in private userscript storage, and passes
+`unsafeWindow` explicitly to the chart runtime. The orderbook registers a
+synchronous boolean drawing-busy predicate under
 `Symbol.for('jh-userscripts.chart-mutation-owners')`; it unregisters on permanent
 page teardown. A missing owner means there is no coordinated orderbook instance,
 not a guessed order/account state. No task objects or financial actions cross
@@ -26,12 +29,49 @@ this boundary. The exact native API owns the shared marker controller under
 protocol version 1 and reject incompatible versions. These are coordination
 contracts between trusted scripts, not a security boundary against page code.
 
-The standalone entry has a per-page singleton. One poll discovers charts/routes
-and evaluates the existing monitor. Hidden documents and BFCache pagehide pause
-it; visibility/pageshow resumes it. Permanent disposal removes its listeners and
-invalidates pending drawing work. Non-trading routes perform no candle exports.
+The standalone entry has a per-page singleton on `unsafeWindow`. One poll
+discovers charts/routes and evaluates the existing monitor. Hidden documents and
+BFCache pagehide pause it; visibility/pageshow resumes it. Permanent disposal
+removes its listeners, aborts an in-flight summary request, and invalidates
+pending drawing work. Non-trading routes perform no candle exports or gateway
+requests.
 Independent instances of each bundle share the same controller regardless of
 load order. Strategy27 does not participate in this protocol.
+
+## Optional Cross-Timeframe Server Summary
+
+The remote summary is disabled by default. Tampermonkey exposes three Strategy29
+menu commands: toggle the cross-timeframe summary, set the loopback gateway
+origin, and set the gateway secret. The origin contract is an explicit
+`http://127.0.0.1:<port>` origin; the default is `http://127.0.0.1:8729`. The
+secret is never stored in the page, URL, panel DOM, or debug diagnostics.
+
+When enabled, the panel follows only the current Binance route symbol but shows
+every timeframe watched for that symbol by the server. It therefore continues to
+show 1m, 1h, and other server states and recent signals regardless of the chart
+interval currently open. It labels delivery counts as global because those
+counts cover the complete server outbox rather than just the current symbol.
+Server status freshness and signal times remain separate from local chart state.
+Panel timestamps explicitly use `UTC+08` rather than inheriting the browser's
+ambient timezone.
+
+The browser polls status first and then consumes at most two event pages per
+scheduled poll. A page may contain no matching events while still advancing the
+global cursor; that progress is accepted. `cursor_expired` clears only the remote
+event rows and resumes from the explicit server cursor. Route changes, page
+hiding, disabling, and disposal abort the owned request. Every response checks
+context ownership before changing the panel, so a late old-symbol response is
+ignored. No extra recurring timer is installed: the existing one-second runtime
+sample applies a five-second remote gate and keeps requests single-flight.
+
+Transport failures and a temporarily unavailable database remain retryable
+remote states. Authentication, request, JSON, and response-contract failures
+stop only the remote context until it is restarted through a route or settings
+change. None of these states stop the local detector or remove local markers.
+The panel compares server and local `spec_version`; a mismatch is visible and
+event consumption is blocked. The local reference hash is displayed and exposed
+for audit, but the current server status schema does not carry a hash, so the UI
+does not claim hash-level remote parity.
 
 ## Bidirectional Bollinger Alerts
 
@@ -49,7 +89,7 @@ The exposed chart API can exist before its internal model during initial loading
 
 Indicator calculation traverses each fixed window directly instead of allocating sliced/mapped close arrays for every bar. Summation order is preserved exactly, including population variance, to avoid changing threshold decisions through floating-point drift. Stable marker audits read each shape handle once while retaining the full point/property checks. The asynchronous render loop yields a browser task after 32 signals or 8 ms of batch work; each resumed batch refreshes native shape ownership and revalidates generation, chart session, and drawing-mutation ownership. This is a cooperative budget checked between native calls, not a hard limit on an individual native API call. It adds no recurring timer and does not reduce history coverage or audit frequency. Context cleanup and obsolete-marker deletion remain synchronous; host chart loading/rendering and those removal phases are not covered by the batch budget.
 
-`window.__TM_STRATEGY29_DEBUG__.diagnostics` is an on-demand diagnostic snapshot of timer/task presence, context/session readiness, cached/rendered signal counts, and the aggregate boolean drawing-mutation state. It contains no order details, does not export candles or audit drawings, and adds no periodic work. Native model/data readiness is reported separately from session readiness so a waiting session is not mistaken for expensive calculation or a zero-signal window.
+`window.__TM_STRATEGY29_DEBUG__.diagnostics` is an on-demand diagnostic snapshot of timer/task presence, context/session readiness, cached/rendered signal counts, the aggregate boolean drawing-mutation state, and non-sensitive remote state. It contains no gateway secret, authorization header, request payload, or order details; it does not export candles or audit drawings and adds no periodic work. Native model/data readiness is reported separately from session readiness so a waiting session is not mistaken for expensive calculation or a zero-signal window.
 
 Alert markers use TradingView's drawing API. Every detected signal in the loaded window is rendered; there is no recent-signal truncation. Each direction allows up to 1,000 simultaneous signals, for a shared maximum of 2,000, and an over-limit window is rejected before any partial marker mutation. Marker ownership is tracked by signal ID, but the live shape list remains authoritative: externally evicted marker IDs are discarded from the registry and recreated without removing or changing foreign drawings. A typed OHLC/time-order snapshot race is treated as recoverable: existing markers and cached signals remain in place and the next poll retries. Schema, nonnumeric data, chart API, band-width, and time-alignment contract failures remain fail-closed and clear the alert layer. Current live evidence shows that removing even a `disableSave` marker emits `drawing_event` and `saveChart`, so alert reconciliation pauses during every existing order-line drawing/save owner. Symbol changes, non-trading routes, hidden documents, and page teardown stop or clear the alert lifecycle.
 
@@ -74,8 +114,11 @@ Native asynchronous shape creation can automatically enable the interval active 
 Run `npm run test:binance-strategy29-bollinger`, `npm test`, both affected
 single-script builds, `npm run check:binance-userscripts` and `npm run test:ui`.
 The cross-script browser fixture loads the actual generated artifacts in both
-orders. Independent bundle tests cover controller identity, active owners,
-save drain, protocol conflicts and unregister. Existing marker tests cover
+orders. The sandbox entry test proves that Strategy29 installs its singleton on
+the page `unsafeWindow`. Remote contract/controller tests cover strict symbol
+round trips, bounded cursors, spec mismatch, 409 reset, stale response ownership,
+and failure isolation. Independent bundle tests cover controller identity, active
+owners, save drain, protocol conflicts and unregister. Existing marker tests cover
 interval switches, late results, historical coverage, foreign drawings and
 cooperative rendering.
 

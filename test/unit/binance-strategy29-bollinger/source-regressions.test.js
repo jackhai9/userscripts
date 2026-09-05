@@ -1,9 +1,13 @@
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { STRATEGY29_REFERENCE_SHA256 } from '../../../src/binance-strategy29-bollinger/core/remote-summary-contract.js';
 
 const source = await readFile(new URL('../../../src/binance-strategy29-bollinger/monitor.js', import.meta.url), 'utf8');
 const bollingerPatternSource = await readFile(new URL('../../../src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js', import.meta.url), 'utf8');
+const entrySource = await readFile(new URL('../../../src/binance-strategy29-bollinger/index.user.js', import.meta.url), 'utf8');
+const remoteSource = await readFile(new URL('../../../src/binance-strategy29-bollinger/remote-summary.js', import.meta.url), 'utf8');
 
 function readFunctionBody(name, sourceText = source) {
   const start = sourceText.indexOf(`function ${name}(`);
@@ -45,4 +49,29 @@ test('Bollinger chart alert failures distinguish snapshot races from contract fa
   assert.match(synchronizeBody, /context\.cleanupPending[\s\S]*context\.layer\.clear\(\)/);
   assert.match(bollingerPatternSource, /context\.failed = true;/);
   assert.match(bollingerPatternSource, /context\.cleanupPending = true;/);
+});
+
+test('Strategy29 sandbox metadata is exact and coordinates through unsafeWindow', () => {
+  assert.equal(readUserscriptVersion(entrySource), '0.2.0');
+  assert.deepEqual(
+    [...entrySource.matchAll(/^\/\/ @grant\s+(\S+)\s*$/gm)].map(match => match[1]),
+    ['unsafeWindow', 'GM_xmlhttpRequest', 'GM_getValue', 'GM_setValue', 'GM_registerMenuCommand'],
+  );
+  assert.deepEqual(
+    [...entrySource.matchAll(/^\/\/ @connect\s+(\S+)\s*$/gm)].map(match => match[1]),
+    ['127.0.0.1'],
+  );
+  assert.match(entrySource, /installStrategy29\(unsafeWindow,/);
+  assert.match(entrySource, /globalThis\.prompt\.bind\(globalThis\)/);
+  assert.doesNotMatch(remoteSource, /view\.prompt/);
+  assert.doesNotMatch(entrySource, /@grant\s+none/);
+});
+
+test('remote summary remains read-only and does not add chart or exchange transports', () => {
+  assert.doesNotMatch(remoteSource, /WebSocket|\.fetch\(|createMultipointShape|createShape|exchangeInfo|apiKey|apiSecret/);
+  assert.match(remoteSource, /createStrategy29RemoteSummary/);
+});
+
+test('remote parity display is pinned to the exact reviewed local detector bytes', () => {
+  assert.equal(createHash('sha256').update(bollingerPatternSource).digest('hex'), STRATEGY29_REFERENCE_SHA256);
 });
