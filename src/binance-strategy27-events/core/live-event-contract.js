@@ -384,6 +384,55 @@ export function validateGatewayResponse(value, httpStatus) {
   throw new Error('Gateway response status is invalid');
 }
 
+export function validateGatewayBootstrapResponse(value, httpStatus) {
+  if (value?.status === 'error') {
+    assertExactKeys(value, ['schema_version', 'status', 'error_code'], 'gateway bootstrap error response');
+    assertCondition(value.schema_version === 1, 'Gateway bootstrap schema_version must be 1');
+    const expected = { 401: 'unauthorized', 503: ['bootstrap_unavailable', 'redis_unavailable'] }[httpStatus];
+    assertCondition(Array.isArray(expected) ? expected.includes(value.error_code) : value.error_code === expected, 'Gateway bootstrap error response is invalid');
+    return value;
+  }
+  assertCondition(httpStatus === 200, 'Gateway bootstrap success must use HTTP 200');
+  assertExactKeys(value, [
+    'schema_version', 'status', 'projection_kind', 'requested_cursor', 'next_cursor',
+    'runtime_epoch', 'last_sequence', 'bootstrap_observed_at_ms', 'records',
+  ], 'gateway bootstrap response');
+  assertCondition(value.schema_version === 1 && value.status === 'bootstrap', 'Gateway bootstrap status is invalid');
+  assertCondition(value.projection_kind === 'strategy27_events', 'Gateway bootstrap projection kind is invalid');
+  assertCondition(value.requested_cursor === null, 'Gateway bootstrap requested_cursor must be null');
+  assertCondition(typeof value.next_cursor === 'string' && STREAM_ID_PATTERN.test(value.next_cursor), 'Gateway bootstrap next cursor is invalid');
+  assertCondition(typeof value.runtime_epoch === 'string' && EPOCH_PATTERN.test(value.runtime_epoch), 'Gateway bootstrap epoch is invalid');
+  assertInteger(value.last_sequence, 'Gateway bootstrap last_sequence', { minimum: 1 });
+  assertInteger(value.bootstrap_observed_at_ms, 'Gateway bootstrap observed time');
+  assertCondition(Array.isArray(value.records) && value.records.length <= 80, 'Gateway bootstrap record bound is invalid');
+  for (const record of value.records) {
+    assertExactKeys(record, ['event_id', 'event_envelope', 'marker_envelope', 'outcome_envelope'], 'gateway bootstrap event record');
+    assertCondition(typeof record.event_id === 'string' && EVENT_ID_PATTERN.test(record.event_id), 'Gateway bootstrap event ID is invalid');
+    assertCondition(record.event_envelope !== null, 'Gateway bootstrap event envelope is required');
+    const envelopes = [record.event_envelope, record.marker_envelope, record.outcome_envelope].filter(item => item !== null);
+    for (const envelope of envelopes) {
+      validateLiveEnvelope(envelope);
+      assertCondition(envelope.runtime_epoch === value.runtime_epoch, 'Gateway bootstrap event epoch is inconsistent');
+      assertCondition(envelope.event_id === record.event_id, 'Gateway bootstrap event identity is inconsistent');
+      assertCondition(envelope.sequence <= value.last_sequence, 'Gateway bootstrap event sequence exceeds tail');
+    }
+    assertCondition(
+      record.event_envelope.message_kind !== 'event_outcome'
+        || (record.outcome_envelope !== null
+          && JSON.stringify(record.event_envelope) === JSON.stringify(record.outcome_envelope)),
+      'Gateway bootstrap event envelope is invalid',
+    );
+    if (record.marker_envelope !== null) {
+      assertCondition(record.marker_envelope.message_kind !== 'event_outcome', 'Gateway bootstrap marker envelope is invalid');
+      assertCondition(record.marker_envelope.payload.event.latest_snapshot.candidate_observations.length > 0, 'Gateway bootstrap marker evidence is missing');
+    }
+    if (record.outcome_envelope !== null) {
+      assertCondition(record.outcome_envelope.message_kind === 'event_outcome', 'Gateway bootstrap outcome envelope is invalid');
+    }
+  }
+  return value;
+}
+
 export class LiveEventLifecycle {
   constructor(canonicalSymbol, { maxEvents, maxAgeMs }) {
     canonicalSymbolToRoute(canonicalSymbol);
@@ -404,6 +453,26 @@ export class LiveEventLifecycle {
     this.evictedEvents = new Map();
     this.allowUnknownRehydrate = true;
     this.rehydrationCutoffMs = null;
+    this.bootstrapActive = false;
+  }
+
+  beginBootstrap({ runtimeEpoch, observedAtMs }) {
+    assertCondition(typeof runtimeEpoch === 'string' && EPOCH_PATTERN.test(runtimeEpoch), 'Bootstrap runtime epoch is invalid');
+    assertInteger(observedAtMs, 'Bootstrap observed time');
+    this.reset('initial_cursor');
+    this.runtimeEpoch = runtimeEpoch;
+    this.lastSequence = 0;
+    this.epochEnvelopeAccepted = true;
+    this.rehydrationCutoffMs = observedAtMs;
+    this.bootstrapActive = true;
+  }
+
+  finishBootstrap(lastSequence) {
+    assertInteger(lastSequence, 'Bootstrap last sequence', { minimum: 1 });
+    assertCondition(this.runtimeEpoch !== null && this.lastSequence !== null, 'Bootstrap was not started');
+    assertCondition(lastSequence >= this.lastSequence, 'Bootstrap tail sequence precedes restored records');
+    this.lastSequence = lastSequence;
+    this.bootstrapActive = false;
   }
 
   rememberEviction(eventId, observedAtMs) {
@@ -512,7 +581,10 @@ export class LiveEventLifecycle {
       assertCondition(envelope.message_kind !== 'event_closed' || existing.phase === 'active', 'Duplicate event_closed');
       existing.event = envelope.payload.event;
       existing.observedAtMs = envelope.observed_at_ms;
-      if (envelope.message_kind === 'event_closed') existing.phase = 'closed';
+      if (envelope.message_kind === 'event_closed'
+        || (this.bootstrapActive && envelope.message_kind === 'event_outcome')) {
+        existing.phase = 'closed';
+      }
     }
 
     const current = this.events.get(envelope.event_id);

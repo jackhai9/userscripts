@@ -58,7 +58,7 @@ async function harness(t, { generated = false, beforeCreate } = {}) {
     GM_registerMenuCommand: (name, callback) => menus.set(name, callback),
     GM_xmlhttpRequest: (options) => {
       const path = new URL(options.url).pathname;
-      const request = { kind: path.endsWith('/compound-candidates') ? 'compound' : 'ordinary', options, settled: false, aborted: false };
+      const request = { kind: path.includes('/compound-candidates') ? 'compound' : 'ordinary', options, settled: false, aborted: false };
       requests.push(request);
       return { abort() { request.aborted = true; request.settled = true; options.onabort(); } };
     },
@@ -87,7 +87,7 @@ async function harness(t, { generated = false, beforeCreate } = {}) {
     request.settled = true;
     request.options.onload({ status, responseText: typeof body === 'string' ? body : JSON.stringify(body) });
   }
-  async function candidate(sequence = 1, cursor = '1-0', next = '2-0') {
+  async function candidate(sequence = 2, cursor = '1-0', next = '2-0') {
     await respond('compound', {
       schema_version: 1, status: 'ok', requested_cursor: cursor, next_cursor: next,
       messages: [{ schema_version: 1, projection_kind: 'compound_candidate', runtime_epoch: 'a'.repeat(32),
@@ -97,7 +97,8 @@ async function harness(t, { generated = false, beforeCreate } = {}) {
   }
   return {
     page, shapes, requests, pending, respond, candidate, timers,
-    reset: () => respond('compound', { schema_version: 1, status: 'reset', reason: 'initial_cursor', requested_cursor: null, next_cursor: '1-0', messages: [] }),
+    reset: () => respond('compound', { schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
+    ordinaryBootstrap: () => respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     rows: () => page.document.querySelectorAll('[data-role="compound-row"]').length,
     tick: () => timers.get(1)(),
     clear: () => menus.get('清除 Strategy 27 图表标注')(),
@@ -117,7 +118,7 @@ test('real entrypoint starts independent clients and manual clear preserves comp
   h.clear();
   assert.equal(h.rows(), 0);
   assert.deepEqual([...h.shapes.keys()], ['user-owned']);
-  await h.candidate(2, '2-0', '3-0');
+  await h.candidate(3, '2-0', '3-0');
   assert.equal(h.rows(), 0);
   assert.equal(h.shapes.size, 1);
   assert.equal(h.pending('ordinary').length, 1);
@@ -209,7 +210,7 @@ for (const generated of [false, true]) {
     await new Promise(setImmediate);
     assert.equal(h.shapes.size, 1);
     assert.equal(h.rows(), 0);
-    await h.candidate(2, '2-0', '3-0');
+    await h.candidate(3, '2-0', '3-0');
     assert.equal(h.rows(), 0);
     assert.deepEqual([...h.shapes.keys()], ['user-owned']);
   });
@@ -228,7 +229,7 @@ function ordinaryMessage() {
   };
   return {
     schema_version: 2, strategy_id: '27', spec_version: '27_2_spec_v10', runtime_epoch: 'a'.repeat(32),
-    sequence: 1, message_kind: 'event_updated', symbol: 'BTC/USDT:USDT', event_id: 'b'.repeat(64),
+    sequence: 2, message_kind: 'event_updated', symbol: 'BTC/USDT:USDT', event_id: 'b'.repeat(64),
     observed_at_ms: 2000, event_time_ms: 2000, data_status: 'active',
     payload: { event: {
       event_kind: 'orderflow_event', analysis_start_at_ms: 0, triggered_at_ms: 1000,
@@ -240,10 +241,111 @@ function ordinaryMessage() {
   };
 }
 
+function ordinaryOutcomeMessage() {
+  const ordinary = ordinaryMessage();
+  return {
+    ...ordinary,
+    sequence: 3,
+    message_kind: 'event_outcome',
+    event_id: ordinary.event_id,
+    observed_at_ms: 7000,
+    event_time_ms: 7000,
+    data_status: 'complete',
+    payload: {
+      event: {
+        ...ordinary.payload.event,
+        active_end_at_ms: 2000,
+        event_status: 'complete',
+        close_reason: 'quiet_period',
+      },
+      outcome: {
+        window_seconds: 5,
+        outcome_boundary_at_ms: 7000,
+        outcome_status: 'complete',
+        terminated_at_ms: null,
+        termination_reason: null,
+        boundary_mid: '99',
+        return_from_trigger_bps: '-100',
+        return_from_active_end_bps: '-100',
+        maximum_upward_excursion_bps: '0',
+        maximum_downward_excursion_bps: '100',
+        pre_event_range_break_up: false,
+        pre_event_range_break_down: true,
+        spread_change_from_active_end_bps: '0.1',
+        eligible_orderbook_observation_count: 4,
+        impulse_direction: 'down',
+        directional_outcome: 'continuation',
+      },
+    },
+  };
+}
+
+function compoundMessage() {
+  return {
+    schema_version: 1,
+    projection_kind: 'compound_candidate',
+    runtime_epoch: 'a'.repeat(32),
+    sequence: 2,
+    message_kind: 'candidate',
+    symbol: fixtures[0].symbol,
+    observed_at_ms: 7000,
+    payload: fixtures[0],
+  };
+}
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} refresh bootstrap rebuilds ordinary and compound markers before live polling`, async (t) => {
+    const h = await harness(t, { generated });
+    const ordinary = ordinaryMessage();
+    const outcome = ordinaryOutcomeMessage();
+    await h.respond('ordinary', {
+      schema_version: 1,
+      status: 'bootstrap',
+      projection_kind: 'strategy27_events',
+      requested_cursor: null,
+      next_cursor: '3-0',
+      runtime_epoch: ordinary.runtime_epoch,
+      last_sequence: outcome.sequence,
+      bootstrap_observed_at_ms: 7000,
+      records: [{
+        event_id: ordinary.event_id,
+        event_envelope: ordinary,
+        marker_envelope: ordinary,
+        outcome_envelope: null,
+      }, {
+        event_id: outcome.event_id,
+        event_envelope: outcome,
+        marker_envelope: null,
+        outcome_envelope: outcome,
+      }],
+    });
+    await h.respond('compound', {
+      schema_version: 1,
+      status: 'bootstrap',
+      projection_kind: 'compound_candidates',
+      requested_cursor: null,
+      next_cursor: '2-0',
+      runtime_epoch: 'a'.repeat(32),
+      last_sequence: 2,
+      bootstrap_observed_at_ms: 7000,
+      records: [compoundMessage()],
+    });
+    await until(() => h.shapes.size === 4);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
+    assert.equal(h.rows(), 1);
+    assert.equal(h.pending('ordinary').length, 1);
+    assert.equal(h.pending('compound').length, 1);
+    assert.deepEqual(
+      h.requests.slice(0, 2).map(({ options }) => new URL(options.url).pathname).sort(),
+      ['/v1/strategy27/compound-candidates/bootstrap', '/v1/strategy27/events/bootstrap'],
+    );
+  });
+}
+
 for (const generated of [false, true]) {
   test(`${generated ? 'generated' : 'source'} timer restores ordinary drawings and prunes both lifecycles before repair`, async (t) => {
     const h = await harness(t, { generated });
-    await h.respond('ordinary', { schema_version: 1, status: 'reset', reason: 'initial_cursor', requested_cursor: null, next_cursor: '1-0', messages: [] });
+    await h.ordinaryBootstrap();
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
     await until(() => h.shapes.size === 2 || h.page.document.getElementById('jh-strategy27-event-status')?.dataset.state === 'error');
     assert.equal(h.shapes.size, 2, h.page.document.getElementById('jh-strategy27-event-status')?.textContent);
@@ -270,7 +372,7 @@ test('timer expiry cancels an ordinary first creation that is still awaiting Tra
   const entered = Promise.withResolvers();
   const release = Promise.withResolvers();
   const h = await harness(t, { beforeCreate: async () => { entered.resolve(); await release.promise; } });
-  await h.respond('ordinary', { schema_version: 1, status: 'reset', reason: 'initial_cursor', requested_cursor: null, next_cursor: '1-0', messages: [] });
+  await h.ordinaryBootstrap();
   await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
   await entered.promise;
   h.setNow(7207001);

@@ -1,4 +1,4 @@
-import { validateGatewayResponse } from './live-event-contract.js';
+import { validateGatewayBootstrapResponse, validateGatewayResponse } from './live-event-contract.js';
 
 const DEFAULT_RECONNECT_DELAY_MS = 2_000;
 
@@ -76,7 +76,7 @@ function waitForReconnect(delayMs, signal) {
   });
 }
 
-function parseResponseJson(response) {
+function parseResponseJson(response, bootstrap) {
   if (!Number.isInteger(response?.status) || typeof response.responseText !== 'string') {
     throw new Error('Strategy 27 gateway returned an invalid GM response');
   }
@@ -86,7 +86,9 @@ function parseResponseJson(response) {
   } catch {
     throw new Error('Strategy 27 gateway returned invalid JSON');
   }
-  return validateGatewayResponse(payload, response.status);
+  return bootstrap
+    ? validateGatewayBootstrapResponse(payload, response.status)
+    : validateGatewayResponse(payload, response.status);
 }
 
 function compareStreamIds(left, right) {
@@ -124,14 +126,15 @@ export function createLiveEventClient({
   if (!Number.isInteger(reconnectDelayMs) || reconnectDelayMs < 0) throw new Error('Strategy 27 reconnect delay is invalid');
   const origin = normalizeGatewayBaseUrl(gatewayBaseUrl);
   let cursor = null;
+  let needsBootstrap = true;
   let reconnecting = false;
 
   return Object.freeze({
     async run(signal) {
       while (!signal.aborted) {
-        const url = new URL('/v1/strategy27/events', origin);
+        const url = new URL(needsBootstrap ? '/v1/strategy27/events/bootstrap' : '/v1/strategy27/events', origin);
         url.searchParams.set('symbol', canonicalSymbol);
-        if (cursor !== null) url.searchParams.set('cursor', cursor);
+        if (!needsBootstrap) url.searchParams.set('cursor', cursor);
         let response;
         try {
           response = await request({
@@ -148,9 +151,17 @@ export function createLiveEventClient({
           await waitForReconnect(reconnectDelayMs, signal);
           continue;
         }
-        const payload = parseResponseJson(response);
-        assertCursorContract(payload, cursor);
+        const payload = parseResponseJson(response, needsBootstrap);
+        if (!needsBootstrap) assertCursorContract(payload, cursor);
         if (payload.status === 'error') {
+          if (needsBootstrap && response.status === 503) {
+            if (!reconnecting) {
+              reconnecting = true;
+              onConnectionStateChange('reconnecting');
+            }
+            await waitForReconnect(reconnectDelayMs, signal);
+            continue;
+          }
           throw new Error(`Strategy 27 gateway error: ${payload.error_code}`);
         }
         if (reconnecting) {
@@ -158,7 +169,13 @@ export function createLiveEventClient({
           onConnectionStateChange('connected');
         }
         await onResponse(payload);
-        cursor = payload.next_cursor;
+        if (!needsBootstrap && payload.status === 'reset') {
+          cursor = null;
+          needsBootstrap = true;
+        } else {
+          cursor = payload.next_cursor;
+          needsBootstrap = false;
+        }
       }
     },
   });

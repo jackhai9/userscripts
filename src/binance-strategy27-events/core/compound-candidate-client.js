@@ -1,5 +1,5 @@
 import { normalizeGatewayBaseUrl, Strategy27GatewayTransportError } from './live-event-client.js';
-import { validateCompoundGatewayResponse } from './compound-candidate-contract.js';
+import { validateCompoundBootstrapResponse, validateCompoundGatewayResponse } from './compound-candidate-contract.js';
 
 function wait(delay, signal) {
   const aborted = () => new DOMException('Compound request aborted', 'AbortError');
@@ -31,6 +31,7 @@ export function createCompoundCandidateClient({ request, gatewayBaseUrl, authSec
   if (!Number.isSafeInteger(reconnectDelayMs) || reconnectDelayMs < 0) throw new Error('Compound reconnect delay is invalid');
   const origin = normalizeGatewayBaseUrl(gatewayBaseUrl);
   let cursor = null;
+  let needsBootstrap = true;
   let state = null;
   function transition(next) {
     if (state === next) return;
@@ -40,9 +41,9 @@ export function createCompoundCandidateClient({ request, gatewayBaseUrl, authSec
   return Object.freeze({
     async run(signal) {
       while (!signal.aborted) {
-        const url = new URL('/v1/strategy27/compound-candidates', origin);
+        const url = new URL(needsBootstrap ? '/v1/strategy27/compound-candidates/bootstrap' : '/v1/strategy27/compound-candidates', origin);
         url.searchParams.set('symbol', canonicalSymbol);
-        if (cursor !== null) url.searchParams.set('cursor', cursor);
+        if (!needsBootstrap) url.searchParams.set('cursor', cursor);
         let response;
         try {
           response = await request({ url: url.href, authSecret, signal });
@@ -60,20 +61,29 @@ export function createCompoundCandidateClient({ request, gatewayBaseUrl, authSec
           transition('unsupported');
           return;
         }
-        const payload = await validateCompoundGatewayResponse(JSON.parse(response.responseText), response.status);
+        const payload = needsBootstrap
+          ? await validateCompoundBootstrapResponse(JSON.parse(response.responseText), response.status)
+          : await validateCompoundGatewayResponse(JSON.parse(response.responseText), response.status);
         if (signal.aborted) return;
         if (payload.status === 'error') {
           if (response.status !== 503) throw new Error(`Compound gateway error: ${payload.error_code}`);
           cursor = null;
+          needsBootstrap = true;
           transition('unavailable');
           await wait(reconnectDelayMs, signal);
           continue;
         }
-        if (payload.requested_cursor !== cursor || (cursor !== null && cursorRegressed(payload.next_cursor, cursor))) throw new Error('Compound gateway response cursor mismatch/regression');
+        if (!needsBootstrap && (payload.requested_cursor !== cursor || cursorRegressed(payload.next_cursor, cursor))) throw new Error('Compound gateway response cursor mismatch/regression');
         if (signal.aborted) return;
         transition('connected');
         await onResponse(payload);
-        cursor = payload.next_cursor;
+        if (!needsBootstrap && payload.status === 'reset') {
+          cursor = null;
+          needsBootstrap = true;
+        } else {
+          cursor = payload.next_cursor;
+          needsBootstrap = false;
+        }
       }
     },
   });

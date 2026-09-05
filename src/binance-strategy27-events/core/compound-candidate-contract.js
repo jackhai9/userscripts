@@ -179,3 +179,33 @@ export async function validateCompoundGatewayResponse(value, httpStatus) {
   check(typeof value.requested_cursor === 'string' && STREAM_ID.test(value.requested_cursor), 'requested cursor is invalid');
   return value;
 }
+
+export async function validateCompoundBootstrapResponse(value, httpStatus) {
+  if (value?.status === 'error') {
+    keys(value, ['schema_version', 'status', 'error_code'], 'bootstrap gateway error');
+    check(value.schema_version === 1, 'bootstrap gateway schema is invalid');
+    const expected = { 401: ['unauthorized'], 503: ['compound_unavailable', 'redis_unavailable'] }[httpStatus];
+    check(expected?.includes(value.error_code), 'bootstrap gateway error status/code mismatch');
+    return value;
+  }
+  check(httpStatus === 200, 'bootstrap gateway success must use HTTP 200');
+  keys(value, [
+    'schema_version', 'status', 'projection_kind', 'requested_cursor', 'next_cursor',
+    'runtime_epoch', 'last_sequence', 'bootstrap_observed_at_ms', 'records',
+  ], 'bootstrap gateway response');
+  check(value.schema_version === 1 && value.status === 'bootstrap', 'bootstrap gateway status is invalid');
+  check(value.projection_kind === 'compound_candidates', 'bootstrap projection kind is invalid');
+  check(value.requested_cursor === null, 'bootstrap requested cursor must be null');
+  check(typeof value.next_cursor === 'string' && STREAM_ID.test(value.next_cursor), 'bootstrap next cursor is invalid');
+  check(typeof value.runtime_epoch === 'string' && /^[a-f0-9]{32}$/.test(value.runtime_epoch), 'bootstrap epoch is invalid');
+  integer(value.last_sequence, 'bootstrap last sequence', 1);
+  integer(value.bootstrap_observed_at_ms, 'bootstrap observed time');
+  check(Array.isArray(value.records) && value.records.length <= 80, 'bootstrap record bound is invalid');
+  for (const envelope of value.records) {
+    await validateCompoundEnvelope(envelope);
+    check(envelope.message_kind === 'candidate', 'bootstrap record must be a candidate');
+    check(envelope.runtime_epoch === value.runtime_epoch, 'bootstrap candidate epoch is inconsistent');
+    check(envelope.sequence <= value.last_sequence, 'bootstrap candidate sequence exceeds tail');
+  }
+  return value;
+}

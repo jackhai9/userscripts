@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.1
+// @version      0.4.2
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -392,6 +392,59 @@
     }
     throw new Error("Gateway response status is invalid");
   }
+  function validateGatewayBootstrapResponse(value, httpStatus) {
+    if (value?.status === "error") {
+      assertExactKeys(value, ["schema_version", "status", "error_code"], "gateway bootstrap error response");
+      assertCondition(value.schema_version === 1, "Gateway bootstrap schema_version must be 1");
+      const expected = { 401: "unauthorized", 503: ["bootstrap_unavailable", "redis_unavailable"] }[httpStatus];
+      assertCondition(Array.isArray(expected) ? expected.includes(value.error_code) : value.error_code === expected, "Gateway bootstrap error response is invalid");
+      return value;
+    }
+    assertCondition(httpStatus === 200, "Gateway bootstrap success must use HTTP 200");
+    assertExactKeys(value, [
+      "schema_version",
+      "status",
+      "projection_kind",
+      "requested_cursor",
+      "next_cursor",
+      "runtime_epoch",
+      "last_sequence",
+      "bootstrap_observed_at_ms",
+      "records"
+    ], "gateway bootstrap response");
+    assertCondition(value.schema_version === 1 && value.status === "bootstrap", "Gateway bootstrap status is invalid");
+    assertCondition(value.projection_kind === "strategy27_events", "Gateway bootstrap projection kind is invalid");
+    assertCondition(value.requested_cursor === null, "Gateway bootstrap requested_cursor must be null");
+    assertCondition(typeof value.next_cursor === "string" && STREAM_ID_PATTERN.test(value.next_cursor), "Gateway bootstrap next cursor is invalid");
+    assertCondition(typeof value.runtime_epoch === "string" && EPOCH_PATTERN.test(value.runtime_epoch), "Gateway bootstrap epoch is invalid");
+    assertInteger(value.last_sequence, "Gateway bootstrap last_sequence", { minimum: 1 });
+    assertInteger(value.bootstrap_observed_at_ms, "Gateway bootstrap observed time");
+    assertCondition(Array.isArray(value.records) && value.records.length <= 80, "Gateway bootstrap record bound is invalid");
+    for (const record of value.records) {
+      assertExactKeys(record, ["event_id", "event_envelope", "marker_envelope", "outcome_envelope"], "gateway bootstrap event record");
+      assertCondition(typeof record.event_id === "string" && EVENT_ID_PATTERN.test(record.event_id), "Gateway bootstrap event ID is invalid");
+      assertCondition(record.event_envelope !== null, "Gateway bootstrap event envelope is required");
+      const envelopes = [record.event_envelope, record.marker_envelope, record.outcome_envelope].filter((item) => item !== null);
+      for (const envelope of envelopes) {
+        validateLiveEnvelope(envelope);
+        assertCondition(envelope.runtime_epoch === value.runtime_epoch, "Gateway bootstrap event epoch is inconsistent");
+        assertCondition(envelope.event_id === record.event_id, "Gateway bootstrap event identity is inconsistent");
+        assertCondition(envelope.sequence <= value.last_sequence, "Gateway bootstrap event sequence exceeds tail");
+      }
+      assertCondition(
+        record.event_envelope.message_kind !== "event_outcome" || record.outcome_envelope !== null && JSON.stringify(record.event_envelope) === JSON.stringify(record.outcome_envelope),
+        "Gateway bootstrap event envelope is invalid"
+      );
+      if (record.marker_envelope !== null) {
+        assertCondition(record.marker_envelope.message_kind !== "event_outcome", "Gateway bootstrap marker envelope is invalid");
+        assertCondition(record.marker_envelope.payload.event.latest_snapshot.candidate_observations.length > 0, "Gateway bootstrap marker evidence is missing");
+      }
+      if (record.outcome_envelope !== null) {
+        assertCondition(record.outcome_envelope.message_kind === "event_outcome", "Gateway bootstrap outcome envelope is invalid");
+      }
+    }
+    return value;
+  }
   var LiveEventLifecycle = class {
     constructor(canonicalSymbol, { maxEvents, maxAgeMs }) {
       canonicalSymbolToRoute(canonicalSymbol);
@@ -411,6 +464,24 @@
       this.evictedEvents = /* @__PURE__ */ new Map();
       this.allowUnknownRehydrate = true;
       this.rehydrationCutoffMs = null;
+      this.bootstrapActive = false;
+    }
+    beginBootstrap({ runtimeEpoch, observedAtMs }) {
+      assertCondition(typeof runtimeEpoch === "string" && EPOCH_PATTERN.test(runtimeEpoch), "Bootstrap runtime epoch is invalid");
+      assertInteger(observedAtMs, "Bootstrap observed time");
+      this.reset("initial_cursor");
+      this.runtimeEpoch = runtimeEpoch;
+      this.lastSequence = 0;
+      this.epochEnvelopeAccepted = true;
+      this.rehydrationCutoffMs = observedAtMs;
+      this.bootstrapActive = true;
+    }
+    finishBootstrap(lastSequence) {
+      assertInteger(lastSequence, "Bootstrap last sequence", { minimum: 1 });
+      assertCondition(this.runtimeEpoch !== null && this.lastSequence !== null, "Bootstrap was not started");
+      assertCondition(lastSequence >= this.lastSequence, "Bootstrap tail sequence precedes restored records");
+      this.lastSequence = lastSequence;
+      this.bootstrapActive = false;
     }
     rememberEviction(eventId, observedAtMs) {
       this.evictedEvents.delete(eventId);
@@ -508,7 +579,9 @@
         assertCondition(envelope.message_kind !== "event_closed" || existing.phase === "active", "Duplicate event_closed");
         existing.event = envelope.payload.event;
         existing.observedAtMs = envelope.observed_at_ms;
-        if (envelope.message_kind === "event_closed") existing.phase = "closed";
+        if (envelope.message_kind === "event_closed" || this.bootstrapActive && envelope.message_kind === "event_outcome") {
+          existing.phase = "closed";
+        }
       }
       const current = this.events.get(envelope.event_id);
       if (envelope.message_kind === "event_outcome") {
@@ -608,7 +681,7 @@
       signal.addEventListener("abort", abort, { once: true });
     });
   }
-  function parseResponseJson(response) {
+  function parseResponseJson(response, bootstrap) {
     if (!Number.isInteger(response?.status) || typeof response.responseText !== "string") {
       throw new Error("Strategy 27 gateway returned an invalid GM response");
     }
@@ -618,7 +691,7 @@
     } catch {
       throw new Error("Strategy 27 gateway returned invalid JSON");
     }
-    return validateGatewayResponse(payload, response.status);
+    return bootstrap ? validateGatewayBootstrapResponse(payload, response.status) : validateGatewayResponse(payload, response.status);
   }
   function compareStreamIds(left, right) {
     const [leftMs, leftSequence] = left.split("-").map(BigInt);
@@ -653,13 +726,14 @@
     if (!Number.isInteger(reconnectDelayMs) || reconnectDelayMs < 0) throw new Error("Strategy 27 reconnect delay is invalid");
     const origin = normalizeGatewayBaseUrl(gatewayBaseUrl);
     let cursor = null;
+    let needsBootstrap = true;
     let reconnecting = false;
     return Object.freeze({
       async run(signal) {
         while (!signal.aborted) {
-          const url = new URL("/v1/strategy27/events", origin);
+          const url = new URL(needsBootstrap ? "/v1/strategy27/events/bootstrap" : "/v1/strategy27/events", origin);
           url.searchParams.set("symbol", canonicalSymbol);
-          if (cursor !== null) url.searchParams.set("cursor", cursor);
+          if (!needsBootstrap) url.searchParams.set("cursor", cursor);
           let response;
           try {
             response = await request({
@@ -676,9 +750,17 @@
             await waitForReconnect(reconnectDelayMs, signal);
             continue;
           }
-          const payload = parseResponseJson(response);
-          assertCursorContract(payload, cursor);
+          const payload = parseResponseJson(response, needsBootstrap);
+          if (!needsBootstrap) assertCursorContract(payload, cursor);
           if (payload.status === "error") {
+            if (needsBootstrap && response.status === 503) {
+              if (!reconnecting) {
+                reconnecting = true;
+                onConnectionStateChange("reconnecting");
+              }
+              await waitForReconnect(reconnectDelayMs, signal);
+              continue;
+            }
             throw new Error(`Strategy 27 gateway error: ${payload.error_code}`);
           }
           if (reconnecting) {
@@ -686,7 +768,13 @@
             onConnectionStateChange("connected");
           }
           await onResponse(payload);
-          cursor = payload.next_cursor;
+          if (!needsBootstrap && payload.status === "reset") {
+            cursor = null;
+            needsBootstrap = true;
+          } else {
+            cursor = payload.next_cursor;
+            needsBootstrap = false;
+          }
         }
       }
     });
@@ -1912,6 +2000,42 @@
     check(typeof value.requested_cursor === "string" && STREAM_ID.test(value.requested_cursor), "requested cursor is invalid");
     return value;
   }
+  async function validateCompoundBootstrapResponse(value, httpStatus) {
+    if (value?.status === "error") {
+      keys(value, ["schema_version", "status", "error_code"], "bootstrap gateway error");
+      check(value.schema_version === 1, "bootstrap gateway schema is invalid");
+      const expected = { 401: ["unauthorized"], 503: ["compound_unavailable", "redis_unavailable"] }[httpStatus];
+      check(expected?.includes(value.error_code), "bootstrap gateway error status/code mismatch");
+      return value;
+    }
+    check(httpStatus === 200, "bootstrap gateway success must use HTTP 200");
+    keys(value, [
+      "schema_version",
+      "status",
+      "projection_kind",
+      "requested_cursor",
+      "next_cursor",
+      "runtime_epoch",
+      "last_sequence",
+      "bootstrap_observed_at_ms",
+      "records"
+    ], "bootstrap gateway response");
+    check(value.schema_version === 1 && value.status === "bootstrap", "bootstrap gateway status is invalid");
+    check(value.projection_kind === "compound_candidates", "bootstrap projection kind is invalid");
+    check(value.requested_cursor === null, "bootstrap requested cursor must be null");
+    check(typeof value.next_cursor === "string" && STREAM_ID.test(value.next_cursor), "bootstrap next cursor is invalid");
+    check(typeof value.runtime_epoch === "string" && /^[a-f0-9]{32}$/.test(value.runtime_epoch), "bootstrap epoch is invalid");
+    integer(value.last_sequence, "bootstrap last sequence", 1);
+    integer(value.bootstrap_observed_at_ms, "bootstrap observed time");
+    check(Array.isArray(value.records) && value.records.length <= 80, "bootstrap record bound is invalid");
+    for (const envelope of value.records) {
+      await validateCompoundEnvelope(envelope);
+      check(envelope.message_kind === "candidate", "bootstrap record must be a candidate");
+      check(envelope.runtime_epoch === value.runtime_epoch, "bootstrap candidate epoch is inconsistent");
+      check(envelope.sequence <= value.last_sequence, "bootstrap candidate sequence exceeds tail");
+    }
+    return value;
+  }
 
   // src/binance-strategy27-events/core/compound-candidate-client.js
   function wait(delay, signal) {
@@ -1941,6 +2065,7 @@
     if (!Number.isSafeInteger(reconnectDelayMs) || reconnectDelayMs < 0) throw new Error("Compound reconnect delay is invalid");
     const origin = normalizeGatewayBaseUrl(gatewayBaseUrl);
     let cursor = null;
+    let needsBootstrap = true;
     let state = null;
     function transition(next) {
       if (state === next) return;
@@ -1950,9 +2075,9 @@
     return Object.freeze({
       async run(signal) {
         while (!signal.aborted) {
-          const url = new URL("/v1/strategy27/compound-candidates", origin);
+          const url = new URL(needsBootstrap ? "/v1/strategy27/compound-candidates/bootstrap" : "/v1/strategy27/compound-candidates", origin);
           url.searchParams.set("symbol", canonicalSymbol);
-          if (cursor !== null) url.searchParams.set("cursor", cursor);
+          if (!needsBootstrap) url.searchParams.set("cursor", cursor);
           let response;
           try {
             response = await request({ url: url.href, authSecret, signal });
@@ -1969,20 +2094,27 @@
             transition("unsupported");
             return;
           }
-          const payload = await validateCompoundGatewayResponse(JSON.parse(response.responseText), response.status);
+          const payload = needsBootstrap ? await validateCompoundBootstrapResponse(JSON.parse(response.responseText), response.status) : await validateCompoundGatewayResponse(JSON.parse(response.responseText), response.status);
           if (signal.aborted) return;
           if (payload.status === "error") {
             if (response.status !== 503) throw new Error(`Compound gateway error: ${payload.error_code}`);
             cursor = null;
+            needsBootstrap = true;
             transition("unavailable");
             await wait(reconnectDelayMs, signal);
             continue;
           }
-          if (payload.requested_cursor !== cursor || cursor !== null && cursorRegressed(payload.next_cursor, cursor)) throw new Error("Compound gateway response cursor mismatch/regression");
+          if (!needsBootstrap && (payload.requested_cursor !== cursor || cursorRegressed(payload.next_cursor, cursor))) throw new Error("Compound gateway response cursor mismatch/regression");
           if (signal.aborted) return;
           transition("connected");
           await onResponse(payload);
-          cursor = payload.next_cursor;
+          if (!needsBootstrap && payload.status === "reset") {
+            cursor = null;
+            needsBootstrap = true;
+          } else {
+            cursor = payload.next_cursor;
+            needsBootstrap = false;
+          }
         }
       }
     });
@@ -2028,6 +2160,18 @@
       __privateSet(this, _evictionBoundary, null);
       this.runtimeEpoch = null;
       this.lastSequence = null;
+    }
+    beginBootstrap(runtimeEpoch) {
+      check2(typeof runtimeEpoch === "string" && /^[a-f0-9]{32}$/.test(runtimeEpoch), "bootstrap epoch is invalid");
+      this.reset("initial_cursor");
+      this.runtimeEpoch = runtimeEpoch;
+      this.lastSequence = 0;
+    }
+    finishBootstrap(lastSequence) {
+      check2(Number.isSafeInteger(lastSequence) && lastSequence >= 1, "bootstrap last sequence is invalid");
+      check2(this.runtimeEpoch !== null && this.lastSequence !== null, "bootstrap was not started");
+      check2(lastSequence >= this.lastSequence, "bootstrap tail sequence precedes restored records");
+      this.lastSequence = lastSequence;
     }
     prune(nowMs) {
       check2(Number.isSafeInteger(nowMs) && nowMs >= 0, "prune time is invalid");
@@ -2152,8 +2296,8 @@
         panel.removeCompound(id);
       }
     }
-    function prune() {
-      if (current()) remove(lifecycle.prune(nowMs()));
+    function prune(observedAtMs = nowMs()) {
+      if (current()) remove(lifecycle.prune(observedAtMs));
     }
     function failJob(error, { clear = true } = {}) {
       lastError = error;
@@ -2186,10 +2330,21 @@
         if (error) failJob(error, { clear: false });
         return;
       }
-      for (const message of response.messages) {
+      let messages = response.messages;
+      const applicationNowMs = response.status === "bootstrap" ? response.bootstrap_observed_at_ms : nowMs();
+      if (response.status === "bootstrap") {
+        lifecycle.beginBootstrap(response.runtime_epoch);
+        const error = clearView();
+        if (error) {
+          failJob(error, { clear: false });
+          return;
+        }
+        messages = [...response.records].sort((left, right) => left.sequence - right.sequence);
+      }
+      for (const message of messages) {
         if (!current()) return;
         const applicationGeneration = viewGeneration;
-        const action = await lifecycle.apply(message, nowMs());
+        const action = await lifecycle.apply(message, applicationNowMs);
         if (!current()) return;
         remove(action.removedCandidateIds);
         if (action.type === "stream_reset") {
@@ -2217,6 +2372,9 @@
         } finally {
           pendingCandidateId = null;
         }
+      }
+      if (response.status === "bootstrap" && current()) {
+        lifecycle.finishBootstrap(response.last_sequence);
       }
     }
     return Object.freeze({
@@ -2577,7 +2735,29 @@
         hideStatus();
         return;
       }
-      for (const message of response.messages) {
+      let messages = response.messages;
+      if (response.status === "bootstrap") {
+        context.lifecycle.beginBootstrap({
+          runtimeEpoch: response.runtime_epoch,
+          observedAtMs: response.bootstrap_observed_at_ms
+        });
+        context.layer.clear();
+        context.panel.clear();
+        context.candidatePresentations.clear();
+        const bySequence = /* @__PURE__ */ new Map();
+        for (const record of response.records) {
+          for (const message of [record.marker_envelope, record.event_envelope, record.outcome_envelope]) {
+            if (message === null) continue;
+            const existing = bySequence.get(message.sequence);
+            if (existing && JSON.stringify(existing) !== JSON.stringify(message)) {
+              throw new Error("Strategy 27 bootstrap sequence identifies different envelopes");
+            }
+            bySequence.set(message.sequence, message);
+          }
+        }
+        messages = [...bySequence.values()].sort((left, right) => left.sequence - right.sequence);
+      }
+      for (const message of messages) {
         if (active !== context || context.failed) return;
         const action = context.lifecycle.apply(message);
         for (const eventId of action.evictedEventIds ?? []) {
@@ -2610,6 +2790,10 @@
         const rendered = await context.layer[renderMethod](action.eventId, annotation, action.observedAtMs);
         if (!rendered || active !== context || context.failed) continue;
         context.panel.upsert(action.eventId, annotation, action.observedAtMs);
+        hideStatus();
+      }
+      if (response.status === "bootstrap") {
+        context.lifecycle.finishBootstrap(response.last_sequence);
         hideStatus();
       }
     }

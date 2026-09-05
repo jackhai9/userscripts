@@ -52,6 +52,20 @@ export class CompoundCandidateLifecycle {
     this.lastSequence = null;
   }
 
+  beginBootstrap(runtimeEpoch) {
+    check(typeof runtimeEpoch === 'string' && /^[a-f0-9]{32}$/.test(runtimeEpoch), 'bootstrap epoch is invalid');
+    this.reset('initial_cursor');
+    this.runtimeEpoch = runtimeEpoch;
+    this.lastSequence = 0;
+  }
+
+  finishBootstrap(lastSequence) {
+    check(Number.isSafeInteger(lastSequence) && lastSequence >= 1, 'bootstrap last sequence is invalid');
+    check(this.runtimeEpoch !== null && this.lastSequence !== null, 'bootstrap was not started');
+    check(lastSequence >= this.lastSequence, 'bootstrap tail sequence precedes restored records');
+    this.lastSequence = lastSequence;
+  }
+
   #evict(id) {
     const record = this.#records.get(id);
     const order = orderOf(record.candidate);

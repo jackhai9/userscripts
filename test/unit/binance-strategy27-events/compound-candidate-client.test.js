@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCompoundCandidateClient } from '../../../src/binance-strategy27-events/core/compound-candidate-client.js';
 import { Strategy27GatewayTransportError } from '../../../src/binance-strategy27-events/core/live-event-client.js';
-import { validateCompoundGatewayResponse } from '../../../src/binance-strategy27-events/core/compound-candidate-contract.js';
+import { validateCompoundBootstrapResponse, validateCompoundGatewayResponse } from '../../../src/binance-strategy27-events/core/compound-candidate-contract.js';
 
 const initial = (next = '5-0') => ({ schema_version: 1, status: 'reset', reason: 'initial_cursor', requested_cursor: null, next_cursor: next, messages: [] });
+const bootstrap = (next = '5-0') => ({ schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: next, runtime_epoch: 'a'.repeat(32), last_sequence: 4, bootstrap_observed_at_ms: 7000, records: [] });
 const ok = (requested = '5-0', next = '8-0') => ({ schema_version: 1, status: 'ok', requested_cursor: requested, next_cursor: next, messages: [] });
 const response = (body, status = 200) => ({ status, responseText: JSON.stringify(body) });
 const unavailable = (code = 'compound_unavailable') => response({ schema_version: 1, status: 'error', error_code: code }, 503);
@@ -34,14 +35,14 @@ function harness(steps, { onResponse = () => {}, onState = () => {} } = {}) {
 
 test('compound route owns its cursor and accepts stale-cursor resets', async () => {
   const stale = { ...initial('12-0'), reason: 'stale_cursor', requested_cursor: '8-0' };
-  const h = harness([response(initial()), response(ok()), response(stale, 409)], {
+  const h = harness([response(bootstrap()), response(ok()), response(stale, 409)], {
     onResponse: (payload, controller) => { if (payload.next_cursor === '12-0') controller.abort(); },
   });
   await h.run();
-  assert.deepEqual(h.calls.map((url) => url.pathname), Array(3).fill('/v1/strategy27/compound-candidates'));
+  assert.deepEqual(h.calls.map((url) => url.pathname), ['/v1/strategy27/compound-candidates/bootstrap', '/v1/strategy27/compound-candidates', '/v1/strategy27/compound-candidates']);
   assert.deepEqual(h.calls.map((url) => url.searchParams.get('cursor')), [null, '5-0', '8-0']);
   assert.deepEqual(h.calls.map((url) => url.searchParams.get('symbol')), Array(3).fill('BTR/USDT:USDT'));
-  assert.deepEqual(h.received, [initial(), ok(), stale]);
+  assert.deepEqual(h.received, [bootstrap(), ok(), stale]);
   assert.deepEqual(h.states, ['connected']);
 });
 
@@ -55,24 +56,24 @@ test('404 disables compound without parsing HTML or retrying', async () => {
 
 test('explicit unavailable responses reset only this cursor before recovery', async () => {
   for (const code of ['compound_unavailable', 'redis_unavailable']) {
-    const h = harness([response(initial()), unavailable(code), response(initial('20-0'))], {
+    const h = harness([response(bootstrap()), unavailable(code), response(bootstrap('20-0'))], {
       onResponse: (payload, controller) => { if (payload.next_cursor === '20-0') controller.abort(); },
     });
     await h.run();
     assert.deepEqual(h.states, ['connected', 'unavailable', 'connected']);
     assert.deepEqual(h.calls.map((url) => url.searchParams.get('cursor')), [null, '5-0', null]);
-    assert.deepEqual(h.received, [initial(), initial('20-0')]);
+    assert.deepEqual(h.received, [bootstrap(), bootstrap('20-0')]);
   }
 });
 
 test('typed network failures retain the cursor and recover without replaying reset', async () => {
-  const h = harness([response(initial()), new Strategy27GatewayTransportError('fixture transport failure'), response(ok())], {
+  const h = harness([response(bootstrap()), new Strategy27GatewayTransportError('fixture transport failure'), response(ok())], {
     onResponse: (payload, controller) => { if (payload.status === 'ok') controller.abort(); },
   });
   await h.run();
   assert.deepEqual(h.states, ['connected', 'reconnecting', 'connected']);
   assert.deepEqual(h.calls.map((url) => url.searchParams.get('cursor')), [null, '5-0', '5-0']);
-  assert.deepEqual(h.received, [initial(), ok()]);
+  assert.deepEqual(h.received, [bootstrap(), ok()]);
 });
 
 test('protocol failures stop instead of being classified as transient transport failures', async () => {
@@ -89,13 +90,13 @@ test('protocol failures stop instead of being classified as transient transport 
     assert.deepEqual(h.received, []);
     assert.deepEqual(h.states, []);
   }
-  const h = harness([response(initial()), response(ok('5-0', '4-9'))]);
+  const h = harness([response(bootstrap()), response(ok('5-0', '4-9'))]);
   await assert.rejects(h.run(), /cursor mismatch\/regression/);
-  assert.deepEqual(h.received, [initial()]);
+  assert.deepEqual(h.received, [bootstrap()]);
 });
 
 test('aborted requests cannot publish late unsupported or unavailable states', async () => {
-  for (const late of [{ status: 404, responseText: 'missing' }, unavailable(), response(initial())]) {
+  for (const late of [{ status: 404, responseText: 'missing' }, unavailable(), response(bootstrap())]) {
     const h = harness([(controller) => { controller.abort(); return late; }]);
     await h.run();
     assert.deepEqual(h.states, []);
@@ -123,4 +124,10 @@ test('gateway response wrapper validates exact status, cursor and message bounds
     [ok(), 409],
     [{ ...initial(), reason: 'stale_cursor', requested_cursor: '1-0' }, 200],
   ]) await assert.rejects(validateCompoundGatewayResponse(body, status));
+});
+
+test('bootstrap wrapper validates its exact metadata and record bound', async () => {
+  assert.deepEqual(await validateCompoundBootstrapResponse(bootstrap(), 200), bootstrap());
+  await assert.rejects(validateCompoundBootstrapResponse({ ...bootstrap(), extra: true }, 200));
+  await assert.rejects(validateCompoundBootstrapResponse({ ...bootstrap(), records: Array(81).fill({}) }, 200));
 });

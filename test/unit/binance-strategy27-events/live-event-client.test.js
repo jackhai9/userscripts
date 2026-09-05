@@ -7,6 +7,12 @@ import {
   normalizeGatewayBaseUrl,
 } from '../../../src/binance-strategy27-events/core/live-event-client.js';
 
+const bootstrap = (next = '5-0') => ({
+  schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events',
+  requested_cursor: null, next_cursor: next, runtime_epoch: 'a'.repeat(32),
+  last_sequence: 4, bootstrap_observed_at_ms: 7000, records: [],
+});
+
 test('accepts only an explicit loopback HTTP gateway origin', () => {
   assert.equal(normalizeGatewayBaseUrl('http://127.0.0.1:18765/'), 'http://127.0.0.1:18765');
   assert.throws(() => normalizeGatewayBaseUrl('https://example.com'), /loopback/);
@@ -44,11 +50,7 @@ test('long polling binds each response to its requested cursor', async () => {
       status: 200,
       responseText: JSON.stringify({
         schema_version: 1,
-        status: 'reset',
-        reason: 'initial_cursor',
-        requested_cursor: null,
-        next_cursor: '5-0',
-        messages: [],
+        ...bootstrap(),
       }),
     },
     {
@@ -78,22 +80,28 @@ test('long polling binds each response to its requested cursor', async () => {
   });
 
   await client.run(controller.signal);
+  assert.equal(new URL(urls[0]).pathname, '/v1/strategy27/events/bootstrap');
   assert.equal(new URL(urls[0]).searchParams.has('cursor'), false);
+  assert.equal(new URL(urls[1]).pathname, '/v1/strategy27/events');
   assert.equal(new URL(urls[1]).searchParams.get('cursor'), '5-0');
 });
 
 test('long polling rejects a response for a different requested cursor', async () => {
+  let requestCount = 0;
   const client = createLiveEventClient({
-    request: async () => ({
-      status: 200,
-      responseText: JSON.stringify({
+    request: async () => {
+      requestCount += 1;
+      return {
+        status: 200,
+        responseText: JSON.stringify(requestCount === 1 ? bootstrap() : {
         schema_version: 1,
         status: 'ok',
         requested_cursor: '9-0',
         next_cursor: '10-0',
         messages: [],
-      }),
-    }),
+        }),
+      };
+    },
     gatewayBaseUrl: 'http://127.0.0.1:18765',
     authSecret: 'secret',
     canonicalSymbol: 'BTR/USDT:USDT',
@@ -118,13 +126,9 @@ test('reconnects after a GM transport failure and keeps the requested cursor', a
       }
       options.onload({
         status: 200,
-        responseText: JSON.stringify({
-          schema_version: 1,
-          status: requestCount === 1 ? 'reset' : 'ok',
-          ...(requestCount === 1 ? { reason: 'initial_cursor' } : {}),
-          requested_cursor: requestCount === 1 ? null : '5-0',
-          next_cursor: requestCount === 1 ? '5-0' : '8-0',
-          messages: [],
+        responseText: JSON.stringify(requestCount === 1 ? bootstrap() : {
+          schema_version: 1, status: 'ok', requested_cursor: '5-0',
+          next_cursor: '8-0', messages: [],
         }),
       });
     });

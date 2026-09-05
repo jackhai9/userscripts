@@ -9,9 +9,13 @@ import { Strategy27GatewayTransportError } from '../../../src/binance-strategy27
 const fixtures = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-compound-candidates.json', import.meta.url), 'utf8'));
 const EPOCH = 'a'.repeat(32);
 const response = (body, status = 200) => ({ status, responseText: JSON.stringify(body) });
-const reset = (next = '1-0') => response({ schema_version: 1, status: 'reset', reason: 'initial_cursor', requested_cursor: null, next_cursor: next, messages: [] });
+const bootstrap = (next = '1-0', epoch = EPOCH) => response({
+  schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates',
+  requested_cursor: null, next_cursor: next, runtime_epoch: epoch,
+  last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [],
+});
 const batch = (messages, from = '1-0', to = '2-0') => response({ schema_version: 1, status: 'ok', requested_cursor: from, next_cursor: to, messages });
-const envelope = (payload = fixtures[0], sequence = 1, epoch = EPOCH) => ({
+const envelope = (payload = fixtures[0], sequence = 2, epoch = EPOCH) => ({
   schema_version: 1, projection_kind: 'compound_candidate', runtime_epoch: epoch,
   sequence, message_kind: 'candidate', symbol: payload.symbol, observed_at_ms: payload.decision.end_ms, payload,
 });
@@ -106,7 +110,7 @@ function harness(t, steps, { render, reconcile, createError, removeError, clearE
 }
 
 test('controller composes real protocol/lifecycle/panel and renders each independent candidate once', async (t) => {
-  const h = harness(t, [reset(), batch([state(1), envelope(fixtures[0], 2), envelope(fixtures[1], 3), envelope(fixtures[0], 4)])]);
+  const h = harness(t, [bootstrap(), batch([envelope(fixtures[0], 2), envelope(fixtures[1], 3), envelope(fixtures[0], 4)])]);
   h.run();
   await h.parked;
   assert.equal(h.panel.size, 1);
@@ -135,9 +139,9 @@ test('unsupported gateways never construct a chart layer and leave ordinary data
 });
 
 test('same-decision panel ordering uses publication time without extending chart retention time', async (t) => {
-  const high = { ...envelope(fixtures[0], 1), observed_at_ms: 7010 };
-  const low = { ...envelope(fixtures[1], 2), observed_at_ms: 7020 };
-  const h = harness(t, [reset(), batch([high, low])]);
+  const high = { ...envelope(fixtures[0], 2), observed_at_ms: 7010 };
+  const low = { ...envelope(fixtures[1], 3), observed_at_ms: 7020 };
+  const h = harness(t, [bootstrap(), batch([high, low])]);
   h.setClock(7030);
   h.run();
   await h.parked;
@@ -146,14 +150,14 @@ test('same-decision panel ordering uses publication time without extending chart
 });
 
 test('503 clears compound state and recovers with a new cursor without clearing ordinary data', async (t) => {
-  const h = harness(t, [reset(), batch([envelope()]), response({ schema_version: 1, status: 'error', error_code: 'compound_unavailable' }, 503),
+  const h = harness(t, [bootstrap(), batch([envelope()]), response({ schema_version: 1, status: 'error', error_code: 'compound_unavailable' }, 503),
     ({ panel, shapes, calls }) => {
       assert.equal(panel.size, 1);
       assert.equal(panel.compoundSize, 0);
       assert.equal(shapes.size, 0);
       assert.equal(calls.at(-1).searchParams.has('cursor'), false);
-      return reset('5-0');
-    }, batch([envelope(fixtures[1], 1, 'b'.repeat(32))], '5-0', '6-0')]);
+      return bootstrap('5-0', 'b'.repeat(32));
+    }, batch([envelope(fixtures[1], 2, 'b'.repeat(32))], '5-0', '6-0')]);
   h.run();
   await h.parked;
   assert.equal(h.panel.compoundSize, 1);
@@ -162,12 +166,12 @@ test('503 clears compound state and recovers with a new cursor without clearing 
 });
 
 test('network reconnect retains compound history and original cursor', async (t) => {
-  const h = harness(t, [reset(), batch([envelope()]), new Strategy27GatewayTransportError('fixture connection failure'),
+  const h = harness(t, [bootstrap(), batch([envelope()]), new Strategy27GatewayTransportError('fixture connection failure'),
     ({ panel, shapes, calls }) => {
       assert.equal(panel.compoundSize, 1);
       assert.equal(shapes.size, 1);
       assert.equal(calls.at(-1).searchParams.get('cursor'), '2-0');
-      return batch([envelope(fixtures[0], 2)], '2-0', '3-0');
+      return batch([envelope(fixtures[0], 3)], '2-0', '3-0');
     }]);
   h.run();
   await h.parked;
@@ -176,7 +180,7 @@ test('network reconnect retains compound history and original cursor', async (t)
 });
 
 test('stream reset clears compound view but preserves the newly accepted epoch sequence', async (t) => {
-  const h = harness(t, [reset(), batch([envelope(), state(1, 'b'.repeat(32)), envelope(fixtures[1], 2, 'b'.repeat(32))]),
+  const h = harness(t, [bootstrap(), batch([envelope(), state(1, 'b'.repeat(32)), envelope(fixtures[1], 2, 'b'.repeat(32))]),
     batch([envelope(fixtures[0], 2, 'b'.repeat(32))], '2-0', '3-0')]);
   await h.run();
   assert.equal(h.renders.length, 2);
@@ -188,7 +192,7 @@ test('stream reset clears compound view but preserves the newly accepted epoch s
 
 test('contract and lazy renderer failures are terminal only for the compound job', async (t) => {
   for (const mode of ['protocol', 'renderer']) {
-    const h = harness(t, mode === 'protocol' ? [{ status: 200, responseText: 'invalid JSON' }] : [reset(), batch([envelope()])],
+    const h = harness(t, mode === 'protocol' ? [{ status: 200, responseText: 'invalid JSON' }] : [bootstrap(), batch([envelope()])],
       mode === 'renderer' ? { createError: new Error('fixture chart capability missing') } : {});
     await h.run();
     assert.equal(h.panel.size, 1);
@@ -200,7 +204,7 @@ test('contract and lazy renderer failures are terminal only for the compound job
 });
 
 test('manual clear suppresses pending render and exact replay without restarting the stream', async (t) => {
-  const h = harness(t, [reset(), batch([envelope(), envelope(fixtures[0], 2), envelope(fixtures[1], 3)])], {
+  const h = harness(t, [bootstrap(), batch([envelope(), envelope(fixtures[0], 3), envelope(fixtures[1], 4)])], {
     render: ({ controller, id }) => { if (id === fixtures[0].candidate_id) controller.clear(); },
   });
   h.run();
@@ -213,9 +217,9 @@ test('manual clear suppresses pending render and exact replay without restarting
 });
 
 test('ordinary clear does not reset compound replay bookkeeping', async (t) => {
-  const h = harness(t, [reset(), batch([envelope()]), ({ panel }) => {
+  const h = harness(t, [bootstrap(), batch([envelope()]), ({ panel }) => {
     panel.clear();
-    return batch([envelope(fixtures[0], 2)], '2-0', '3-0');
+    return batch([envelope(fixtures[0], 3)], '2-0', '3-0');
   }]);
   h.run();
   await h.parked;
@@ -235,7 +239,7 @@ test('manual clear during lifecycle hash validation suppresses late display and 
     if (digestCalls === 3) { validating.resolve(); await release.promise; }
     return digest(...args);
   });
-  const h = harness(t, [reset(), batch([envelope()]), batch([envelope(fixtures[0], 2)], '2-0', '3-0')]);
+  const h = harness(t, [bootstrap(), batch([envelope()]), batch([envelope(fixtures[0], 3)], '2-0', '3-0')]);
   h.run();
   await validating.promise;
   h.controller.clear();
@@ -249,14 +253,14 @@ test('manual clear during lifecycle hash validation suppresses late display and 
 });
 
 test('stale cursor reset removes old compound history and accepts the new stream', async (t) => {
-  const h = harness(t, [reset(), batch([envelope()]),
+  const h = harness(t, [bootstrap(), batch([envelope()]),
     response({ schema_version: 1, status: 'reset', reason: 'stale_cursor', requested_cursor: '2-0', next_cursor: '7-0', messages: [] }, 409),
     ({ panel, shapes }) => {
       assert.equal(panel.compoundSize, 0);
       assert.equal(shapes.size, 0);
       assert.equal(panel.size, 1);
-      return batch([envelope(fixtures[1], 1, 'b'.repeat(32))], '7-0', '8-0');
-    }]);
+      return bootstrap('7-0', 'b'.repeat(32));
+    }, batch([envelope(fixtures[1], 2, 'b'.repeat(32))], '7-0', '8-0')]);
   h.run();
   await h.parked;
   assert.deepEqual([...h.shapes.keys()], [fixtures[1].candidate_id]);
@@ -267,7 +271,7 @@ test('stale cursor reset removes old compound history and accepts the new stream
 test('stop during an asynchronous draw prevents late shapes and panel publication', async (t) => {
   const drawing = deferred();
   const release = deferred();
-  const h = harness(t, [reset(), batch([envelope()])], { render: async () => { drawing.resolve(); await release.promise; } });
+  const h = harness(t, [bootstrap(), batch([envelope()])], { render: async () => { drawing.resolve(); await release.promise; } });
   const done = h.run();
   await drawing.promise;
   h.setCurrent(false);
@@ -283,7 +287,7 @@ test('stop during an asynchronous draw prevents late shapes and panel publicatio
 test('age eviction during a pending draw prevents late publication and needs no new timer', async (t) => {
   const drawing = deferred();
   const release = deferred();
-  const h = harness(t, [reset(), batch([envelope()])], { maxAgeMs: 1000, render: async () => { drawing.resolve(); await release.promise; } });
+  const h = harness(t, [bootstrap(), batch([envelope()])], { maxAgeMs: 1000, render: async () => { drawing.resolve(); await release.promise; } });
   h.run();
   await drawing.promise;
   h.setClock(8001);
@@ -297,7 +301,7 @@ test('age eviction during a pending draw prevents late publication and needs no 
 });
 
 test('post-draw age check rejects a candidate that expired while rendering', async (t) => {
-  const h = harness(t, [reset(), batch([envelope()])], { maxAgeMs: 1000, render: () => h.setClock(8001) });
+  const h = harness(t, [bootstrap(), batch([envelope()])], { maxAgeMs: 1000, render: () => h.setClock(8001) });
   h.run();
   await h.parked;
   assert.equal(h.panel.compoundSize, 0);
@@ -306,7 +310,7 @@ test('post-draw age check rejects a candidate that expired while rendering', asy
 });
 
 test('timer-driven prune failures stop only the optional job and do not escape to the shared context timer', async (t) => {
-  const h = harness(t, [reset(), batch([envelope()])], { maxAgeMs: 1000, removeError: new Error('fixture removal failure') });
+  const h = harness(t, [bootstrap(), batch([envelope()])], { maxAgeMs: 1000, removeError: new Error('fixture removal failure') });
   const done = h.run();
   await h.parked;
   h.setClock(8001);
@@ -321,7 +325,7 @@ test('timer-driven prune failures stop only the optional job and do not escape t
 
 test('capacity evictions remove only the evicted compound marker', async (t) => {
   const sorted = [...fixtures].sort((a, b) => a.candidate_id.localeCompare(b.candidate_id));
-  const h = harness(t, [reset(), batch(sorted.map((item, index) => envelope(item, index + 1)))], { maxCandidates: 1 });
+  const h = harness(t, [bootstrap(), batch(sorted.map((item, index) => envelope(item, index + 2)))], { maxCandidates: 1 });
   h.run();
   await h.parked;
   assert.deepEqual([...h.shapes.keys()], [sorted[1].candidate_id]);
@@ -332,7 +336,7 @@ test('capacity evictions remove only the evicted compound marker', async (t) => 
 
 test('manual clear and stop contain native cleanup failures without retrying removal', async (t) => {
   for (const action of ['clear', 'stop']) {
-    const h = harness(t, [reset(), batch([envelope()])], { clearError: new Error('fixture native cleanup failure') });
+    const h = harness(t, [bootstrap(), batch([envelope()])], { clearError: new Error('fixture native cleanup failure') });
     const done = h.run();
     await h.parked;
     assert.doesNotThrow(() => h.controller[action]('route_changed'));
@@ -346,7 +350,7 @@ test('manual clear and stop contain native cleanup failures without retrying rem
 });
 
 test('terminal protocol failure preserves both the original and cleanup errors', async (t) => {
-  const h = harness(t, [reset(), batch([envelope()]), { status: 200, responseText: 'invalid JSON' }], {
+  const h = harness(t, [bootstrap(), batch([envelope()]), { status: 200, responseText: 'invalid JSON' }], {
     clearError: new Error('fixture native cleanup failure'),
   });
   await assert.doesNotReject(h.run());
@@ -362,7 +366,7 @@ test('late drawing failure after context retirement remains inspectable without 
   const drawing = deferred();
   const release = deferred();
   const failure = new Error('fixture late cleanup failure');
-  const h = harness(t, [reset(), batch([envelope()])], {
+  const h = harness(t, [bootstrap(), batch([envelope()])], {
     render: async () => { drawing.resolve(); await release.promise; throw failure; },
   });
   const done = h.run();
@@ -379,7 +383,7 @@ test('late drawing failure after context retirement remains inspectable without 
 });
 
 test('timer repair failures stop only the compound job and retain ordinary history', async (t) => {
-  const h = harness(t, [reset(), batch([envelope()])], {
+  const h = harness(t, [bootstrap(), batch([envelope()])], {
     reconcile: async () => { throw new Error('fixture native repair failure'); },
   });
   h.run();
