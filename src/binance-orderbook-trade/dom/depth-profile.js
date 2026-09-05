@@ -153,8 +153,7 @@ function installStyle(document) {
       display: block;
       width: 100%;
       height: 100%;
-      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-BasicBg, #fff) 72%, transparent));
-      opacity: .9;
+      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-BasicBg, #fff) 24%, transparent));
       pointer-events: none;
     }
     #${DEPTH_PROFILE_ID}[data-expanded="false"] .jh-depth-profile-canvas {
@@ -328,8 +327,8 @@ export function renderDepthProfile(root, profile, geometry, currentPrice) {
   const bids = bucketVisibleLevels(profile.bids, geometry);
   const maxVisibleCumulative = getMaxVisibleCumulative(asks, bids);
   if (maxVisibleCumulative > 0) {
-    drawSide(context, asks, maxVisibleCumulative, rect.width, 'rgba(246, 70, 93, .30)');
-    drawSide(context, bids, maxVisibleCumulative, rect.width, 'rgba(14, 203, 129, .30)');
+    drawSide(context, asks, maxVisibleCumulative, rect.width, 'rgba(246, 70, 93, .62)');
+    drawSide(context, bids, maxVisibleCumulative, rect.width, 'rgba(14, 203, 129, .62)');
   }
 
   const currentPriceY = geometry.priceToCoordinate(currentPrice);
