@@ -2,13 +2,19 @@ const OWNER_SLOT = Symbol.for('jh-userscripts.chart-mutation-owners');
 const VERSION = 1;
 
 function owners(view) {
+  if (typeof view?.Map !== 'function') {
+    throw new TypeError('Chart mutation protocol requires the page Map constructor');
+  }
   if (view[OWNER_SLOT] === undefined) {
     Object.defineProperty(view, OWNER_SLOT, {
-      value: Object.freeze({ version: VERSION, predicates: new Map() }),
+      // The record lives on the page window, so its collection must belong to
+      // that realm too. Both page-context and userscript-sandbox bundles then
+      // validate the same constructor regardless of installation load order.
+      value: Object.freeze({ version: VERSION, predicates: new view.Map() }),
     });
   }
   const record = view[OWNER_SLOT];
-  if (record.version !== VERSION || !(record.predicates instanceof Map)) {
+  if (record.version !== VERSION || !(record.predicates instanceof view.Map)) {
     throw new Error('Incompatible chart mutation protocol; update both scripts and reload');
   }
   return record.predicates;
