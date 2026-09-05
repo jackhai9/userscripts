@@ -1617,26 +1617,18 @@
   // src/shared/chart-mutation-owners.js
   var OWNER_SLOT = Symbol.for("jh-userscripts.chart-mutation-owners");
   var VERSION = 1;
-  function owners(view) {
-    if (typeof view?.Map !== "function") {
-      throw new TypeError("Chart mutation protocol requires the page Map constructor");
-    }
-    if (view[OWNER_SLOT] === void 0) {
-      Object.defineProperty(view, OWNER_SLOT, {
-        // The record lives on the page window, so its collection must belong to
-        // that realm too. Both page-context and userscript-sandbox bundles then
-        // validate the same constructor regardless of installation load order.
-        value: Object.freeze({ version: VERSION, predicates: new view.Map() })
-      });
-    }
+  function existingOwners(view) {
     const record = view[OWNER_SLOT];
-    if (record.version !== VERSION || !(record.predicates instanceof view.Map)) {
+    if (record === void 0) return null;
+    if (typeof view?.Map !== "function" || record.version !== VERSION || !(record.predicates instanceof view.Map)) {
       throw new Error("Incompatible chart mutation protocol; update both scripts and reload");
     }
     return record.predicates;
   }
   function isChartMutationBlocked(view) {
-    for (const predicate of owners(view).values()) {
+    const registry = existingOwners(view);
+    if (registry === null) return false;
+    for (const predicate of registry.values()) {
       const blocked = predicate();
       if (typeof blocked !== "boolean") throw new Error("Chart mutation owner must return a boolean");
       if (blocked) return true;

@@ -13,13 +13,12 @@ async function bundle() {
   return vm.runInThisContext(result.outputFiles[0].text + '; coordination;');
 }
 
-async function sandboxBundle() {
+async function ownerBundle(context) {
   const result = await build({
     stdin: { contents: "export * from './src/shared/chart-mutation-owners.js';",
       resolveDir: process.cwd(), sourcefile: 'coordination-sandbox-test.js' },
     bundle: true, write: false, format: 'iife', globalName: 'coordination',
   });
-  const context = vm.createContext({});
   return vm.runInContext(`${result.outputFiles[0].text}; coordination;`, context);
 }
 
@@ -62,24 +61,24 @@ test('independent bundles expose only a live boolean and unregister their own ow
 });
 
 test('page and userscript realms share the page-owned Map in either load order', async () => {
-  const pageContext = vm.createContext({});
-  const pageView = vm.runInContext('globalThis', pageContext);
-  const pageBundle = await sandboxBundle();
-  const userscriptBundle = await sandboxBundle();
-  assert.notEqual(pageView.Map, Map);
-
-  for (const [first, second, name] of [
-    [pageBundle, userscriptBundle, 'page-first'],
-    [userscriptBundle, pageBundle, 'userscript-first'],
-  ]) {
-    const view = vm.runInContext('globalThis', vm.createContext({}));
+  for (const strategy29First of [false, true]) {
+    const pageContext = vm.createContext({});
+    const sandboxContext = vm.createContext({});
+    const view = vm.runInContext('globalThis', pageContext);
+    const pageBundle = await ownerBundle(pageContext);
+    const strategy29Bundle = await ownerBundle(sandboxContext);
+    assert.notEqual(view.Map, vm.runInContext('Map', sandboxContext));
+    if (strategy29First) {
+      assert.equal(strategy29Bundle.isChartMutationBlocked(view), false);
+      assert.equal(view[Symbol.for('jh-userscripts.chart-mutation-owners')], undefined);
+    }
     let busy = false;
-    const remove = first.registerChartMutationOwner(view, name, () => busy);
+    const remove = pageBundle.registerChartMutationOwner(view, `orderbook-${strategy29First}`, () => busy);
     const record = view[Symbol.for('jh-userscripts.chart-mutation-owners')];
     assert.equal(record.predicates instanceof view.Map, true);
-    assert.equal(second.isChartMutationBlocked(view), false);
+    assert.equal(strategy29Bundle.isChartMutationBlocked(view), false);
     busy = true;
-    assert.equal(second.isChartMutationBlocked(view), true);
+    assert.equal(strategy29Bundle.isChartMutationBlocked(view), true);
     remove();
   }
 });
