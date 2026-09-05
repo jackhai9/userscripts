@@ -277,8 +277,17 @@ test('creates a non-interactive canvas with an independently clickable toggle', 
 
   assert.equal(root.id, DEPTH_PROFILE_ID);
   assert.equal(root.parentElement, host);
-  assert.match(document.getElementById('jh-binance-depth-profile-style').textContent, /pointer-events: none/);
-  assert.match(document.getElementById('jh-binance-depth-profile-style').textContent, /pointer-events: auto/);
+  const styleText = document.getElementById('jh-binance-depth-profile-style').textContent;
+  assert.match(styleText, /pointer-events: none/);
+  assert.match(styleText, /pointer-events: auto/);
+  assert.match(
+    styleText,
+    /background: linear-gradient\(90deg, transparent, color-mix\(in srgb, var\(--color-BasicBg, #fff\) 24%, transparent\)\)/,
+  );
+  assert.doesNotMatch(
+    styleText,
+    /\.jh-depth-profile-canvas\s*\{[^}]*opacity:/,
+  );
   root.querySelector('[data-depth-profile-toggle]').click();
   assert.equal(toggles, 1);
 });
@@ -333,6 +342,7 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
   const { host } = findDepthProfileHost(document);
   const root = ensureDepthProfileView(document, host, { onToggle: () => {} });
   const calls = [];
+  const fillStyles = [];
   root.querySelector('canvas').getContext = () => ({
     beginPath: () => calls.push('beginPath'),
     clearRect: () => calls.push('clearRect'),
@@ -344,6 +354,7 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
     setLineDash: () => calls.push('setLineDash'),
     setTransform: () => calls.push('setTransform'),
     stroke: () => calls.push('stroke'),
+    set fillStyle(value) { fillStyles.push(value); },
   });
 
   const geometry = {
@@ -361,6 +372,10 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
   }, geometry, 100.5), true);
   assert.equal(root.style.height, '240px');
   assert.equal(calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').length, 2);
+  assert.deepEqual(fillStyles, [
+    'rgba(246, 70, 93, .62)',
+    'rgba(14, 203, 129, .62)',
+  ]);
   assert.deepEqual(
     calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').map((call) => call[2]),
     [80, 180],
