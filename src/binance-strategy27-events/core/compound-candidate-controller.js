@@ -50,8 +50,8 @@ export function createCompoundCandidateController({
     }
   }
 
-  function prune() {
-    if (current()) remove(lifecycle.prune(nowMs()));
+  function prune(observedAtMs = nowMs()) {
+    if (current()) remove(lifecycle.prune(observedAtMs));
   }
 
   function failJob(error, { clear = true } = {}) {
@@ -84,10 +84,20 @@ export function createCompoundCandidateController({
       if (error) failJob(error, { clear: false });
       return;
     }
-    for (const message of response.messages) {
+    let messages = response.messages;
+    const applicationNowMs = response.status === 'bootstrap'
+      ? response.bootstrap_observed_at_ms
+      : nowMs();
+    if (response.status === 'bootstrap') {
+      lifecycle.beginBootstrap(response.runtime_epoch);
+      const error = clearView();
+      if (error) { failJob(error, { clear: false }); return; }
+      messages = [...response.records].sort((left, right) => left.sequence - right.sequence);
+    }
+    for (const message of messages) {
       if (!current()) return;
       const applicationGeneration = viewGeneration;
-      const action = await lifecycle.apply(message, nowMs());
+      const action = await lifecycle.apply(message, applicationNowMs);
       if (!current()) return;
       remove(action.removedCandidateIds);
       if (action.type === 'stream_reset') {
@@ -114,6 +124,9 @@ export function createCompoundCandidateController({
       } finally {
         pendingCandidateId = null;
       }
+    }
+    if (response.status === 'bootstrap' && current()) {
+      lifecycle.finishBootstrap(response.last_sequence);
     }
   }
 

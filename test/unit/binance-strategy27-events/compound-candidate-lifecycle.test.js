@@ -119,3 +119,13 @@ test('wrong-symbol data cannot mutate stream state', async () => {
   assert.equal(state.size, 0);
   assert.equal(state.runtimeEpoch, null);
 });
+
+test('bootstrap restores retained candidates and advances to the live tail', async () => {
+  const state = lifecycle();
+  state.beginBootstrap(EPOCH);
+  assert.equal((await state.apply(envelope(fixtures[0], 4), 7000)).type, 'candidate');
+  state.finishBootstrap(7);
+  assert.equal((await state.apply(control(8), 7000)).type, 'heartbeat');
+  assert.equal(state.size, 1);
+  assert.equal(state.lastSequence, 8);
+});

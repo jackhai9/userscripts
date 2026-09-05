@@ -97,9 +97,13 @@ record shares one in-flight repair across timer and message callbacks. Cleanup
 skips IDs proven absent, while native removal failures still stop the owning job.
 Clear, reset, context changes and retention eviction invalidate repair ownership;
 late-created entities are removed instead of resurrecting retired records.
-Reconciliation does not refresh retention timestamps or persist drawings across
-reloads. A panel history reset is a separate lifecycle event, not evidence of
-native entity eviction.
+Reconciliation does not refresh retention timestamps. Drawings remain transient
+and use `disableSave: true`, but a full page reload requests a bounded display
+snapshot from the gateway before long polling and rebuilds retained ordinary and
+compound records. The snapshot and its continuation cursor are committed with the
+same Redis operation, so live messages after that cursor cannot be skipped. A
+panel history reset is a separate lifecycle event, not evidence of native entity
+eviction.
 
 ## Compound Candidate Extension
 
@@ -107,7 +111,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.4.1 with identical metadata headers.
+generated install artifact are version 0.4.2 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
@@ -123,6 +127,17 @@ Do not treat source unit tests or the panel fixture as deployment evidence.
   Typed request transport failures retain the cursor. Other contract failures
   are not retried. Cancellation is checked after request and async validation
   boundaries so a stopped context cannot publish a late status.
+- On startup and after a stale cursor, each client first requests its dedicated
+  `/bootstrap` endpoint. The ordinary snapshot preserves the latest event facts,
+  the first directional marker evidence and the latest outcome per retained
+  event. The compound snapshot preserves immutable candidates by original
+  decision time. Both snapshots are bounded to 80 records and two hours; the
+  browser applies them at the gateway's fixed observation time before continuing
+  from the returned Redis Stream cursor.
+  Ordinary bootstrap may replay a retained active marker envelope immediately
+  before the same event's latest outcome; only this explicit bootstrap phase
+  treats the omitted close transition as closed. Live polling still requires the
+  normal close-before-outcome lifecycle.
 - Canonical Python/JavaScript SHA-256 identities are checked against synthetic
   Python detector fixtures. Wire decimals remain exact strings for validation;
   numeric conversion is limited to presentation. Small nonzero display

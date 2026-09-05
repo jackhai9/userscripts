@@ -6,6 +6,7 @@ import {
   eventTimeToChartSecond,
   LiveEventLifecycle,
   routeSymbolToCanonical,
+  validateGatewayBootstrapResponse,
   validateGatewayResponse,
   validateLiveEnvelope,
 } from '../../../src/binance-strategy27-events/core/live-event-contract.js';
@@ -292,6 +293,107 @@ test('tracks exact sequence and event lifecycle while allowing reset rehydration
     eventTime: 2_000,
   }));
   assert.equal(rehydrated.rehydrated, true);
+});
+
+test('bootstrap restores a sparse retained subsequence and advances to the live tail', () => {
+  const retained = envelope({ sequence: 4, kind: 'event_updated', eventTime: 1_250 });
+  const body = {
+    schema_version: 1,
+    status: 'bootstrap',
+    projection_kind: 'strategy27_events',
+    requested_cursor: null,
+    next_cursor: '12-0',
+    runtime_epoch: epoch,
+    last_sequence: 7,
+    bootstrap_observed_at_ms: 7000,
+    records: [{
+      event_id: eventId,
+      event_envelope: retained,
+      marker_envelope: null,
+      outcome_envelope: null,
+    }],
+  };
+  assert.equal(validateGatewayBootstrapResponse(body, 200), body);
+  assert.throws(
+    () => validateGatewayBootstrapResponse({
+      ...body,
+      records: [{ ...body.records[0], event_envelope: null }],
+    }, 200),
+    /event envelope is required/,
+  );
+  const closedEvent = event({ status: 'complete', activeEnd: 2_000 });
+  const outcomeOnly = envelope({
+    sequence: 6,
+    kind: 'event_outcome',
+    payload: {
+      event: closedEvent,
+      outcome: {
+        window_seconds: 1,
+        outcome_boundary_at_ms: 3_000,
+        outcome_status: 'complete',
+        terminated_at_ms: null,
+        termination_reason: null,
+        boundary_mid: '1.2',
+        return_from_trigger_bps: '-4',
+        return_from_active_end_bps: '-3',
+        maximum_upward_excursion_bps: '1',
+        maximum_downward_excursion_bps: '4',
+        pre_event_range_break_up: false,
+        pre_event_range_break_down: true,
+        spread_change_from_active_end_bps: '0.2',
+        eligible_orderbook_observation_count: 4,
+        impulse_direction: 'up',
+        directional_outcome: 'reversal',
+      },
+    },
+    status: 'complete',
+    eventTime: 3_000,
+  });
+  const outcomeOnlyBody = {
+    ...body,
+    records: [{
+      event_id: eventId,
+      event_envelope: outcomeOnly,
+      marker_envelope: null,
+      outcome_envelope: outcomeOnly,
+    }],
+  };
+  assert.equal(validateGatewayBootstrapResponse(outcomeOnlyBody, 200), outcomeOnlyBody);
+  assert.throws(
+    () => validateGatewayBootstrapResponse({
+      ...outcomeOnlyBody,
+      records: [{ ...outcomeOnlyBody.records[0], outcome_envelope: retained }],
+    }, 200),
+    /event envelope is invalid/,
+  );
+  const sparseLifecycle = new LiveEventLifecycle('BTR/USDT:USDT', lifecycleOptions);
+  sparseLifecycle.beginBootstrap({
+    runtimeEpoch: body.runtime_epoch,
+    observedAtMs: body.bootstrap_observed_at_ms,
+  });
+  assert.equal(sparseLifecycle.apply(retained).phase, 'active');
+  const sparseOutcome = sparseLifecycle.apply(outcomeOnly);
+  assert.equal(sparseOutcome.phase, 'closed');
+  assert.equal(sparseOutcome.outcomes.length, 1);
+  sparseLifecycle.finishBootstrap(body.last_sequence);
+  const strictLifecycle = new LiveEventLifecycle('BTR/USDT:USDT', lifecycleOptions);
+  strictLifecycle.apply(envelope());
+  assert.throws(
+    () => strictLifecycle.apply(envelope({
+      sequence: 2,
+      kind: 'event_outcome',
+      payload: outcomeOnly.payload,
+      status: 'complete',
+      eventTime: 3_000,
+    })),
+    /requires a closed event/,
+  );
+  const lifecycle = new LiveEventLifecycle('BTR/USDT:USDT', lifecycleOptions);
+  lifecycle.beginBootstrap({ runtimeEpoch: body.runtime_epoch, observedAtMs: body.bootstrap_observed_at_ms });
+  assert.equal(lifecycle.apply(retained).type, 'event');
+  lifecycle.finishBootstrap(body.last_sequence);
+  assert.equal(lifecycle.apply(envelope({ sequence: 8, kind: 'event_updated', eventTime: 1_250 })).type, 'event');
+  assert.equal(lifecycle.lastSequence, 8);
 });
 
 test('rejects unknown lifecycle transitions without a reset', () => {
