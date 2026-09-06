@@ -19,7 +19,7 @@ const STATE_COLORS = Object.freeze({
   configuration_required: '#F0B90B',
 });
 const STATUS_COLORS = Object.freeze({
-  ready: '#0ECB81',
+  ready: '#848E9C',
   warming: '#F0B90B',
   stale: '#F6465D',
   insufficient_history: '#F0B90B',
@@ -97,7 +97,11 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   const selection = element(document, 'div', { role: 'selection', styles: { color: '#EAECEF', fontSize: '11px' } });
   const selectionRefresh = element(document, 'div', { role: 'selection-refresh', styles: { color: '#848E9C', fontSize: '11px' } });
   overview.append(connection, spec, reference, statusFreshness, selection, selectionRefresh, eventsFreshness);
-  const unitsTitle = element(document, 'div', { text: 'Watched timeframes', styles: { padding: '7px 10px 4px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontWeight: '600' } });
+  const unitsTitle = element(document, 'div', { text: 'Last processing status', styles: { padding: '7px 10px 4px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontWeight: '600' } });
+  unitsTitle.appendChild(element(document, 'div', {
+    text: 'Stored processing status does not confirm current live readiness.',
+    styles: { fontSize: '11px', fontWeight: '400' },
+  }));
   const units = element(document, 'div', { role: 'units', styles: { display: 'grid', gap: '3px', padding: '0 7px 8px' } });
   const delivery = element(document, 'div', { text: 'Global delivery — waiting', role: 'delivery', styles: { padding: '7px 10px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontSize: '11px' } });
   const eventsTitle = element(document, 'div', { text: 'Recent cross-timeframe signals', styles: { padding: '7px 10px 4px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontWeight: '600' } });
@@ -168,7 +172,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
       const unavailable = universe.refresh_status === 'fail_closed';
       selection.dataset.state = universe.refresh_status;
       selection.style.color = unavailable ? '#F6465D' : universe.refresh_status === 'fresh' ? '#0ECB81' : '#F0B90B';
-      selection.textContent = `${SELECTION_REASONS[universe.reason]} · Generation ${universe.generation ?? 'pending'} · ${universe.selected_markets.length} markets · ${universe.ready_unit_count}/${universe.selected_unit_count} units ready · Intervals ${universe.configured_timeframes.join(', ') || 'pending'}`;
+      selection.textContent = `${SELECTION_REASONS[universe.reason]} · Generation ${universe.generation ?? 'pending'} · ${universe.selected_markets.length} markets · ${universe.ready_unit_count}/${universe.selected_unit_count} live units ready · Intervals ${universe.configured_timeframes.join(', ') || 'pending'}`;
       selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null
         ? 'No successful selection has been observed'
         : `Last successful selection ${formatClock(universe.last_successful_refreshed_at_ms)} · ${universe.last_success_age_seconds.toFixed(1)}s ago`;
@@ -183,7 +187,8 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
           styles: { display: 'grid', gridTemplateColumns: '42px 64px minmax(0,1fr)', gap: '6px', padding: '4px 6px', borderRadius: '5px', background: 'rgba(132,142,156,.08)' },
         });
         row.appendChild(element(document, 'strong', { text: unit.timeframe, styles: { color: '#EAECEF' } }));
-        row.appendChild(element(document, 'span', { text: unit.status, styles: { color: STATUS_COLORS[unit.status] } }));
+        // Stored processing can succeed before the current live admission is ready.
+        row.appendChild(element(document, 'span', { text: unit.status === 'ready' ? 'Processed' : unit.status, styles: { color: STATUS_COLORS[unit.status] } }));
         row.appendChild(element(document, 'span', { text: unit.reason, styles: { color: '#848E9C', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }));
         units.appendChild(row);
       }

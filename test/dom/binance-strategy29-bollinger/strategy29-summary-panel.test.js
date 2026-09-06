@@ -8,6 +8,22 @@ import { createStrategy29SummaryPanel } from '../../../src/binance-strategy29-bo
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('distinguishes stored processing success from current live readiness', () => {
+  const dom = new JSDOM('<body></body>');
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
+  panel.renderStatus({ ...status, universe: {
+    ...status.universe, ready_unit_count: 0, pending_unit_count: status.universe.selected_unit_count,
+  } });
+  assert.match(dom.window.document.querySelector('[data-role=selection]').textContent, /0\/3 live units ready/);
+  assert.match(dom.window.document.body.textContent, /Last processing status/);
+  assert.match(dom.window.document.body.textContent, /Stored processing status does not confirm current live readiness/);
+  const processing = dom.window.document.querySelector('[data-role=unit]').children[1];
+  assert.equal(processing.textContent, 'Processed');
+  assert.equal(processing.style.color, 'rgb(132, 142, 156)');
+  panel.destroy();
+  dom.window.close();
+});
+
 test('distinguishes unavailable selection, unselected symbol and pending unit registration', () => {
   const dom = new JSDOM('<body></body>');
   const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });

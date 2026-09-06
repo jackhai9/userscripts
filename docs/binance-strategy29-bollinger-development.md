@@ -85,6 +85,11 @@ selected units awaiting observation and a healthy selection excluding the curren
 market. Unavailable selection suppresses healthy-looking processing rows while
 retained events remain visible. A never-successful refresh displays no successful
 time; generation-mismatched producer readiness contributes no ready units.
+The aggregate is labeled `live units ready`. Per-period rows show the last stored
+processing status, with `ready` displayed as neutral `Processed`; they do not
+certify current live readiness. A stored ready row with zero live-ready units is
+valid during producer-generation or admission/baseline transitions and must not
+be rejected by the client validator.
 
 The current remote summary is disabled by default and has no panel while disabled.
 Authentication failure affects only the remote summary, not local chart detection.

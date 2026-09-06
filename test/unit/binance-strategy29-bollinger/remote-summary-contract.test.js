@@ -14,6 +14,14 @@ import {
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('accepts stored ready processing while current live admission is pending', () => {
+  const candidate = { ...status, universe: {
+    ...status.universe, ready_unit_count: 0, pending_unit_count: status.universe.selected_unit_count,
+  } };
+  assert.equal(candidate.units[0].status, 'ready');
+  assert.equal(validateStrategy29StatusResponse(candidate, 200), candidate);
+});
+
 test('rejects malformed or contradictory universe status fields', () => {
   for (const change of [
     { generation: '1' }, { refresh_status: 'unknown' }, { unexpected: true },
