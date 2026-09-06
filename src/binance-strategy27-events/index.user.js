@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.5
+// @version      0.4.6
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -47,6 +47,7 @@ import { createStrategy27EventPanel } from './dom/strategy27-event-panel.js';
 import { createCompoundCandidateController } from './core/compound-candidate-controller.js';
 import { createTradingViewCompoundLayer } from './dom/tradingview-compound-layer.js';
 import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
+import { createStrategy27Translator, localizeAnnotation, resolveUiLocaleFromPathname } from './core/ui-copy.js';
 import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 
 (function () {
@@ -65,6 +66,9 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
   const request = createGmJsonRequest(GM_xmlhttpRequest);
   let active = null;
   let statusView = null;
+  let uiLocale = resolveUiLocaleFromPathname(page.location.pathname);
+  let t = createStrategy27Translator(uiLocale);
+  let statusCopy = null;
 
   function stopActive(resetReason) {
     if (!active) return;
@@ -78,12 +82,14 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 
   function showStatus(chartRoot, text, state = 'normal') {
     statusView = ensureStrategy27StatusView(pageDocument, chartRoot);
-    setStrategy27Status(statusView, text, state);
+    statusCopy = { text, state };
+    setStrategy27Status(statusView, text(uiLocale), state);
   }
 
   function hideStatus() {
     removeStrategy27StatusView(pageDocument);
     statusView = null;
+    statusCopy = null;
   }
 
   function removeOrdinaryEvent(context, eventId) {
@@ -121,7 +127,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     context.controller.abort();
     context.layer.suspend();
     context.panel.setOrdinaryConnection('stopped');
-    showStatus(context.target.chartRoot, `Strategy 27 stopped; history retained. Use the reconnect menu to resume: ${error.message}`, 'error');
+    showStatus(context.target.chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 已停止，历史记录已保留。请使用重新连接菜单恢复：', 'Strategy 27 stopped; history retained. Use the reconnect menu to resume: ') + error.message, 'error');
   }
 
   function reconcileOrdinary(context) {
@@ -187,6 +193,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
         buildEventAnnotation({
           event: action.event,
           rehydrated: action.rehydrated,
+          locale: context.locale,
         }),
       );
       const renderMethod = {
@@ -197,7 +204,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       }[action.messageKind];
       const rendered = await context.layer[renderMethod](action.eventId, annotation, retainedAtMs);
       if (!rendered || active !== context || context.failed || !context.ordinaryHistory.has(action.eventId)) continue;
-      context.panel.upsert(action.eventId, annotation, retainedAtMs);
+      context.panel.upsert(action.eventId, localizeAnnotation(annotation, context.locale), retainedAtMs);
       hideStatus();
     }
     if (response.status === 'bootstrap') {
@@ -210,6 +217,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     const context = {
       signature: `${routeSymbol}|${target.resolution}`,
       routeSymbol,
+      locale: uiLocale,
       canonicalSymbol,
       target,
       controller: new AbortController(),
@@ -222,6 +230,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
         maxAgeMs: MAX_EVENT_AGE_MS,
       }),
       panel: createStrategy27EventPanel(pageDocument, target.chartRoot, {
+        locale: uiLocale,
         maxEvents: MAX_PANEL_EVENTS,
         maxCompoundEvents: MAX_PANEL_EVENTS,
         loadPosition: () => GM_getValue(PANEL_POSITION_KEY, null),
@@ -234,13 +243,13 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     };
     active = context;
     context.compound = createCompoundCandidateController({
-      request, gatewayBaseUrl: gatewayOrigin, authSecret, canonicalSymbol,
+      locale: context.locale, request, gatewayBaseUrl: gatewayOrigin, authSecret, canonicalSymbol,
       panel: context.panel, isCurrent: () => active === context,
       maxCandidates: MAX_RETAINED_EVENTS, maxAgeMs: MAX_EVENT_AGE_MS,
-      createLayer: () => createTradingViewCompoundLayer(target, { maxCandidates: MAX_RETAINED_EVENTS }),
+      createLayer: () => createTradingViewCompoundLayer(target, { maxCandidates: MAX_RETAINED_EVENTS, locale: context.locale }),
     });
     void context.compound.run();
-    showStatus(target.chartRoot, 'Strategy 27 正在连接');
+    showStatus(target.chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 正在连接', 'Strategy 27 connecting'));
     const client = createLiveEventClient({
       request,
       gatewayBaseUrl: gatewayOrigin,
@@ -250,7 +259,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
         if (active !== context || context.failed) return;
         context.panel.setOrdinaryConnection(state);
         if (state === 'reconnecting') {
-          showStatus(context.target.chartRoot, 'Strategy 27 网关连接中断，正在重连', 'inactive');
+          showStatus(context.target.chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 网关连接中断，正在重连', 'Strategy 27 gateway disconnected; reconnecting'), 'inactive');
         } else {
           hideStatus();
         }
@@ -261,11 +270,22 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
   }
 
   function synchronizeContext() {
+    const nextLocale = resolveUiLocaleFromPathname(page.location.pathname);
+    if (nextLocale !== uiLocale) {
+      uiLocale = nextLocale;
+      t = createStrategy27Translator(uiLocale);
+      if (active) {
+        active.locale = uiLocale;
+        active.panel.setLocale(uiLocale);
+        active.compound.setLocale(uiLocale);
+      }
+      if (statusView && statusCopy) setStrategy27Status(statusView, statusCopy.text(uiLocale), statusCopy.state);
+    }
+    synchronizeMenus();
     const routeSymbol = parseFuturesTradingSymbolFromPathname(page.location.pathname);
     if (!routeSymbol) {
       stopActive('route_changed');
-      removeStrategy27StatusView(pageDocument);
-      statusView = null;
+      hideStatus();
       return;
     }
 
@@ -283,7 +303,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       }
     } catch (error) {
       stopActive('route_changed');
-      showStatus(chartRoot, `Strategy 27 已停止：${error.message}`, 'error');
+      showStatus(chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 已停止：', 'Strategy 27 stopped: ') + error.message, 'error');
       return;
     }
 
@@ -295,14 +315,14 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       const inactive = error.message.includes('one-second chart');
       showStatus(
         chartRoot,
-        inactive ? 'Strategy 27 仅在 1 秒图表启用' : `Strategy 27 已停止：${error.message}`,
+        inactive ? (locale) => createStrategy27Translator(locale)('Strategy 27 仅在 1 秒图表启用', 'Strategy 27 requires a one-second chart') : (locale) => createStrategy27Translator(locale)('Strategy 27 已停止：', 'Strategy 27 stopped: ') + error.message,
         inactive ? 'inactive' : 'error',
       );
       return;
     }
     if (!target) {
       stopActive('interval_changed');
-      showStatus(chartRoot, 'Strategy 27 正在等待图表接口', 'inactive');
+      showStatus(chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 正在等待图表接口', 'Strategy 27 waiting for the chart interface'), 'inactive');
       return;
     }
 
@@ -320,14 +340,14 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 
     const authSecret = GM_getValue(GATEWAY_SECRET_KEY, '');
     if (typeof authSecret !== 'string' || authSecret.length === 0) {
-      showStatus(chartRoot, 'Strategy 27 未配置网关密钥（请使用油猴菜单设置）', 'inactive');
+      showStatus(chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 未配置网关密钥（请使用油猴菜单设置）', 'Strategy 27 gateway secret is not configured (use the userscript menu)'), 'inactive');
       return;
     }
     let gatewayOrigin;
     try {
       gatewayOrigin = normalizeGatewayBaseUrl(GM_getValue(GATEWAY_ORIGIN_KEY, DEFAULT_GATEWAY_ORIGIN));
     } catch (error) {
-      showStatus(chartRoot, `Strategy 27 已停止：${error.message}`, 'error');
+      showStatus(chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 已停止：', 'Strategy 27 stopped: ') + error.message, 'error');
       return;
     }
     startContext({ routeSymbol, canonicalSymbol, target, gatewayOrigin, authSecret });
@@ -338,31 +358,41 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     synchronizeContext();
   }
 
-  GM_registerMenuCommand('设置 Strategy 27 网关密钥', () => {
-    const value = page.prompt('输入本机 Strategy 27 网关密钥。该值只保存在此油猴脚本的私有存储中。');
-    if (value === null) return;
-    if (value.length === 0) throw new Error('Strategy 27 网关密钥不能为空');
-    GM_setValue(GATEWAY_SECRET_KEY, value);
-    restart();
-  });
-  GM_registerMenuCommand('设置 Strategy 27 本机网关地址', () => {
-    const current = GM_getValue(GATEWAY_ORIGIN_KEY, DEFAULT_GATEWAY_ORIGIN);
-    const value = page.prompt('输入 SSH 本地转发地址（仅允许 http://127.0.0.1:<端口>）', current);
-    if (value === null) return;
-    GM_setValue(GATEWAY_ORIGIN_KEY, normalizeGatewayBaseUrl(value));
-    restart();
-  });
-  GM_registerMenuCommand('清除 Strategy 27 图表标注', () => {
-    active?.compound.clear();
-    active?.layer.clear();
-    active?.panel.clear();
-    active?.ordinaryHistory.clear();
-    active?.candidatePresentations.clear();
-    if (!active?.failed) hideStatus();
-  });
-  GM_registerMenuCommand('Reconnect Strategy 27 and restore history', restart);
+  const menuDefinitions = [
+    { label: () => t('设置 Strategy 27 网关密钥', 'Set Strategy 27 gateway secret'), run: () => {
+      const value = page.prompt(t('输入本机 Strategy 27 网关密钥。该值只保存在此油猴脚本的私有存储中。', 'Enter the local Strategy 27 gateway secret. It is saved only in this userscript’s private storage.'));
+      if (value === null) return;
+      if (value.length === 0) throw new Error(t('Strategy 27 网关密钥不能为空', 'Strategy 27 gateway secret must not be empty'));
+      GM_setValue(GATEWAY_SECRET_KEY, value);
+      restart();
+    } },
+    { label: () => t('设置 Strategy 27 本机网关地址', 'Set Strategy 27 local gateway URL'), run: () => {
+      const current = GM_getValue(GATEWAY_ORIGIN_KEY, DEFAULT_GATEWAY_ORIGIN);
+      const value = page.prompt(t('输入 SSH 本地转发地址（仅允许 http://127.0.0.1:<端口>）', 'Enter the SSH local forwarding URL (only http://127.0.0.1:<port> is allowed)'), current);
+      if (value === null) return;
+      GM_setValue(GATEWAY_ORIGIN_KEY, normalizeGatewayBaseUrl(value));
+      restart();
+    } },
+    { label: () => t('清除 Strategy 27 图表标注', 'Clear Strategy 27 chart annotations'), run: () => {
+      active?.compound.clear();
+      active?.layer.clear();
+      active?.panel.clear();
+      active?.ordinaryHistory.clear();
+      active?.candidatePresentations.clear();
+      if (!active?.failed) hideStatus();
+    } },
+    { label: () => t('重新连接 Strategy 27 并恢复历史', 'Reconnect Strategy 27 and restore history'), run: restart },
+  ];
+  let menuLocale = null;
+  function synchronizeMenus() {
+    if (menuLocale === uiLocale) return;
+    for (const menu of menuDefinitions) {
+      menu.id = GM_registerMenuCommand(menu.label(), menu.run, menuLocale === null ? undefined : { id: menu.id });
+    }
+    menuLocale = uiLocale;
+  }
 
-  const removeRouteListener = installSpaRouteChangeListener(page, restart);
+  const removeRouteListener = installSpaRouteChangeListener(page, synchronizeContext);
   const contextTimer = page.setInterval(synchronizeContext, CONTEXT_CHECK_INTERVAL_MS);
   page.addEventListener('beforeunload', () => {
     page.clearInterval(contextTimer);

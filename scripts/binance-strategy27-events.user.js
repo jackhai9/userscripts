@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.5
+// @version      0.4.6
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -783,48 +783,159 @@
     });
   }
 
-  // src/binance-strategy27-events/core/event-annotation.js
-  var CANDIDATE_PRESENTATIONS = Object.freeze({
-    bearish_buy_impact_failure: Object.freeze({
-      label: "买入推动失效 · 承接转弱",
-      markerShape: "arrow_down",
-      markerColor: "#F6465D"
+  // src/binance-orderbook-trade/contracts/panel-copy.js
+  var UI_LOCALE_ZH_CN = "zh-CN";
+  var UI_LOCALE_EN = "en";
+  var SUPPORTED_UI_LOCALES = Object.freeze([
+    UI_LOCALE_ZH_CN,
+    UI_LOCALE_EN
+  ]);
+  function localizedText(zhCN, en) {
+    if (typeof zhCN !== "string" || zhCN === "" || typeof en !== "string" || en === "") {
+      throw new Error("Localized UI text requires non-empty Chinese and English values");
+    }
+    return Object.freeze({ zhCN, en });
+  }
+  function isLocalizedText(value) {
+    return Boolean(
+      value && typeof value === "object" && typeof value.zhCN === "string" && typeof value.en === "string"
+    );
+  }
+  function formatLocalizedText(value, locale) {
+    if (typeof value === "string") return value;
+    if (!isLocalizedText(value)) throw new Error("Invalid localized UI text");
+    if (locale === UI_LOCALE_ZH_CN) return value.zhCN;
+    if (locale === UI_LOCALE_EN) return value.en;
+    throw new Error(`Unsupported UI locale: ${locale}`);
+  }
+  function resolveUiLocaleFromPathname(pathname) {
+    const firstSegment = String(pathname || "").split(/[?#]/, 1)[0].split("/").filter(Boolean)[0];
+    return firstSegment?.toLowerCase() === "zh-cn" ? UI_LOCALE_ZH_CN : UI_LOCALE_EN;
+  }
+  var freezeCopy = (copy) => Object.freeze(copy);
+  var PANEL_COPY = Object.freeze({
+    section: freezeCopy({
+      singleOrder: localizedText("单击下单", "Single Order"),
+      ladderMaker: localizedText("阶梯下单 · Maker", "Ladder Orders · Maker")
     }),
-    bearish_passive_book_shift: Object.freeze({
-      label: "主动成交弱 · 承接转弱",
-      markerShape: "arrow_down",
-      markerColor: "#F6465D"
+    field: freezeCopy({
+      clickOrderbook: localizedText("单击订单簿时", "On click"),
+      minimumOrderQuantity: localizedText("最小下单量的", "Minimum order qty"),
+      minimumOpenQuantity: localizedText("最小开仓量的", "Minimum open qty"),
+      minimumCloseQuantity: localizedText("最小平仓量的", "Minimum close qty"),
+      ratio: localizedText("比例", "Ratio"),
+      orderCount: localizedText("笔数", "Orders"),
+      interval: localizedText("间距", "Gap"),
+      pricePrecision: localizedText("精度", "Precision"),
+      multiplierUnit: localizedText("倍", "×")
     }),
-    bullish_sell_impact_failure: Object.freeze({
-      label: "卖出推动失效 · 抛压转弱",
-      markerShape: "arrow_up",
-      markerColor: "#0ECB81"
+    action: freezeCopy({
+      openLong: localizedText("阶梯开多", "Open Long"),
+      openShort: localizedText("阶梯开空", "Open Short"),
+      closeLong: localizedText("阶梯平多", "Close Long"),
+      closeShort: localizedText("阶梯平空", "Close Short"),
+      cancel: localizedText("撤单", "Cancel"),
+      cancelRunning: localizedText("撤单处理中", "Cancelling"),
+      noOrders: localizedText("无挂单", "No Orders"),
+      accountRebalance: localizedText("账户再平衡", "Account Rebalance"),
+      stopLadderByAction: freezeCopy({
+        OPEN_LONG: localizedText("停止开多", "Stop Open Long"),
+        OPEN_SHORT: localizedText("停止开空", "Stop Open Short"),
+        CLOSE_LONG: localizedText("停止平多", "Stop Close Long"),
+        CLOSE_SHORT: localizedText("停止平空", "Stop Close Short")
+      })
     }),
-    bullish_passive_book_shift: Object.freeze({
-      label: "主动成交弱 · 抛压转弱",
-      markerShape: "arrow_up",
-      markerColor: "#0ECB81"
+    side: freezeCopy({
+      long: localizedText("多", "Long"),
+      short: localizedText("空", "Short"),
+      openLong: localizedText("开多", "Open Long"),
+      openShort: localizedText("开空", "Open Short"),
+      closeLong: localizedText("平多", "Close Long"),
+      closeShort: localizedText("平空", "Close Short")
+    }),
+    state: freezeCopy({
+      idle: localizedText("空闲", "Idle"),
+      allPositionsClosed: localizedText("已全部平仓", "All positions closed"),
+      waitingTradeMode: localizedText("等待开仓/平仓状态", "Waiting for trade mode"),
+      waitingPricePrecision: localizedText("等待价格精度", "Waiting for precision"),
+      minimumQuantityLoading: localizedText("最小量读取中", "Loading minimum qty"),
+      positiveIntegerMultiplier: localizedText("请输入正整数倍数", "Enter a positive integer"),
+      noClosablePosition: localizedText("暂无可平仓位", "No position to close")
+    }),
+    status: freezeCopy({
+      precisionUpdated: localizedText("精度推荐已更新", "Precision recommendation updated"),
+      precisionInsufficient: localizedText(
+        "近期价格变化不足，请稍后重试",
+        "Recent price movement is insufficient. Try again later."
+      )
+    }),
+    aria: freezeCopy({
+      decrementMultiplier: localizedText("减少倍数", "Decrease multiplier"),
+      incrementMultiplier: localizedText("增加倍数", "Increase multiplier")
+    }),
+    rebalanceDialog: freezeCopy({
+      targetSummary: localizedText(
+        "目标分配：资金 50% / 现货 40% / U本位 10%",
+        "Target allocation: Funding 50% / Spot 40% / USDⓈ-M Futures 10%"
+      ),
+      accountHeading: localizedText("账户", "Account"),
+      currentHeading: localizedText("当前 (USDT)", "Current (USDT)"),
+      targetHeading: localizedText("目标 (USDT)", "Target (USDT)"),
+      transferHeading: localizedText("划转计划", "Transfer Plan"),
+      cancel: localizedText("取消", "Cancel"),
+      confirm: localizedText("确认再平衡", "Confirm Rebalance")
+    }),
+    tooltip: freezeCopy({
+      singleOrder: localizedText(
+        "单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。",
+        "Click a price in the order book to submit one order using the current side and quantity settings."
+      ),
+      ladderMaker: localizedText(
+        "根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。",
+        "Submit Post Only ladder orders sequentially using the current ratio, order count, gap, and precision."
+      ),
+      ratio: localizedText(
+        "本次阶梯下单使用可开/可平数量的百分比。",
+        "Percentage of the available open or close quantity used by this ladder."
+      ),
+      orderCount: localizedText(
+        "计划拆分成多少笔阶梯订单。",
+        "Number of orders in the ladder."
+      ),
+      interval: localizedText(
+        "相邻订单跨越多少个订单簿价格级别。",
+        "Number of order-book price levels between adjacent orders."
+      ),
+      pricePrecision: localizedText(
+        "与订单簿中的价格精度联动。黄点表示推荐值。比例、笔数、间距会随所选精度恢复对应设置。",
+        "Linked to the order-book price precision. The yellow dot marks the recommendation. Ratio, orders, and gap restore their saved values for the selected precision."
+      ),
+      continuousClose: localizedText(
+        "Option/Alt + 单击：连续交易",
+        "Option/Alt + click: continuous trading"
+      ),
+      accountRebalance: localizedText(
+        "将资金、现货和 U 本位账户的 USDT 按 5:4:1 分配",
+        "Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a 5:4:1 ratio"
+      )
     })
   });
-  var TRIGGER_LABELS = Object.freeze({
-    aggressive_buy_to_ask_depth: "主动买",
-    aggressive_sell_to_bid_depth: "主动卖",
-    bid_addition_to_bid_depth: "bid 增",
-    bid_decrease_to_bid_depth: "bid 减",
-    ask_addition_to_ask_depth: "ask 增",
-    ask_decrease_to_ask_depth: "ask 减",
-    bid_best_price_migration_bps: "bid 迁移",
-    ask_best_price_migration_bps: "ask 迁移",
-    mid_return_bps: "价格响应",
-    spread_change_bps: "点差变化"
-  });
-  var CLOSE_REASON_LABELS = Object.freeze({
-    quiet_period: "安静期结束",
-    maximum_duration: "达到最长持续时间",
-    input_gap: "输入缺口",
-    universe_removed: "移出监控范围",
-    monitor_stopped: "监控停止"
-  });
+
+  // src/binance-strategy27-events/core/ui-copy.js
+  function createStrategy27Translator(locale) {
+    formatLocalizedText(localizedText("中文", "English"), locale);
+    return (zhCN, en) => formatLocalizedText(localizedText(zhCN, en), locale);
+  }
+  function createLocalizedAnnotation(build, locale) {
+    const localizedCopy = Object.freeze({ "zh-CN": build("zh-CN"), en: build("en") });
+    return localizeAnnotation({ localizedCopy }, locale);
+  }
+  function localizeAnnotation(annotation, locale) {
+    createStrategy27Translator(locale);
+    return Object.freeze({ ...annotation.localizedCopy[locale], localizedCopy: annotation.localizedCopy });
+  }
+
+  // src/binance-strategy27-events/core/event-annotation.js
   function finiteNumber(value, label) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) throw new Error(`Invalid Strategy 27 display number: ${label}`);
@@ -859,38 +970,79 @@
     if (absolute >= 1e3) return `${compactDecimal(numeric / 1e3, { digits: 1, label })}K`;
     return compactDecimal(numeric, { digits: 1, label });
   }
-  function formatForce(label, oppositeSide, force) {
+  function formatForce(label, oppositeSide, force, t) {
     const notional = finiteNumber(force.notional, `${label}.notional`);
     if (notional === 0 && force.trade_count === 0) {
-      return Object.freeze({ label, value: "无主动成交", detail: "" });
+      return Object.freeze({ label, value: t("无主动成交", "No aggressive trades"), detail: "" });
     }
     return Object.freeze({
       label,
-      value: `${formatNotional(force.notional, `${label}.notional`)} USDT · ${force.trade_count} 笔`,
-      detail: `吃 ${oppositeSide} 深度 ${formatRatio(force.to_opposite_depth, `${label}.to_opposite_depth`)}`
+      value: `${formatNotional(force.notional, `${label}.notional`)} USDT · ${force.trade_count} ${t("笔", "trades")}`,
+      detail: `${t("吃", "Consumed")} ${oppositeSide} ${t("深度", "depth")} ${formatRatio(force.to_opposite_depth, `${label}.to_opposite_depth`)}`
     });
   }
-  function formatBook(label, side) {
+  function formatBook(label, side, t) {
     return Object.freeze({
       label,
-      value: `增 ${formatNotional(side.observed_addition_notional, `${label}.addition`)} · 减 ${formatNotional(side.observed_decrease_notional, `${label}.decrease`)}`,
-      detail: `迁移 ${formatBps(side.best_price_migration_bps, `${label}.migration`)} bps`
+      value: `${t("增", "Added")} ${formatNotional(side.observed_addition_notional, `${label}.addition`)} · ${t("减", "Removed")} ${formatNotional(side.observed_decrease_notional, `${label}.decrease`)}`,
+      detail: `${t("迁移", "Migration")} ${formatBps(side.best_price_migration_bps, `${label}.migration`)} bps`
     });
   }
-  function formatTriggerReasons(reasons) {
+  function formatTriggerReasons(reasons, t) {
+    const TRIGGER_LABELS = Object.freeze({
+      aggressive_buy_to_ask_depth: t("主动买", "Aggressive buy"),
+      aggressive_sell_to_bid_depth: t("主动卖", "Aggressive sell"),
+      bid_addition_to_bid_depth: t("bid 增", "bid additions"),
+      bid_decrease_to_bid_depth: t("bid 减", "bid decreases"),
+      ask_addition_to_ask_depth: t("ask 增", "ask additions"),
+      ask_decrease_to_ask_depth: t("ask 减", "ask decreases"),
+      bid_best_price_migration_bps: t("bid 迁移", "bid migration"),
+      ask_best_price_migration_bps: t("ask 迁移", "ask migration"),
+      mid_return_bps: t("价格响应", "Price response"),
+      spread_change_bps: t("点差变化", "Spread change")
+    });
     return reasons.map((reason) => {
       const label = TRIGGER_LABELS[reason];
       if (!label) throw new Error(`Unknown Strategy 27 trigger reason: ${reason}`);
       return label;
-    }).join("、");
+    }).join(t("、", ", "));
   }
-  function formatCloseReason(reason) {
+  function formatCloseReason(reason, t) {
+    const CLOSE_REASON_LABELS = Object.freeze({
+      quiet_period: t("安静期结束", "Quiet period ended"),
+      maximum_duration: t("达到最长持续时间", "Maximum duration reached"),
+      input_gap: t("输入缺口", "Input gap"),
+      universe_removed: t("移出监控范围", "Removed from monitoring"),
+      monitor_stopped: t("监控停止", "Monitoring stopped")
+    });
     if (reason === null) return null;
     const label = CLOSE_REASON_LABELS[reason];
     if (!label) throw new Error(`Unknown Strategy 27 close reason: ${reason}`);
     return label;
   }
-  function candidatePresentation(observations) {
+  function candidatePresentation(observations, t) {
+    const CANDIDATE_PRESENTATIONS = Object.freeze({
+      bearish_buy_impact_failure: Object.freeze({
+        label: t("买入推动失效 · 承接转弱", "Buy impact failure · Weakening support"),
+        markerShape: "arrow_down",
+        markerColor: "#F6465D"
+      }),
+      bearish_passive_book_shift: Object.freeze({
+        label: t("主动成交弱 · 承接转弱", "Weak aggressive flow · Weakening support"),
+        markerShape: "arrow_down",
+        markerColor: "#F6465D"
+      }),
+      bullish_sell_impact_failure: Object.freeze({
+        label: t("卖出推动失效 · 抛压转弱", "Sell impact failure · Weakening selling pressure"),
+        markerShape: "arrow_up",
+        markerColor: "#0ECB81"
+      }),
+      bullish_passive_book_shift: Object.freeze({
+        label: t("主动成交弱 · 抛压转弱", "Weak aggressive flow · Weakening selling pressure"),
+        markerShape: "arrow_up",
+        markerColor: "#0ECB81"
+      })
+    });
     if (!observations.length) return null;
     const presentations = observations.map((observation) => {
       const presentation = CANDIDATE_PRESENTATIONS[observation];
@@ -902,45 +1054,48 @@
       throw new Error("Strategy 27 candidate observations contain conflicting directions");
     }
     return Object.freeze({
-      label: presentations.map((presentation) => presentation.label).join("、"),
+      label: presentations.map((presentation) => presentation.label).join(t("、", ", ")),
       markerShape,
       markerColor: presentations[0].markerColor
     });
   }
-  function formatWindowDuration(snapshot) {
+  function formatWindowDuration(snapshot, t) {
     const durationMs = snapshot.bucket_end_ms - snapshot.bucket_start_ms;
-    if (durationMs % 1e3 === 0) return `${durationMs / 1e3} 秒`;
-    return `${trimmedFixed(durationMs / 1e3, 2)} 秒`;
+    if (durationMs % 1e3 === 0) return `${durationMs / 1e3} ${t("秒", "s")}`;
+    return `${trimmedFixed(durationMs / 1e3, 2)} ${t("秒", "s")}`;
   }
-  function buildEventAnnotation({
+  function formatEventAnnotation({
     event,
-    rehydrated
+    rehydrated,
+    locale
   }) {
+    const t = createStrategy27Translator(locale);
     const snapshot = event.latest_snapshot;
     const response = snapshot.price_response;
-    const candidate = candidatePresentation(snapshot.candidate_observations);
+    const candidate = candidatePresentation(snapshot.candidate_observations, t);
     const incomplete = event.event_status === "incomplete";
     const notices = [];
-    if (rehydrated) notices.push("此前投影历史不可用");
-    if (incomplete) notices.push("数据不完整，不作方向结论");
-    const title = event.event_kind === "orderflow_event" ? "订单流观察" : "价格响应观察";
-    const summary = `价格 ${formatBps(response.mid_return_bps, "price_response.mid_return_bps")} bps · 点差 ${formatBps(response.spread_bps, "price_response.spread_bps", { signed: false })} bps`;
+    if (rehydrated) notices.push(t("此前投影历史不可用", "Earlier projection history unavailable"));
+    if (incomplete) notices.push(t("数据不完整，不作方向结论", "Incomplete data; no directional conclusion"));
+    const title = event.event_kind === "orderflow_event" ? t("订单流观察", "Order-flow observation") : t("价格响应观察", "Price-response observation");
+    const summary = `${t("价格", "Price")} ${formatBps(response.mid_return_bps, "price_response.mid_return_bps")} bps · ${t("点差", "Spread")} ${formatBps(response.spread_bps, "price_response.spread_bps", { signed: false })} bps`;
     return Object.freeze({
       title,
+      locale,
       eventTimeMs: snapshot.bucket_end_ms - 1,
       status: event.event_status,
-      windowText: `统计 ${formatWindowDuration(snapshot)} · ${snapshot.source_bucket_count} 桶`,
+      windowText: `${t("统计", "Window")} ${formatWindowDuration(snapshot, t)} · ${snapshot.source_bucket_count} ${t("桶", "buckets")}`,
       candidateText: candidate?.label ?? null,
       summary,
       forceRows: Object.freeze([
-        formatForce("主动买", "ask", snapshot.aggressive_buy),
-        formatForce("主动卖", "bid", snapshot.aggressive_sell),
-        formatBook("bid", snapshot.bid),
-        formatBook("ask", snapshot.ask)
+        formatForce(t("主动买", "Aggressive buy"), "ask", snapshot.aggressive_buy, t),
+        formatForce(t("主动卖", "Aggressive sell"), "bid", snapshot.aggressive_sell, t),
+        formatBook("bid", snapshot.bid, t),
+        formatBook("ask", snapshot.ask, t)
       ]),
-      priceDetail: `点差变化 ${formatBps(response.spread_change_bps, "price_response.spread_change_bps")} bps`,
-      triggerText: formatTriggerReasons(event.trigger_reasons),
-      closeText: formatCloseReason(event.close_reason),
+      priceDetail: `${t("点差变化", "Spread change")} ${formatBps(response.spread_change_bps, "price_response.spread_change_bps")} bps`,
+      triggerText: formatTriggerReasons(event.trigger_reasons, t),
+      closeText: formatCloseReason(event.close_reason, t),
       notices: Object.freeze(notices),
       markerShape: candidate?.markerShape ?? null,
       markerColor: candidate?.markerColor ?? null,
@@ -949,16 +1104,27 @@
       liveStatus: `Strategy 27 ${candidate?.label ?? title}｜${summary}`
     });
   }
+  function buildEventAnnotation({ event, rehydrated, locale = "zh-CN" }) {
+    return createLocalizedAnnotation((nextLocale) => formatEventAnnotation({ event, rehydrated, locale: nextLocale }), locale);
+  }
   function stabilizeCandidatePresentation(presentations, eventId, annotation) {
     const existing = presentations.get(eventId);
-    if (existing) return Object.freeze({ ...annotation, ...existing });
+    if (existing) {
+      const localizedCopy = Object.freeze(Object.fromEntries(Object.entries(annotation.localizedCopy).map(([locale, copy]) => [
+        locale,
+        Object.freeze({ ...copy, ...existing.marker, candidateText: existing.candidateText[locale] })
+      ])));
+      return Object.freeze({ ...annotation, ...existing.marker, candidateText: existing.candidateText[annotation.locale], localizedCopy });
+    }
     if (!annotation.markerShape) return annotation;
     const presentation = Object.freeze({
-      candidateText: annotation.candidateText,
-      markerShape: annotation.markerShape,
-      markerColor: annotation.markerColor,
-      markerTime: annotation.markerTime,
-      markerPrice: annotation.markerPrice
+      candidateText: Object.freeze({ "zh-CN": annotation.localizedCopy["zh-CN"].candidateText, en: annotation.localizedCopy.en.candidateText }),
+      marker: Object.freeze({
+        markerShape: annotation.markerShape,
+        markerColor: annotation.markerColor,
+        markerTime: annotation.markerTime,
+        markerPrice: annotation.markerPrice
+      })
     });
     presentations.set(eventId, presentation);
     return annotation;
@@ -1349,11 +1515,6 @@
   var PANEL_WIDTH = 320;
   var DEFAULT_RIGHT_OFFSET = 84;
   var DEFAULT_TOP_OFFSET = 68;
-  var STATUS_LABELS = Object.freeze({
-    active: "进行中",
-    complete: "已结束",
-    incomplete: "数据不完整"
-  });
   function setStyles(element, styles) {
     Object.assign(element.style, styles);
     return element;
@@ -1464,14 +1625,14 @@
     const line = createElement(document, "div", {
       styles: {
         display: "grid",
-        gridTemplateColumns: "62px minmax(0, 1fr)",
+        gridTemplateColumns: "var(--strategy27-label-width) minmax(0, 1fr)",
         gap: "8px",
         alignItems: "start"
       }
     });
     line.appendChild(createElement(document, "span", {
       text: label,
-      styles: { color: "#848E9C", whiteSpace: "nowrap" }
+      styles: { color: "#848E9C", overflowWrap: "anywhere" }
     }));
     line.appendChild(createElement(document, "span", {
       text: value,
@@ -1483,8 +1644,15 @@
     maxEvents,
     maxCompoundEvents,
     loadPosition,
-    savePosition
+    savePosition,
+    locale = "zh-CN"
   }) {
+    let t = createStrategy27Translator(locale);
+    const statusLabels = () => ({
+      active: t("进行中", "Active"),
+      complete: t("已结束", "Ended"),
+      incomplete: t("数据不完整", "Incomplete data")
+    });
     if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error("Strategy 27 panel maxEvents is invalid");
     if (!Number.isInteger(maxCompoundEvents) || maxCompoundEvents < 1 || maxCompoundEvents > 8) throw new Error("Strategy 27 panel maxCompoundEvents is invalid");
     if (typeof loadPosition !== "function") throw new Error("Strategy 27 panel loadPosition is invalid");
@@ -1511,6 +1679,7 @@
       }
     });
     panel.id = PANEL_ID;
+    panel.style.setProperty("--strategy27-label-width", locale === "en" ? "88px" : "62px");
     const header = createElement(document, "header", {
       styles: {
         display: "flex",
@@ -1521,23 +1690,23 @@
         cursor: "move"
       }
     });
-    header.title = "拖动面板";
+    header.title = t("拖动面板", "Drag panel");
     const dragHandle = createElement(document, "span", {
       text: "☰",
       styles: { color: "#848E9C", fontSize: "13px", cursor: "move" }
     });
     const heading = createElement(document, "strong", {
-      text: "Strategy 27 事件",
+      text: t("Strategy 27 事件", "Strategy 27 events"),
       styles: { flex: "1", fontSize: "13px", cursor: "move" }
     });
     const latestButton = createElement(document, "button", {
-      text: "最新",
+      text: t("最新", "Latest"),
       role: "follow-latest",
       styles: buttonStyles()
     });
     latestButton.type = "button";
     const collapseButton = createElement(document, "button", {
-      text: "收起",
+      text: t("收起", "Collapse"),
       role: "collapse",
       styles: buttonStyles()
     });
@@ -1550,23 +1719,24 @@
     });
     const monitoring = createElement(document, "div", {
       role: "ordinary-monitoring-status",
-      text: "Monitoring status unknown. Waiting for event evidence.",
+      text: t("监控状态未知，等待事件数据确认。", "Monitoring status unknown. Waiting for event evidence."),
       styles: { padding: "9px", fontWeight: "600", color: "#F0B90B", borderBottom: "1px solid rgba(132, 142, 156, .18)" }
     });
     monitoring.dataset.state = "unknown";
     monitoring.setAttribute("aria-live", "polite");
     const ordinaryConnection = createElement(document, "div", {
       role: "ordinary-connection-status",
-      text: "Event data: Connecting",
+      text: t("事件数据：正在连接", "Event data: Connecting"),
       styles: { padding: "5px 9px 0", color: "#848E9C", fontSize: "11px" }
     });
+    ordinaryConnection.dataset.state = "connecting";
     let monitoringObservation = null;
     const detail = createElement(document, "div", {
       role: "event-detail",
       styles: { display: "grid", gap: "5px", padding: "9px" }
     });
     const recentTitle = createElement(document, "div", {
-      text: "最近事件",
+      text: t("最近事件", "Recent events"),
       styles: {
         padding: "7px 9px 4px",
         borderTop: "1px solid rgba(132, 142, 156, .18)",
@@ -1579,11 +1749,11 @@
       styles: { display: "grid", gap: "2px", padding: "0 6px 7px" }
     });
     const compoundTitle = createElement(document, "strong", {
-      text: "复合候选",
+      text: t("复合候选", "Compound candidates"),
       styles: { display: "block", padding: "7px 9px 4px", borderTop: "1px solid rgba(132, 142, 156, .18)" }
     });
     const compoundStatus = createElement(document, "div", {
-      text: "复合候选等待连接",
+      text: t("复合候选等待连接", "Waiting for compound data connection"),
       role: "compound-status",
       styles: { padding: "0 9px 5px", color: "#848E9C", fontSize: "11px", overflowWrap: "anywhere" }
     });
@@ -1626,7 +1796,7 @@
       const record = selectedCollection().get(selectedEventId);
       if (!record) {
         detail.appendChild(createElement(document, "span", {
-          text: "等待新事件",
+          text: t("等待新事件", "Waiting for new events"),
           styles: { color: "#848E9C" }
         }));
         return;
@@ -1640,37 +1810,37 @@
         styles: { color: selectedKind === "compound" ? annotation.titleColor : annotation.markerColor ?? "#EAECEF", fontWeight: "700", flex: "1" }
       }));
       title.appendChild(createElement(document, "span", {
-        text: selectedKind === "compound" ? "探索版" : record.historical ? "Historical" : STATUS_LABELS[annotation.status],
+        text: selectedKind === "compound" ? t("探索版", "Exploratory") : record.historical ? t("历史记录", "Historical") : statusLabels()[annotation.status],
         styles: { color: "#848E9C", fontSize: "11px" }
       }));
       detail.appendChild(title);
-      appendDetailLine(document, detail, "时间", formatClock(annotation.eventTimeMs));
-      if (record.historical) appendDetailLine(document, detail, "History", "Stream restarted; showing the last received observation.", "#F0B90B");
+      appendDetailLine(document, detail, t("时间", "Time"), formatClock(annotation.eventTimeMs));
+      if (record.historical) appendDetailLine(document, detail, t("历史说明", "History"), t("数据流已重启，当前显示最后收到的观察记录。", "Stream restarted; showing the last received observation."), "#F0B90B");
       if (selectedKind === "compound") {
         for (const row of annotation.detailRows) appendDetailLine(document, detail, row.label, row.value);
         const identity = createElement(document, "details", { role: "compound-identity", styles: { color: "#848E9C" } });
-        identity.appendChild(createElement(document, "summary", { text: "规则与候选 ID", styles: { cursor: "pointer" } }));
+        identity.appendChild(createElement(document, "summary", { text: t("规则与候选 ID", "Rule and candidate ID"), styles: { cursor: "pointer" } }));
         identity.appendChild(createElement(document, "div", {
-          text: `规则 ${annotation.ruleIdentity}
-候选 ${annotation.candidateId}`,
+          text: `${t("规则", "Rule")} ${annotation.ruleIdentity}
+${t("候选", "Candidate")} ${annotation.candidateId}`,
           styles: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", userSelect: "text", fontSize: "10px" }
         }));
         detail.appendChild(identity);
-        for (const notice of annotation.notices) appendDetailLine(document, detail, "说明", notice, "#848E9C");
+        for (const notice of annotation.notices) appendDetailLine(document, detail, t("说明", "Note"), notice, "#848E9C");
         return;
       }
-      appendDetailLine(document, detail, "统计", annotation.windowText);
+      appendDetailLine(document, detail, t("统计", "Window"), annotation.windowText);
       if (annotation.candidateText) {
-        appendDetailLine(document, detail, "候选观察", annotation.candidateText, annotation.markerColor);
+        appendDetailLine(document, detail, t("候选观察", "Candidate observation"), annotation.candidateText, annotation.markerColor);
       }
-      appendDetailLine(document, detail, "即时响应", annotation.summary, annotation.markerColor ?? "#EAECEF");
+      appendDetailLine(document, detail, t("即时响应", "Immediate response"), annotation.summary, annotation.markerColor ?? "#EAECEF");
       for (const row of annotation.forceRows) {
         appendDetailLine(document, detail, row.label, row.detail ? `${row.value}｜${row.detail}` : row.value);
       }
-      appendDetailLine(document, detail, "点差", annotation.priceDetail);
-      appendDetailLine(document, detail, "触发", annotation.triggerText);
-      if (annotation.closeText) appendDetailLine(document, detail, "结束", annotation.closeText);
-      for (const notice of annotation.notices) appendDetailLine(document, detail, "说明", notice, "#F0B90B");
+      appendDetailLine(document, detail, t("点差", "Spread"), annotation.priceDetail);
+      appendDetailLine(document, detail, t("触发", "Trigger"), annotation.triggerText);
+      if (annotation.closeText) appendDetailLine(document, detail, t("结束", "End reason"), annotation.closeText);
+      for (const notice of annotation.notices) appendDetailLine(document, detail, t("说明", "Note"), notice, "#F0B90B");
     }
     function renderRecent(container, collection, kind) {
       container.replaceChildren();
@@ -1724,6 +1894,27 @@
         container.appendChild(row);
       }
     }
+    function renderMonitoring() {
+      if (monitoringObservation === null) {
+        monitoring.textContent = t("监控状态未知，等待事件数据确认。", "Monitoring status unknown. Waiting for event evidence.");
+        return;
+      }
+      if (monitoringObservation.historical) {
+        monitoring.dataset.state = "historical";
+        monitoring.textContent = t("数据流已重启，监控状态等待新事件确认；保留记录仅供历史查看。", "Stream restarted. Monitoring status awaits new event evidence; retained records are historical.");
+        monitoring.style.color = "#F0B90B";
+        return;
+      }
+      const state = monitoringObservation.closeReason === "universe_removed" ? "removed" : monitoringObservation.closeReason === "monitor_stopped" ? "stopped" : "observed";
+      const text = state === "removed" ? t("该币种已移出监控范围，保留记录仅供历史查看。", "Symbol removed from monitoring. Retained records are historical.") : state === "stopped" ? t("监控已停止，保留记录仅供历史查看。", "Monitoring stopped. Retained records are historical.") : t("已收到观察记录，等待后续事件。", "Observation received. Waiting for further events.");
+      monitoring.dataset.state = state;
+      monitoring.textContent = t("最近报告的监控状态（", "Last reported monitoring status (") + formatClock(monitoringObservation.observedAtMs) + t("）：", "): ") + text;
+      monitoring.style.color = state === "observed" ? "#848E9C" : "#F0B90B";
+    }
+    function renderConnection() {
+      const labels = { connecting: t("正在连接", "Connecting"), connected: t("已连接", "Connected"), reconnecting: t("正在重连", "Reconnecting"), stopped: t("已停止", "Stopped") };
+      ordinaryConnection.textContent = t("事件数据：", "Event data: ") + labels[ordinaryConnection.dataset.state];
+    }
     function render() {
       latestButton.style.color = followLatest ? "#F0B90B" : "#EAECEF";
       renderDetail();
@@ -1738,7 +1929,7 @@
     collapseButton.addEventListener("click", () => {
       collapsed = !collapsed;
       body.style.display = collapsed ? "none" : "block";
-      collapseButton.textContent = collapsed ? "展开" : "收起";
+      collapseButton.textContent = collapsed ? t("展开", "Expand") : t("收起", "Collapse");
     });
     render();
     function upsertRecord(collection, capacity, eventId, annotation, observedAtMs) {
@@ -1754,6 +1945,23 @@
       render();
     }
     return Object.freeze({
+      /** Language changes repaint the same records and selection without replaying either stream. */
+      setLocale(nextLocale) {
+        t = createStrategy27Translator(nextLocale);
+        panel.style.setProperty("--strategy27-label-width", nextLocale === "en" ? "88px" : "62px");
+        header.title = t("拖动面板", "Drag panel");
+        heading.textContent = t("Strategy 27 事件", "Strategy 27 events");
+        latestButton.textContent = t("最新", "Latest");
+        collapseButton.textContent = collapsed ? t("展开", "Expand") : t("收起", "Collapse");
+        recentTitle.textContent = t("最近事件", "Recent events");
+        compoundTitle.textContent = t("复合候选", "Compound candidates");
+        for (const collection of [records, compoundRecords]) {
+          for (const record of collection.values()) record.annotation = localizeAnnotation(record.annotation, nextLocale);
+        }
+        renderMonitoring();
+        renderConnection();
+        render();
+      },
       /** Event identity order prevents delayed outcomes or bootstrap replay from undoing removal or reentry. */
       observeOrdinaryEvent(event, observedAtMs) {
         const previous = monitoringObservation;
@@ -1765,19 +1973,16 @@
         monitoringObservation = {
           triggeredAtMs: event.triggered_at_ms,
           observedAtMs,
-          terminal: event.event_status !== "active"
+          terminal: event.event_status !== "active",
+          closeReason: event.close_reason,
+          historical: false
         };
-        const state = event.close_reason === "universe_removed" ? "removed" : event.close_reason === "monitor_stopped" ? "stopped" : "observed";
-        const text = state === "removed" ? "Symbol removed from monitoring. Retained records are historical." : state === "stopped" ? "Monitoring stopped. Retained records are historical." : "Observation received. Waiting for further events.";
-        monitoring.dataset.state = state;
-        monitoring.textContent = "Last reported monitoring status (" + formatClock(observedAtMs) + "): " + text;
-        monitoring.style.color = state === "observed" ? "#848E9C" : "#F0B90B";
+        renderMonitoring();
       },
       setOrdinaryConnection(state) {
-        const labels = { connected: "Connected", reconnecting: "Reconnecting", stopped: "Stopped" };
-        if (!Object.hasOwn(labels, state)) throw new Error("Invalid ordinary connection state");
-        ordinaryConnection.textContent = "Event data: " + labels[state];
+        if (!["connected", "reconnecting", "stopped"].includes(state)) throw new Error("Invalid ordinary connection state");
         ordinaryConnection.dataset.state = state;
+        renderConnection();
         ordinaryConnection.style.color = state === "stopped" ? "#F6465D" : "#848E9C";
       },
       upsert(eventId, annotation, observedAtMs) {
@@ -1795,9 +2000,8 @@
       /** Retain facts and selection without presenting a previous stream as live. */
       retainHistory() {
         if (monitoring.dataset.state === "observed") {
-          monitoring.dataset.state = "historical";
-          monitoring.textContent = "Stream restarted. Monitoring status awaits new event evidence; retained records are historical.";
-          monitoring.style.color = "#F0B90B";
+          monitoringObservation.historical = true;
+          renderMonitoring();
         }
         for (const record of records.values()) record.historical = true;
         render();
@@ -1834,14 +2038,6 @@
   }
 
   // src/binance-strategy27-events/core/compound-candidate-annotation.js
-  var DIRECTIONS = Object.freeze({
-    high: Object.freeze({ title: "复合候选高", label: "候选高", shape: "arrow_down", color: "#B71C3B" }),
-    low: Object.freeze({ title: "复合候选低", label: "候选低", shape: "arrow_up", color: "#087F5B" })
-  });
-  var FAMILY_LABELS = Object.freeze({
-    high: Object.freeze({ impact_failure: "买入推动失效", passive_support_loss: "被动承接转弱", failed_rebound: "反弹失败强化" }),
-    low: Object.freeze({ impact_failure: "卖出推动失效", passive_support_loss: "被动抛压转弱", failed_rebound: "回落失败强化" })
-  });
   function clock(ms) {
     const date = new Date(ms);
     return [date.getHours(), date.getMinutes(), date.getSeconds()].map((value) => String(value).padStart(2, "0")).join(":");
@@ -1849,35 +2045,44 @@
   function priceWindow(value) {
     return `${clock(value.start_ms)}–${clock(value.end_ms)} · ${value.opening_mid} → ${value.closing_mid}`;
   }
-  function flow(value, count, label) {
-    return value === "0" && count === 0 ? "无主动成交" : `${formatNotional(value, label)} USDT · ${count} 笔`;
+  function flow(value, count, label, t) {
+    return value === "0" && count === 0 ? t("无主动成交", "No aggressive trades") : `${formatNotional(value, label)} USDT · ${count} ${t("笔", "trades")}`;
   }
-  function buildCompoundCandidateAnnotation(candidate) {
+  function formatCompoundCandidateAnnotation(candidate, locale) {
+    const t = createStrategy27Translator(locale);
+    const DIRECTIONS = Object.freeze({
+      high: Object.freeze({ title: t("复合候选高", "Compound high candidate"), label: t("候选高", "High candidate"), shape: "arrow_down", color: "#B71C3B" }),
+      low: Object.freeze({ title: t("复合候选低", "Compound low candidate"), label: t("候选低", "Low candidate"), shape: "arrow_up", color: "#087F5B" })
+    });
+    const FAMILY_LABELS = Object.freeze({
+      high: Object.freeze({ impact_failure: t("买入推动失效", "Buy impact failure"), passive_support_loss: t("被动承接转弱", "Weakening passive support"), failed_rebound: t("反弹失败强化", "Failed rebound reinforcement") }),
+      low: Object.freeze({ impact_failure: t("卖出推动失效", "Sell impact failure"), passive_support_loss: t("被动抛压转弱", "Weakening passive selling pressure"), failed_rebound: t("回落失败强化", "Failed pullback reinforcement") })
+    });
     const direction = DIRECTIONS[candidate.direction];
     const family = FAMILY_LABELS[candidate.direction]?.[candidate.family];
     if (!direction || !family) throw new Error("Strategy 27 compound display rule is invalid");
     const reinforcement = candidate.family === "failed_rebound";
     const detailRows = [
-      { label: "规则", value: family },
-      { label: "背景", value: priceWindow(candidate.context) },
-      { label: "触发秒", value: priceWindow(candidate.seed) },
-      { label: "主动买", value: flow(candidate.seed.buy_notional, candidate.seed.buy_count, "seed buy") },
-      { label: "主动卖", value: flow(candidate.seed.sell_notional, candidate.seed.sell_count, "seed sell") },
-      { label: "bid", value: `增 ${formatNotional(candidate.seed.bid_addition, "bid addition")} · 减 ${formatNotional(candidate.seed.bid_decrease, "bid decrease")} USDT` },
-      { label: "ask", value: `增 ${formatNotional(candidate.seed.ask_addition, "ask addition")} · 减 ${formatNotional(candidate.seed.ask_decrease, "ask decrease")} USDT` },
-      { label: "基础确认", value: priceWindow(candidate.confirmation) }
+      { label: t("规则", "Rule"), value: family },
+      { label: t("背景", "Context"), value: priceWindow(candidate.context) },
+      { label: t("触发秒", "Trigger second"), value: priceWindow(candidate.seed) },
+      { label: t("主动买", "Aggressive buy"), value: flow(candidate.seed.buy_notional, candidate.seed.buy_count, "seed buy", t) },
+      { label: t("主动卖", "Aggressive sell"), value: flow(candidate.seed.sell_notional, candidate.seed.sell_count, "seed sell", t) },
+      { label: "bid", value: `${t("增", "Added")} ${formatNotional(candidate.seed.bid_addition, "bid addition")} · ${t("减", "Removed")} ${formatNotional(candidate.seed.bid_decrease, "bid decrease")} USDT` },
+      { label: "ask", value: `${t("增", "Added")} ${formatNotional(candidate.seed.ask_addition, "ask addition")} · ${t("减", "Removed")} ${formatNotional(candidate.seed.ask_decrease, "ask decrease")} USDT` },
+      { label: t("基础确认", "Base confirmation"), value: priceWindow(candidate.confirmation) }
     ];
     if (reinforcement) {
       detailRows.push(
-        { label: candidate.direction === "high" ? "低点秒" : "高点秒", value: priceWindow(candidate.trough) },
-        { label: candidate.direction === "high" ? "反弹秒" : "回落秒", value: priceWindow(candidate.rebound) },
-        { label: "强化确认", value: priceWindow(candidate.decision) },
-        { label: "关联候选", value: candidate.parent_candidate_id }
+        { label: candidate.direction === "high" ? t("低点秒", "Trough second") : t("高点秒", "Peak second"), value: priceWindow(candidate.trough) },
+        { label: candidate.direction === "high" ? t("反弹秒", "Rebound second") : t("回落秒", "Pullback second"), value: priceWindow(candidate.rebound) },
+        { label: t("强化确认", "Reinforcement confirmation"), value: priceWindow(candidate.decision) },
+        { label: t("关联候选", "Related candidate"), value: candidate.parent_candidate_id }
       );
     }
-    detailRows.push({ label: "参数版本", value: candidate.profile.revision });
-    const notices = ["探索候选，尚未验证预测能力"];
-    if (candidate.direction === "low") notices.push("镜像规则，尚未独立验证");
+    detailRows.push({ label: t("参数版本", "Parameter revision"), value: candidate.profile.revision });
+    const notices = [t("探索候选，尚未验证预测能力", "Exploratory candidate; predictive ability not validated")];
+    if (candidate.direction === "low") notices.push(t("镜像规则，尚未独立验证", "Mirrored rule; not independently validated"));
     return Object.freeze({
       kind: "compound",
       title: direction.title,
@@ -1896,6 +2101,9 @@
       detailRows: Object.freeze(detailRows.map(Object.freeze)),
       notices: Object.freeze(notices)
     });
+  }
+  function buildCompoundCandidateAnnotation(candidate, { locale = "zh-CN" } = {}) {
+    return createLocalizedAnnotation((nextLocale) => formatCompoundCandidateAnnotation(candidate, nextLocale), locale);
   }
 
   // src/binance-strategy27-events/core/compound-candidate-contract.js
@@ -2313,12 +2521,6 @@
   };
 
   // src/binance-strategy27-events/core/compound-candidate-controller.js
-  var CONNECTION_STATUS = Object.freeze({
-    connected: ["Compound data: connected. Connection does not confirm symbol monitoring.", "normal"],
-    reconnecting: ["Compound data connection lost; reconnecting.", "inactive"],
-    unavailable: ["Compound data temporarily unavailable; reconnecting.", "inactive"],
-    unsupported: ["网关尚未启用复合候选", "inactive"]
-  });
   function createCompoundCandidateController({
     request,
     gatewayBaseUrl,
@@ -2326,12 +2528,30 @@
     canonicalSymbol,
     panel,
     createLayer,
+    locale = "zh-CN",
     isCurrent,
     maxCandidates,
     maxAgeMs,
     nowMs = Date.now,
     reconnectDelayMs = 2e3
   }) {
+    let currentLocale = locale;
+    let t = createStrategy27Translator(locale);
+    let connectionState = "connecting";
+    function connectionStatus() {
+      const CONNECTION_STATUS = Object.freeze({
+        connected: [t("复合候选数据：已连接。接口连通不代表该币种仍在监控中。", "Compound data: connected. Connection does not confirm symbol monitoring."), "normal"],
+        reconnecting: [t("复合候选数据连接中断，正在重连。", "Compound data connection lost; reconnecting."), "inactive"],
+        unavailable: [t("复合候选数据暂不可用，正在重连。", "Compound data temporarily unavailable; reconnecting."), "inactive"],
+        connecting: [t("复合候选正在连接", "Connecting to compound data"), "inactive"],
+        unsupported: [t("网关尚未启用复合候选", "Compound candidates are not enabled on the gateway"), "inactive"]
+      });
+      return CONNECTION_STATUS;
+    }
+    function renderStatus() {
+      if (lastError) panel.setCompoundStatus(t("复合候选已停止：", "Compound candidates stopped: ") + lastError.message, "error");
+      else panel.setCompoundStatus(...connectionStatus()[connectionState]);
+    }
     const lifecycle = new CompoundCandidateLifecycle(canonicalSymbol, { maxCandidates, maxAgeMs });
     const abortController = new AbortController();
     let layer = null;
@@ -2369,11 +2589,11 @@
       lifecycle.reset("stopped");
       const cleanupError = clear ? clearView() : null;
       if (cleanupError) lastError = new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
-      panel.setCompoundStatus(`复合候选已停止：${lastError.message}`, "error");
+      renderStatus();
     }
     function onConnectionStateChange(state) {
       if (!current()) return;
-      const status = CONNECTION_STATUS[state];
+      const status = connectionStatus()[state];
       if (!status) throw new Error(`Unknown compound connection state: ${state}`);
       if (state === "unavailable" || state === "unsupported") {
         lifecycle.reset("unavailable");
@@ -2383,7 +2603,8 @@
           return;
         }
       }
-      panel.setCompoundStatus(...status);
+      connectionState = state;
+      renderStatus();
     }
     async function onResponse(response) {
       if (!current()) return;
@@ -2420,7 +2641,7 @@
         }
         if (action.type !== "candidate" || applicationGeneration !== viewGeneration) continue;
         const id = action.candidate.candidate_id;
-        const annotation = buildCompoundCandidateAnnotation(action.candidate);
+        const annotation = buildCompoundCandidateAnnotation(action.candidate, { locale: currentLocale });
         if (layer === null) layer = createLayer();
         const renderGeneration = viewGeneration;
         pendingCandidateId = id;
@@ -2430,7 +2651,7 @@
           if (!current()) return;
           prune();
           if (rendered && renderGeneration === viewGeneration) {
-            panel.upsertCompound(id, annotation, action.observedAtMs);
+            panel.upsertCompound(id, localizeAnnotation(annotation, currentLocale), action.observedAtMs);
           }
         } finally {
           pendingCandidateId = null;
@@ -2441,13 +2662,23 @@
       }
     }
     return Object.freeze({
+      setLocale(nextLocale) {
+        t = createStrategy27Translator(nextLocale);
+        currentLocale = nextLocale;
+        renderStatus();
+        try {
+          layer?.setLocale(nextLocale);
+        } catch (error) {
+          failJob(error);
+        }
+      },
       run() {
         if (started) throw new Error("Compound controller already started");
         started = true;
         return (async () => {
           if (!current()) return;
           try {
-            panel.setCompoundStatus("复合候选正在连接", "inactive");
+            renderStatus();
             const client = createCompoundCandidateClient({
               request,
               gatewayBaseUrl,
@@ -2491,7 +2722,7 @@
         const error = clearView();
         if (error) {
           lastError = error;
-          panel.setCompoundStatus(`复合候选已停止：${error.message}`, "error");
+          renderStatus();
         }
       },
       // A late drawing rejection remains inspectable without touching a retired panel.
@@ -2516,8 +2747,10 @@
       overrides: { color }
     };
   }
-  function createTradingViewCompoundLayer(target, { maxCandidates, candleWaitMs = 3e3 }) {
+  function createTradingViewCompoundLayer(target, { maxCandidates, candleWaitMs = 3e3, locale = "zh-CN" }) {
     if (!Number.isSafeInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 80) throw new Error("Compound chart capacity must be 1..80");
+    let t = createStrategy27Translator(locale);
+    const markerLabel = (shape) => shape === "arrow_down" ? t("候选高", "High candidate") : t("候选低", "Low candidate");
     const { chart } = target;
     const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
     const isChartCurrent = pinMarkerChartContext(chart);
@@ -2539,7 +2772,8 @@
       }
       if (errors.length) throw new AggregateError(errors, `Compound chart cleanup failed: ${errors.map((error) => error.message).join("; ")}`);
     }
-    async function createDrawing(point, drawing) {
+    async function createDrawing(point, options) {
+      const drawing = { ...options };
       const entityId = await createAlignedShape(chart, point, drawing);
       try {
         const properties = chart.getShapeById(entityId).getProperties();
@@ -2571,6 +2805,7 @@
             return false;
           }
           record.ids[index] = entityId;
+          if (drawing.shape === "text") updateLabel(entityId, drawing, record.markerShape);
           liveIds = readLiveShapeIds(chart);
         }
         return true;
@@ -2621,8 +2856,9 @@
       if (records.size >= maxCandidates) throw new Error("Compound chart capacity exceeded before eviction");
       if (typeof id !== "string" || id.length === 0 || !Number.isSafeInteger(decisionAtMs) || decisionAtMs < 1) throw new Error("Compound chart candidate identity/time is invalid");
       const icon = ICONS[annotation.markerShape];
-      if (icon === void 0 || !["候选高", "候选低"].includes(annotation.markerLabel)) throw new Error("Compound chart direction/label is invalid");
-      const operation = { id, controller: new AbortController(), ids: [] };
+      const labels = annotation.markerShape === "arrow_down" ? ["候选高", "High candidate"] : ["候选低", "Low candidate"];
+      if (icon === void 0 || !labels.includes(annotation.markerLabel)) throw new Error("Compound chart direction/label is invalid");
+      const operation = { id, markerShape: annotation.markerShape, controller: new AbortController(), ids: [] };
       pending = operation;
       try {
         const base = await placement.wait(annotation, {
@@ -2640,17 +2876,19 @@
         const options = drawingOptions(annotation.markerColor);
         const drawings = [
           [point, { ...options, shape: "icon", icon, overrides: { ...options.overrides, size: ICON_SIZE_PX } }],
-          [labelPoint, { ...options, shape: "text", text: annotation.markerLabel, overrides: { ...options.overrides, fontsize: 12, bold: true, fillBackground: false, drawBorder: false } }]
+          [labelPoint, { ...options, shape: "text", text: markerLabel(annotation.markerShape), overrides: { ...options.overrides, fontsize: 12, bold: true, fillBackground: false, drawBorder: false } }]
         ];
+        operation.drawings = drawings;
         for (const [drawingPoint, drawing] of drawings) {
           const entityId = await createDrawing(drawingPoint, drawing);
           operation.ids.push(entityId);
+          if (drawing.shape === "text") updateLabel(entityId, drawing, annotation.markerShape);
           if (operation.controller.signal.aborted || !isChartCurrent()) {
             dispose([operation]);
             return false;
           }
         }
-        records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, drawings, restoring: null });
+        records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, markerShape: annotation.markerShape, drawings, restoring: null });
         return true;
       } catch (error) {
         try {
@@ -2663,7 +2901,26 @@
         pending = null;
       }
     }
-    return Object.freeze({ renderCandidate, reconcile, remove, clear, get size() {
+    function updateLabel(entityId, drawing, shape) {
+      const text = markerLabel(shape);
+      drawing.text = text;
+      const entity = chart.getShapeById(entityId);
+      if (entity.getProperties().text !== text) {
+        entity.setProperties({ text }, false);
+        if (entity.getProperties().text !== text) throw new Error("Compound chart label did not match the selected language");
+      }
+    }
+    function setLocale(nextLocale) {
+      t = createStrategy27Translator(nextLocale);
+      const liveIds = readLiveShapeIds(chart);
+      for (const record of [...records.values(), ...pending ? [pending] : []]) {
+        if (!record.drawings) continue;
+        const drawing = record.drawings[1][1];
+        drawing.text = markerLabel(record.markerShape);
+        if (liveIds.has(record.ids[1])) updateLabel(record.ids[1], drawing, record.markerShape);
+      }
+    }
+    return Object.freeze({ setLocale, renderCandidate, reconcile, remove, clear, get size() {
       return records.size;
     } });
   }
@@ -2738,6 +2995,9 @@
     const request = createGmJsonRequest(GM_xmlhttpRequest);
     let active = null;
     let statusView = null;
+    let uiLocale = resolveUiLocaleFromPathname(page.location.pathname);
+    let t = createStrategy27Translator(uiLocale);
+    let statusCopy = null;
     function stopActive(resetReason) {
       if (!active) return;
       active.controller.abort();
@@ -2749,11 +3009,13 @@
     }
     function showStatus(chartRoot, text, state = "normal") {
       statusView = ensureStrategy27StatusView(pageDocument, chartRoot);
-      setStrategy27Status(statusView, text, state);
+      statusCopy = { text, state };
+      setStrategy27Status(statusView, text(uiLocale), state);
     }
     function hideStatus() {
       removeStrategy27StatusView(pageDocument);
       statusView = null;
+      statusCopy = null;
     }
     function removeOrdinaryEvent(context, eventId) {
       context.ordinaryHistory.delete(eventId);
@@ -2784,7 +3046,7 @@
       context.controller.abort();
       context.layer.suspend();
       context.panel.setOrdinaryConnection("stopped");
-      showStatus(context.target.chartRoot, `Strategy 27 stopped; history retained. Use the reconnect menu to resume: ${error.message}`, "error");
+      showStatus(context.target.chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 已停止，历史记录已保留。请使用重新连接菜单恢复：", "Strategy 27 stopped; history retained. Use the reconnect menu to resume: ") + error.message, "error");
     }
     function reconcileOrdinary(context) {
       try {
@@ -2845,7 +3107,8 @@
           action.eventId,
           buildEventAnnotation({
             event: action.event,
-            rehydrated: action.rehydrated
+            rehydrated: action.rehydrated,
+            locale: context.locale
           })
         );
         const renderMethod = {
@@ -2856,7 +3119,7 @@
         }[action.messageKind];
         const rendered = await context.layer[renderMethod](action.eventId, annotation, retainedAtMs);
         if (!rendered || active !== context || context.failed || !context.ordinaryHistory.has(action.eventId)) continue;
-        context.panel.upsert(action.eventId, annotation, retainedAtMs);
+        context.panel.upsert(action.eventId, localizeAnnotation(annotation, context.locale), retainedAtMs);
         hideStatus();
       }
       if (response.status === "bootstrap") {
@@ -2868,6 +3131,7 @@
       const context = {
         signature: `${routeSymbol}|${target.resolution}`,
         routeSymbol,
+        locale: uiLocale,
         canonicalSymbol,
         target,
         controller: new AbortController(),
@@ -2880,6 +3144,7 @@
           maxAgeMs: MAX_EVENT_AGE_MS
         }),
         panel: createStrategy27EventPanel(pageDocument, target.chartRoot, {
+          locale: uiLocale,
           maxEvents: MAX_PANEL_EVENTS,
           maxCompoundEvents: MAX_PANEL_EVENTS,
           loadPosition: () => GM_getValue(PANEL_POSITION_KEY, null),
@@ -2892,6 +3157,7 @@
       };
       active = context;
       context.compound = createCompoundCandidateController({
+        locale: context.locale,
         request,
         gatewayBaseUrl: gatewayOrigin,
         authSecret,
@@ -2900,10 +3166,10 @@
         isCurrent: () => active === context,
         maxCandidates: MAX_RETAINED_EVENTS,
         maxAgeMs: MAX_EVENT_AGE_MS,
-        createLayer: () => createTradingViewCompoundLayer(target, { maxCandidates: MAX_RETAINED_EVENTS })
+        createLayer: () => createTradingViewCompoundLayer(target, { maxCandidates: MAX_RETAINED_EVENTS, locale: context.locale })
       });
       void context.compound.run();
-      showStatus(target.chartRoot, "Strategy 27 正在连接");
+      showStatus(target.chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 正在连接", "Strategy 27 connecting"));
       const client = createLiveEventClient({
         request,
         gatewayBaseUrl: gatewayOrigin,
@@ -2913,7 +3179,7 @@
           if (active !== context || context.failed) return;
           context.panel.setOrdinaryConnection(state);
           if (state === "reconnecting") {
-            showStatus(context.target.chartRoot, "Strategy 27 网关连接中断，正在重连", "inactive");
+            showStatus(context.target.chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 网关连接中断，正在重连", "Strategy 27 gateway disconnected; reconnecting"), "inactive");
           } else {
             hideStatus();
           }
@@ -2923,11 +3189,22 @@
       client.run(context.controller.signal).catch((error) => failOrdinary(context, error));
     }
     function synchronizeContext() {
+      const nextLocale = resolveUiLocaleFromPathname(page.location.pathname);
+      if (nextLocale !== uiLocale) {
+        uiLocale = nextLocale;
+        t = createStrategy27Translator(uiLocale);
+        if (active) {
+          active.locale = uiLocale;
+          active.panel.setLocale(uiLocale);
+          active.compound.setLocale(uiLocale);
+        }
+        if (statusView && statusCopy) setStrategy27Status(statusView, statusCopy.text(uiLocale), statusCopy.state);
+      }
+      synchronizeMenus();
       const routeSymbol = parseFuturesTradingSymbolFromPathname(page.location.pathname);
       if (!routeSymbol) {
         stopActive("route_changed");
-        removeStrategy27StatusView(pageDocument);
-        statusView = null;
+        hideStatus();
         return;
       }
       const chartRoot = findStrategy27ChartRoot(pageDocument);
@@ -2944,7 +3221,7 @@
         }
       } catch (error) {
         stopActive("route_changed");
-        showStatus(chartRoot, `Strategy 27 已停止：${error.message}`, "error");
+        showStatus(chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 已停止：", "Strategy 27 stopped: ") + error.message, "error");
         return;
       }
       let target;
@@ -2955,14 +3232,14 @@
         const inactive = error.message.includes("one-second chart");
         showStatus(
           chartRoot,
-          inactive ? "Strategy 27 仅在 1 秒图表启用" : `Strategy 27 已停止：${error.message}`,
+          inactive ? (locale) => createStrategy27Translator(locale)("Strategy 27 仅在 1 秒图表启用", "Strategy 27 requires a one-second chart") : (locale) => createStrategy27Translator(locale)("Strategy 27 已停止：", "Strategy 27 stopped: ") + error.message,
           inactive ? "inactive" : "error"
         );
         return;
       }
       if (!target) {
         stopActive("interval_changed");
-        showStatus(chartRoot, "Strategy 27 正在等待图表接口", "inactive");
+        showStatus(chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 正在等待图表接口", "Strategy 27 waiting for the chart interface"), "inactive");
         return;
       }
       if (active && active.routeSymbol === routeSymbol && active.target.chart === target.chart && active.target.chartRoot === target.chartRoot) {
@@ -2973,14 +3250,14 @@
       stopActive("route_changed");
       const authSecret = GM_getValue(GATEWAY_SECRET_KEY, "");
       if (typeof authSecret !== "string" || authSecret.length === 0) {
-        showStatus(chartRoot, "Strategy 27 未配置网关密钥（请使用油猴菜单设置）", "inactive");
+        showStatus(chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 未配置网关密钥（请使用油猴菜单设置）", "Strategy 27 gateway secret is not configured (use the userscript menu)"), "inactive");
         return;
       }
       let gatewayOrigin;
       try {
         gatewayOrigin = normalizeGatewayBaseUrl(GM_getValue(GATEWAY_ORIGIN_KEY, DEFAULT_GATEWAY_ORIGIN));
       } catch (error) {
-        showStatus(chartRoot, `Strategy 27 已停止：${error.message}`, "error");
+        showStatus(chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 已停止：", "Strategy 27 stopped: ") + error.message, "error");
         return;
       }
       startContext({ routeSymbol, canonicalSymbol, target, gatewayOrigin, authSecret });
@@ -2989,30 +3266,40 @@
       stopActive("route_changed");
       synchronizeContext();
     }
-    GM_registerMenuCommand("设置 Strategy 27 网关密钥", () => {
-      const value = page.prompt("输入本机 Strategy 27 网关密钥。该值只保存在此油猴脚本的私有存储中。");
-      if (value === null) return;
-      if (value.length === 0) throw new Error("Strategy 27 网关密钥不能为空");
-      GM_setValue(GATEWAY_SECRET_KEY, value);
-      restart();
-    });
-    GM_registerMenuCommand("设置 Strategy 27 本机网关地址", () => {
-      const current = GM_getValue(GATEWAY_ORIGIN_KEY, DEFAULT_GATEWAY_ORIGIN);
-      const value = page.prompt("输入 SSH 本地转发地址（仅允许 http://127.0.0.1:<端口>）", current);
-      if (value === null) return;
-      GM_setValue(GATEWAY_ORIGIN_KEY, normalizeGatewayBaseUrl(value));
-      restart();
-    });
-    GM_registerMenuCommand("清除 Strategy 27 图表标注", () => {
-      active?.compound.clear();
-      active?.layer.clear();
-      active?.panel.clear();
-      active?.ordinaryHistory.clear();
-      active?.candidatePresentations.clear();
-      if (!active?.failed) hideStatus();
-    });
-    GM_registerMenuCommand("Reconnect Strategy 27 and restore history", restart);
-    const removeRouteListener = installSpaRouteChangeListener(page, restart);
+    const menuDefinitions = [
+      { label: () => t("设置 Strategy 27 网关密钥", "Set Strategy 27 gateway secret"), run: () => {
+        const value = page.prompt(t("输入本机 Strategy 27 网关密钥。该值只保存在此油猴脚本的私有存储中。", "Enter the local Strategy 27 gateway secret. It is saved only in this userscript’s private storage."));
+        if (value === null) return;
+        if (value.length === 0) throw new Error(t("Strategy 27 网关密钥不能为空", "Strategy 27 gateway secret must not be empty"));
+        GM_setValue(GATEWAY_SECRET_KEY, value);
+        restart();
+      } },
+      { label: () => t("设置 Strategy 27 本机网关地址", "Set Strategy 27 local gateway URL"), run: () => {
+        const current = GM_getValue(GATEWAY_ORIGIN_KEY, DEFAULT_GATEWAY_ORIGIN);
+        const value = page.prompt(t("输入 SSH 本地转发地址（仅允许 http://127.0.0.1:<端口>）", "Enter the SSH local forwarding URL (only http://127.0.0.1:<port> is allowed)"), current);
+        if (value === null) return;
+        GM_setValue(GATEWAY_ORIGIN_KEY, normalizeGatewayBaseUrl(value));
+        restart();
+      } },
+      { label: () => t("清除 Strategy 27 图表标注", "Clear Strategy 27 chart annotations"), run: () => {
+        active?.compound.clear();
+        active?.layer.clear();
+        active?.panel.clear();
+        active?.ordinaryHistory.clear();
+        active?.candidatePresentations.clear();
+        if (!active?.failed) hideStatus();
+      } },
+      { label: () => t("重新连接 Strategy 27 并恢复历史", "Reconnect Strategy 27 and restore history"), run: restart }
+    ];
+    let menuLocale = null;
+    function synchronizeMenus() {
+      if (menuLocale === uiLocale) return;
+      for (const menu of menuDefinitions) {
+        menu.id = GM_registerMenuCommand(menu.label(), menu.run, menuLocale === null ? void 0 : { id: menu.id });
+      }
+      menuLocale = uiLocale;
+    }
+    const removeRouteListener = installSpaRouteChangeListener(page, synchronizeContext);
     const contextTimer = page.setInterval(synchronizeContext, CONTEXT_CHECK_INTERVAL_MS);
     page.addEventListener("beforeunload", () => {
       page.clearInterval(contextTimer);

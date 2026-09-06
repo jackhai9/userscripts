@@ -1,13 +1,7 @@
+import { createStrategy27Translator, localizeAnnotation } from './ui-copy.js';
 import { buildCompoundCandidateAnnotation } from './compound-candidate-annotation.js';
 import { createCompoundCandidateClient } from './compound-candidate-client.js';
 import { CompoundCandidateLifecycle } from './compound-candidate-lifecycle.js';
-
-const CONNECTION_STATUS = Object.freeze({
-  connected: ['Compound data: connected. Connection does not confirm symbol monitoring.', 'normal'],
-  reconnecting: ['Compound data connection lost; reconnecting.', 'inactive'],
-  unavailable: ['Compound data temporarily unavailable; reconnecting.', 'inactive'],
-  unsupported: ['网关尚未启用复合候选', 'inactive'],
-});
 
 /** Own the optional compound job, never the ordinary client's state.
  *
@@ -18,8 +12,25 @@ const CONNECTION_STATUS = Object.freeze({
  */
 export function createCompoundCandidateController({
   request, gatewayBaseUrl, authSecret, canonicalSymbol, panel, createLayer,
-  isCurrent, maxCandidates, maxAgeMs, nowMs = Date.now, reconnectDelayMs = 2000,
+  locale = 'zh-CN', isCurrent, maxCandidates, maxAgeMs, nowMs = Date.now, reconnectDelayMs = 2000,
 }) {
+  let currentLocale = locale;
+  let t = createStrategy27Translator(locale);
+  let connectionState = 'connecting';
+  function connectionStatus() {
+    const CONNECTION_STATUS = Object.freeze({
+      connected: [t('复合候选数据：已连接。接口连通不代表该币种仍在监控中。', 'Compound data: connected. Connection does not confirm symbol monitoring.'), 'normal'],
+      reconnecting: [t('复合候选数据连接中断，正在重连。', 'Compound data connection lost; reconnecting.'), 'inactive'],
+      unavailable: [t('复合候选数据暂不可用，正在重连。', 'Compound data temporarily unavailable; reconnecting.'), 'inactive'],
+      connecting: [t('复合候选正在连接', 'Connecting to compound data'), 'inactive'],
+      unsupported: [t('网关尚未启用复合候选', 'Compound candidates are not enabled on the gateway'), 'inactive'],
+    });
+    return CONNECTION_STATUS;
+  }
+  function renderStatus() {
+    if (lastError) panel.setCompoundStatus(t('复合候选已停止：', 'Compound candidates stopped: ') + lastError.message, 'error');
+    else panel.setCompoundStatus(...connectionStatus()[connectionState]);
+  }
   const lifecycle = new CompoundCandidateLifecycle(canonicalSymbol, { maxCandidates, maxAgeMs });
   const abortController = new AbortController();
   let layer = null;
@@ -61,19 +72,20 @@ export function createCompoundCandidateController({
     lifecycle.reset('stopped');
     const cleanupError = clear ? clearView() : null;
     if (cleanupError) lastError = new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
-    panel.setCompoundStatus(`复合候选已停止：${lastError.message}`, 'error');
+    renderStatus();
   }
 
   function onConnectionStateChange(state) {
     if (!current()) return;
-    const status = CONNECTION_STATUS[state];
+    const status = connectionStatus()[state];
     if (!status) throw new Error(`Unknown compound connection state: ${state}`);
     if (state === 'unavailable' || state === 'unsupported') {
       lifecycle.reset('unavailable');
       const error = clearView();
       if (error) { failJob(error, { clear: false }); return; }
     }
-    panel.setCompoundStatus(...status);
+    connectionState = state;
+    renderStatus();
   }
 
   async function onResponse(response) {
@@ -108,7 +120,7 @@ export function createCompoundCandidateController({
       }
       if (action.type !== 'candidate' || applicationGeneration !== viewGeneration) continue;
       const id = action.candidate.candidate_id;
-      const annotation = buildCompoundCandidateAnnotation(action.candidate);
+      const annotation = buildCompoundCandidateAnnotation(action.candidate, { locale: currentLocale });
       // Optional chart capabilities are tested inside this job's error boundary.
       if (layer === null) layer = createLayer();
       const renderGeneration = viewGeneration;
@@ -119,7 +131,7 @@ export function createCompoundCandidateController({
         if (!current()) return;
         prune();
         if (rendered && renderGeneration === viewGeneration) {
-          panel.upsertCompound(id, annotation, action.observedAtMs);
+          panel.upsertCompound(id, localizeAnnotation(annotation, currentLocale), action.observedAtMs);
         }
       } finally {
         pendingCandidateId = null;
@@ -131,13 +143,23 @@ export function createCompoundCandidateController({
   }
 
   return Object.freeze({
+    setLocale(nextLocale) {
+      t = createStrategy27Translator(nextLocale);
+      currentLocale = nextLocale;
+      renderStatus();
+      try {
+        layer?.setLocale(nextLocale);
+      } catch (error) {
+        failJob(error);
+      }
+    },
     run() {
       if (started) throw new Error('Compound controller already started');
       started = true;
       return (async () => {
         if (!current()) return;
         try {
-          panel.setCompoundStatus('复合候选正在连接', 'inactive');
+          renderStatus();
           const client = createCompoundCandidateClient({
             request, gatewayBaseUrl, authSecret, canonicalSymbol, reconnectDelayMs,
             onResponse, onConnectionStateChange,
@@ -179,7 +201,7 @@ export function createCompoundCandidateController({
       const error = clearView();
       if (error) {
         lastError = error;
-        panel.setCompoundStatus(`复合候选已停止：${error.message}`, 'error');
+        renderStatus();
       }
     },
     // A late drawing rejection remains inspectable without touching a retired panel.

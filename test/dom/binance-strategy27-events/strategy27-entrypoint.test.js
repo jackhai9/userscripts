@@ -15,9 +15,9 @@ async function until(predicate) {
   }
 }
 
-async function harness(t, { generated = false, beforeCreate } = {}) {
+async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN' } = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"><iframe></iframe></div>');
-  dom.reconfigure({ url: 'https://www.binance.com/zh-CN/futures/BTCUSDT' });
+  dom.reconfigure({ url: `https://www.binance.com/${locale}/futures/BTCUSDT` });
   const page = dom.window;
   const shapes = new Map([['user-owned', {}]]);
   let resolution = '1S';
@@ -27,7 +27,7 @@ async function harness(t, { generated = false, beforeCreate } = {}) {
     createShape: async (point, options) => {
       const id = `entry-owned-${++shapeSequence}`;
       if (beforeCreate) await beforeCreate();
-      shapes.set(id, { getPoints: () => [point], getProperties: () => ({ ...options.overrides, icon: options.icon, text: options.text }) });
+      shapes.set(id, { getPoints: () => [point], getProperties: () => ({ ...options.overrides, icon: options.icon, text: options.text }), setProperties: (properties) => Object.assign(options, properties) });
       return id;
     },
     getShapeById: (id) => shapes.get(id),
@@ -46,6 +46,7 @@ async function harness(t, { generated = false, beforeCreate } = {}) {
   page.document.querySelector('iframe').contentWindow.tradingViewApi = { activeChart: () => chart };
   const timers = new Map();
   const menus = new Map();
+  const menuIds = new Map();
   const requests = [];
   let now = 7000;
   t.mock.method(Date, 'now', () => now);
@@ -55,7 +56,13 @@ async function harness(t, { generated = false, beforeCreate } = {}) {
     unsafeWindow: page,
     GM_getValue: (key, initial) => key === 'strategy27GatewayAuthSecret' ? 'synthetic-test-value' : initial,
     GM_setValue: () => { throw new Error('Unexpected settings write'); },
-    GM_registerMenuCommand: (name, callback) => menus.set(name, callback),
+    GM_registerMenuCommand: (name, callback, options = {}) => {
+      const id = options.id ?? menuIds.size + 1;
+      if (menuIds.has(id)) menus.delete(menuIds.get(id));
+      menuIds.set(id, name);
+      menus.set(name, callback);
+      return id;
+    },
     GM_xmlhttpRequest: (options) => {
       const path = new URL(options.url).pathname;
       const request = { kind: path.includes('/compound-candidates') ? 'compound' : 'ordinary', options, settled: false, aborted: false };
@@ -96,13 +103,13 @@ async function harness(t, { generated = false, beforeCreate } = {}) {
     await until(() => pending('compound').length === 1);
   }
   return {
-    page, chart, shapes, requests, pending, respond, candidate, timers,
+    page, chart, shapes, requests, pending, respond, candidate, timers, menus,
     reset: () => respond('compound', { schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     ordinaryBootstrap: () => respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     rows: () => page.document.querySelectorAll('[data-role="compound-row"]').length,
     tick: () => timers.get(1)(),
     clear: () => menus.get('清除 Strategy 27 图表标注')(),
-    restart: () => menus.get('Reconnect Strategy 27 and restore history')(),
+    restart: () => menus.get('重新连接 Strategy 27 并恢复历史')(),
     setNow: (value) => { now = value; },
     setResolution: (value) => { resolution = value; },
   };
@@ -468,13 +475,13 @@ for (const generated of [false, true]) {
     await until(() => h.pending('ordinary').length === 1);
     assert.deepEqual([...h.shapes.keys()], ids);
     assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
-    assert.match(h.page.document.body.textContent, /Historical/);
+    assert.match(h.page.document.body.textContent, /历史记录/);
     const replay = { ...ordinaryMessage(), runtime_epoch: 'c'.repeat(32), sequence: 2 };
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '3-0', next_cursor: '4-0', messages: [replay] });
     await until(() => h.pending('ordinary').length === 1);
     assert.deepEqual([...h.shapes.keys()], ids);
     assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
-    assert.doesNotMatch(h.page.document.body.textContent, /Historical/);
+    assert.doesNotMatch(h.page.document.body.textContent, /历史记录/);
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '4-0', next_cursor: '5-0', messages: [ordinaryStreamReset('d'.repeat(32))] });
     await until(() => h.pending('ordinary').length === 1);
     h.setNow(7207001);
@@ -590,12 +597,12 @@ for (const generated of [false, true]) {
     await until(() => h.pending('ordinary').length === 1);
     const status = h.page.document.querySelector('[data-role="ordinary-monitoring-status"]');
     assert.equal(status?.dataset.state, 'removed');
-    assert.match(status.textContent, /Symbol removed from monitoring/);
+    assert.match(status.textContent, /已移出监控范围/);
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '2-0', next_cursor: '3-0', messages: [ordinaryStreamReset()] });
     await until(() => h.pending('ordinary').length === 1);
     assert.equal(status.dataset.state, 'removed');
     const connection = h.page.document.querySelector('[data-role="ordinary-connection-status"]');
-    assert.match(connection.textContent, /Connected/);
+    assert.match(connection.textContent, /已连接/);
     assert.equal(h.shapes.size, 2);
     h.setResolution('1'); h.tick();
     assert.equal(h.page.document.querySelector('[data-role="ordinary-monitoring-status"]'), null);
@@ -616,5 +623,73 @@ for (const generated of [false, true]) {
     await until(() => h.pending('ordinary').length === 1);
     assert.equal(h.page.document.querySelector('[data-role="ordinary-monitoring-status"]').dataset.state, 'removed');
     assert.equal(h.page.document.querySelector('[data-role="ordinary-connection-status"]').dataset.state, 'connected');
+  });
+}
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} English route localizes ordinary and compound content and language switching updates menus`, async (t) => {
+    const h = await harness(t, { generated, locale: 'en' });
+    await h.ordinaryBootstrap();
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
+    await until(() => h.pending('ordinary').length === 1);
+    await h.reset(); await h.candidate();
+    const panel = () => h.page.document.getElementById('jh-strategy27-event-panel');
+    assert.doesNotMatch(panel().textContent, /\p{Script=Han}/u);
+    assert.match(panel().textContent, /Compound|candidate/i);
+    h.page.document.querySelector('[data-role="event-row"]').click();
+    assert.match(panel().textContent, /Order-flow observation/);
+    assert.doesNotMatch(panel().textContent, /\p{Script=Han}/u);
+    assert.equal(h.menus.size, 4);
+    assert.equal([...h.menus.keys()].some(text => /\p{Script=Han}/u.test(text)), false);
+    const priorPanel = panel();
+    const ordinaryRequest = h.pending('ordinary')[0];
+    const compoundRequest = h.pending('compound')[0];
+    const shapeIds = [...h.shapes.keys()];
+    assert.equal([...h.shapes.values()].filter(shape => shape.getProperties?.().text === 'High candidate').length, 1);
+    h.page.history.pushState({}, '', '/zh-CN/futures/BTCUSDT');
+    await until(() => h.menus.has('重新连接 Strategy 27 并恢复历史'));
+    assert.equal(panel(), priorPanel);
+    assert.equal(h.pending('ordinary')[0], ordinaryRequest);
+    assert.equal(h.pending('compound')[0], compoundRequest);
+    assert.deepEqual([...h.shapes.keys()], shapeIds);
+    assert.equal([...h.shapes.values()].filter(shape => shape.getProperties?.().text === '候选高').length, 1);
+    assert.match(panel().textContent, /已收到观察记录/);
+    assert.doesNotMatch(panel().textContent, /Monitoring|Connected|Historical/);
+    assert.equal(h.menus.size, 4);
+    assert.equal(h.menus.has('重新连接 Strategy 27 并恢复历史'), true);
+    h.page.history.pushState({}, '', '/en/futures/BTCUSDT');
+    await until(() => h.menus.has('Reconnect Strategy 27 and restore history'));
+    assert.equal(panel(), priorPanel);
+    assert.equal(h.pending('ordinary')[0], ordinaryRequest);
+    assert.equal(h.pending('compound')[0], compoundRequest);
+    assert.deepEqual([...h.shapes.keys()], shapeIds);
+    assert.doesNotMatch(panel().textContent, /\p{Script=Han}/u);
+    assert.equal(h.menus.size, 4);
+  });
+}
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} locale switch updates stopped status and prompts without reconnecting`, async (t) => {
+    const h = await harness(t, { generated, locale: 'en' });
+    const prompts = [];
+    t.mock.method(h.page, 'prompt', (text) => { prompts.push(text); return null; });
+    h.menus.get('Set Strategy 27 gateway secret')();
+    h.menus.get('Set Strategy 27 local gateway URL')();
+    assert.equal(prompts.length, 2);
+    assert.doesNotMatch(prompts.join(' '), /\p{Script=Han}/u);
+    await h.respond('ordinary', 'invalid JSON');
+    await until(() => h.page.document.querySelector('[data-role="ordinary-connection-status"]').dataset.state === 'stopped');
+    const count = h.requests.length;
+    const status = h.page.document.getElementById('jh-strategy27-event-status');
+    assert.match(status.textContent, /stopped; history retained/);
+    h.page.history.pushState({}, '', '/zh-CN/futures/BTCUSDT');
+    assert.equal(h.requests.length, count);
+    assert.match(status.textContent, /已停止，历史记录已保留/);
+    assert.equal(h.page.document.querySelector('[data-role="ordinary-connection-status"]').textContent, '事件数据：已停止');
+    h.menus.get('设置 Strategy 27 网关密钥')();
+    h.menus.get('设置 Strategy 27 本机网关地址')();
+    assert.match(prompts[2], /输入本机/);
+    assert.match(prompts[3], /输入 SSH/);
+    assert.equal(h.menus.size, 4);
   });
 }

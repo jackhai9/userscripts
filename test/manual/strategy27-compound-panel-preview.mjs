@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import { readFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { build } from 'esbuild';
+import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { buildCompoundCandidateAnnotation } from '../../src/binance-strategy27-events/core/compound-candidate-annotation.js';
 
 // Render the actual panel module with synthetic evidence, without a dev server
 // or access to the operator's browser, accounts, or market connections.
 const fixtures = JSON.parse(await readFile(new URL('../fixtures/strategy27-compound-candidates.json', import.meta.url), 'utf8'));
-const source = await readFile(new URL('../../src/binance-strategy27-events/dom/strategy27-event-panel.js', import.meta.url), 'utf8');
+const bundle = await build({ entryPoints: [fileURLToPath(new URL('../../src/binance-strategy27-events/dom/strategy27-event-panel.js', import.meta.url))], bundle: true, format: 'esm', platform: 'browser', write: false });
+const source = bundle.outputFiles[0].text;
 const sourceUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const output = await mkdtemp(join(tmpdir(), 'strategy27-compound-panel-'));
 const browser = await chromium.launch({ headless: true });
@@ -29,7 +32,7 @@ try {
       panel.upsertCompound(`fixture-${i}`, { ...annotation, eventTimeMs: annotation.eventTimeMs + i * 1000 }, 8000 + i * 1000);
     }
     panel.setCompoundStatus('复合候选已连接', 'normal');
-  }, { sourceUrl, annotations: fixtures.map(buildCompoundCandidateAnnotation) });
+  }, { sourceUrl, annotations: fixtures.map((candidate) => buildCompoundCandidateAnnotation(candidate)) });
   const panel = page.locator('#jh-strategy27-event-panel');
   await panel.waitFor({ state: 'visible' });
   assert.equal(await panel.locator('[data-role="compound-row"]').count(), 8);
@@ -46,8 +49,24 @@ try {
   const box = await panel.boundingBox();
   assert.equal(box.width, 322);
   assert.equal(box.x >= 0 && box.y >= 0 && box.y + box.height <= 1000, true);
+  await page.evaluate(() => {
+    window.fixturePanel.observeOrdinaryEvent({ triggered_at_ms: 2000, event_status: 'incomplete', close_reason: 'universe_removed' }, 3000);
+    window.fixturePanel.setOrdinaryConnection('connected');
+    window.fixturePanel.setLocale('en');
+    window.fixturePanel.setCompoundStatus('Compound data: connected. Connection does not confirm symbol monitoring.', 'normal');
+  });
+  assert.doesNotMatch(await panel.textContent(), /\p{Script=Han}/u);
+  assert.match(await panel.textContent(), /Symbol removed from monitoring/);
+  await panel.screenshot({ path: join(output, 'english-candidate.png') });
+  await page.evaluate(() => {
+    window.fixturePanel.setLocale('zh-CN');
+    window.fixturePanel.setCompoundStatus('复合候选数据：已连接。接口连通不代表该币种仍在监控中。', 'normal');
+  });
+  assert.match(await panel.textContent(), /该币种已移出监控范围/);
+  assert.doesNotMatch(await panel.textContent(), /Connected|Historical|Monitoring|Exploratory/);
+  await panel.screenshot({ path: join(output, 'chinese-candidate.png') });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ output, checked: ['high', 'mirrored-low', 'eight-row-bound', 'collapse', 'status', 'viewport'], pageErrors: errors }));
+  console.log(JSON.stringify({ output, checked: ['high', 'mirrored-low', 'eight-row-bound', 'collapse', 'status', 'viewport', 'english', 'chinese', 'locale-switch-retains-history'], pageErrors: errors }));
 } finally {
   await browser.close();
 }
