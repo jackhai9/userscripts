@@ -228,6 +228,18 @@ export function createStrategy27EventPanel(document, chartRoot, {
     role: 'panel-body',
     styles: { overflow: 'auto', maxHeight: 'calc(100vh - 190px)' },
   });
+  const monitoring = createElement(document, 'div', {
+    role: 'ordinary-monitoring-status',
+    text: 'Monitoring status unknown. Waiting for event evidence.',
+    styles: { padding: '9px', fontWeight: '600', color: '#F0B90B', borderBottom: '1px solid rgba(132, 142, 156, .18)' },
+  });
+  monitoring.dataset.state = 'unknown';
+  monitoring.setAttribute('aria-live', 'polite');
+  const ordinaryConnection = createElement(document, 'div', {
+    role: 'ordinary-connection-status', text: 'Event data: Connecting',
+    styles: { padding: '5px 9px 0', color: '#848E9C', fontSize: '11px' },
+  });
+  let monitoringObservation = null;
   const detail = createElement(document, 'div', {
     role: 'event-detail',
     styles: { display: 'grid', gap: '5px', padding: '9px' },
@@ -258,7 +270,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
     role: 'compound-list',
     styles: { display: 'grid', gap: '2px', padding: '0 6px 7px' },
   });
-  body.append(detail, compoundTitle, compoundStatus, compoundRecent, recentTitle, recent);
+  body.append(monitoring, ordinaryConnection, detail, compoundTitle, compoundStatus, compoundRecent, recentTitle, recent);
   panel.appendChild(body);
   document.body.appendChild(panel);
   const initialPosition = assertPanelPosition(loadPosition()) ?? createDefaultPosition(chartRoot);
@@ -435,6 +447,36 @@ export function createStrategy27EventPanel(document, chartRoot, {
   }
 
   return Object.freeze({
+    /** Event identity order prevents delayed outcomes or bootstrap replay from undoing removal or reentry. */
+    observeOrdinaryEvent(event, observedAtMs) {
+      const previous = monitoringObservation;
+      if (previous && event.triggered_at_ms < previous.triggeredAtMs) return;
+      if (previous && event.triggered_at_ms === previous.triggeredAtMs) {
+        if (observedAtMs < previous.observedAtMs) return;
+        if (previous.terminal && event.event_status === 'active') return;
+      }
+      monitoringObservation = {
+        triggeredAtMs: event.triggered_at_ms,
+        observedAtMs,
+        terminal: event.event_status !== 'active',
+      };
+      const state = event.close_reason === 'universe_removed' ? 'removed'
+        : event.close_reason === 'monitor_stopped' ? 'stopped' : 'observed';
+      const text = state === 'removed'
+        ? 'Symbol removed from monitoring. Retained records are historical.'
+        : state === 'stopped' ? 'Monitoring stopped. Retained records are historical.'
+          : 'Observation received. Waiting for further events.';
+      monitoring.dataset.state = state;
+      monitoring.textContent = 'Last reported monitoring status (' + formatClock(observedAtMs) + '): ' + text;
+      monitoring.style.color = state === 'observed' ? '#848E9C' : '#F0B90B';
+    },
+    setOrdinaryConnection(state) {
+      const labels = { connected: 'Connected', reconnecting: 'Reconnecting', stopped: 'Stopped' };
+      if (!Object.hasOwn(labels, state)) throw new Error('Invalid ordinary connection state');
+      ordinaryConnection.textContent = 'Event data: ' + labels[state];
+      ordinaryConnection.dataset.state = state;
+      ordinaryConnection.style.color = state === 'stopped' ? '#F6465D' : '#848E9C';
+    },
     upsert(eventId, annotation, observedAtMs) {
       upsertRecord(records, maxEvents, eventId, annotation, observedAtMs);
     },
@@ -449,6 +491,11 @@ export function createStrategy27EventPanel(document, chartRoot, {
     },
     /** Retain facts and selection without presenting a previous stream as live. */
     retainHistory() {
+      if (monitoring.dataset.state === 'observed') {
+        monitoring.dataset.state = 'historical';
+        monitoring.textContent = 'Stream restarted. Monitoring status awaits new event evidence; retained records are historical.';
+        monitoring.style.color = '#F0B90B';
+      }
       for (const record of records.values()) record.historical = true;
       render();
     },

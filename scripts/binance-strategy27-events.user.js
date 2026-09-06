@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.4
+// @version      0.4.5
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -1548,6 +1548,19 @@
       role: "panel-body",
       styles: { overflow: "auto", maxHeight: "calc(100vh - 190px)" }
     });
+    const monitoring = createElement(document, "div", {
+      role: "ordinary-monitoring-status",
+      text: "Monitoring status unknown. Waiting for event evidence.",
+      styles: { padding: "9px", fontWeight: "600", color: "#F0B90B", borderBottom: "1px solid rgba(132, 142, 156, .18)" }
+    });
+    monitoring.dataset.state = "unknown";
+    monitoring.setAttribute("aria-live", "polite");
+    const ordinaryConnection = createElement(document, "div", {
+      role: "ordinary-connection-status",
+      text: "Event data: Connecting",
+      styles: { padding: "5px 9px 0", color: "#848E9C", fontSize: "11px" }
+    });
+    let monitoringObservation = null;
     const detail = createElement(document, "div", {
       role: "event-detail",
       styles: { display: "grid", gap: "5px", padding: "9px" }
@@ -1578,7 +1591,7 @@
       role: "compound-list",
       styles: { display: "grid", gap: "2px", padding: "0 6px 7px" }
     });
-    body.append(detail, compoundTitle, compoundStatus, compoundRecent, recentTitle, recent);
+    body.append(monitoring, ordinaryConnection, detail, compoundTitle, compoundStatus, compoundRecent, recentTitle, recent);
     panel.appendChild(body);
     document.body.appendChild(panel);
     const initialPosition = assertPanelPosition(loadPosition()) ?? createDefaultPosition(chartRoot);
@@ -1741,6 +1754,32 @@
       render();
     }
     return Object.freeze({
+      /** Event identity order prevents delayed outcomes or bootstrap replay from undoing removal or reentry. */
+      observeOrdinaryEvent(event, observedAtMs) {
+        const previous = monitoringObservation;
+        if (previous && event.triggered_at_ms < previous.triggeredAtMs) return;
+        if (previous && event.triggered_at_ms === previous.triggeredAtMs) {
+          if (observedAtMs < previous.observedAtMs) return;
+          if (previous.terminal && event.event_status === "active") return;
+        }
+        monitoringObservation = {
+          triggeredAtMs: event.triggered_at_ms,
+          observedAtMs,
+          terminal: event.event_status !== "active"
+        };
+        const state = event.close_reason === "universe_removed" ? "removed" : event.close_reason === "monitor_stopped" ? "stopped" : "observed";
+        const text = state === "removed" ? "Symbol removed from monitoring. Retained records are historical." : state === "stopped" ? "Monitoring stopped. Retained records are historical." : "Observation received. Waiting for further events.";
+        monitoring.dataset.state = state;
+        monitoring.textContent = "Last reported monitoring status (" + formatClock(observedAtMs) + "): " + text;
+        monitoring.style.color = state === "observed" ? "#848E9C" : "#F0B90B";
+      },
+      setOrdinaryConnection(state) {
+        const labels = { connected: "Connected", reconnecting: "Reconnecting", stopped: "Stopped" };
+        if (!Object.hasOwn(labels, state)) throw new Error("Invalid ordinary connection state");
+        ordinaryConnection.textContent = "Event data: " + labels[state];
+        ordinaryConnection.dataset.state = state;
+        ordinaryConnection.style.color = state === "stopped" ? "#F6465D" : "#848E9C";
+      },
       upsert(eventId, annotation, observedAtMs) {
         upsertRecord(records, maxEvents, eventId, annotation, observedAtMs);
       },
@@ -1755,6 +1794,11 @@
       },
       /** Retain facts and selection without presenting a previous stream as live. */
       retainHistory() {
+        if (monitoring.dataset.state === "observed") {
+          monitoring.dataset.state = "historical";
+          monitoring.textContent = "Stream restarted. Monitoring status awaits new event evidence; retained records are historical.";
+          monitoring.style.color = "#F0B90B";
+        }
         for (const record of records.values()) record.historical = true;
         render();
       },
@@ -2270,9 +2314,9 @@
 
   // src/binance-strategy27-events/core/compound-candidate-controller.js
   var CONNECTION_STATUS = Object.freeze({
-    connected: ["复合候选已连接", "normal"],
-    reconnecting: ["复合候选连接中断，正在重连", "inactive"],
-    unavailable: ["复合候选暂不可用，正在重连", "inactive"],
+    connected: ["Compound data: connected. Connection does not confirm symbol monitoring.", "normal"],
+    reconnecting: ["Compound data connection lost; reconnecting.", "inactive"],
+    unavailable: ["Compound data temporarily unavailable; reconnecting.", "inactive"],
     unsupported: ["网关尚未启用复合候选", "inactive"]
   });
   function createCompoundCandidateController({
@@ -2739,6 +2783,7 @@
       context.failed = true;
       context.controller.abort();
       context.layer.suspend();
+      context.panel.setOrdinaryConnection("stopped");
       showStatus(context.target.chartRoot, `Strategy 27 stopped; history retained. Use the reconnect menu to resume: ${error.message}`, "error");
     }
     function reconcileOrdinary(context) {
@@ -2755,6 +2800,7 @@
     }
     async function renderGatewayResponse(context, response) {
       if (active !== context || context.failed) return;
+      context.panel.setOrdinaryConnection("connected");
       pruneOrdinaryEvents(context);
       if (response.status === "reset") {
         context.lifecycle.reset(response.reason);
@@ -2791,6 +2837,7 @@
           continue;
         }
         if (action.type === "event_evicted") continue;
+        context.panel.observeOrdinaryEvent(action.event, action.observedAtMs);
         const retainedAtMs = retainOrdinaryEvent(context, action.eventId, action.observedAtMs);
         if (!context.ordinaryHistory.has(action.eventId)) continue;
         const annotation = stabilizeCandidatePresentation(
@@ -2864,6 +2911,7 @@
         canonicalSymbol,
         onConnectionStateChange: (state) => {
           if (active !== context || context.failed) return;
+          context.panel.setOrdinaryConnection(state);
           if (state === "reconnecting") {
             showStatus(context.target.chartRoot, "Strategy 27 网关连接中断，正在重连", "inactive");
           } else {

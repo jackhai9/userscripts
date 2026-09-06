@@ -138,7 +138,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.4.4 with identical metadata headers.
+generated install artifact are version 0.4.5 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
@@ -266,3 +266,21 @@ the next response had zero ordinary markers. Earlier event_closed responses
 had retained those markers. Version 0.4.4 separates protocol reset from bounded
 display ownership. This evidence identifies the browser deletion path; it does
 not distinguish the underlying server Redis connection error from a timeout.
+
+## Monitoring status and connection status
+
+Version 0.4.5 adds a top-level last-reported monitoring status independent of
+selected history, drawing completion and data connection status. An accepted
+universe_removed event explicitly identifies removal; monitor_stopped identifies
+stopped monitoring. These reports survive stream resets and manual history clear.
+A newer event identity supersedes the report; delayed outcomes for older events
+and active bootstrap replay for the same closed event cannot undo it. Outcome-only
+bootstrap records also restore this status. A stream reset without a removal/stop
+report displays that monitoring status awaits new evidence.
+
+The ordinary connection line reports request delivery independently. The compound
+connection text explicitly states that connectivity does not confirm monitoring
+for the current symbol. Both clients use the same gateway with separate existing
+paths; neither a successful empty response nor compound connectivity can mark a
+symbol as re-added. No live universe-membership endpoint is available to this UI,
+so the banner reports the last event evidence, not a current membership guarantee.
