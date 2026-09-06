@@ -35,7 +35,7 @@ errors/timeouts and protocol-validated HTTP 503 unavailability as recoverable:
 it retains the current cursor and displayed history, shows a reconnecting status,
 and retries after two seconds. A bootstrap 503 remains in bootstrap; a live
 `redis_unavailable` response retries the same live cursor. Stale cursors still
-use the existing reset/bootstrap contract. Other HTTP/gateway errors, malformed
+use the reset/bootstrap protocol while retaining verified display history. Other HTTP/gateway errors, malformed
 JSON, cursor violations, and rendering contract failures stop immediately.
 
 A terminal ordinary-job failure suspends drawing and polling without deleting
@@ -95,8 +95,21 @@ be later than that snapshot's end when an ineligible bucket advances the event
 to its lifecycle deadline without joining the event.
 
 The script stores only its own returned marker IDs and its bounded in-memory
-panel records. Route, symbol, interval, epoch and explicit cursor resets remove
-only those transient entities. Sequence/cursor contract violations stop the
+panel records. Route, symbol, interval and manual clear remove only those
+transient entities. Ordinary stream epochs and cursor resets reset protocol
+validation while preserving verified display history in the same chart context.
+The independent ordinary display registry retains at most 80 events (including
+neutral events), evicts by last observation time with event ID as the tie-break,
+and expires after two hours without another observation. Reset messages and
+bootstrap replay do not refresh its observation timestamps. Protocol lifecycle
+pruning does not delete this independently bounded display history.
+Old panel records display Historical until that event receives another accepted
+observation; this flag changes neither the last received event status nor the
+protocol phase. Same-event replay merges by the source event ID, which is stable
+across transport epochs, and preserves the first directional marker. A bootstrap
+merges its records instead of deleting history absent from the new epoch's
+snapshot. Full reload still depends on the server snapshot and cannot recover
+previous-epoch records that were never retained by the server. Sequence/cursor contract violations stop the
 ordinary job with an error while retaining its already verified history.
 Marker count and age are bounded on the chart; the panel retains at most eight
 events.
@@ -108,7 +121,8 @@ message arrives. Compound candidates restore only missing parts of their
 icon/label pair, preserving the original slot and surviving entity IDs. Each
 record shares one in-flight repair across timer and message callbacks. Cleanup
 skips IDs proven absent, while native removal failures still stop the owning job.
-Clear, reset, context changes and retention eviction invalidate repair ownership;
+Manual clear, context changes and display retention eviction invalidate ordinary
+repair ownership; compound resets also invalidate their own repair ownership;
 late-created entities are removed instead of resurrecting retired records.
 Reconciliation does not refresh retention timestamps. Drawings remain transient
 and use `disableSave: true`, but a full page reload requests a bounded display
@@ -124,7 +138,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.4.3 with identical metadata headers.
+generated install artifact are version 0.4.4 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
@@ -241,3 +255,14 @@ Live validation must confirm the current Binance main-world chart API, exact
 `1S` resolution, exact route symbol, successful create/readback/remove behavior,
 Tampermonkey source readback, and the actually loaded source after a hard
 reload. A source-level method name alone is not end-to-end proof.
+
+## 2026-09-06 ordinary stream recovery evidence
+
+The loaded 0.4.3 Binance script was observed through non-pausing CDP probes on
+BTRUSDT at 1S. At 03:47:33.716 UTC a successful response delivered
+stream_state / transport_recovered with a new runtime epoch. The entrypoint
+then reached stream_reset_clear with two ordinary markers and eight panel rows;
+the next response had zero ordinary markers. Earlier event_closed responses
+had retained those markers. Version 0.4.4 separates protocol reset from bounded
+display ownership. This evidence identifies the browser deletion path; it does
+not distinguish the underlying server Redis connection error from a timeout.

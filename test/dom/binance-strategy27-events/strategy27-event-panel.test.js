@@ -230,3 +230,29 @@ test('drags the panel by its header, persists the bounded position, and ignores 
   document.dispatchEvent(new dom.window.MouseEvent('mouseup', { bubbles: true }));
   assert.equal(savedPositions.length, 1);
 });
+
+test('transport history marking preserves selection, facts, bounds and compound ownership', () => {
+  const dom = loadFixtureDom('<div class="chart-widget-root"></div>');
+  const { document } = dom.window;
+  const panel = createStrategy27EventPanel(document, document.querySelector('.chart-widget-root'), panelOptions(2));
+  panel.upsert('old', { ...annotation(), status: 'active' }, 1100);
+  panel.upsert('latest', { ...annotation({ time: 2000 }), status: 'complete' }, 2100);
+  panel.upsertCompound('compound', compoundAnnotation(3000), 3100);
+  document.querySelector('[data-event-id="old"]').click();
+  panel.retainHistory();
+  panel.retainHistory();
+  assert.equal(panel.size, 2);
+  assert.equal(panel.compoundSize, 1);
+  const detail = document.querySelector('[data-role="event-detail"]');
+  assert.match(detail.textContent, /Historical/);
+  assert.match(detail.textContent, /12\.3K USDT/);
+  assert.equal(detail.textContent.split('Stream restarted; showing the last received observation.').length, 2);
+  panel.upsert('latest', { ...annotation({ time: 2000 }), status: 'complete' }, 2200);
+  assert.match(detail.textContent, /Historical/);
+  panel.upsert('old', { ...annotation(), status: 'complete' }, 2300);
+  assert.doesNotMatch(detail.textContent, /Historical|Stream restarted/);
+  assert.match(detail.textContent, /已结束/);
+  assert.equal(panel.compoundSize, 1);
+  panel.destroy();
+  dom.window.close();
+});
