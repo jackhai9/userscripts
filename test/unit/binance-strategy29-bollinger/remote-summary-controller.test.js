@@ -5,6 +5,7 @@ import {
   STRATEGY29_REMOTE_ENABLED_KEY,
   createStrategy29RemoteSummary,
 } from '../../../src/binance-strategy29-bollinger/remote-summary.js';
+import { formatLocalizedText } from '../../../src/binance-strategy29-bollinger/ui-copy.js';
 import { Strategy29GatewayTransportError } from '../../../src/binance-strategy29-bollinger/core/remote-summary-client.js';
 
 function fixture({ enabled = true, authSecret = 'synthetic-secret', poll } = {}) {
@@ -27,14 +28,21 @@ function fixture({ enabled = true, authSecret = 'synthetic-secret', poll } = {})
     request: async () => { throw new Error('unexpected raw request'); },
     getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
     setValue: (key, value) => values.set(key, value),
-    registerMenuCommand: (label, callback) => menus.push({ label, callback }),
+    registerMenuCommand: (label, callback, options) => {
+      const id = options?.id ?? menus.length;
+      menus[id] = { label, callback };
+      return id;
+    },
     promptUser: (...args) => { prompts.push(args); return null; },
-    createPanel: (_document, canonicalSymbol) => {
+    createPanel: (_document, canonicalSymbol, options) => {
       const calls = [];
       const panel = {
         canonicalSymbol,
+        options,
+        locale: options.locale,
         calls,
-        setConnection: (...args) => calls.push(['connection', ...args]),
+        setLocale: locale => { panel.locale = locale; calls.push(['locale', locale]); },
+        setConnection: (state, message) => calls.push(['connection', state, formatLocalizedText(message, panel.locale)]),
         renderStatus: (...args) => calls.push(['status', ...args]),
         addEvents: (...args) => calls.push(['events', ...args]),
         clearEvents: (...args) => calls.push(['clear', ...args]),
@@ -172,4 +180,59 @@ test('unsupported futures route is classified once without a retry/log loop', as
   assert.equal(warnings, 1);
   assert.equal(f.panels.length, 0);
   assert.equal(f.clients.length, 0);
+});
+
+test('locale switches preserve the pending request, client cursor and panel while updating existing menu IDs', async () => {
+  let complete;
+  let requestSignal;
+  const f = fixture({ poll: signal => { requestSignal = signal; return new Promise(resolve => { complete = resolve; }); } });
+  const pending = f.summary.sample(0);
+  f.clients[0].diagnostics.cursor = 41;
+  f.view.location.pathname = '/zh-CN/futures/BTRUSDT';
+  assert.equal(f.summary.sample(1), undefined);
+  assert.equal(f.clients.length, 1);
+  assert.equal(f.panels.length, 1);
+  assert.equal(f.panels[0].locale, 'zh-CN');
+  assert.equal(f.summary.diagnostics.cursor, 41);
+  assert.equal(requestSignal.aborted, false);
+  assert.equal(f.menus.length, 3);
+  assert.deepEqual(f.menus.map(menu => menu.label), ['切换 Strategy 29 跨周期汇总', '设置 Strategy 29 网关密钥', '设置 Strategy 29 网关地址']);
+  complete({ state: 'connected', pages: 1, hasMore: false });
+  await pending;
+  assert.deepEqual(f.panels[0].calls.at(-1), ['connection', 'connected', '已连接']);
+  f.view.location.pathname = '/en/futures/BTRUSDT';
+  f.summary.sample(2);
+  assert.equal(f.panels[0].locale, 'en');
+  assert.equal(f.summary.diagnostics.cursor, 41);
+  assert.equal(f.clients.length, 1);
+  assert.equal(f.menus.length, 3);
+  assert.equal(f.menus[0].label, 'Toggle Strategy 29 cross-timeframe summary');
+  f.summary.dispose();
+});
+
+test('no-auth locale change updates the existing panel and localized prompts without creating a client', () => {
+  const f = fixture({ authSecret: '' });
+  f.summary.sample(0);
+  f.view.location.pathname = '/zh-CN/futures/BTRUSDT';
+  f.summary.sample(1);
+  assert.equal(f.panels.length, 1);
+  assert.equal(f.panels[0].locale, 'zh-CN');
+  assert.equal(f.clients.length, 0);
+  assert.equal(f.summary.diagnostics.state, 'configuration_required');
+  f.menus[1].callback();
+  assert.match(f.prompts[0][0], /请输入本地 Strategy 29 网关密钥/);
+  f.summary.dispose();
+});
+
+test('position adapters persist only the dedicated coordinate value and restore it across symbol contexts', async () => {
+  const f = fixture();
+  await f.summary.sample(0);
+  assert.equal(f.panels[0].options.loadPosition(), null);
+  f.panels[0].options.savePosition({ left: 72, top: 124 });
+  assert.deepEqual(f.values.get('strategy29SummaryPanelPosition'), { left: 72, top: 124 });
+  f.view.location.pathname = '/en/futures/ETHUSDT';
+  await f.summary.sample(1);
+  assert.deepEqual(f.panels[1].options.loadPosition(), { left: 72, top: 124 });
+  assert.equal(f.values.get('strategy29GatewayAuthSecret'), 'synthetic-secret');
+  f.summary.dispose();
 });

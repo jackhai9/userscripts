@@ -3,7 +3,12 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
-import { createStrategy29SummaryPanel } from '../../../src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js';
+import { createStrategy29SummaryPanel as createPanel } from '../../../src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js';
+
+function createStrategy29SummaryPanel(document, symbol, options = {}) {
+  let position = null;
+  return createPanel(document, symbol, { locale: 'en', loadPosition: () => position, savePosition: value => { position = value; }, ...options });
+}
 
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
@@ -62,7 +67,7 @@ test('replaces dynamic membership while retaining durable signal history', () =>
   panel.renderStatus({ ...status, universe: { ...status.universe, configured_timeframes: ['4h'] }, units: [{ ...status.units[0], timeframe: '4h', status: 'warming', reason: 'awaiting_producer_generation' }] });
   const units = dom.window.document.querySelectorAll('[data-role=unit]');
   assert.equal(units.length, 1);
-  assert.match(units[0].textContent, /4h.*warming.*awaiting_producer_generation/);
+  assert.match(units[0].textContent, /4h.*Warming.*Awaiting producer generation/);
   assert.doesNotMatch(dom.window.document.body.textContent, /Symbol is not watched/);
   panel.destroy();
   dom.window.close();

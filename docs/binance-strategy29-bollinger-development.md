@@ -52,6 +52,28 @@ or sent to the remote service. Recoverable snapshot races leave it unchanged.
 Independent instances of each bundle share the same controller regardless of
 load order. Strategy27 does not participate in this protocol.
 
+## Panel Language and Position
+
+The summary follows the existing pathname locale contract: `/zh-CN/` uses Chinese,
+while English and other routes use English. Strategy29 imports the existing pure
+orderbook locale helpers without modifying orderbook or shared runtime behavior.
+Headers, connection and selection states, signal names, processing labels,
+notification totals, empty states, menus and prompts have bilingual copy. Technical
+identifiers and arbitrary server diagnostic details remain verbatim, with localized
+labels. Chart arrows contain no textual labels.
+
+A same-symbol locale change rerenders retained status, events and connection text
+without retiring requests, rebuilding the client or resetting its cursor. Existing
+Tampermonkey menu IDs are updated using the documented `GM_registerMenuCommand`
+options contract (Tampermonkey 5.0 or later); no extra grant is required.
+
+Drag the header with the primary mouse button. Header buttons do not start a drag.
+Mouse release or window blur saves only `{left, top}` under the private userscript
+key `strategy29SummaryPanelPosition`; route changes and page reloads restore it.
+The panel clamps its position after viewport, content, collapse and language changes.
+Destroying the panel removes its document/window drag listeners. Invalid persisted
+coordinates fail explicitly. No credentials cross the page boundary.
+
 ## Optional Cross-Timeframe Server Summary
 
 The remote summary is disabled by default. Tampermonkey exposes three Strategy29

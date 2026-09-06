@@ -1841,16 +1841,292 @@
     };
   }
 
+  // src/binance-orderbook-trade/contracts/panel-copy.js
+  var UI_LOCALE_ZH_CN = "zh-CN";
+  var UI_LOCALE_EN = "en";
+  var SUPPORTED_UI_LOCALES = Object.freeze([
+    UI_LOCALE_ZH_CN,
+    UI_LOCALE_EN
+  ]);
+  function localizedText(zhCN, en) {
+    if (typeof zhCN !== "string" || zhCN === "" || typeof en !== "string" || en === "") {
+      throw new Error("Localized UI text requires non-empty Chinese and English values");
+    }
+    return Object.freeze({ zhCN, en });
+  }
+  function isLocalizedText(value) {
+    return Boolean(
+      value && typeof value === "object" && typeof value.zhCN === "string" && typeof value.en === "string"
+    );
+  }
+  function formatLocalizedText(value, locale) {
+    if (typeof value === "string") return value;
+    if (!isLocalizedText(value)) throw new Error("Invalid localized UI text");
+    if (locale === UI_LOCALE_ZH_CN) return value.zhCN;
+    if (locale === UI_LOCALE_EN) return value.en;
+    throw new Error(`Unsupported UI locale: ${locale}`);
+  }
+  function resolveUiLocaleFromPathname(pathname) {
+    const firstSegment = String(pathname || "").split(/[?#]/, 1)[0].split("/").filter(Boolean)[0];
+    return firstSegment?.toLowerCase() === "zh-cn" ? UI_LOCALE_ZH_CN : UI_LOCALE_EN;
+  }
+  var freezeCopy = (copy) => Object.freeze(copy);
+  var PANEL_COPY = Object.freeze({
+    section: freezeCopy({
+      singleOrder: localizedText("单击下单", "Single Order"),
+      ladderMaker: localizedText("阶梯下单 · Maker", "Ladder Orders · Maker")
+    }),
+    field: freezeCopy({
+      clickOrderbook: localizedText("单击订单簿时", "On click"),
+      minimumOrderQuantity: localizedText("最小下单量的", "Minimum order qty"),
+      minimumOpenQuantity: localizedText("最小开仓量的", "Minimum open qty"),
+      minimumCloseQuantity: localizedText("最小平仓量的", "Minimum close qty"),
+      ratio: localizedText("比例", "Ratio"),
+      orderCount: localizedText("笔数", "Orders"),
+      interval: localizedText("间距", "Gap"),
+      pricePrecision: localizedText("精度", "Precision"),
+      multiplierUnit: localizedText("倍", "×")
+    }),
+    action: freezeCopy({
+      openLong: localizedText("阶梯开多", "Open Long"),
+      openShort: localizedText("阶梯开空", "Open Short"),
+      closeLong: localizedText("阶梯平多", "Close Long"),
+      closeShort: localizedText("阶梯平空", "Close Short"),
+      cancel: localizedText("撤单", "Cancel"),
+      cancelRunning: localizedText("撤单处理中", "Cancelling"),
+      noOrders: localizedText("无挂单", "No Orders"),
+      accountRebalance: localizedText("账户再平衡", "Account Rebalance"),
+      stopLadderByAction: freezeCopy({
+        OPEN_LONG: localizedText("停止开多", "Stop Open Long"),
+        OPEN_SHORT: localizedText("停止开空", "Stop Open Short"),
+        CLOSE_LONG: localizedText("停止平多", "Stop Close Long"),
+        CLOSE_SHORT: localizedText("停止平空", "Stop Close Short")
+      })
+    }),
+    side: freezeCopy({
+      long: localizedText("多", "Long"),
+      short: localizedText("空", "Short"),
+      openLong: localizedText("开多", "Open Long"),
+      openShort: localizedText("开空", "Open Short"),
+      closeLong: localizedText("平多", "Close Long"),
+      closeShort: localizedText("平空", "Close Short")
+    }),
+    state: freezeCopy({
+      idle: localizedText("空闲", "Idle"),
+      allPositionsClosed: localizedText("已全部平仓", "All positions closed"),
+      waitingTradeMode: localizedText("等待开仓/平仓状态", "Waiting for trade mode"),
+      waitingPricePrecision: localizedText("等待价格精度", "Waiting for precision"),
+      minimumQuantityLoading: localizedText("最小量读取中", "Loading minimum qty"),
+      positiveIntegerMultiplier: localizedText("请输入正整数倍数", "Enter a positive integer"),
+      noClosablePosition: localizedText("暂无可平仓位", "No position to close")
+    }),
+    status: freezeCopy({
+      precisionUpdated: localizedText("精度推荐已更新", "Precision recommendation updated"),
+      precisionInsufficient: localizedText(
+        "近期价格变化不足，请稍后重试",
+        "Recent price movement is insufficient. Try again later."
+      )
+    }),
+    aria: freezeCopy({
+      decrementMultiplier: localizedText("减少倍数", "Decrease multiplier"),
+      incrementMultiplier: localizedText("增加倍数", "Increase multiplier")
+    }),
+    rebalanceDialog: freezeCopy({
+      targetSummary: localizedText(
+        "目标分配：资金 50% / 现货 40% / U本位 10%",
+        "Target allocation: Funding 50% / Spot 40% / USDⓈ-M Futures 10%"
+      ),
+      accountHeading: localizedText("账户", "Account"),
+      currentHeading: localizedText("当前 (USDT)", "Current (USDT)"),
+      targetHeading: localizedText("目标 (USDT)", "Target (USDT)"),
+      transferHeading: localizedText("划转计划", "Transfer Plan"),
+      cancel: localizedText("取消", "Cancel"),
+      confirm: localizedText("确认再平衡", "Confirm Rebalance")
+    }),
+    tooltip: freezeCopy({
+      singleOrder: localizedText(
+        "单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。",
+        "Click a price in the order book to submit one order using the current side and quantity settings."
+      ),
+      ladderMaker: localizedText(
+        "根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。",
+        "Submit Post Only ladder orders sequentially using the current ratio, order count, gap, and precision."
+      ),
+      ratio: localizedText(
+        "本次阶梯下单使用可开/可平数量的百分比。",
+        "Percentage of the available open or close quantity used by this ladder."
+      ),
+      orderCount: localizedText(
+        "计划拆分成多少笔阶梯订单。",
+        "Number of orders in the ladder."
+      ),
+      interval: localizedText(
+        "相邻订单跨越多少个订单簿价格级别。",
+        "Number of order-book price levels between adjacent orders."
+      ),
+      pricePrecision: localizedText(
+        "与订单簿中的价格精度联动。黄点表示推荐值。比例、笔数、间距会随所选精度恢复对应设置。",
+        "Linked to the order-book price precision. The yellow dot marks the recommendation. Ratio, orders, and gap restore their saved values for the selected precision."
+      ),
+      continuousClose: localizedText(
+        "Option/Alt + 单击：连续交易",
+        "Option/Alt + click: continuous trading"
+      ),
+      accountRebalance: localizedText(
+        "将资金、现货和 U 本位账户的 USDT 按 5:4:1 分配",
+        "Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a 5:4:1 ratio"
+      )
+    })
+  });
+
+  // src/binance-strategy29-bollinger/ui-copy.js
+  var pair = localizedText;
+  var SUMMARY_COPY = Object.freeze({
+    title: pair("Strategy 29 汇总", "Strategy 29 Summary"),
+    drag: pair("拖动面板", "Drag panel"),
+    collapse: pair("收起", "Collapse"),
+    expand: pair("展开", "Expand"),
+    waiting: pair("等待中", "Waiting"),
+    observerSpec: (value) => pair(`观察器规格 ${value}`, `Observer spec ${value}`),
+    reference: (value) => pair(`本地参考版本 ${value}`, `Local reference ${value}`),
+    noStatus: pair("尚未收到状态", "Status not received"),
+    noEventsCheck: pair("尚未检查事件", "Events not checked"),
+    processing: pair("最近处理状态", "Last processing status"),
+    processingHint: pair("已保存的处理状态不代表当前实时数据已就绪。", "Stored processing status does not confirm current live readiness."),
+    waitingDelivery: pair("全局通知 — 等待中", "Global delivery — waiting"),
+    recent: pair("最近跨周期信号", "Recent cross-timeframe signals"),
+    noEvents: pair("暂无最近信号", "No recent signals"),
+    close: (value) => pair(`收盘 ${value}`, `Close ${value}`),
+    matched: (value) => pair(`规格版本一致 · ${value}`, `Spec version matched · ${value}`),
+    mismatch: (local, server) => pair(`规格不一致 · 本地 ${local} · 服务端 ${server}`, `Spec mismatch · local ${local} · server ${server}`),
+    statusAt: (value) => pair(`状态更新 ${value}`, `Status ${value}`),
+    eventsAt: (value) => pair(`事件检查 ${value}`, `Events checked ${value}`),
+    incompatibleSelection: pair("选币不可用：观察器规格不一致", "Selection unavailable: observer specs are incompatible"),
+    incompatibleDelivery: pair("全局通知状态不可用：观察器规格不一致", "Global delivery unavailable: observer specs are incompatible"),
+    pending: pair("等待中", "pending"),
+    generation: (value) => pair(`批次 ${value}`, `Generation ${value}`),
+    markets: (value) => pair(`${value} 个币种`, `${value} markets`),
+    ready: (ready, total) => pair(`${ready}/${total} 个实时监测单元已就绪`, `${ready}/${total} live units ready`),
+    intervals: (value) => pair(`周期 ${value}`, `Intervals ${value}`),
+    noSuccess: pair("尚无成功选币记录", "No successful selection has been observed"),
+    lastSuccess: (clock, age) => pair(`上次成功选币 ${clock} · ${age} 秒前`, `Last successful selection ${clock} · ${age}s ago`),
+    unavailableSelection: pair("服务端选币不可用", "Server selection is unavailable"),
+    awaitingUnits: pair("币种已入选，等待监测单元状态", "Symbol is selected; waiting for unit status"),
+    notSelected: pair("当前服务端选币未监听此币种", "Symbol is not watched by the current server selection"),
+    delivery: (c) => pair(`全局通知 · 待发送 ${c.pending} · 发送中 ${c.sending} · 已发送 ${c.sent} · 结果未知 ${c.unknown} · 已过期 ${c.expired} · 失败 ${c.failed}`, `Global delivery · Pending ${c.pending} · Sending ${c.sending} · Sent ${c.sent} · Unknown ${c.unknown} · Expired ${c.expired} · Failed ${c.failed}`),
+    configuration: pair("尚未配置网关密钥", "Gateway secret is not configured"),
+    connecting: pair("正在连接 Strategy 29 网关", "Connecting to Strategy 29 gateway"),
+    connected: pair("已连接", "Connected"),
+    moreHistory: pair("已连接 · 仍有历史记录待加载", "Connected · more history pending"),
+    unavailable: pair("网关数据库暂不可用", "Gateway database unavailable"),
+    incompatible: pair("服务端与本地规格不一致", "Server and local specs are incompatible"),
+    disconnected: pair("网关连接失败，将在下次定时检查时重试", "Gateway connection failed; next scheduled poll will retry"),
+    stopped: (detail) => pair(`远程汇总已停止。技术详情：${detail}`, `Remote summary stopped: ${detail}`),
+    menuToggle: pair("切换 Strategy 29 跨周期汇总", "Toggle Strategy 29 cross-timeframe summary"),
+    menuSecret: pair("设置 Strategy 29 网关密钥", "Set Strategy 29 gateway secret"),
+    menuOrigin: pair("设置 Strategy 29 网关地址", "Set Strategy 29 gateway origin"),
+    promptSecret: pair("请输入本地 Strategy 29 网关密钥，仅保存在此用户脚本的私有存储中。", "Enter the local Strategy 29 gateway secret. It is stored only in this userscript storage."),
+    promptOrigin: pair("请输入本机网关地址（http://127.0.0.1:<port>）", "Enter the loopback gateway origin (http://127.0.0.1:<port>)"),
+    emptySecret: pair("Strategy 29 网关密钥不能为空", "Strategy 29 gateway secret cannot be empty"),
+    localStopped: (detail) => pair(`Strategy 29 已停止。技术详情：${detail}`, `Strategy 29 stopped: ${detail}`),
+    conflict: pair("Strategy 29 已停止：请将订单簿脚本更新至 2.7.199 或更高版本，或禁用内嵌布林带观察器的旧版本，然后刷新页面。", "Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.")
+  });
+  var SELECTION_REASONS = Object.freeze({
+    current: pair("当前选币有效", "Selection is current"),
+    using_stale_selection_after_refresh_error: pair("刷新失败，暂沿用上次选币直至过期", "Refresh failed; using the previous selection until expiry"),
+    selection_fail_closed: pair("刷新失败，选币不可用", "Selection unavailable after refresh failure"),
+    selection_expired_or_unusable: pair("选币已过期，等待成功刷新", "Selection expired; waiting for a successful refresh"),
+    missing_current_universe_facts: pair("等待服务端初始化选币", "Waiting for server selection to initialize"),
+    incompatible_current_universe_facts: pair("服务端选币规格不兼容", "Server selection has an incompatible specification")
+  });
+  var STATUS_LABELS = Object.freeze({
+    ready: pair("已处理", "Processed"),
+    warming: pair("预热中", "Warming"),
+    stale: pair("已过期", "Stale"),
+    insufficient_history: pair("历史不足", "Insufficient history"),
+    data_gap: pair("数据缺口", "Data gap"),
+    failed: pair("失败", "Failed")
+  });
+  var SIGNAL_LABELS = Object.freeze({
+    "bearish:warning": pair("看跌预警", "Bearish warning"),
+    "bearish:confirmed": pair("看跌确认", "Bearish confirmed"),
+    "bearish:reversal": pair("多头反转", "Long reversal"),
+    "bullish:warning": pair("看涨预警", "Bullish warning"),
+    "bullish:confirmed": pair("看涨确认", "Bullish confirmed"),
+    "bullish:reversal": pair("空头反转", "Short reversal")
+  });
+  var PROCESSING_REASONS = Object.freeze({
+    current: pair("进度已更新", "Progress current"),
+    awaiting_producer_generation: pair("等待当前批次行情就绪", "Awaiting producer generation"),
+    awaiting_initial_baseline: pair("等待建立初始历史基线", "Awaiting initial baseline"),
+    awaiting_reentry_baseline: pair("等待重新入选的历史基线", "Awaiting re-entry baseline"),
+    latest_closed_candle_missing: pair("缺少最新已收盘 K 线", "Latest closed candle missing"),
+    observer_progress_stale: pair("观察器进度已过期", "Observer progress stale")
+  });
+  function processingReason(reason, locale) {
+    if (Object.hasOwn(PROCESSING_REASONS, reason)) return formatLocalizedText(PROCESSING_REASONS[reason], locale);
+    const required = /^requires_(\d+)_closed_candles$/.exec(reason);
+    if (required) return formatLocalizedText(pair(`需要 ${required[1]} 根已收盘 K 线`, `Requires ${required[1]} closed candles`), locale);
+    return formatLocalizedText(pair(`技术详情：${reason}`, `Details: ${reason}`), locale);
+  }
+
+  // src/binance-strategy29-bollinger/dom/panel-position.js
+  function installPanelPosition(document, panel, header, { initialPosition, savePosition }) {
+    const view = document.defaultView;
+    if (!view) throw new Error("Strategy 29 panel window is unavailable");
+    let position = initialPosition ?? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 };
+    let drag = null;
+    function apply(next) {
+      const rect = panel.getBoundingClientRect();
+      position = {
+        left: Math.max(0, Math.min(next.left, Math.max(0, view.innerWidth - rect.width))),
+        top: Math.max(0, Math.min(next.top, Math.max(0, view.innerHeight - rect.height)))
+      };
+      panel.style.left = `${position.left}px`;
+      panel.style.top = `${position.top}px`;
+      panel.style.right = "auto";
+    }
+    function clamp() {
+      apply(position);
+    }
+    function onDown(event) {
+      if (event.button !== 0 || event.target.closest("button,a")) return;
+      const rect = panel.getBoundingClientRect();
+      drag = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+      event.preventDefault();
+    }
+    function onMove(event) {
+      if (!drag) return;
+      apply({ left: drag.left + event.clientX - drag.x, top: drag.top + event.clientY - drag.y });
+    }
+    function finish() {
+      if (!drag) return;
+      drag = null;
+      clamp();
+      savePosition({ ...position });
+    }
+    clamp();
+    header.style.cursor = "move";
+    header.addEventListener("mousedown", onDown);
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", finish);
+    view.addEventListener("blur", finish);
+    view.addEventListener("resize", clamp);
+    return Object.freeze({
+      clamp,
+      destroy() {
+        drag = null;
+        header.removeEventListener("mousedown", onDown);
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", finish);
+        view.removeEventListener("blur", finish);
+        view.removeEventListener("resize", clamp);
+      }
+    });
+  }
+
   // src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js
   var PANEL_ID = "jh-strategy29-summary-panel";
-  var SELECTION_REASONS = Object.freeze({
-    current: "Selection is current",
-    using_stale_selection_after_refresh_error: "Refresh failed; using the previous selection until expiry",
-    selection_fail_closed: "Selection unavailable after refresh failure",
-    selection_expired_or_unusable: "Selection expired; waiting for a successful refresh",
-    missing_current_universe_facts: "Waiting for server selection to initialize",
-    incompatible_current_universe_facts: "Server selection has an incompatible specification"
-  });
   var STATE_COLORS = Object.freeze({
     connected: "#0ECB81",
     connecting: "#F0B90B",
@@ -1867,14 +2143,6 @@
     insufficient_history: "#F0B90B",
     data_gap: "#F6465D",
     failed: "#F6465D"
-  });
-  var TYPE_LABELS = Object.freeze({
-    "bearish:warning": "Bearish warning",
-    "bearish:confirmed": "Bearish confirmed",
-    "bearish:reversal": "Long reversal",
-    "bullish:warning": "Bullish warning",
-    "bullish:confirmed": "Bullish confirmed",
-    "bullish:reversal": "Short reversal"
   });
   var CLOCK_FORMATTER = new Intl.DateTimeFormat("en-GB", {
     month: "2-digit",
@@ -1898,20 +2166,22 @@
     const part = (name) => parts.find((item) => item.type === name)?.value;
     return `${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")} UTC+08`;
   }
-  function signalLabel(event) {
-    return TYPE_LABELS[`${event.setup_direction}:${event.signal_type}`];
-  }
-  function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEvents = 20 } = {}) {
+  function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEvents = 20, locale = resolveUiLocaleFromPathname(document.location.pathname), loadPosition, savePosition } = {}) {
     if (!document?.body) throw new Error("Strategy 29 summary panel requires document.body");
     if (typeof canonicalSymbol !== "string" || canonicalSymbol.length === 0) throw new Error("Strategy 29 panel symbol is invalid");
     if (!Number.isInteger(maxEvents) || maxEvents < 1 || maxEvents > 100) throw new Error("Strategy 29 panel maxEvents is invalid");
+    const text = (value) => formatLocalizedText(value, locale);
+    text(SUMMARY_COPY.waiting);
+    if (typeof loadPosition !== "function" || typeof savePosition !== "function") throw new TypeError("Strategy 29 panel position adapters are required");
+    const stored = loadPosition();
+    if (stored !== null && (!stored || typeof stored !== "object" || !Number.isFinite(stored.left) || !Number.isFinite(stored.top))) throw new TypeError("Strategy 29 panel position is invalid");
     document.getElementById(PANEL_ID)?.remove();
     const panel = element(document, "section", {
       styles: {
         position: "fixed",
         zIndex: "999995",
-        top: "68px",
-        right: "84px",
+        left: "0",
+        top: "0",
         width: "340px",
         boxSizing: "border-box",
         maxWidth: "calc(100vw - 112px)",
@@ -1931,9 +2201,12 @@
     const header = element(document, "header", {
       styles: { display: "flex", alignItems: "center", gap: "7px", padding: "8px 10px", borderBottom: "1px solid rgba(132,142,156,.20)" }
     });
-    header.appendChild(element(document, "strong", { text: "Strategy 29 Summary", styles: { flex: "1", fontSize: "13px" } }));
+    const heading = element(document, "strong", { text: text(SUMMARY_COPY.title), styles: { flex: "1", fontSize: "13px" } });
+    header.appendChild(element(document, "span", { text: "☰", styles: { color: "#848E9C" } }));
+    header.appendChild(heading);
+    header.title = text(SUMMARY_COPY.drag);
     const collapse = element(document, "button", {
-      text: "Collapse",
+      text: text(SUMMARY_COPY.collapse),
       role: "collapse",
       styles: { border: "0", borderRadius: "5px", padding: "2px 7px", background: "rgba(132,142,156,.18)", color: "#EAECEF", cursor: "pointer" }
     });
@@ -1942,27 +2215,32 @@
     const body = element(document, "div", { role: "body", styles: { maxHeight: "calc(100vh - 150px)", overflow: "auto" } });
     const overview = element(document, "div", { styles: { display: "grid", gap: "4px", padding: "9px 10px" } });
     overview.appendChild(element(document, "div", { text: canonicalSymbol, role: "symbol", styles: { fontWeight: "700" } }));
-    const connection = element(document, "div", { text: "Waiting", role: "connection", styles: { color: "#848E9C", fontSize: "11px" } });
-    const spec = element(document, "div", { text: `Observer spec ${STRATEGY29_SPEC_VERSION}`, role: "spec", styles: { color: "#848E9C", fontSize: "11px" } });
-    const reference = element(document, "div", { text: `Local reference ${STRATEGY29_REFERENCE_SHA256}`, role: "reference", styles: { color: "#848E9C", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "text" } });
-    const statusFreshness = element(document, "div", { text: "Status not received", role: "status-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
-    const eventsFreshness = element(document, "div", { text: "Events not checked", role: "events-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
+    const connection = element(document, "div", { text: text(SUMMARY_COPY.waiting), role: "connection", styles: { color: "#848E9C", fontSize: "11px" } });
+    const spec = element(document, "div", { text: text(SUMMARY_COPY.observerSpec(STRATEGY29_SPEC_VERSION)), role: "spec", styles: { color: "#848E9C", fontSize: "11px" } });
+    const reference = element(document, "div", { text: text(SUMMARY_COPY.reference(STRATEGY29_REFERENCE_SHA256)), role: "reference", styles: { color: "#848E9C", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "text" } });
+    const statusFreshness = element(document, "div", { text: text(SUMMARY_COPY.noStatus), role: "status-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
+    const eventsFreshness = element(document, "div", { text: text(SUMMARY_COPY.noEventsCheck), role: "events-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
     const selection = element(document, "div", { role: "selection", styles: { color: "#EAECEF", fontSize: "11px" } });
     const selectionRefresh = element(document, "div", { role: "selection-refresh", styles: { color: "#848E9C", fontSize: "11px" } });
     overview.append(connection, spec, reference, statusFreshness, selection, selectionRefresh, eventsFreshness);
-    const unitsTitle = element(document, "div", { text: "Last processing status", styles: { padding: "7px 10px 4px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontWeight: "600" } });
-    unitsTitle.appendChild(element(document, "div", {
-      text: "Stored processing status does not confirm current live readiness.",
+    const unitsTitle = element(document, "div", { text: text(SUMMARY_COPY.processing), styles: { padding: "7px 10px 4px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontWeight: "600" } });
+    const processingHint = element(document, "div", {
+      text: text(SUMMARY_COPY.processingHint),
       styles: { fontSize: "11px", fontWeight: "400" }
-    }));
+    });
+    unitsTitle.appendChild(processingHint);
     const units = element(document, "div", { role: "units", styles: { display: "grid", gap: "3px", padding: "0 7px 8px" } });
-    const delivery = element(document, "div", { text: "Global delivery — waiting", role: "delivery", styles: { padding: "7px 10px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontSize: "11px" } });
-    const eventsTitle = element(document, "div", { text: "Recent cross-timeframe signals", styles: { padding: "7px 10px 4px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontWeight: "600" } });
+    const delivery = element(document, "div", { text: text(SUMMARY_COPY.waitingDelivery), role: "delivery", styles: { padding: "7px 10px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontSize: "11px" } });
+    const eventsTitle = element(document, "div", { text: text(SUMMARY_COPY.recent), styles: { padding: "7px 10px 4px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontWeight: "600" } });
     const events = element(document, "div", { role: "events", styles: { display: "grid", gap: "3px", padding: "0 7px 8px" } });
     body.append(overview, unitsTitle, units, delivery, eventsTitle, events);
     panel.append(header, body);
     document.body.appendChild(panel);
+    const position = installPanelPosition(document, panel, header, { initialPosition: stored, savePosition });
     const eventRecords = /* @__PURE__ */ new Map();
+    let lastStatus = null;
+    let lastEventsAt = null;
+    let connectionCopy = SUMMARY_COPY.waiting;
     let destroyed = false;
     function assertLive() {
       if (destroyed) throw new Error("Strategy 29 summary panel is destroyed");
@@ -1978,96 +2256,134 @@
         row.dataset.eventId = event.event_id;
         row.appendChild(element(document, "strong", { text: event.timeframe, styles: { color: "#F0B90B" } }));
         row.appendChild(element(document, "span", {
-          text: signalLabel(event),
+          text: text(SIGNAL_LABELS[`${event.setup_direction}:${event.signal_type}`]),
           styles: { color: event.signal_side === "long" ? "#0ECB81" : "#F6465D", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
         }));
-        row.appendChild(element(document, "span", { text: `Close ${formatClock(event.bar_close_ms)}`, styles: { color: "#848E9C", fontSize: "10px", textAlign: "right" } }));
+        row.appendChild(element(document, "span", { text: text(SUMMARY_COPY.close(formatClock(event.bar_close_ms))), styles: { color: "#848E9C", fontSize: "10px", textAlign: "right" } }));
         events.appendChild(row);
       }
-      if (ordered.length === 0) events.appendChild(element(document, "span", { text: "No recent signals", styles: { color: "#848E9C", padding: "4px" } }));
+      if (ordered.length === 0) events.appendChild(element(document, "span", { text: text(SUMMARY_COPY.noEvents), styles: { color: "#848E9C", padding: "4px" } }));
     }
     collapse.addEventListener("click", () => {
       const collapsed = body.style.display !== "none";
       body.style.display = collapsed ? "none" : "block";
-      collapse.textContent = collapsed ? "Expand" : "Collapse";
+      collapse.textContent = text(collapsed ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
+      position.clamp();
     });
     renderEvents();
-    return Object.freeze({
+    const api = Object.freeze({
+      setLocale(nextLocale) {
+        assertLive();
+        formatLocalizedText(SUMMARY_COPY.waiting, nextLocale);
+        if (locale === nextLocale) return;
+        locale = nextLocale;
+        heading.textContent = text(SUMMARY_COPY.title);
+        header.title = text(SUMMARY_COPY.drag);
+        collapse.textContent = text(body.style.display === "none" ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
+        connection.textContent = text(connectionCopy);
+        reference.textContent = text(SUMMARY_COPY.reference(STRATEGY29_REFERENCE_SHA256));
+        unitsTitle.firstChild.textContent = text(SUMMARY_COPY.processing);
+        processingHint.textContent = text(SUMMARY_COPY.processingHint);
+        eventsTitle.textContent = text(SUMMARY_COPY.recent);
+        eventsFreshness.textContent = text(lastEventsAt === null ? SUMMARY_COPY.noEventsCheck : SUMMARY_COPY.eventsAt(formatClock(lastEventsAt)));
+        if (lastStatus !== null) api.renderStatus(lastStatus);
+        else {
+          spec.textContent = text(SUMMARY_COPY.observerSpec(STRATEGY29_SPEC_VERSION));
+          statusFreshness.textContent = text(SUMMARY_COPY.noStatus);
+          delivery.textContent = text(SUMMARY_COPY.waitingDelivery);
+        }
+        renderEvents();
+        position.clamp();
+      },
       setConnection(state, message) {
         assertLive();
-        if (!(state in STATE_COLORS) || typeof message !== "string") throw new Error("Strategy 29 panel connection state is invalid");
+        if (!(state in STATE_COLORS)) throw new Error("Strategy 29 panel connection state is invalid");
         connection.dataset.state = state;
         connection.style.color = STATE_COLORS[state];
-        connection.textContent = message;
+        connectionCopy = message;
+        connection.textContent = text(message);
+        position.clamp();
       },
       renderStatus(snapshot) {
         assertLive();
+        lastStatus = snapshot;
         const matched = snapshot.spec_version === STRATEGY29_SPEC_VERSION;
         spec.dataset.state = matched ? "matched" : "error";
         spec.style.color = matched ? "#0ECB81" : "#F6465D";
-        spec.textContent = matched ? `Spec version matched · ${STRATEGY29_SPEC_VERSION}` : `Spec mismatch · local ${STRATEGY29_SPEC_VERSION} · server ${snapshot.spec_version}`;
-        statusFreshness.textContent = `Status ${formatClock(snapshot.observed_at_ms)}`;
+        spec.textContent = matched ? text(SUMMARY_COPY.matched(STRATEGY29_SPEC_VERSION)) : text(SUMMARY_COPY.mismatch(STRATEGY29_SPEC_VERSION, snapshot.spec_version));
+        statusFreshness.textContent = text(SUMMARY_COPY.statusAt(formatClock(snapshot.observed_at_ms)));
         if (!matched) {
           selection.dataset.state = "incompatible";
           selection.style.color = "#F6465D";
-          selection.textContent = "Selection unavailable: observer specs are incompatible";
+          selection.textContent = text(SUMMARY_COPY.incompatibleSelection);
           selectionRefresh.textContent = "";
           units.replaceChildren();
-          delivery.textContent = "Global delivery unavailable: observer specs are incompatible";
+          delivery.textContent = text(SUMMARY_COPY.incompatibleDelivery);
+          position.clamp();
           return;
         }
         const universe = snapshot.universe;
         const unavailable = universe.refresh_status === "fail_closed";
         selection.dataset.state = universe.refresh_status;
         selection.style.color = unavailable ? "#F6465D" : universe.refresh_status === "fresh" ? "#0ECB81" : "#F0B90B";
-        selection.textContent = `${SELECTION_REASONS[universe.reason]} · Generation ${universe.generation ?? "pending"} · ${universe.selected_markets.length} markets · ${universe.ready_unit_count}/${universe.selected_unit_count} live units ready · Intervals ${universe.configured_timeframes.join(", ") || "pending"}`;
-        selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null ? "No successful selection has been observed" : `Last successful selection ${formatClock(universe.last_successful_refreshed_at_ms)} · ${universe.last_success_age_seconds.toFixed(1)}s ago`;
+        selection.textContent = [text(SELECTION_REASONS[universe.reason]), text(SUMMARY_COPY.generation(universe.generation ?? text(SUMMARY_COPY.pending))), text(SUMMARY_COPY.markets(universe.selected_markets.length)), text(SUMMARY_COPY.ready(universe.ready_unit_count, universe.selected_unit_count)), text(SUMMARY_COPY.intervals(universe.configured_timeframes.join(", ") || text(SUMMARY_COPY.pending)))].join(" · ");
+        selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null ? text(SUMMARY_COPY.noSuccess) : text(SUMMARY_COPY.lastSuccess(formatClock(universe.last_successful_refreshed_at_ms), universe.last_success_age_seconds.toFixed(1)));
         units.replaceChildren();
         const selected = universe.selected_markets.includes(canonicalSymbol);
         const matching = unavailable || !selected ? [] : snapshot.units.filter((unit) => unit.symbol === canonicalSymbol && universe.configured_timeframes.includes(unit.timeframe));
         for (const unit of matching) {
           const row = element(document, "div", {
             role: "unit",
-            styles: { display: "grid", gridTemplateColumns: "42px 64px minmax(0,1fr)", gap: "6px", padding: "4px 6px", borderRadius: "5px", background: "rgba(132,142,156,.08)" }
+            styles: { display: "grid", gridTemplateColumns: "36px 78px minmax(0,1fr)", gap: "6px", padding: "4px 6px", borderRadius: "5px", background: "rgba(132,142,156,.08)" }
           });
           row.appendChild(element(document, "strong", { text: unit.timeframe, styles: { color: "#EAECEF" } }));
-          row.appendChild(element(document, "span", { text: unit.status === "ready" ? "Processed" : unit.status, styles: { color: STATUS_COLORS[unit.status] } }));
-          row.appendChild(element(document, "span", { text: unit.reason, styles: { color: "#848E9C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }));
+          row.appendChild(element(document, "span", { text: text(STATUS_LABELS[unit.status]), styles: { color: STATUS_COLORS[unit.status] } }));
+          row.appendChild(element(document, "span", { text: processingReason(unit.reason, locale), styles: { color: "#848E9C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }));
           units.appendChild(row);
         }
         if (matching.length === 0) units.appendChild(element(document, "span", {
-          text: unavailable ? "Server selection is unavailable" : selected ? "Symbol is selected; waiting for unit status" : "Symbol is not watched by the current server selection",
+          text: text(unavailable ? SUMMARY_COPY.unavailableSelection : selected ? SUMMARY_COPY.awaitingUnits : SUMMARY_COPY.notSelected),
           styles: { color: "#F0B90B", padding: "4px" }
         }));
         const counts = snapshot.delivery_counts;
-        delivery.textContent = `Global delivery · Pending ${counts.pending} · Sending ${counts.sending} · Sent ${counts.sent} · Unknown ${counts.unknown} · Expired ${counts.expired} · Failed ${counts.failed}`;
+        delivery.textContent = text(SUMMARY_COPY.delivery(counts));
+        position.clamp();
       },
       addEvents(incoming, observedAtMs = null) {
         assertLive();
         for (const event of incoming) eventRecords.set(event.event_id, event);
         const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
         while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
-        if (observedAtMs !== null) eventsFreshness.textContent = `Events checked ${formatClock(observedAtMs)}`;
+        if (observedAtMs !== null) {
+          lastEventsAt = observedAtMs;
+          eventsFreshness.textContent = text(SUMMARY_COPY.eventsAt(formatClock(observedAtMs)));
+        }
         renderEvents();
+        position.clamp();
       },
       clearEvents() {
         assertLive();
         eventRecords.clear();
         renderEvents();
+        position.clamp();
       },
       destroy() {
         if (destroyed) return;
         destroyed = true;
         eventRecords.clear();
+        position.destroy();
         panel.remove();
       },
       get size() {
         return eventRecords.size;
       }
     });
+    position.clamp();
+    return api;
   }
 
   // src/binance-strategy29-bollinger/remote-summary.js
+  var STRATEGY29_PANEL_POSITION_KEY = "strategy29SummaryPanelPosition";
   var STRATEGY29_REMOTE_ENABLED_KEY = "strategy29RemoteSummaryEnabled";
   var STRATEGY29_GATEWAY_ORIGIN_KEY = "strategy29GatewayOrigin";
   var STRATEGY29_GATEWAY_SECRET_KEY = "strategy29GatewayAuthSecret";
@@ -2108,6 +2424,8 @@
     let active = null;
     let disposed = false;
     let unsupportedRoute = null;
+    let locale = resolveUiLocaleFromPathname(view.location.pathname);
+    const text = (value) => formatLocalizedText(value, locale);
     function isCurrent(context) {
       return !disposed && active === context && !context.abortController.signal.aborted;
     }
@@ -2128,7 +2446,12 @@
     }
     function startContext(routeSymbol) {
       const canonicalSymbol = routeSymbolToCanonical(routeSymbol);
-      const panel = createPanel(view.document, canonicalSymbol, { maxEvents: 20 });
+      const panel = createPanel(view.document, canonicalSymbol, {
+        maxEvents: 20,
+        locale,
+        loadPosition: () => getValue(STRATEGY29_PANEL_POSITION_KEY, null),
+        savePosition: (position) => setValue(STRATEGY29_PANEL_POSITION_KEY, position)
+      });
       const AbortControllerConstructor = view.AbortController ?? AbortController;
       const context = {
         routeSymbol,
@@ -2153,14 +2476,14 @@
         context.failed = true;
         context.state = "stopped";
         context.lastError = error.message;
-        panel.setConnection("stopped", `Remote summary stopped: ${error.message}`);
+        panel.setConnection("stopped", SUMMARY_COPY.stopped(error.message));
         view.console.warn("[Strategy29 remote]", error.message);
         return context;
       }
       const { authSecret, gatewayOrigin } = settings;
       if (authSecret.length === 0) {
         context.state = "configuration_required";
-        panel.setConnection("configuration_required", "Gateway secret is not configured");
+        panel.setConnection("configuration_required", SUMMARY_COPY.configuration);
         return context;
       }
       try {
@@ -2184,7 +2507,7 @@
         context.failed = true;
         context.state = "stopped";
         context.lastError = error.message;
-        panel.setConnection("stopped", `Remote summary stopped: ${error.message}`);
+        panel.setConnection("stopped", SUMMARY_COPY.stopped(error.message));
         view.console.warn("[Strategy29 remote]", error.message);
       }
       return context;
@@ -2216,6 +2539,7 @@
     }
     function sample(nowMs = Date.now()) {
       if (disposed || view.document.hidden) return;
+      synchronizeLocale();
       const context = synchronizeContext();
       if (!context || !context.client || context.inFlight || context.failed || nowMs < context.nextPollAtMs) return;
       if (context.abortController.signal.aborted) {
@@ -2227,16 +2551,16 @@
       context.nextPollAtMs = nowMs + pollIntervalMs;
       context.inFlight = true;
       context.state = "connecting";
-      context.panel.setConnection("connecting", "Connecting to Strategy 29 gateway");
+      context.panel.setConnection("connecting", SUMMARY_COPY.connecting);
       return context.client.poll(controller.signal).then((result) => {
         if (!ownsRequest()) return;
         context.lastResult = result;
         context.lastError = null;
         context.state = result.state;
         const presentation = {
-          connected: ["connected", result.hasMore ? "Connected · more history pending" : "Connected"],
-          unavailable: ["unavailable", "Gateway database unavailable"],
-          incompatible: ["incompatible", "Server and local specs are incompatible"]
+          connected: ["connected", result.hasMore ? SUMMARY_COPY.moreHistory : SUMMARY_COPY.connected],
+          unavailable: ["unavailable", SUMMARY_COPY.unavailable],
+          incompatible: ["incompatible", SUMMARY_COPY.incompatible]
         }[result.state];
         if (!presentation) throw new Error(`Strategy 29 remote state is invalid: ${result.state}`);
         context.panel.setConnection(...presentation);
@@ -2245,11 +2569,11 @@
         context.lastError = error.message;
         if (error instanceof Strategy29GatewayTransportError) {
           context.state = "disconnected";
-          context.panel.setConnection("disconnected", "Gateway connection failed; next scheduled poll will retry");
+          context.panel.setConnection("disconnected", SUMMARY_COPY.disconnected);
         } else {
           context.state = "stopped";
           context.failed = true;
-          context.panel.setConnection("stopped", `Remote summary stopped: ${error.message}`);
+          context.panel.setConnection("stopped", SUMMARY_COPY.stopped(error.message));
         }
         view.console.warn("[Strategy29 remote]", error.message);
       }).finally(() => {
@@ -2261,25 +2585,35 @@
       stopActive("Strategy 29 remote settings changed");
       if (!disposed) void sample(Date.now());
     }
-    registerMenuCommand("Toggle Strategy 29 cross-timeframe summary", () => {
-      enabled = !enabled;
-      setValue(STRATEGY29_REMOTE_ENABLED_KEY, enabled);
-      restart();
-    });
-    registerMenuCommand("Set Strategy 29 gateway secret", () => {
-      const value = promptUser2("Enter the local Strategy 29 gateway secret. It is stored only in this userscript storage.");
-      if (value === null) return;
-      if (value.length === 0) throw new Error("Strategy 29 gateway secret cannot be empty");
-      setValue(STRATEGY29_GATEWAY_SECRET_KEY, value);
-      restart();
-    });
-    registerMenuCommand("Set Strategy 29 gateway origin", () => {
-      const current = getValue(STRATEGY29_GATEWAY_ORIGIN_KEY, STRATEGY29_DEFAULT_GATEWAY_ORIGIN);
-      const value = promptUser2("Enter the loopback gateway origin (http://127.0.0.1:<port>)", current);
-      if (value === null) return;
-      setValue(STRATEGY29_GATEWAY_ORIGIN_KEY, normalizeStrategy29GatewayOrigin(value));
-      restart();
-    });
+    const menus = [
+      { copy: SUMMARY_COPY.menuToggle, run() {
+        enabled = !enabled;
+        setValue(STRATEGY29_REMOTE_ENABLED_KEY, enabled);
+        restart();
+      } },
+      { copy: SUMMARY_COPY.menuSecret, run() {
+        const value = promptUser2(formatLocalizedText(SUMMARY_COPY.promptSecret, resolveUiLocaleFromPathname(view.location.pathname)));
+        if (value === null) return;
+        if (value.length === 0) throw new Error(text(SUMMARY_COPY.emptySecret));
+        setValue(STRATEGY29_GATEWAY_SECRET_KEY, value);
+        restart();
+      } },
+      { copy: SUMMARY_COPY.menuOrigin, run() {
+        const current = getValue(STRATEGY29_GATEWAY_ORIGIN_KEY, STRATEGY29_DEFAULT_GATEWAY_ORIGIN);
+        const value = promptUser2(formatLocalizedText(SUMMARY_COPY.promptOrigin, resolveUiLocaleFromPathname(view.location.pathname)), current);
+        if (value === null) return;
+        setValue(STRATEGY29_GATEWAY_ORIGIN_KEY, normalizeStrategy29GatewayOrigin(value));
+        restart();
+      } }
+    ];
+    for (const menu of menus) menu.id = registerMenuCommand(text(menu.copy), menu.run);
+    function synchronizeLocale() {
+      const current = resolveUiLocaleFromPathname(view.location.pathname);
+      if (current === locale) return;
+      locale = current;
+      for (const menu of menus) menu.id = registerMenuCommand(text(menu.copy), menu.run, { id: menu.id });
+      active?.panel.setLocale(locale);
+    }
     return Object.freeze({
       sample,
       pause() {
@@ -2316,7 +2650,7 @@
   // src/binance-strategy29-bollinger/runtime.js
   var INSTANCE = Symbol.for("jh-userscripts.strategy29-bollinger");
   var RUNTIME_VERSION = 2;
-  var CONFLICT = "Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.";
+  var CONFLICT = SUMMARY_COPY.conflict;
   function hasEmbeddedBollinger(view) {
     const debug = view.__TM_CLOSE_LONG_DEBUG__;
     return !!debug && Object.getOwnPropertyDescriptor(debug, "bollingerAlertState") !== void 0;
@@ -2343,7 +2677,7 @@
         notice.style.cssText = "position:fixed;left:16px;bottom:16px;z-index:10000;max-width:420px;padding:10px;background:#332b16;color:#ffcf67;font:13px sans-serif;pointer-events:none";
         document.body.append(notice);
       }
-      notice.textContent = failed;
+      notice.textContent = formatLocalizedText(failed, resolveUiLocaleFromPathname(view.location.pathname));
     }
     const monitor = createBollingerMonitor({
       document,
@@ -2366,7 +2700,11 @@
       showFailure();
     }
     function sample() {
-      if (disposed || failed || document.hidden) return;
+      if (disposed || document.hidden) return;
+      if (failed) {
+        showFailure();
+        return;
+      }
       if (hasEmbeddedBollinger(view)) {
         fail(CONFLICT);
         return;
@@ -2377,7 +2715,7 @@
         monitor.stop();
         return;
       }
-      void monitor.tick().catch((error) => fail(`Strategy 29 stopped: ${error.message}`));
+      void monitor.tick().catch((error) => fail(SUMMARY_COPY.localStopped(error.message)));
     }
     function resume() {
       if (disposed || failed || document.hidden) return;
@@ -2399,7 +2737,7 @@
       get diagnostics() {
         return {
           ...monitor.diagnostics,
-          runtimeFailure: failed,
+          runtimeFailure: failed === null ? null : formatLocalizedText(failed, "en"),
           disposed,
           timerRunning: timer !== null,
           remoteSummary: remoteSummary?.diagnostics ?? Object.freeze({ enabled: false, state: "unavailable_in_this_installation" })
