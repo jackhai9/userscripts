@@ -143,6 +143,7 @@ export function createLiveEventClient({
             signal,
           });
         } catch (error) {
+          if (signal.aborted) return;
           if (!(error instanceof Strategy27GatewayTransportError)) throw error;
           if (!reconnecting) {
             reconnecting = true;
@@ -151,10 +152,12 @@ export function createLiveEventClient({
           await waitForReconnect(reconnectDelayMs, signal);
           continue;
         }
+        if (signal.aborted) return;
         const payload = parseResponseJson(response, needsBootstrap);
         if (!needsBootstrap) assertCursorContract(payload, cursor);
         if (payload.status === 'error') {
-          if (needsBootstrap && response.status === 503) {
+          // Validated unavailability does not invalidate the retained stream cursor.
+          if (response.status === 503) {
             if (!reconnecting) {
               reconnecting = true;
               onConnectionStateChange('reconnecting');
@@ -168,6 +171,7 @@ export function createLiveEventClient({
           reconnecting = false;
           onConnectionStateChange('connected');
         }
+        if (signal.aborted) return;
         await onResponse(payload);
         if (!needsBootstrap && payload.status === 'reset') {
           cursor = null;

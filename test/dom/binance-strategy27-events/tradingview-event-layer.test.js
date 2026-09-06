@@ -377,7 +377,7 @@ test('reconciliation restores missing ordinary markers without an event and neve
 });
 
 test('ordinary timer and gateway repair share a single creation and cancel stale results', async () => {
-  for (const action of ['retain', 'clear', 'remove', 'expire', 'interval', 'symbol']) {
+  for (const action of ['retain', 'clear', 'remove', 'expire', 'interval', 'symbol', 'suspend']) {
     const f = createChartDom();
     const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 2, maxAgeMs: 60000 });
     await layer.renderOpened('a', annotation(), 10000);
@@ -397,6 +397,7 @@ test('ordinary timer and gateway repair share a single creation and cancel stale
     const update = layer.renderUpdated('a', annotation(), 11000);
     const anotherTick = layer.reconcile();
     if (action === 'clear') layer.clear();
+    if (action === 'suspend') layer.suspend();
     if (action === 'remove') layer.remove('a');
     if (action === 'expire') layer.prune(7200000);
     if (action === 'interval') f.chart.resolution = () => '1';
@@ -411,4 +412,27 @@ test('ordinary timer and gateway repair share a single creation and cancel stale
     await layer.reconcile();
     assert.equal(f.shapes.size, 0);
   }
+});
+
+test('suspension retains existing markers, cancels late first creation and still permits expiry', async () => {
+  const f = createChartDom();
+  const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 3, maxAgeMs: 60000 });
+  await layer.renderOpened('a', annotation(), 10000);
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const create = f.chart.createShape;
+  f.chart.createShape = async (...args) => { entered.resolve(); await release.promise; return create(...args); };
+  const pending = layer.renderOpened('b', annotation(), 11000);
+  await entered.promise;
+  layer.suspend();
+  release.resolve();
+  assert.equal(await pending, false);
+  assert.deepEqual([...f.shapes.keys()], ['shape-1']);
+  assert.equal(layer.size, 1);
+  assert.equal(await layer.renderOpened('c', annotation(), 12000), false);
+  await layer.reconcile();
+  assert.deepEqual([...f.shapes.keys()], ['shape-1']);
+  layer.prune(70001);
+  assert.equal(layer.size, 0);
+  assert.equal(f.shapes.size, 0);
 });

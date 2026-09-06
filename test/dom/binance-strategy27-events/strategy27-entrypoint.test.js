@@ -96,12 +96,13 @@ async function harness(t, { generated = false, beforeCreate } = {}) {
     await until(() => pending('compound').length === 1);
   }
   return {
-    page, shapes, requests, pending, respond, candidate, timers,
+    page, chart, shapes, requests, pending, respond, candidate, timers,
     reset: () => respond('compound', { schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     ordinaryBootstrap: () => respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     rows: () => page.document.querySelectorAll('[data-role="compound-row"]').length,
     tick: () => timers.get(1)(),
     clear: () => menus.get('清除 Strategy 27 图表标注')(),
+    restart: () => menus.get('Reconnect Strategy 27 and restore history')(),
     setNow: (value) => { now = value; },
     setResolution: (value) => { resolution = value; },
   };
@@ -382,3 +383,68 @@ test('timer expiry cancels an ordinary first creation that is still awaiting Tra
   assert.deepEqual([...h.shapes.keys()], ['user-owned']);
   assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
 });
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} live 503 retains ordinary history and resumes at the same cursor`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.ordinaryBootstrap();
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
+    await until(() => h.pending('ordinary').length === 1);
+    const ids = [...h.shapes.keys()];
+    assert.equal(ids.length, 2);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await h.respond('ordinary', { schema_version: 1, status: 'error', error_code: 'redis_unavailable' }, 503);
+    await until(() => h.page.document.getElementById('jh-strategy27-event-status') !== null);
+    assert.equal(h.page.document.getElementById('jh-strategy27-event-status').dataset.state, 'inactive');
+    h.tick();
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
+    t.mock.timers.tick(1999);
+    assert.equal(h.pending('ordinary').length, 0);
+    t.mock.timers.tick(1);
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(new URL(h.pending('ordinary')[0].options.url).searchParams.get('cursor'), '2-0');
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '2-0', next_cursor: '3-0', messages: [{ ...ordinaryMessage(), sequence: 3 }] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
+    assert.equal(h.page.document.getElementById('jh-strategy27-event-status'), null);
+  });
+
+  test(`${generated ? 'generated' : 'source'} fatal repair preserves surviving history until expiry or explicit restart`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.ordinaryBootstrap();
+    const first = ordinaryMessage();
+    const second = { ...ordinaryMessage(), event_id: 'c'.repeat(64), sequence: 3 };
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '3-0', messages: [first, second] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(h.shapes.size, 3);
+    const ids = [...h.shapes.keys()].filter((id) => id !== 'user-owned');
+    h.shapes.delete(ids[0]);
+    const create = h.chart.createShape;
+    h.chart.createShape = async (point, options) => create({ ...point, time: point.time - 1 }, options);
+    h.tick();
+    await until(() => h.page.document.getElementById('jh-strategy27-event-status')?.dataset.state === 'error');
+    assert.match(h.page.document.getElementById('jh-strategy27-event-status').textContent, /time alignment failed/);
+    assert.deepEqual([...h.shapes.keys()], ['user-owned', ids[1]]);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 2);
+    assert.equal(h.pending('ordinary').length, 0);
+    h.tick();
+    await new Promise(setImmediate);
+    assert.deepEqual([...h.shapes.keys()], ['user-owned', ids[1]]);
+    h.setNow(7207001);
+    h.tick();
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
+    h.chart.createShape = create;
+    h.setNow(7000);
+    h.restart();
+    assert.equal(h.pending('ordinary').length, 1);
+    assert.equal(new URL(h.pending('ordinary')[0].options.url).pathname, '/v1/strategy27/events/bootstrap');
+    await h.ordinaryBootstrap();
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [first] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(h.shapes.size, 2);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
+  });
+}

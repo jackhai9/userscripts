@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.2
+// @version      0.4.3
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -742,6 +742,7 @@
               signal
             });
           } catch (error) {
+            if (signal.aborted) return;
             if (!(error instanceof Strategy27GatewayTransportError)) throw error;
             if (!reconnecting) {
               reconnecting = true;
@@ -750,10 +751,11 @@
             await waitForReconnect(reconnectDelayMs, signal);
             continue;
           }
+          if (signal.aborted) return;
           const payload = parseResponseJson(response, needsBootstrap);
           if (!needsBootstrap) assertCursorContract(payload, cursor);
           if (payload.status === "error") {
-            if (needsBootstrap && response.status === 503) {
+            if (response.status === 503) {
               if (!reconnecting) {
                 reconnecting = true;
                 onConnectionStateChange("reconnecting");
@@ -767,6 +769,7 @@
             reconnecting = false;
             onConnectionStateChange("connected");
           }
+          if (signal.aborted) return;
           await onResponse(payload);
           if (!needsBootstrap && payload.status === "reset") {
             cursor = null;
@@ -1202,6 +1205,7 @@
     const pendingRenders = /* @__PURE__ */ new Map();
     let renderGeneration = 0;
     let reconciliation = null;
+    let suspended = false;
     function removeRecord(eventId) {
       pendingRenders.get(eventId)?.abort();
       const record = registry.get(eventId);
@@ -1219,7 +1223,7 @@
     }
     function restoreMarker(eventId, record, liveIds) {
       if (record.restoring) return record.restoring;
-      const current = () => registry.get(eventId) === record && isChartCurrent();
+      const current = () => !suspended && registry.get(eventId) === record && isChartCurrent();
       if (!current()) return Promise.resolve(false);
       if (liveIds.has(record.markerId)) return Promise.resolve(true);
       record.restoring = (async () => {
@@ -1236,11 +1240,12 @@
       return record.restoring;
     }
     function reconcile() {
+      if (suspended) return Promise.resolve();
       if (reconciliation) return reconciliation;
       reconciliation = (async () => {
         let liveIds = readLiveShapeIds(chart);
         for (const [eventId, record] of [...registry]) {
-          if (registry.get(eventId) !== record || !isChartCurrent()) continue;
+          if (suspended || registry.get(eventId) !== record || !isChartCurrent()) continue;
           if (!record.restoring && liveIds.has(record.markerId)) continue;
           await restoreMarker(eventId, record, liveIds);
           liveIds = readLiveShapeIds(chart);
@@ -1251,6 +1256,7 @@
       return reconciliation;
     }
     async function ensureMarker(eventId, annotation, observedAtMs) {
+      if (suspended) return false;
       let record = registry.get(eventId);
       if (record) {
         record.observedAtMs = observedAtMs;
@@ -1286,6 +1292,12 @@
       remove: removeRecord,
       prune: pruneAge,
       reconcile,
+      /** Stop new presentation without deleting verified history after a job failure. */
+      suspend() {
+        suspended = true;
+        renderGeneration += 1;
+        for (const controller of pendingRenders.values()) controller.abort();
+      },
       clear() {
         renderGeneration += 1;
         for (const controller of pendingRenders.values()) controller.abort();
@@ -2703,19 +2715,13 @@
       if (error.name === "AbortError" || active !== context || context.failed) return;
       context.failed = true;
       context.controller.abort();
-      let failure = error;
-      try {
-        context.layer.clear();
-      } catch (cleanupError) {
-        failure = new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
-      }
-      context.panel.clear();
-      showStatus(context.target.chartRoot, `Strategy 27 已停止：${failure.message}`, "error");
+      context.layer.suspend();
+      showStatus(context.target.chartRoot, `Strategy 27 stopped; history retained. Use the reconnect menu to resume: ${error.message}`, "error");
     }
     function reconcileOrdinary(context) {
-      if (context.failed) return;
       try {
         pruneOrdinaryEvents(context);
+        if (context.failed) return;
         if (context.reconciliation) return;
         context.reconciliation = context.layer.reconcile().catch((error) => failOrdinary(context, error)).finally(() => {
           context.reconciliation = null;
@@ -2842,7 +2848,7 @@
         authSecret,
         canonicalSymbol,
         onConnectionStateChange: (state) => {
-          if (active !== context) return;
+          if (active !== context || context.failed) return;
           if (state === "reconnecting") {
             showStatus(context.target.chartRoot, "Strategy 27 网关连接中断，正在重连", "inactive");
           } else {
@@ -2938,8 +2944,9 @@
       active?.compound.clear();
       active?.layer.clear();
       active?.panel.clear();
-      hideStatus();
+      if (!active?.failed) hideStatus();
     });
+    GM_registerMenuCommand("Reconnect Strategy 27 and restore history", restart);
     const removeRouteListener = installSpaRouteChangeListener(page, restart);
     const contextTimer = page.setInterval(synchronizeContext, CONTEXT_CHECK_INTERVAL_MS);
     page.addEventListener("beforeunload", () => {

@@ -268,6 +268,7 @@ export function createTradingViewEventLayer(target, {
   const pendingRenders = new Map();
   let renderGeneration = 0;
   let reconciliation = null;
+  let suspended = false;
 
   function removeRecord(eventId) {
     pendingRenders.get(eventId)?.abort();
@@ -289,7 +290,7 @@ export function createTradingViewEventLayer(target, {
 
   function restoreMarker(eventId, record, liveIds) {
     if (record.restoring) return record.restoring;
-    const current = () => registry.get(eventId) === record && isChartCurrent();
+    const current = () => !suspended && registry.get(eventId) === record && isChartCurrent();
     if (!current()) return Promise.resolve(false);
     if (liveIds.has(record.markerId)) return Promise.resolve(true);
     record.restoring = (async () => {
@@ -305,11 +306,12 @@ export function createTradingViewEventLayer(target, {
   }
 
   function reconcile() {
+    if (suspended) return Promise.resolve();
     if (reconciliation) return reconciliation;
     reconciliation = (async () => {
       let liveIds = readLiveShapeIds(chart);
       for (const [eventId, record] of [...registry]) {
-        if (registry.get(eventId) !== record || !isChartCurrent()) continue;
+        if (suspended || registry.get(eventId) !== record || !isChartCurrent()) continue;
         if (!record.restoring && liveIds.has(record.markerId)) continue;
         await restoreMarker(eventId, record, liveIds);
         // A native create yields; refresh before examining another record.
@@ -320,6 +322,7 @@ export function createTradingViewEventLayer(target, {
   }
 
   async function ensureMarker(eventId, annotation, observedAtMs) {
+    if (suspended) return false;
     let record = registry.get(eventId);
     if (record) {
       record.observedAtMs = observedAtMs;
@@ -356,6 +359,12 @@ export function createTradingViewEventLayer(target, {
     remove: removeRecord,
     prune: pruneAge,
     reconcile,
+    /** Stop new presentation without deleting verified history after a job failure. */
+    suspend() {
+      suspended = true;
+      renderGeneration += 1;
+      for (const controller of pendingRenders.values()) controller.abort();
+    },
     clear() {
       renderGeneration += 1;
       for (const controller of pendingRenders.values()) controller.abort();
