@@ -4,9 +4,11 @@ import { isFuturesTradingPathname, parseFuturesTradingSymbolFromPathname } from 
 import { ensureSpaRouteChangePatched, installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 import { createStrategy29RemoteSummary } from './remote-summary.js';
 
+import { SUMMARY_COPY as COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
+
 const INSTANCE = Symbol.for('jh-userscripts.strategy29-bollinger');
 const RUNTIME_VERSION = 2;
-const CONFLICT = 'Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.';
+const CONFLICT = COPY.conflict;
 
 /** This is a migration refusal, not compatibility with the old independently owned save wrapper. */
 export function hasEmbeddedBollinger(view) {
@@ -39,7 +41,7 @@ export function installStrategy29(view, remoteAdapters = null) {
       notice.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:10000;max-width:420px;padding:10px;background:#332b16;color:#ffcf67;font:13px sans-serif;pointer-events:none';
       document.body.append(notice);
     }
-    notice.textContent = failed;
+    notice.textContent = formatLocalizedText(failed, resolveUiLocaleFromPathname(view.location.pathname));
   }
   const monitor = createBollingerMonitor({
     document,
@@ -62,13 +64,14 @@ export function installStrategy29(view, remoteAdapters = null) {
     showFailure();
   }
   function sample() {
-    if (disposed || failed || document.hidden) return;
+    if (disposed || document.hidden) return;
+    if (failed) { showFailure(); return; }
     if (hasEmbeddedBollinger(view)) { fail(CONFLICT); return; }
     ensureSpaRouteChangePatched(view);
     void remoteSummary?.sample(Date.now());
     if (!isFuturesTradingPathname(view.location.pathname)) { monitor.stop(); return; }
     // Job boundary: unexpected synchronization errors stop this observer only.
-    void monitor.tick().catch(error => fail(`Strategy 29 stopped: ${error.message}`));
+    void monitor.tick().catch(error => fail(COPY.localStopped(error.message)));
   }
   function resume() {
     if (disposed || failed || document.hidden) return;
@@ -82,7 +85,7 @@ export function installStrategy29(view, remoteAdapters = null) {
     get diagnostics() {
       return {
         ...monitor.diagnostics,
-        runtimeFailure: failed,
+        runtimeFailure: failed === null ? null : formatLocalizedText(failed, 'en'),
         disposed,
         timerRunning: timer !== null,
         remoteSummary: remoteSummary?.diagnostics ?? Object.freeze({ enabled: false, state: 'unavailable_in_this_installation' }),
