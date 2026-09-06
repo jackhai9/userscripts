@@ -40,6 +40,9 @@ or stop. It records the export/reconcile/detect/render stage, thrown value type,
 bounded name (64 characters) and message (512 characters), route, interval and
 pre-cleanup counts. String rejections supply the message directly; missing string
 name/message fields are null, and arbitrary rejected objects are not serialized.
+Each field is read once. A throwing host accessor leaves that field null and adds
+its name to `unreadableFields`; this diagnostic boundary cannot replace the original
+monitor failure with a property-read failure.
 It describes the last fatal event, not necessarily the active context. It does not
 store stack traces, candles, requests or gateway credentials, and is never persisted
 or sent to the remote service. Recoverable snapshot races leave it unchanged.

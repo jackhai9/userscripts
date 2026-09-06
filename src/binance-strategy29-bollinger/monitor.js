@@ -178,11 +178,21 @@ export function createBollingerMonitor({
         return;
       }
       /** Preserve host rejection types without serializing arbitrary objects or stacks. */
+      const details = { name: null, message: null };
+      const unreadableFields = [];
+      for (const [key, limit] of [['name', 64], ['message', 512]]) {
+        try {
+          const value = key === 'message' && typeof error === 'string' ? error : error?.[key];
+          details[key] = typeof value === 'string' ? value.slice(0, limit) : null;
+        } catch {
+          // Host rejection accessors may throw; preserve that fact without replacing the original failure.
+          unreadableFields.push(key);
+        }
+      }
       lastLocalFailure = Object.freeze({
         thrownType: error === null ? 'null' : typeof error,
-        name: typeof error?.name === 'string' ? error.name.slice(0, 64) : null,
-        message: typeof error === 'string' ? error.slice(0, 512)
-          : typeof error?.message === 'string' ? error.message.slice(0, 512) : null,
+        ...details,
+        unreadableFields: Object.freeze(unreadableFields),
         stage,
         routeSymbol: context.routeSymbol,
         resolution: context.resolution,

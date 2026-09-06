@@ -711,7 +711,7 @@ for (const stage of ['export', 'render']) {
     assert.equal(harness.monitor.diagnostics.cleanupPending, false);
     assert.equal(harness.monitor.diagnostics.layerSize, 0);
     const expected = {
-      thrownType: 'object', name: 'Error', message, stage, routeSymbol: 'BTRUSDT', resolution: '1',
+      thrownType: 'object', name: 'Error', message, unreadableFields: [], stage, routeSymbol: 'BTRUSDT', resolution: '1',
       cachedSignalCount: 6, layerSizeBeforeCleanup: 6,
       sessionRevision: 0, contextIntervalRevision: 0,
     };
@@ -735,12 +735,42 @@ for (const value of ['x'.repeat(600), null, { code: 7 }]) {
     assert.deepEqual(harness.monitor.diagnostics.lastLocalFailure, {
       thrownType: value === null ? 'null' : typeof value,
       name: null, message: typeof value === 'string' ? 'x'.repeat(512) : null,
-      stage: 'export', routeSymbol: 'BTRUSDT', resolution: '1',
+      unreadableFields: [], stage: 'export', routeSymbol: 'BTRUSDT', resolution: '1',
       cachedSignalCount: null, layerSizeBeforeCleanup: 0,
       sessionRevision: 0, contextIntervalRevision: 0,
     });
     assert.equal(harness.errors.length, 1);
     assert.equal(harness.errors[0][1], value);
+    harness.monitor.stop();
+    fixture.dom.window.close();
+  });
+}
+
+for (const throwing of [true, false]) {
+  test(`reads host rejection accessors once and records unreadable fields (throwing=${throwing})`, async () => {
+    const fixture = createChartDom();
+    const harness = createMonitorHarness(fixture);
+    const reads = { name: 0, message: 0 };
+    const rejection = {};
+    for (const key of ['name', 'message']) {
+      Object.defineProperty(rejection, key, { get() {
+        reads[key] += 1;
+        if (throwing) throw new Error('synthetic inaccessible diagnostic field');
+        return reads[key] === 1 ? key : null;
+      } });
+    }
+    fixture.chart.exportData = async () => { throw rejection; };
+    await assert.rejects(harness.tick(), reason => reason === rejection);
+    await harness.tick();
+    assert.deepEqual(reads, { name: 1, message: 1 });
+    const recorded = harness.monitor.diagnostics.lastLocalFailure;
+    assert.deepEqual(recorded.unreadableFields, throwing ? ['name', 'message'] : []);
+    assert.equal(recorded.name, throwing ? null : 'name');
+    assert.equal(recorded.message, throwing ? null : 'message');
+    assert.equal(recorded.stage, 'export');
+    assert.equal(harness.monitor.diagnostics.failed, true);
+    assert.equal(harness.monitor.diagnostics.cleanupPending, false);
+    assert.equal(harness.errors[0][1], rejection);
     harness.monitor.stop();
     fixture.dom.window.close();
   });
