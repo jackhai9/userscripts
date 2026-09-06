@@ -6,6 +6,7 @@ import { installStrategy29 } from '../../../src/binance-strategy29-bollinger/run
 import { STRATEGY29_REMOTE_ENABLED_KEY } from '../../../src/binance-strategy29-bollinger/remote-summary.js';
 
 const gatewayStatus = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
+const gatewayEvents = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
 function fixture() {
   const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTRUSDT' });
@@ -113,10 +114,58 @@ test('hiding the page aborts the remote request and resumes with one shared runt
   await new Promise(resolve => f.view.setTimeout(resolve, 0));
   assert.equal(aborts, 1);
   assert.equal(f.timers.size, 0);
-  assert.equal(runtime.diagnostics.remoteSummary.contextPresent, false);
+  assert.equal(runtime.diagnostics.remoteSummary.contextPresent, true);
   f.hide(false);
   assert.equal(f.timers.size, 1);
   assert.equal(runtime.diagnostics.remoteSummary.inFlight, true);
+  runtime.dispose();
+  f.dom.window.close();
+});
+
+test('actual remote client retains rows and cursor across visibility and bootstraps a new route', async () => {
+  const f = fixture();
+  const values = new Map([
+    [STRATEGY29_REMOTE_ENABLED_KEY, true],
+    ['strategy29GatewayAuthSecret', 'synthetic-secret'],
+  ]);
+  const urls = [];
+  const first = { ...gatewayEvents.events[0], symbol: 'BTR/USDT:USDT', sequence: 900 };
+  const second = { ...gatewayEvents.events[1], symbol: 'BTR/USDT:USDT', sequence: 901 };
+  const runtime = installStrategy29(f.view, {
+    request: async ({ url }) => {
+      const query = new URL(url);
+      let body = gatewayStatus;
+      if (query.pathname.endsWith('/events')) {
+        urls.push(query);
+        const records = query.searchParams.get('symbol') === 'ETH/USDT:USDT'
+          ? [] : query.searchParams.has('cursor') ? [second] : [first];
+        body = { ...gatewayEvents, events: records, next_cursor: urls.length === 1 ? 900 : 901, has_more: false };
+      }
+      return { status: 200, responseText: JSON.stringify(body) };
+    },
+    getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
+    setValue: (key, value) => values.set(key, value),
+    registerMenuCommand() {}, promptUser() { return null; },
+  });
+  const settle = () => new Promise(resolve => f.view.setTimeout(resolve, 0));
+  await settle();
+  const panel = f.view.document.getElementById('jh-strategy29-summary-panel');
+  assert.equal(urls[0].searchParams.get('mode'), 'latest');
+  assert.equal(panel.querySelectorAll('[data-role=remote-event]').length, 1);
+  f.hide(true);
+  assert.equal(runtime.diagnostics.remoteSummary.cursor, 900);
+  f.hide(false);
+  await settle();
+  assert.equal(f.view.document.getElementById('jh-strategy29-summary-panel'), panel);
+  assert.equal(urls[1].searchParams.get('cursor'), '900');
+  assert.equal(runtime.diagnostics.remoteSummary.cursor, 901);
+  assert.deepEqual([...panel.querySelectorAll('[data-role=remote-event]')].map(row => row.dataset.eventId), [second.event_id, first.event_id]);
+  f.view.history.pushState({}, '', '/en/futures/ETHUSDT');
+  await settle();
+  assert.equal(urls[2].searchParams.get('mode'), 'latest');
+  assert.equal(urls[2].searchParams.has('cursor'), false);
+  assert.equal(panel.isConnected, false);
+  assert.equal(f.view.document.querySelectorAll('[data-role=remote-event]').length, 0);
   runtime.dispose();
   f.dom.window.close();
 });

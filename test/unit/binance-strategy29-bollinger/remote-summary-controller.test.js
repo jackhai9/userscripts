@@ -65,6 +65,34 @@ test('remote summary is opt-in and registers configuration without requesting da
   assert.equal(f.summary.diagnostics.enabled, false);
 });
 
+test('pause preserves the current client and panel and permits one resumed request', async () => {
+  let completeOld;
+  const oldResponse = new Promise(resolve => { completeOld = resolve; });
+  let polls = 0;
+  const signals = [];
+  const f = fixture({ poll: signal => {
+    signals.push(signal);
+    polls += 1;
+    return polls === 1 ? oldResponse : new Promise(() => {});
+  } });
+  const oldPoll = f.summary.sample(0);
+  f.summary.pause();
+  assert.equal(signals[0].aborted, true);
+  assert.equal(f.summary.diagnostics.contextPresent, true);
+  assert.equal(f.panels[0].calls.some(call => call[0] === 'destroy'), false);
+  f.summary.sample(1);
+  assert.equal(f.clients.length, 1);
+  assert.equal(f.panels.length, 1);
+  assert.equal(signals[1].aborted, false);
+  completeOld({ state: 'connected', pages: 1, hasMore: false });
+  await oldPoll;
+  assert.equal(f.summary.diagnostics.inFlight, true);
+  assert.equal(f.summary.diagnostics.state, 'connecting');
+  assert.equal(f.summary.sample(10_000), undefined);
+  assert.equal(polls, 2);
+  f.summary.dispose();
+});
+
 test('gateway configuration uses only the injected userscript prompt adapter', () => {
   const f = fixture({ enabled: false });
   f.view.prompt = () => { throw new Error('page prompt must not be called'); };

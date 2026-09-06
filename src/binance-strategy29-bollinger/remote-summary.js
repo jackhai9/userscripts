@@ -162,16 +162,22 @@ export function createStrategy29RemoteSummary({
   }
 
   function sample(nowMs = Date.now()) {
-    if (disposed) return;
+    if (disposed || view.document.hidden) return;
     const context = synchronizeContext();
     if (!context || !context.client || context.inFlight || context.failed || nowMs < context.nextPollAtMs) return;
+    if (context.abortController.signal.aborted) {
+      const AbortControllerConstructor = view.AbortController ?? AbortController;
+      context.abortController = new AbortControllerConstructor();
+    }
+    const controller = context.abortController;
+    const ownsRequest = () => isCurrent(context) && context.abortController === controller;
     context.nextPollAtMs = nowMs + pollIntervalMs;
     context.inFlight = true;
     context.state = 'connecting';
     context.panel.setConnection('connecting', 'Connecting to Strategy 29 gateway');
-    return context.client.poll(context.abortController.signal)
+    return context.client.poll(controller.signal)
       .then(result => {
-        if (!isCurrent(context)) return;
+        if (!ownsRequest()) return;
         context.lastResult = result;
         context.lastError = null;
         context.state = result.state;
@@ -184,7 +190,7 @@ export function createStrategy29RemoteSummary({
         context.panel.setConnection(...presentation);
       })
       .catch(error => {
-        if (!isCurrent(context) || error?.name === 'AbortError') return;
+        if (!ownsRequest() || error?.name === 'AbortError') return;
         context.lastError = error.message;
         if (error instanceof Strategy29GatewayTransportError) {
           context.state = 'disconnected';
@@ -196,7 +202,7 @@ export function createStrategy29RemoteSummary({
         }
         view.console.warn('[Strategy29 remote]', error.message);
       })
-      .finally(() => { context.inFlight = false; });
+      .finally(() => { if (ownsRequest()) context.inFlight = false; });
   }
 
   function restart() {
@@ -227,7 +233,12 @@ export function createStrategy29RemoteSummary({
 
   return Object.freeze({
     sample,
-    pause() { stopActive('Strategy 29 remote summary paused'); },
+    pause() {
+      if (!active) return;
+      active.abortController.abort(abortError(view, 'Strategy 29 remote summary paused'));
+      active.inFlight = false;
+      active.nextPollAtMs = 0;
+    },
     restart,
     dispose() {
       if (disposed) return;
