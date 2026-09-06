@@ -181,6 +181,36 @@
     if (value.last_successful_refreshed_at_ms === null !== (value.last_success_age_seconds === null)) {
       throw new TypeError("status.universe last success fields are inconsistent");
     }
+    const successMissing = value.last_successful_refreshed_at_ms === null;
+    if (successMissing !== (value.selection_expires_at_ms === null)) {
+      throw new TypeError("status.universe successful selection requires its expiry");
+    }
+    const absentFacts = value.reason === "missing_current_universe_facts" || value.reason === "incompatible_current_universe_facts";
+    if (absentFacts) {
+      if ([
+        value.generation,
+        value.refreshed_at_ms,
+        value.last_successful_refreshed_at_ms,
+        value.last_success_age_seconds,
+        value.last_refresh_error_at_ms,
+        value.selection_expires_at_ms
+      ].some((item) => item !== null)) {
+        throw new TypeError("status.universe unavailable facts must have null refresh metadata");
+      }
+    } else {
+      if (value.generation === null || value.refreshed_at_ms === null) {
+        throw new TypeError("status.universe current facts require generation and refresh time");
+      }
+      if (value.reason !== "selection_fail_closed" && successMissing) {
+        throw new TypeError("status.universe successful selection metadata is required");
+      }
+      if (value.refresh_status === "fresh" && value.last_refresh_error_at_ms !== null) {
+        throw new TypeError("status.universe fresh selection cannot report a refresh error");
+      }
+      if ((value.refresh_status === "stale_if_error" || value.reason === "selection_fail_closed") && value.last_refresh_error_at_ms === null) {
+        throw new TypeError("status.universe failed refresh requires its error time");
+      }
+    }
   }
   function validateStrategy29StatusResponse(value, httpStatus) {
     if (httpStatus !== 200) throw new TypeError(`status response requires HTTP 200, received ${httpStatus}`);

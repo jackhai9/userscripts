@@ -14,6 +14,71 @@ import {
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+const METADATA_KEYS = ['generation', 'refreshed_at_ms', 'last_successful_refreshed_at_ms', 'last_success_age_seconds', 'last_refresh_error_at_ms', 'selection_expires_at_ms'];
+const SUCCESS_KEYS = ['last_successful_refreshed_at_ms', 'last_success_age_seconds', 'selection_expires_at_ms'];
+
+function universeForReason(reason) {
+  const universe = { ...status.universe, reason };
+  universe.refresh_status = reason === 'current' ? 'fresh'
+    : reason === 'using_stale_selection_after_refresh_error' ? 'stale_if_error' : 'fail_closed';
+  if (universe.refresh_status === 'fail_closed') Object.assign(universe, {
+    selected_markets: [], selected_unit_count: 0, ready_unit_count: 0, pending_unit_count: 0,
+  });
+  if (reason === 'selection_fail_closed' || universe.refresh_status === 'stale_if_error') {
+    universe.last_refresh_error_at_ms = status.observed_at_ms;
+  }
+  if (reason === 'missing_current_universe_facts' || reason === 'incompatible_current_universe_facts') {
+    for (const key of METADATA_KEYS) universe[key] = null;
+    universe.configured_timeframes = [];
+  }
+  return universe;
+}
+
+test('requires metadata belonging to the reported refresh state', () => {
+  const required = {
+    current: ['generation', 'refreshed_at_ms', ...SUCCESS_KEYS],
+    using_stale_selection_after_refresh_error: METADATA_KEYS,
+    selection_fail_closed: ['generation', 'refreshed_at_ms', 'last_refresh_error_at_ms'],
+    selection_expired_or_unusable: ['generation', 'refreshed_at_ms', ...SUCCESS_KEYS],
+  };
+  for (const [reason, keys] of Object.entries(required)) {
+    const universe = universeForReason(reason);
+    const candidate = { ...status, universe };
+    assert.equal(validateStrategy29StatusResponse(candidate, 200), candidate);
+    for (const key of keys) assert.throws(() => validateStrategy29StatusResponse({
+      ...status, universe: { ...universe, [key]: null },
+    }, 200), /universe/, `${reason} requires ${key}`);
+  }
+  const freshWithoutSuccess = universeForReason('current');
+  for (const key of SUCCESS_KEYS) freshWithoutSuccess[key] = null;
+  assert.throws(() => validateStrategy29StatusResponse({ ...status, universe: freshWithoutSuccess }, 200), /universe/);
+  const failedWithoutSuccess = universeForReason('selection_fail_closed');
+  for (const key of SUCCESS_KEYS) failedWithoutSuccess[key] = null;
+  const failed = { ...status, universe: failedWithoutSuccess };
+  assert.equal(validateStrategy29StatusResponse(failed, 200), failed);
+  for (const key of SUCCESS_KEYS) assert.throws(() => validateStrategy29StatusResponse({
+    ...failed, universe: { ...failedWithoutSuccess, [key]: status.universe[key] },
+  }, 200), /universe/);
+  for (const reason of ['missing_current_universe_facts', 'incompatible_current_universe_facts']) {
+    const universe = universeForReason(reason);
+    const candidate = { ...status, universe };
+    assert.equal(validateStrategy29StatusResponse(candidate, 200), candidate);
+    for (const key of METADATA_KEYS) assert.throws(() => validateStrategy29StatusResponse({
+      ...status, universe: { ...universe, [key]: 1 },
+    }, 200), /universe/);
+  }
+  assert.throws(() => validateStrategy29StatusResponse({ ...status, universe: {
+    ...status.universe, last_refresh_error_at_ms: status.observed_at_ms,
+  } }, 200), /universe/);
+  const expiredStale = { ...status, universe: {
+    ...universeForReason('selection_expired_or_unusable'), last_refresh_error_at_ms: status.observed_at_ms,
+  } };
+  assert.equal(validateStrategy29StatusResponse(expiredStale, 200), expiredStale);
+  const clockBack = { ...status, observed_at_ms: status.universe.refreshed_at_ms - 1000,
+    universe: { ...status.universe, last_success_age_seconds: 0 } };
+  assert.equal(validateStrategy29StatusResponse(clockBack, 200), clockBack);
+});
+
 test('accepts stored ready processing while current live admission is pending', () => {
   const candidate = { ...status, universe: {
     ...status.universe, ready_unit_count: 0, pending_unit_count: status.universe.selected_unit_count,
@@ -50,10 +115,7 @@ test('accepts only coherent universe refresh state and reason combinations', () 
   };
   for (const refreshState of Object.keys(reasons)) {
     for (const reason of Object.values(reasons).flat()) {
-      const universe = { ...status.universe, refresh_status: refreshState, reason };
-      if (refreshState === 'fail_closed') Object.assign(universe, {
-        selected_markets: [], selected_unit_count: 0, ready_unit_count: 0, pending_unit_count: 0,
-      });
+      const universe = { ...universeForReason(reason), refresh_status: refreshState };
       const candidate = { ...status, universe };
       if (reasons[refreshState].includes(reason)) assert.equal(validateStrategy29StatusResponse(candidate, 200), candidate);
       else assert.throws(() => validateStrategy29StatusResponse(candidate, 200), /universe/);

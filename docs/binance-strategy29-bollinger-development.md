@@ -90,6 +90,11 @@ processing status, with `ready` displayed as neutral `Processed`; they do not
 certify current live readiness. A stored ready row with zero live-ready units is
 valid during producer-generation or admission/baseline transitions and must not
 be rejected by the client validator.
+Refresh metadata must match the reported state: successful and stale selections
+require success time, age and expiry; failed refreshes require an error time;
+missing or incompatible facts carry null metadata. Fail-closed selection may
+retain a complete prior-success group. Expired selection can originate from fresh
+or stale facts. Clock rollback does not invalidate otherwise coherent metadata.
 
 The current remote summary is disabled by default and has no panel while disabled.
 Authentication failure affects only the remote summary, not local chart detection.
