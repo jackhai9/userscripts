@@ -90,9 +90,16 @@ test('shows multi-timeframe events, deduplicates identities and clears only remo
 test('makes server/local spec mismatch visible without rendering it as verified', () => {
   const dom = new JSDOM('<body></body>');
   const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
-  panel.renderStatus({ ...status, spec_version: 'other_spec' });
+  panel.renderStatus(status);
+  panel.addEvents(events.events, events.observed_at_ms);
+  panel.renderStatus({ schema_version: 1, spec_version: 'other_spec', observed_at_ms: status.observed_at_ms });
   assert.match(dom.window.document.body.textContent, /Spec mismatch/);
   assert.equal(dom.window.document.querySelector('[data-role=spec]').dataset.state, 'error');
+  assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 0);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
+  assert.match(dom.window.document.querySelector('[data-role=selection]').textContent, /incompatible/);
+  panel.renderStatus(status);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 2);
   panel.destroy();
   dom.window.close();
 });

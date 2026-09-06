@@ -51,14 +51,16 @@
     "selection_expires_at_ms"
   ];
   var UNIVERSE_STATES = /* @__PURE__ */ new Set(["fresh", "stale_if_error", "fail_closed"]);
-  var UNIVERSE_REASONS = /* @__PURE__ */ new Set([
-    "current",
-    "using_stale_selection_after_refresh_error",
-    "selection_fail_closed",
-    "selection_expired_or_unusable",
-    "missing_current_universe_facts",
-    "incompatible_current_universe_facts"
-  ]);
+  var UNIVERSE_REASONS = {
+    fresh: /* @__PURE__ */ new Set(["current"]),
+    stale_if_error: /* @__PURE__ */ new Set(["using_stale_selection_after_refresh_error"]),
+    fail_closed: /* @__PURE__ */ new Set([
+      "selection_fail_closed",
+      "selection_expired_or_unusable",
+      "missing_current_universe_facts",
+      "incompatible_current_universe_facts"
+    ])
+  };
   var UNIT_KEYS = [
     "symbol",
     "timeframe",
@@ -155,7 +157,7 @@
     if (value.source_monitor !== "monitor29_bollinger_ma60") throw new TypeError("status.universe.source_monitor is invalid");
     assertInteger(value.generation, "status.universe.generation", { nullable: true, minimum: 1 });
     assertEnum(value.refresh_status, UNIVERSE_STATES, "status.universe.refresh_status");
-    assertEnum(value.reason, UNIVERSE_REASONS, "status.universe.reason");
+    assertEnum(value.reason, UNIVERSE_REASONS[value.refresh_status], "status.universe.reason");
     for (const key of ["selected_markets", "configured_timeframes"]) {
       if (!Array.isArray(value[key]) || value[key].length > 128 || new Set(value[key]).size !== value[key].length) {
         throw new TypeError(`status.universe.${key} must be a bounded unique array`);
@@ -182,10 +184,16 @@
   }
   function validateStrategy29StatusResponse(value, httpStatus) {
     if (httpStatus !== 200) throw new TypeError(`status response requires HTTP 200, received ${httpStatus}`);
-    assertExactKeys(value, STATUS_KEYS, "status response");
+    assertObject(value, "status response");
     assertSchema(value.schema_version, "status.schema_version");
     assertString(value.spec_version, "status.spec_version");
     assertInteger(value.observed_at_ms, "status.observed_at_ms");
+    if (value.spec_version !== STRATEGY29_SPEC_VERSION) return {
+      schema_version: value.schema_version,
+      spec_version: value.spec_version,
+      observed_at_ms: value.observed_at_ms
+    };
+    assertExactKeys(value, STATUS_KEYS, "status response");
     validateUniverse(value.universe);
     if (!Array.isArray(value.units)) throw new TypeError("status.units must be an array");
     if (value.units.length > 128) throw new TypeError("status.units exceeds the 128-unit bound");
@@ -1965,6 +1973,15 @@
         spec.style.color = matched ? "#0ECB81" : "#F6465D";
         spec.textContent = matched ? `Spec version matched · ${STRATEGY29_SPEC_VERSION}` : `Spec mismatch · local ${STRATEGY29_SPEC_VERSION} · server ${snapshot.spec_version}`;
         statusFreshness.textContent = `Status ${formatClock(snapshot.observed_at_ms)}`;
+        if (!matched) {
+          selection.dataset.state = "incompatible";
+          selection.style.color = "#F6465D";
+          selection.textContent = "Selection unavailable: observer specs are incompatible";
+          selectionRefresh.textContent = "";
+          units.replaceChildren();
+          delivery.textContent = "Global delivery unavailable: observer specs are incompatible";
+          return;
+        }
         const universe = snapshot.universe;
         const unavailable = universe.refresh_status === "fail_closed";
         selection.dataset.state = universe.refresh_status;

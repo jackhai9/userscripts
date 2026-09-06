@@ -121,8 +121,12 @@ Transport failures and a temporarily unavailable database remain retryable
 remote states. Authentication, request, JSON, and response-contract failures
 stop only the remote context until it is restarted through a route or settings
 change. None of these states stop the local detector or remove local markers.
-The panel compares server and local `spec_version`; a mismatch is visible and
-event consumption is blocked. The local reference hash is displayed and exposed
+The status validator first checks the shared schema/spec/time identity envelope.
+A different spec exposes only those three fields; no incompatible unit, selection
+or delivery payload is interpreted. The panel clears current health rows, displays
+the mismatch and preserves retained events; event consumption is blocked. Matching
+V2 responses still require every exact field and a coherent refresh state/reason
+combination. An unknown schema envelope remains a contract error. The local reference hash is displayed and exposed
 for audit, but the current server status schema does not carry a hash, so the UI
 does not claim hash-level remote parity.
 

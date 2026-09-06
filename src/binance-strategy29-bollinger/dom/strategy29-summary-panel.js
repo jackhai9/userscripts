@@ -155,6 +155,15 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
         ? `Spec version matched · ${STRATEGY29_SPEC_VERSION}`
         : `Spec mismatch · local ${STRATEGY29_SPEC_VERSION} · server ${snapshot.spec_version}`;
       statusFreshness.textContent = `Status ${formatClock(snapshot.observed_at_ms)}`;
+      if (!matched) {
+        selection.dataset.state = 'incompatible';
+        selection.style.color = '#F6465D';
+        selection.textContent = 'Selection unavailable: observer specs are incompatible';
+        selectionRefresh.textContent = '';
+        units.replaceChildren();
+        delivery.textContent = 'Global delivery unavailable: observer specs are incompatible';
+        return;
+      }
       const universe = snapshot.universe;
       const unavailable = universe.refresh_status === 'fail_closed';
       selection.dataset.state = universe.refresh_status;

@@ -17,10 +17,14 @@ const UNIVERSE_KEYS = [
   'last_successful_refreshed_at_ms', 'last_success_age_seconds', 'last_refresh_error_at_ms', 'selection_expires_at_ms',
 ];
 const UNIVERSE_STATES = new Set(['fresh', 'stale_if_error', 'fail_closed']);
-const UNIVERSE_REASONS = new Set([
-  'current', 'using_stale_selection_after_refresh_error', 'selection_fail_closed',
-  'selection_expired_or_unusable', 'missing_current_universe_facts', 'incompatible_current_universe_facts',
-]);
+const UNIVERSE_REASONS = {
+  fresh: new Set(['current']),
+  stale_if_error: new Set(['using_stale_selection_after_refresh_error']),
+  fail_closed: new Set([
+    'selection_fail_closed', 'selection_expired_or_unusable',
+    'missing_current_universe_facts', 'incompatible_current_universe_facts',
+  ]),
+};
 const UNIT_KEYS = [
   'symbol', 'timeframe', 'status', 'reason', 'last_processed_open_ms', 'last_data_at_ms', 'last_event_id',
 ];
@@ -111,7 +115,7 @@ function validateUniverse(value) {
   if (value.source_monitor !== 'monitor29_bollinger_ma60') throw new TypeError('status.universe.source_monitor is invalid');
   assertInteger(value.generation, 'status.universe.generation', { nullable: true, minimum: 1 });
   assertEnum(value.refresh_status, UNIVERSE_STATES, 'status.universe.refresh_status');
-  assertEnum(value.reason, UNIVERSE_REASONS, 'status.universe.reason');
+  assertEnum(value.reason, UNIVERSE_REASONS[value.refresh_status], 'status.universe.reason');
   for (const key of ['selected_markets', 'configured_timeframes']) {
     if (!Array.isArray(value[key]) || value[key].length > 128 || new Set(value[key]).size !== value[key].length) {
       throw new TypeError(`status.universe.${key} must be a bounded unique array`);
@@ -140,10 +144,15 @@ function validateUniverse(value) {
 
 export function validateStrategy29StatusResponse(value, httpStatus) {
   if (httpStatus !== 200) throw new TypeError(`status response requires HTTP 200, received ${httpStatus}`);
-  assertExactKeys(value, STATUS_KEYS, 'status response');
+  assertObject(value, 'status response');
   assertSchema(value.schema_version, 'status.schema_version');
   assertString(value.spec_version, 'status.spec_version');
   assertInteger(value.observed_at_ms, 'status.observed_at_ms');
+  // An incompatible spec exposes identity only; its payload is not our contract.
+  if (value.spec_version !== STRATEGY29_SPEC_VERSION) return {
+    schema_version: value.schema_version, spec_version: value.spec_version, observed_at_ms: value.observed_at_ms,
+  };
+  assertExactKeys(value, STATUS_KEYS, 'status response');
   validateUniverse(value.universe);
   if (!Array.isArray(value.units)) throw new TypeError('status.units must be an array');
   if (value.units.length > 128) throw new TypeError('status.units exceeds the 128-unit bound');

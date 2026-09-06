@@ -34,12 +34,42 @@ test('canonical Strategy29 symbols round-trip without server-side normalization'
   assert.throws(() => canonicalSymbolToRoute('BTR/USDT'), /canonical symbol/);
 });
 
+test('accepts only coherent universe refresh state and reason combinations', () => {
+  const reasons = {
+    fresh: ['current'],
+    stale_if_error: ['using_stale_selection_after_refresh_error'],
+    fail_closed: ['selection_fail_closed', 'selection_expired_or_unusable', 'missing_current_universe_facts', 'incompatible_current_universe_facts'],
+  };
+  for (const refreshState of Object.keys(reasons)) {
+    for (const reason of Object.values(reasons).flat()) {
+      const universe = { ...status.universe, refresh_status: refreshState, reason };
+      if (refreshState === 'fail_closed') Object.assign(universe, {
+        selected_markets: [], selected_unit_count: 0, ready_unit_count: 0, pending_unit_count: 0,
+      });
+      const candidate = { ...status, universe };
+      if (reasons[refreshState].includes(reason)) assert.equal(validateStrategy29StatusResponse(candidate, 200), candidate);
+      else assert.throws(() => validateStrategy29StatusResponse(candidate, 200), /universe/);
+    }
+  }
+});
+
+test('projects only validated identity when status belongs to an incompatible spec', () => {
+  const identity = { schema_version: 1, spec_version: 'other_spec', observed_at_ms: status.observed_at_ms };
+  const incompatible = { ...identity, get units() { throw new Error('incompatible payload must not be read'); } };
+  assert.deepEqual(validateStrategy29StatusResponse(incompatible, 200), identity);
+  for (const invalid of [{ schema_version: 2 }, { spec_version: '' }, { observed_at_ms: '1' }]) {
+    assert.throws(() => validateStrategy29StatusResponse({ ...identity, ...invalid }, 200), /status/);
+  }
+});
+
 test('validates exact status fields while preserving visible spec mismatch', () => {
   assert.equal(STRATEGY29_SPEC_VERSION, '29_2_spec_v2');
   assert.equal(validateStrategy29StatusResponse(status, 200), status);
   const mismatch = structuredClone(status);
   mismatch.spec_version = 'other_spec';
-  assert.equal(validateStrategy29StatusResponse(mismatch, 200), mismatch);
+  assert.deepEqual(validateStrategy29StatusResponse(mismatch, 200), {
+    schema_version: mismatch.schema_version, spec_version: mismatch.spec_version, observed_at_ms: mismatch.observed_at_ms,
+  });
   assert.throws(
     () => validateStrategy29StatusResponse({ ...status, unexpected: true }, 200),
     /exact keys/,
