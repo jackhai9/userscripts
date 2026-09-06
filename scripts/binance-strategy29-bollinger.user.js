@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.1
+// @version      0.2.2
 // @author       jackhai9
 // @description  Native Bollinger/SMA60 markers with an optional read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -1473,6 +1473,7 @@
     let bearishBollingerAlertTask = null;
     let bearishBollingerAlertContext = null;
     let bollingerIntervalSession = null;
+    let lastLocalFailure = null;
     const retiredBollingerLayers = /* @__PURE__ */ new Set();
     function clearBearishBollingerAlertContext() {
       if (bearishBollingerAlertContext) {
@@ -1552,19 +1553,31 @@
         context.cleanupPending = false;
       }
       if (context.failed || bearishBollingerAlertTask) return;
+      let stage = "export";
       const task = (async () => {
         const bars = await exportClosedTradingViewBars(context.target, context.intervalSession);
         if (!bars || !isBearishBollingerAlertContextCurrent(context)) return;
         if (bars.length === 0) return;
+        stage = "reconcile";
         const result = await reconcileBearishBollingerAlertWindow({
           bars,
           cachedWindowKey: context.lastProcessedClosedBarsWindowKey,
           cachedContentSnapshot: context.lastProcessedClosedBarsContentSnapshot,
           cachedSignals: context.lastProcessedSignals,
-          detectSignals: detectBollingerSignals,
-          renderSignals: (signals) => context.layer.render(signals, {
-            isCurrent: () => isBearishBollingerAlertContextCurrent(context)
-          })
+          detectSignals: (bars2) => {
+            stage = "detect";
+            const signals = detectBollingerSignals(bars2);
+            stage = "reconcile";
+            return signals;
+          },
+          renderSignals: async (signals) => {
+            stage = "render";
+            const rendered = await context.layer.render(signals, {
+              isCurrent: () => isBearishBollingerAlertContextCurrent(context)
+            });
+            stage = "reconcile";
+            return rendered;
+          }
         });
         if (result.rendered && isBearishBollingerAlertContextCurrent(context)) {
           context.lastProcessedClosedBarsWindowKey = result.closedBarsWindowKey;
@@ -1580,6 +1593,18 @@
           warn("布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:", error);
           return;
         }
+        lastLocalFailure = Object.freeze({
+          thrownType: error === null ? "null" : typeof error,
+          name: typeof error?.name === "string" ? error.name.slice(0, 64) : null,
+          message: typeof error === "string" ? error.slice(0, 512) : typeof error?.message === "string" ? error.message.slice(0, 512) : null,
+          stage,
+          routeSymbol: context.routeSymbol,
+          resolution: context.resolution,
+          cachedSignalCount: context.lastProcessedSignals === null ? null : context.lastProcessedSignals.length,
+          layerSizeBeforeCleanup: context.layer.size,
+          sessionRevision: context.intervalSession.revision,
+          contextIntervalRevision: context.intervalRevision
+        });
         err("布林带形态预警已停止:", error);
       }).finally(() => {
         if (bearishBollingerAlertTask === task) bearishBollingerAlertTask = null;
@@ -1598,6 +1623,7 @@
         taskPending: bearishBollingerAlertTask !== null,
         contextPresent: context !== null,
         failed: context ? context.failed : null,
+        lastLocalFailure,
         cleanupPending: context ? context.cleanupPending : null,
         cachedSignalCount: context?.lastProcessedSignals === null || !context ? null : context.lastProcessedSignals.length,
         layerSize: context ? context.layer.size : null,

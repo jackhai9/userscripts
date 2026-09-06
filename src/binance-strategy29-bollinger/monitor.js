@@ -20,6 +20,7 @@ export function createBollingerMonitor({
   let bearishBollingerAlertTask = null;
   let bearishBollingerAlertContext = null;
   let bollingerIntervalSession = null;
+  let lastLocalFailure = null;
   const retiredBollingerLayers = new Set();
 
   function clearBearishBollingerAlertContext() {
@@ -129,19 +130,31 @@ export function createBollingerMonitor({
       context.cleanupPending = false;
     }
     if (context.failed || bearishBollingerAlertTask) return;
+    let stage = 'export';
     const task = (async () => {
       const bars = await exportClosedTradingViewBars(context.target, context.intervalSession);
       if (!bars || !isBearishBollingerAlertContextCurrent(context)) return;
       if (bars.length === 0) return;
+      stage = 'reconcile';
       const result = await reconcileBearishBollingerAlertWindow({
         bars,
         cachedWindowKey: context.lastProcessedClosedBarsWindowKey,
         cachedContentSnapshot: context.lastProcessedClosedBarsContentSnapshot,
         cachedSignals: context.lastProcessedSignals,
-        detectSignals: detectBollingerSignals,
-        renderSignals: (signals) => context.layer.render(signals, {
-          isCurrent: () => isBearishBollingerAlertContextCurrent(context),
-        }),
+        detectSignals: (bars) => {
+          stage = 'detect';
+          const signals = detectBollingerSignals(bars);
+          stage = 'reconcile';
+          return signals;
+        },
+        renderSignals: async (signals) => {
+          stage = 'render';
+          const rendered = await context.layer.render(signals, {
+            isCurrent: () => isBearishBollingerAlertContextCurrent(context),
+          });
+          stage = 'reconcile';
+          return rendered;
+        },
       });
       if (result.rendered && isBearishBollingerAlertContextCurrent(context)) {
         context.lastProcessedClosedBarsWindowKey = result.closedBarsWindowKey;
@@ -164,6 +177,20 @@ export function createBollingerMonitor({
         warn('布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:', error);
         return;
       }
+      /** Preserve host rejection types without serializing arbitrary objects or stacks. */
+      lastLocalFailure = Object.freeze({
+        thrownType: error === null ? 'null' : typeof error,
+        name: typeof error?.name === 'string' ? error.name.slice(0, 64) : null,
+        message: typeof error === 'string' ? error.slice(0, 512)
+          : typeof error?.message === 'string' ? error.message.slice(0, 512) : null,
+        stage,
+        routeSymbol: context.routeSymbol,
+        resolution: context.resolution,
+        cachedSignalCount: context.lastProcessedSignals === null ? null : context.lastProcessedSignals.length,
+        layerSizeBeforeCleanup: context.layer.size,
+        sessionRevision: context.intervalSession.revision,
+        contextIntervalRevision: context.intervalRevision,
+      });
       err('布林带形态预警已停止:', error);
     }).finally(() => {
       if (bearishBollingerAlertTask === task) bearishBollingerAlertTask = null;
@@ -186,6 +213,7 @@ export function createBollingerMonitor({
       taskPending: bearishBollingerAlertTask !== null,
       contextPresent: context !== null,
       failed: context ? context.failed : null,
+      lastLocalFailure,
       cleanupPending: context ? context.cleanupPending : null,
       cachedSignalCount: context?.lastProcessedSignals === null || !context
         ? null : context.lastProcessedSignals.length,

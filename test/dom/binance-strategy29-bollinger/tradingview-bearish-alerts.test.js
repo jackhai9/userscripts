@@ -125,6 +125,7 @@ function createMonitorHarness(fixture, dependencyOverrides = {}) {
     let bearishBollingerAlertTask = null;
     let bearishBollingerAlertContext = null;
     let bollingerIntervalSession = null;
+    let lastLocalFailure = null;
     const retiredBollingerLayers = new Set();
     const ladderTask = null, continuousLadderTask = null, singleOrderTask = null;
     const cancelCurrentSymbolOpenOrdersTask = null, chartOrdersRecoveryTask = null;
@@ -666,7 +667,7 @@ test('on-demand diagnostics distinguish active, awaiting-data and torn-down stat
   fixture.chart.getAllShapes = () => { throw new Error('Diagnostics must not audit drawings'); };
   fixture.chart.exportData = () => { throw new Error('Diagnostics must not export data'); };
   assert.deepEqual(harness.monitor.diagnostics, {
-    taskPending: false, contextPresent: true, failed: false,
+    taskPending: false, contextPresent: true, failed: false, lastLocalFailure: null,
     cleanupPending: false, cachedSignalCount: 1, layerSize: 1, retiredCount: 0,
     markerSaveStats: { busy: true, mutations: 0, draining: 0, saveRequests: 0,
       serializations: 0, callbackCount: 0, failureCount: 0, pendingCallbacks: 0 },
@@ -685,6 +686,90 @@ test('on-demand diagnostics distinguish active, awaiting-data and torn-down stat
   fixture.chart.getAllShapes = originalGetAllShapes;
   harness.monitor.stop();
 });
+
+for (const stage of ['export', 'render']) {
+  test(`retains the last local ${stage} failure after clearing the layer and stopping`, async () => {
+    const fixture = createChartDom();
+    const harness = createMonitorHarness(fixture, {
+      detectBollingerSignals: bars => bars.map(bar => ({
+        id: `${bar.time}:warning`, direction: 'bearish', type: 'warning',
+        time: bar.time, markerPrice: 13,
+      })),
+    });
+    fixture.chart.exportData = async () => exportResult(Array.from({ length: 6 }, (_, index) => ({
+      0: (index + 1) * 60, 1: 10, 2: 12, 3: 9, 4: 11,
+    })));
+    await harness.tick();
+    assert.equal(harness.monitor.diagnostics.cachedSignalCount, 6);
+    assert.equal(harness.monitor.diagnostics.layerSize, 6);
+    if (stage === 'export') fixture.chart.exportData = async () => { throw new Error('synthetic export failure'); };
+    else fixture.chart.getShapeById = () => undefined;
+    const message = stage === 'export' ? 'synthetic export failure' : 'TradingView Bollinger alert marker point is invalid';
+    await assert.rejects(harness.tick(), { message });
+    await harness.tick();
+    assert.equal(harness.monitor.diagnostics.failed, true);
+    assert.equal(harness.monitor.diagnostics.cleanupPending, false);
+    assert.equal(harness.monitor.diagnostics.layerSize, 0);
+    const expected = {
+      thrownType: 'object', name: 'Error', message, stage, routeSymbol: 'BTRUSDT', resolution: '1',
+      cachedSignalCount: 6, layerSizeBeforeCleanup: 6,
+      sessionRevision: 0, contextIntervalRevision: 0,
+    };
+    assert.deepEqual(harness.monitor.diagnostics.lastLocalFailure, expected);
+    assert.equal(Object.isFrozen(harness.monitor.diagnostics.lastLocalFailure), true);
+    harness.monitor.stop();
+    assert.deepEqual(harness.monitor.diagnostics.lastLocalFailure, expected);
+    fixture.dom.window.close();
+  });
+}
+
+for (const value of ['x'.repeat(600), null, { code: 7 }]) {
+  test(`records ${value === null ? 'null' : typeof value} host rejection without a diagnostic rejection`, async () => {
+    const fixture = createChartDom();
+    const harness = createMonitorHarness(fixture);
+    fixture.chart.exportData = async () => { throw value; };
+    await assert.rejects(harness.tick(), reason => reason === value);
+    await harness.tick();
+    assert.equal(harness.monitor.diagnostics.failed, true);
+    assert.equal(harness.monitor.diagnostics.cleanupPending, false);
+    assert.deepEqual(harness.monitor.diagnostics.lastLocalFailure, {
+      thrownType: value === null ? 'null' : typeof value,
+      name: null, message: typeof value === 'string' ? 'x'.repeat(512) : null,
+      stage: 'export', routeSymbol: 'BTRUSDT', resolution: '1',
+      cachedSignalCount: null, layerSizeBeforeCleanup: 0,
+      sessionRevision: 0, contextIntervalRevision: 0,
+    });
+    assert.equal(harness.errors.length, 1);
+    assert.equal(harness.errors[0][1], value);
+    harness.monitor.stop();
+    fixture.dom.window.close();
+  });
+}
+
+for (const stage of ['detect', 'reconcile']) {
+  test(`identifies ${stage} failures before rendering`, async () => {
+    const fixture = createChartDom();
+    const failure = new Error('synthetic detector failure');
+    failure.name = 'N'.repeat(80);
+    const harness = createMonitorHarness(fixture, {
+      detectBollingerSignals: () => {
+        if (stage === 'detect') throw failure;
+        return undefined;
+      },
+    });
+    fixture.chart.exportData = async () => exportResult([{ 0: 60, 1: 10, 2: 12, 3: 9, 4: 11 }]);
+    const message = stage === 'detect' ? failure.message : 'Bollinger signal cache is invalid';
+    await assert.rejects(harness.tick(), { message });
+    await harness.tick();
+    assert.equal(harness.monitor.diagnostics.lastLocalFailure.stage, stage);
+    assert.equal(harness.monitor.diagnostics.lastLocalFailure.name, stage === 'detect' ? 'N'.repeat(64) : 'Error');
+    assert.equal(harness.monitor.diagnostics.lastLocalFailure.message, message);
+    assert.equal(harness.monitor.diagnostics.failed, true);
+    assert.equal(fixture.createdOptions.length, 0);
+    harness.monitor.stop();
+    fixture.dom.window.close();
+  });
+}
 
 test('requires the current symbol and complete bearish-alert chart API', () => {
   const {
