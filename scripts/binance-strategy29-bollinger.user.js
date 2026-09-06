@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.2
+// @version      0.3.0
 // @author       jackhai9
 // @description  Native Bollinger/SMA60 markers with an optional read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -23,7 +23,7 @@
 (() => {
   // src/binance-strategy29-bollinger/core/remote-summary-contract.js
   var STRATEGY29_SCHEMA_VERSION = 1;
-  var STRATEGY29_SPEC_VERSION = "29_2_spec_v1";
+  var STRATEGY29_SPEC_VERSION = "29_2_spec_v2";
   var STRATEGY29_REFERENCE_SHA256 = "eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d";
   var TIMEFRAMES = /* @__PURE__ */ new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]);
   var UNIT_STATUSES = /* @__PURE__ */ new Set(["warming", "ready", "stale", "insufficient_history", "data_gap", "failed"]);
@@ -1841,7 +1841,7 @@
     const overview = element(document, "div", { styles: { display: "grid", gap: "4px", padding: "9px 10px" } });
     overview.appendChild(element(document, "div", { text: canonicalSymbol, role: "symbol", styles: { fontWeight: "700" } }));
     const connection = element(document, "div", { text: "Waiting", role: "connection", styles: { color: "#848E9C", fontSize: "11px" } });
-    const spec = element(document, "div", { text: `Local spec ${STRATEGY29_SPEC_VERSION}`, role: "spec", styles: { color: "#848E9C", fontSize: "11px" } });
+    const spec = element(document, "div", { text: `Observer spec ${STRATEGY29_SPEC_VERSION}`, role: "spec", styles: { color: "#848E9C", fontSize: "11px" } });
     const reference = element(document, "div", { text: `Local reference ${STRATEGY29_REFERENCE_SHA256}`, role: "reference", styles: { color: "#848E9C", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "text" } });
     const statusFreshness = element(document, "div", { text: "Status not received", role: "status-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
     const eventsFreshness = element(document, "div", { text: "Events not checked", role: "events-freshness", styles: { color: "#848E9C", fontSize: "11px" } });

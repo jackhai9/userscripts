@@ -8,6 +8,25 @@ import { createStrategy29SummaryPanel } from '../../../src/binance-strategy29-bo
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('replaces dynamic membership while retaining durable signal history', () => {
+  const dom = new JSDOM('<body></body>');
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
+  panel.renderStatus(status);
+  panel.addEvents(events.events);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 2);
+  panel.renderStatus({ ...status, units: [] });
+  assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 0);
+  assert.match(dom.window.document.body.textContent, /Symbol is not watched/);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
+  panel.renderStatus({ ...status, units: [{ ...status.units[0], timeframe: '4h', status: 'warming', reason: 'awaiting_producer_generation' }] });
+  const units = dom.window.document.querySelectorAll('[data-role=unit]');
+  assert.equal(units.length, 1);
+  assert.match(units[0].textContent, /4h.*warming.*awaiting_producer_generation/);
+  assert.doesNotMatch(dom.window.document.body.textContent, /Symbol is not watched/);
+  panel.destroy();
+  dom.window.close();
+});
+
 test('renders all watched timeframes for the route symbol and labels global delivery totals', () => {
   const dom = new JSDOM('<body></body>');
   const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
@@ -49,7 +68,7 @@ test('shows multi-timeframe events, deduplicates identities and clears only remo
 test('makes server/local spec mismatch visible without rendering it as verified', () => {
   const dom = new JSDOM('<body></body>');
   const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
-  panel.renderStatus({ ...status, spec_version: '29_2_spec_v2' });
+  panel.renderStatus({ ...status, spec_version: 'other_spec' });
   assert.match(dom.window.document.body.textContent, /Spec mismatch/);
   assert.equal(dom.window.document.querySelector('[data-role=spec]').dataset.state, 'error');
   panel.destroy();

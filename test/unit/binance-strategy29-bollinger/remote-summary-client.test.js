@@ -228,12 +228,12 @@ test('reports unavailable status separately from fatal HTTP and contract errors'
 });
 
 test('exposes remote/local spec mismatch before requesting event history', async () => {
-  const mismatch = { ...status, spec_version: '29_2_spec_v2' };
+  const mismatch = { ...status, spec_version: 'other_spec' };
   const fixture = clientFixture([response(mismatch)]);
   assert.deepEqual(
     await fixture.client.poll(new AbortController().signal),
     { state: 'incompatible', pages: 0, hasMore: false },
   );
   assert.equal(fixture.requests.length, 1);
-  assert.equal(fixture.snapshots[0].spec_version, '29_2_spec_v2');
+  assert.equal(fixture.snapshots[0].spec_version, 'other_spec');
 });

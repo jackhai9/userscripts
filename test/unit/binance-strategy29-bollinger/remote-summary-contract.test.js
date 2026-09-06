@@ -23,10 +23,10 @@ test('canonical Strategy29 symbols round-trip without server-side normalization'
 });
 
 test('validates exact status fields while preserving visible spec mismatch', () => {
-  assert.equal(STRATEGY29_SPEC_VERSION, '29_2_spec_v1');
+  assert.equal(STRATEGY29_SPEC_VERSION, '29_2_spec_v2');
   assert.equal(validateStrategy29StatusResponse(status, 200), status);
   const mismatch = structuredClone(status);
-  mismatch.spec_version = '29_2_spec_v2';
+  mismatch.spec_version = 'other_spec';
   assert.equal(validateStrategy29StatusResponse(mismatch, 200), mismatch);
   assert.throws(
     () => validateStrategy29StatusResponse({ ...status, unexpected: true }, 200),

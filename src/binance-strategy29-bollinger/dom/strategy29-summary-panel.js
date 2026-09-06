@@ -82,7 +82,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   const overview = element(document, 'div', { styles: { display: 'grid', gap: '4px', padding: '9px 10px' } });
   overview.appendChild(element(document, 'div', { text: canonicalSymbol, role: 'symbol', styles: { fontWeight: '700' } }));
   const connection = element(document, 'div', { text: 'Waiting', role: 'connection', styles: { color: '#848E9C', fontSize: '11px' } });
-  const spec = element(document, 'div', { text: `Local spec ${STRATEGY29_SPEC_VERSION}`, role: 'spec', styles: { color: '#848E9C', fontSize: '11px' } });
+  const spec = element(document, 'div', { text: `Observer spec ${STRATEGY29_SPEC_VERSION}`, role: 'spec', styles: { color: '#848E9C', fontSize: '11px' } });
   const reference = element(document, 'div', { text: `Local reference ${STRATEGY29_REFERENCE_SHA256}`, role: 'reference', styles: { color: '#848E9C', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'text' } });
   const statusFreshness = element(document, 'div', { text: 'Status not received', role: 'status-freshness', styles: { color: '#848E9C', fontSize: '11px' } });
   const eventsFreshness = element(document, 'div', { text: 'Events not checked', role: 'events-freshness', styles: { color: '#848E9C', fontSize: '11px' } });

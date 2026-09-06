@@ -1,5 +1,5 @@
 export const STRATEGY29_SCHEMA_VERSION = 1;
-export const STRATEGY29_SPEC_VERSION = '29_2_spec_v1';
+export const STRATEGY29_SPEC_VERSION = '29_2_spec_v2';
 export const STRATEGY29_REFERENCE_SHA256 = 'eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d';
 
 const TIMEFRAMES = new Set(['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w']);

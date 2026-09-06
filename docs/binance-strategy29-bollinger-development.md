@@ -9,7 +9,7 @@ already-loaded native chart candles. The optional summary reads the authenticate
 loopback observer gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.2.2 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.3.0 with orderbook 2.7.199 or later, or use it alone.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
@@ -69,6 +69,14 @@ Server status freshness and signal times remain separate from local chart state.
 Panel timestamps explicitly use `UTC+08` rather than inheriting the browser's
 ambient timezone.
 
+Observer compatibility is `29_2_spec_v2`; the chart detector retains the frozen
+V1 reference and unchanged hash. The server independently ranks an activity-score
+universe and applies its configured intervals. Each status poll replaces current
+membership: removed symbols show "Symbol is not watched by the server" while
+retained event history remains visible, and re-entering units can show warming
+until producer readiness and historical baseline complete. The browser does not
+choose markets or infer intervals from other strategies.
+
 The browser polls status first and then consumes at most two event pages per
 scheduled poll. A new route requests `mode=latest&limit=20` for its canonical
 symbol: the server returns the latest retained sequences and a global increment
@@ -78,7 +86,7 @@ advancing that cursor. `cursor_expired` clears only remote rows and requests a n
 latest snapshot. Rows are displayed and bounded by descending durable sequence,
 independent of detection timestamps. This requires the server's explicit latest
 query contract; a server rejecting it stops the remote context visibly.
-Publish the gateway contract before the `0.2.1` client, then verify installed
+Publish the V2 gateway contract before the `0.3.0` client, then verify installed
 source identity and reload before remote acceptance. Publication of either
 component does not enable the observer, gateway, or notifications.
 
