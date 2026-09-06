@@ -12,9 +12,41 @@ import {
   isOpenLadderOpenOrdersCapacityFeedback,
   isPostOnlyMakerRejectionFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
+  readConfirmedReduceOnlyRejection,
   resolveBinanceSubmitResponseRecovery,
   summarizeBinancePlaceOrderPayload,
 } from '../../../src/binance-orderbook-trade/core/order-feedback.js';
+
+test('reduce-only recovery requires a single settled native close rejection', () => {
+  const apiError = { success: false, code: 90802022, message: 'Reduce-only order failed' };
+  const observation = {
+    settled: true,
+    diagnostics: [{ httpStatus: 200, bodyKind: 'json', payloadSummary: apiError }],
+    apiErrors: [apiError],
+  };
+  assert.deepEqual(readConfirmedReduceOnlyRejection('CLOSE', observation, []), apiError);
+  assert.deepEqual(readConfirmedReduceOnlyRejection('CLOSE', {
+    ...observation,
+    diagnostics: [{ ...observation.diagnostics[0], payloadSummary: { ...apiError, code: '90802022' } }],
+  }, []), apiError);
+  assert.equal(readConfirmedReduceOnlyRejection('OPEN', observation, []), null);
+  assert.equal(readConfirmedReduceOnlyRejection('CLOSE', observation, [{}]), null);
+  for (const patch of [
+    { settled: false },
+    { diagnostics: [] },
+    { diagnostics: [observation.diagnostics[0], observation.diagnostics[0]] },
+    { apiErrors: [] },
+    { apiErrors: [apiError, apiError] },
+    { apiErrors: [{ ...apiError, success: true }] },
+    { apiErrors: [{ ...apiError, code: 90802025 }] },
+    ...[null, 0, 400, 503].map((httpStatus) => ({ diagnostics: [{ ...observation.diagnostics[0], httpStatus }] })),
+    { diagnostics: [{ ...observation.diagnostics[0], bodyKind: 'invalid_json' }] },
+    { diagnostics: [{ ...observation.diagnostics[0], payloadSummary: { ...apiError, success: true } }] },
+    { diagnostics: [{ ...observation.diagnostics[0], payloadSummary: { ...apiError, code: 90802025 } }] },
+  ]) {
+    assert.equal(readConfirmedReduceOnlyRejection('CLOSE', { ...observation, ...patch }, []), null);
+  }
+});
 
 test('classifies only rate limits and uncertain server responses as recoverable', () => {
   assert.deepEqual(resolveBinanceSubmitResponseRecovery([

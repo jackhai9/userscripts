@@ -56,10 +56,12 @@ test('close completion checks only the requested position side in hedge mode', (
   assert.deepEqual(resolveSymbolPositionSideStatus(payload, 'HYPEUSDT', 'LONG'), {
     status: 'has_position',
     matchingPositionCount: 1,
+    positionQty: '1.25',
   });
   assert.deepEqual(resolveSymbolPositionSideStatus(payload, 'HYPEUSDT', 'SHORT'), {
     status: 'flat',
     matchingPositionCount: 1,
+    positionQty: '0',
   });
 });
 
@@ -91,6 +93,37 @@ test('close completion rejects unknown position directions instead of guessing',
     () => resolveSymbolPositionSideStatus({ success: true, data: [] }, 'HYPEUSDT', 'UNKNOWN'),
     /目标持仓方向无效/,
   );
+});
+
+test('directional recovery quantities preserve exact signed decimals and existing numeric inputs', () => {
+  for (const [positionSide, positionAmount, side, positionQty] of [
+    ['SHORT', '-1.000000000000000002', 'SHORT', '1.000000000000000002'],
+    ['LONG', '1.000000000000000001', 'LONG', '1.000000000000000001'],
+    ['BOTH', '-1.25', 'SHORT', '1.25'],
+    ['BOTH', '-1.25', 'LONG', '0'],
+    ['BOTH', '1.25', 'LONG', '1.25'],
+    ['BOTH', '1.25', 'SHORT', '0'],
+    ['SHORT', '-0.000', 'SHORT', '0'],
+    ['SHORT', '-.50', 'SHORT', '0.5'],
+    ['LONG', '1.', 'LONG', '1'],
+    ['LONG', 0, 'LONG', '0'],
+    ['BOTH', -1e-8, 'SHORT', '0.00000001'],
+    ['BOTH', 1e21, 'LONG', '1000000000000000000000'],
+  ]) {
+    const state = resolveSymbolPositionSideStatus({
+      success: true, data: [{ symbol: 'HYPEUSDT', positionSide, positionAmount }],
+    }, 'HYPEUSDT', side);
+    assert.equal(state.positionQty, positionQty);
+    assert.equal(state.status, positionQty === '0' ? 'flat' : 'has_position');
+  }
+  assert.deepEqual(resolveSymbolPositionSideStatus({ success: true, data: [] }, 'HYPEUSDT', 'SHORT'), {
+    status: 'flat', matchingPositionCount: 0, positionQty: '0',
+  });
+  for (const positionAmount of ['1e-8', '--1', 'NaN', Infinity, null]) {
+    assert.throws(() => resolveSymbolPositionSideStatus({
+      success: true, data: [{ symbol: 'HYPEUSDT', positionSide: 'BOTH', positionAmount }],
+    }, 'HYPEUSDT', 'SHORT'), { name: 'PositionPayloadContractError' });
+  }
 });
 
 test('rejects unsuccessful or malformed current-symbol position responses', () => {

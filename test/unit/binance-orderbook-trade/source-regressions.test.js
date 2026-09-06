@@ -265,6 +265,27 @@ test('ladder retries with restricted open-order replacement after supported feed
   assert.match(startBody, /runLadderPlanWithOpenOrderReplacement\(\s*actionType,\s*progress,\s*setExecutionStatus,\s*abortController\.signal/);
 });
 
+test('only continuous close routes confirmed conflicts through position-based recovery', () => {
+  const startBody = readFunctionBody('startLadder');
+  const routeBody = readFunctionBody('runLadderPlanWithOpenOrderReplacement');
+  const recoveryBody = readFunctionBody('runContinuousCloseLadderPlan');
+  const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
+  const planBody = readFunctionBody('buildLadderPlan');
+  assert.match(startBody, /allowReduceOnlyRecovery: continuousSession && spec\.mode === 'CLOSE'/);
+  assert.match(routeBody, /options\?\.allowReduceOnlyRecovery === true && getLadderActionSpec\(actionType\)\?\.mode === 'CLOSE'/);
+  assert.match(recoveryBody, /runCloseLadderWithPositionRecovery/);
+  assert.match(recoveryBody, /cancelCurrentSymbolOpenOrdersForPlan\(/);
+  assert.doesNotMatch(recoveryBody, /cancelCurrentSymbolOpenOrders\(|findCurrentSymbolCancelAllButton|resolveContinuousLadderRecovery/);
+  assert.match(recoveryBody, /throwIfClosePositionCompleted\(plan, abortSignal\)\)\.positionQty/);
+  assert.match(recoveryBody, /CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS/);
+  assert.match(recoveryBody, /assertContext: assertLadderExecutionContext/);
+  assert.match(recoveryBody, /allowMaxOpenOrdersRecovery: options.allowMaxOpenOrdersRecovery && !recovering/);
+  assert.match(acknowledgementBody, /readConfirmedReduceOnlyRejection\(\s*mode,\s*responseObservation,\s*capturedApiSuccesses/);
+  assert.match(planBody, /capCloseLadderBaseQty\(base.qty, expectedContext.closePositionQty\)/);
+  assert.match(recoveryBody, /optionContext: plan.optionContext/);
+  assert.match(planBody, /areLadderOptionContextsEqual\(optionContext, expectedContext.optionContext\)/);
+});
+
 test('continuous close recovers a confirmed max-open-orders rejection by freeing farthest slots', () => {
   const acknowledgementBody = readFunctionBody('waitForOrderSubmitAcknowledgement');
   const executeBody = readFunctionBody('executeLadderPlan');
