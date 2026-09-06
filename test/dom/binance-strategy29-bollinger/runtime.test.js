@@ -170,6 +170,80 @@ test('actual remote client retains rows and cursor across visibility and bootstr
   f.dom.window.close();
 });
 
+for (const failure of ['embedded conflict', 'interval subscription failure']) {
+  test(`permanent ${failure} retires the populated remote panel and request`, async () => {
+    const f = fixture();
+    const values = new Map([
+      [STRATEGY29_REMOTE_ENABLED_KEY, true],
+      ['strategy29GatewayAuthSecret', 'synthetic-secret'],
+    ]);
+    let requests = 0, aborts = 0;
+    let releaseLate;
+    const runtime = installStrategy29(f.view, {
+      request: ({ url, signal }) => {
+        requests += 1;
+        if (requests > 2) return new Promise(resolve => {
+          releaseLate = resolve;
+          signal.addEventListener('abort', () => { aborts += 1; }, { once: true });
+        });
+        const body = url.includes('/status') ? gatewayStatus : {
+          ...gatewayEvents,
+          events: [{ ...gatewayEvents.events[0], symbol: 'BTR/USDT:USDT' }],
+          has_more: false,
+        };
+        return Promise.resolve({ status: 200, responseText: JSON.stringify(body) });
+      },
+      getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
+      setValue: (key, value) => values.set(key, value),
+      registerMenuCommand() {}, promptUser() { return null; },
+    });
+    const settle = () => new Promise(resolve => f.view.setTimeout(resolve, 0));
+    try {
+      await settle();
+      const panel = f.view.document.getElementById('jh-strategy29-summary-panel');
+      assert.equal(panel.querySelectorAll('[data-role=remote-event]').length, 1);
+      assert.equal(runtime.diagnostics.remoteSummary.state, 'connected');
+      f.hide(true); f.hide(false);
+      assert.equal(requests, 3);
+      if (failure === 'embedded conflict') {
+        f.view.__TM_CLOSE_LONG_DEBUG__ = { bollingerAlertState: {} };
+      } else {
+        const root = f.view.document.createElement('div');
+        root.className = 'chart-widget-root';
+        root.innerHTML = '<iframe></iframe>';
+        root.getClientRects = () => [{ width: 800, height: 600 }];
+        root.getBoundingClientRect = () => ({ width: 800, height: 600 });
+        f.view.document.body.append(root);
+        const chart = {
+          symbol: () => 'BTRUSDT@PRICETYPE=LAST', resolution: () => '1',
+          hasModel: () => true, dataReady: () => true,
+          onIntervalChanged() { throw new Error('synthetic interval subscription failure'); },
+          onDataLoaded() {}, createShape() {}, exportData() {},
+          getAllShapes() {}, getShapeById() {}, removeEntity() {},
+        };
+        root.querySelector('iframe').contentWindow.tradingViewApi = { activeChart: () => chart };
+      }
+      f.tick();
+      await settle();
+      assert.match(runtime.diagnostics.runtimeFailure, failure === 'embedded conflict' ? /update Orderbook/ : /synthetic interval subscription failure/);
+      assert.equal(aborts, 1);
+      assert.equal(panel.isConnected, false);
+      assert.equal(runtime.diagnostics.remoteSummary.contextPresent, false);
+      assert.equal(f.timers.size, 0);
+      releaseLate({ status: 200, responseText: JSON.stringify(gatewayStatus) });
+      f.hide(true); f.hide(false);
+      f.view.dispatchEvent(new f.view.Event('pageshow'));
+      await settle();
+      assert.equal(requests, 3);
+      assert.equal(f.view.document.getElementById('jh-strategy29-summary-panel'), null);
+      assert.equal(f.timers.size, 0);
+    } finally {
+      runtime.dispose();
+      f.dom.window.close();
+    }
+  });
+}
+
 for (const legacyFirst of [true, false]) {
   test(`legacy embedded observer refuses coexistence (legacy first=${legacyFirst})`, () => {
     const f = fixture();

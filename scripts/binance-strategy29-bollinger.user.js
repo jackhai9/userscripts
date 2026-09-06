@@ -2189,6 +2189,7 @@
     function fail(message) {
       failed = message;
       pause();
+      remoteSummary?.dispose();
       showFailure();
     }
     function sample() {

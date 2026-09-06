@@ -71,7 +71,8 @@ component does not enable the observer, gateway, or notifications.
 Route changes, page hiding, disabling, and disposal abort the owned request.
 Hiding retains the current client, cursor, and panel rows; resume uses a fresh
 request owner and continues increments. Route/settings changes retire the old
-context. Responses check their original abort signal before changing client state;
+context. A permanent local runtime failure disposes the remote summary and removes
+its panel; visibility or pageshow cannot revive it. Responses check their original abort signal before changing client state;
 completion handlers also check request ownership, so an old request cannot publish
 or clear the in-flight flag of resumed work. No extra recurring timer is installed:
 the existing one-second runtime sample applies a five-second remote gate.
