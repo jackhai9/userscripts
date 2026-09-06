@@ -316,11 +316,12 @@ export function createStrategy27EventPanel(document, chartRoot, {
       styles: { color: selectedKind === 'compound' ? annotation.titleColor : annotation.markerColor ?? '#EAECEF', fontWeight: '700', flex: '1' },
     }));
     title.appendChild(createElement(document, 'span', {
-      text: selectedKind === 'compound' ? '探索版' : STATUS_LABELS[annotation.status],
+      text: selectedKind === 'compound' ? '探索版' : record.historical ? 'Historical' : STATUS_LABELS[annotation.status],
       styles: { color: '#848E9C', fontSize: '11px' },
     }));
     detail.appendChild(title);
     appendDetailLine(document, detail, '时间', formatClock(annotation.eventTimeMs));
+    if (record.historical) appendDetailLine(document, detail, 'History', 'Stream restarted; showing the last received observation.', '#F0B90B');
     if (selectedKind === 'compound') {
       for (const row of annotation.detailRows) appendDetailLine(document, detail, row.label, row.value);
       const identity = createElement(document, 'details', { role: 'compound-identity', styles: { color: '#848E9C' } });
@@ -371,6 +372,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
       });
       row.type = 'button';
       row.dataset.eventId = eventId;
+      if (record.historical) row.dataset.historical = 'true';
       row.title = `${annotation.title}｜${annotation.summary}`;
       row.appendChild(createElement(document, 'span', {
         styles: {
@@ -444,6 +446,11 @@ export function createStrategy27EventPanel(document, chartRoot, {
     },
     removeCompound(eventId) {
       removeRecord(compoundRecords, eventId);
+    },
+    /** Retain facts and selection without presenting a previous stream as live. */
+    retainHistory() {
+      for (const record of records.values()) record.historical = true;
+      render();
     },
     clear() {
       records.clear();

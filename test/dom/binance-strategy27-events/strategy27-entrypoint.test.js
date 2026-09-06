@@ -448,3 +448,133 @@ for (const generated of [false, true]) {
     assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
   });
 }
+
+function ordinaryStreamReset(epoch = 'c'.repeat(32)) {
+  return { ...ordinaryMessage(), runtime_epoch: epoch, sequence: 1,
+    message_kind: 'stream_state', symbol: null, event_id: null,
+    observed_at_ms: 7000, event_time_ms: 7000, data_status: 'ready',
+    payload: { state: 'ready', reason: 'transport_recovered' } };
+}
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} transport epoch reset retains historical arrows and rehydrates without duplication`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.ordinaryBootstrap();
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
+    await until(() => h.pending('ordinary').length === 1);
+    const ids = [...h.shapes.keys()];
+    assert.equal(ids.length, 2);
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '2-0', next_cursor: '3-0', messages: [ordinaryStreamReset()] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
+    assert.match(h.page.document.body.textContent, /Historical/);
+    const replay = { ...ordinaryMessage(), runtime_epoch: 'c'.repeat(32), sequence: 2 };
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '3-0', next_cursor: '4-0', messages: [replay] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
+    assert.doesNotMatch(h.page.document.body.textContent, /Historical/);
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '4-0', next_cursor: '5-0', messages: [ordinaryStreamReset('d'.repeat(32))] });
+    await until(() => h.pending('ordinary').length === 1);
+    h.setNow(7207001);
+    h.tick();
+    await new Promise(setImmediate);
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
+  });
+}
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} stale cursor bootstrap merges retained history and context exit removes it`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.ordinaryBootstrap();
+    const ordinary = ordinaryMessage();
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinary] });
+    await until(() => h.pending('ordinary').length === 1);
+    const ids = [...h.shapes.keys()];
+    await h.respond('ordinary', { schema_version: 1, status: 'reset', reason: 'stale_cursor', requested_cursor: '2-0', next_cursor: '5-0', messages: [] }, 409);
+    await until(() => h.pending('ordinary').length === 1);
+    assert.deepEqual([...h.shapes.keys()], ids);
+    await h.respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null,
+      next_cursor: '6-0', runtime_epoch: ordinary.runtime_epoch, last_sequence: 2, bootstrap_observed_at_ms: 7000,
+      records: [{ event_id: ordinary.event_id, event_envelope: ordinary, marker_envelope: ordinary, outcome_envelope: null }] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
+    h.setResolution('1');
+    h.tick();
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
+  });
+
+  test(`${generated ? 'generated' : 'source'} retained display history stays bounded across epochs and manual clear removes it`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.ordinaryBootstrap();
+    const messages = Array.from({ length: 80 }, (_, i) => ({ ...ordinaryMessage(), sequence: i + 2, event_id: i.toString(16).padStart(64, '0') }));
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '81-0', messages });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(h.shapes.size, 81);
+    const firstId = [...h.shapes.keys()][1];
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '81-0', next_cursor: '82-0', messages: [ordinaryStreamReset()] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(h.shapes.size, 81);
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '82-0', next_cursor: '83-0', messages: [{ ...ordinaryMessage(), runtime_epoch: 'c'.repeat(32), sequence: 2 }] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(h.shapes.size, 81);
+    assert.equal(h.shapes.has(firstId), false);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 8);
+    h.clear();
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+    h.tick();
+    await new Promise(setImmediate);
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+    assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
+  });
+}
+
+test('display capacity uses last observation rather than insertion order after epoch rehydration', async (t) => {
+  const h = await harness(t);
+  await h.ordinaryBootstrap();
+  const events = Array.from({ length: 80 }, (_, i) => ({ ...ordinaryMessage(), sequence: i + 2, event_id: i.toString(16).padStart(64, '0') }));
+  await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '81-0', messages: events });
+  await until(() => h.pending('ordinary').length === 1);
+  const ids = [...h.shapes.keys()];
+  await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '81-0', next_cursor: '82-0', messages: [ordinaryStreamReset(), { ...events[0], runtime_epoch: 'c'.repeat(32), sequence: 2, observed_at_ms: 7000 }] });
+  await until(() => h.pending('ordinary').length === 1);
+  await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '82-0', next_cursor: '83-0', messages: [{ ...ordinaryMessage(), runtime_epoch: 'c'.repeat(32), sequence: 3, observed_at_ms: 7000 }] });
+  await until(() => h.pending('ordinary').length === 1);
+  assert.equal(h.shapes.size, 81);
+  assert.equal(h.shapes.has(ids[1]), true);
+  assert.equal(h.shapes.has(ids[2]), false);
+  h.setNow(7202001);
+  h.tick();
+  await new Promise(setImmediate);
+  assert.equal(h.shapes.size, 3);
+  assert.equal(h.shapes.has(ids[1]), true);
+});
+
+test('older bootstrap replay cannot shorten the retained display lifetime', async (t) => {
+  const h = await harness(t);
+  await h.ordinaryBootstrap();
+  await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [{ ...ordinaryMessage(), observed_at_ms: 7000 }] });
+  await until(() => h.pending('ordinary').length === 1);
+  const ids = [...h.shapes.keys()];
+  await h.respond('ordinary', { schema_version: 1, status: 'reset', reason: 'stale_cursor', requested_cursor: '2-0', next_cursor: '5-0', messages: [] }, 409);
+  await until(() => h.pending('ordinary').length === 1);
+  const old = ordinaryMessage();
+  await h.respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null,
+    next_cursor: '6-0', runtime_epoch: old.runtime_epoch, last_sequence: 2, bootstrap_observed_at_ms: 7000,
+    records: [{ event_id: old.event_id, event_envelope: old, marker_envelope: old, outcome_envelope: null }] });
+  await until(() => h.pending('ordinary').length === 1);
+  h.setNow(7202001);
+  h.tick();
+  await new Promise(setImmediate);
+  assert.deepEqual([...h.shapes.keys()], ids);
+  assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
+  h.setNow(7207001);
+  h.tick();
+  await new Promise(setImmediate);
+  assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+  assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
+});

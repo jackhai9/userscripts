@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.3
+// @version      0.4.4
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -86,12 +86,33 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     statusView = null;
   }
 
+  function removeOrdinaryEvent(context, eventId) {
+    context.ordinaryHistory.delete(eventId);
+    context.layer.remove(eventId);
+    context.panel.remove(eventId);
+    context.candidatePresentations.delete(eventId);
+  }
+
   function pruneOrdinaryEvents(context) {
-    for (const eventId of context.lifecycle.prune(Date.now())) {
-      context.layer.remove(eventId);
-      context.panel.remove(eventId);
-      context.candidatePresentations.delete(eventId);
+    const now = Date.now();
+    context.lifecycle.prune(now);
+    for (const [eventId, observedAtMs] of context.ordinaryHistory) {
+      if (now - observedAtMs > MAX_EVENT_AGE_MS) removeOrdinaryEvent(context, eventId);
     }
+  }
+
+  /** Transport epochs reset validation, not the lifetime of verified chart evidence. */
+  function retainOrdinaryEvent(context, eventId, observedAtMs) {
+    const previous = context.ordinaryHistory.get(eventId);
+    const retainedAtMs = previous === undefined ? observedAtMs : Math.max(previous, observedAtMs);
+    context.ordinaryHistory.set(eventId, retainedAtMs);
+    const oldestFirst = [...context.ordinaryHistory].sort(([leftId, leftTime], [rightId, rightTime]) => (
+      leftTime - rightTime || leftId.localeCompare(rightId)
+    ));
+    while (context.ordinaryHistory.size > MAX_RETAINED_EVENTS) {
+      removeOrdinaryEvent(context, oldestFirst.shift()[0]);
+    }
+    return retainedAtMs;
   }
 
   function failOrdinary(context, error) {
@@ -120,9 +141,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     pruneOrdinaryEvents(context);
     if (response.status === 'reset') {
       context.lifecycle.reset(response.reason);
-      context.layer.clear();
-      context.panel.clear();
-      context.candidatePresentations.clear();
+      context.panel.retainHistory();
       hideStatus();
       return;
     }
@@ -133,9 +152,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
         runtimeEpoch: response.runtime_epoch,
         observedAtMs: response.bootstrap_observed_at_ms,
       });
-      context.layer.clear();
-      context.panel.clear();
-      context.candidatePresentations.clear();
+      context.panel.retainHistory();
       const bySequence = new Map();
       for (const record of response.records) {
         for (const message of [record.marker_envelope, record.event_envelope, record.outcome_envelope]) {
@@ -153,19 +170,14 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     for (const message of messages) {
       if (active !== context || context.failed) return;
       const action = context.lifecycle.apply(message);
-      for (const eventId of action.evictedEventIds ?? []) {
-        context.layer.remove(eventId);
-        context.panel.remove(eventId);
-        context.candidatePresentations.delete(eventId);
-      }
       if (action.type === 'stream_reset') {
-        context.layer.clear();
-        context.panel.clear();
-        context.candidatePresentations.clear();
+        context.panel.retainHistory();
         hideStatus();
         continue;
       }
       if (action.type === 'event_evicted') continue;
+      const retainedAtMs = retainOrdinaryEvent(context, action.eventId, action.observedAtMs);
+      if (!context.ordinaryHistory.has(action.eventId)) continue;
       const annotation = stabilizeCandidatePresentation(
         context.candidatePresentations,
         action.eventId,
@@ -180,9 +192,9 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
         event_closed: 'renderClosed',
         event_outcome: 'renderOutcome',
       }[action.messageKind];
-      const rendered = await context.layer[renderMethod](action.eventId, annotation, action.observedAtMs);
-      if (!rendered || active !== context || context.failed) continue;
-      context.panel.upsert(action.eventId, annotation, action.observedAtMs);
+      const rendered = await context.layer[renderMethod](action.eventId, annotation, retainedAtMs);
+      if (!rendered || active !== context || context.failed || !context.ordinaryHistory.has(action.eventId)) continue;
+      context.panel.upsert(action.eventId, annotation, retainedAtMs);
       hideStatus();
     }
     if (response.status === 'bootstrap') {
@@ -213,6 +225,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
         savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position),
       }),
       candidatePresentations: new Map(),
+      ordinaryHistory: new Map(),
       reconciliation: null,
       failed: false,
     };
@@ -339,6 +352,8 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     active?.compound.clear();
     active?.layer.clear();
     active?.panel.clear();
+    active?.ordinaryHistory.clear();
+    active?.candidatePresentations.clear();
     if (!active?.failed) hideStatus();
   });
   GM_registerMenuCommand('Reconnect Strategy 27 and restore history', restart);
