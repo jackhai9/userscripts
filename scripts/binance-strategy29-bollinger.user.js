@@ -1588,7 +1588,16 @@
       bearishBollingerAlertTask = task;
       task.catch((error) => {
         if (bearishBollingerAlertContext !== context || context.intervalSession !== bollingerIntervalSession?.session || context.intervalRevision !== context.intervalSession.revision) return;
-        const failureKind = applyBollingerAlertTaskFailure(context, error);
+        let failureKind;
+        let classificationFailed = false;
+        try {
+          failureKind = applyBollingerAlertTaskFailure(context, error);
+        } catch {
+          classificationFailed = true;
+          context.failed = true;
+          context.cleanupPending = true;
+          failureKind = "fatal";
+        }
         if (failureKind === "retry") {
           warn("布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:", error);
           return;
@@ -1605,6 +1614,7 @@
         }
         lastLocalFailure = Object.freeze({
           thrownType: error === null ? "null" : typeof error,
+          classificationFailed,
           ...details,
           unreadableFields: Object.freeze(unreadableFields),
           stage,

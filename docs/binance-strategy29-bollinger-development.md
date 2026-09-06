@@ -43,6 +43,9 @@ name/message fields are null, and arbitrary rejected objects are not serialized.
 Each field is read once. A throwing host accessor leaves that field null and adds
 its name to `unreadableFields`; this diagnostic boundary cannot replace the original
 monitor failure with a property-read failure.
+If a host Proxy throws during rejection classification, the monitor stops that
+context and records `classificationFailed: true`; normal fatal errors record false.
+The frozen detector/core source and its direct invalid-context assertion remain unchanged.
 It describes the last fatal event, not necessarily the active context. It does not
 store stack traces, candles, requests or gateway credentials, and is never persisted
 or sent to the remote service. Recoverable snapshot races leave it unchanged.

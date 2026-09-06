@@ -711,7 +711,7 @@ for (const stage of ['export', 'render']) {
     assert.equal(harness.monitor.diagnostics.cleanupPending, false);
     assert.equal(harness.monitor.diagnostics.layerSize, 0);
     const expected = {
-      thrownType: 'object', name: 'Error', message, unreadableFields: [], stage, routeSymbol: 'BTRUSDT', resolution: '1',
+      thrownType: 'object', classificationFailed: false, name: 'Error', message, unreadableFields: [], stage, routeSymbol: 'BTRUSDT', resolution: '1',
       cachedSignalCount: 6, layerSizeBeforeCleanup: 6,
       sessionRevision: 0, contextIntervalRevision: 0,
     };
@@ -734,6 +734,7 @@ for (const value of ['x'.repeat(600), null, { code: 7 }]) {
     assert.equal(harness.monitor.diagnostics.cleanupPending, false);
     assert.deepEqual(harness.monitor.diagnostics.lastLocalFailure, {
       thrownType: value === null ? 'null' : typeof value,
+      classificationFailed: false,
       name: null, message: typeof value === 'string' ? 'x'.repeat(512) : null,
       unreadableFields: [], stage: 'export', routeSymbol: 'BTRUSDT', resolution: '1',
       cachedSignalCount: null, layerSizeBeforeCleanup: 0,
@@ -741,6 +742,61 @@ for (const value of ['x'.repeat(600), null, { code: 7 }]) {
     });
     assert.equal(harness.errors.length, 1);
     assert.equal(harness.errors[0][1], value);
+    harness.monitor.stop();
+    fixture.dom.window.close();
+  });
+}
+
+test('keeps a recoverable snapshot race out of fatal diagnostics and resumes exports', async () => {
+  const fixture = createChartDom();
+  const harness = createMonitorHarness(fixture);
+  const stable = async () => exportResult([{ 0: 60, 1: 10, 2: 12, 3: 9, 4: 11 }]);
+  fixture.chart.exportData = stable;
+  await harness.tick();
+  const failure = new TradingViewBarSnapshotInconsistentError('synthetic snapshot race');
+  fixture.chart.exportData = async () => { throw failure; };
+  await assert.rejects(harness.tick(), reason => reason === failure);
+  assert.equal(harness.monitor.diagnostics.failed, false);
+  assert.equal(harness.monitor.diagnostics.cleanupPending, false);
+  assert.equal(harness.monitor.diagnostics.lastLocalFailure, null);
+  assert.equal(harness.monitor.diagnostics.layerSize, 1);
+  fixture.chart.exportData = stable;
+  await harness.tick();
+  assert.equal(harness.monitor.diagnostics.cachedSignalCount, 1);
+  assert.equal(harness.monitor.diagnostics.lastLocalFailure, null);
+  assert.deepEqual(harness.errors, []);
+  harness.monitor.stop();
+  fixture.dom.window.close();
+});
+
+for (const revoked of [true, false]) {
+  test(`stops an unclassifiable host Proxy rejection (revoked=${revoked})`, async () => {
+    const fixture = createChartDom();
+    const harness = createMonitorHarness(fixture);
+    const host = Proxy.revocable({}, { getPrototypeOf() {
+      throw new Error('synthetic host prototype failure');
+    } });
+    if (revoked) host.revoke();
+    let exports = 0;
+    fixture.chart.exportData = async () => { exports += 1; throw host.proxy; };
+    // assert.rejects itself reads properties of the rejected value, which a revoked Proxy forbids.
+    await harness.tick().then(
+      () => assert.fail('The original host rejection must propagate'),
+      reason => assert.equal(reason, host.proxy),
+    );
+    await harness.tick();
+    await harness.tick();
+    const recorded = harness.monitor.diagnostics.lastLocalFailure;
+    assert.equal(recorded.classificationFailed, true);
+    assert.equal(recorded.thrownType, 'object');
+    assert.equal(recorded.name, null);
+    assert.equal(recorded.message, null);
+    assert.deepEqual(recorded.unreadableFields, revoked ? ['name', 'message'] : []);
+    assert.equal(harness.monitor.diagnostics.failed, true);
+    assert.equal(harness.monitor.diagnostics.cleanupPending, false);
+    assert.equal(harness.monitor.diagnostics.layerSize, 0);
+    assert.equal(harness.errors[0][1], host.proxy);
+    assert.equal(exports, 1);
     harness.monitor.stop();
     fixture.dom.window.close();
   });

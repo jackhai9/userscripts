@@ -169,7 +169,17 @@ export function createBollingerMonitor({
         || context.intervalSession !== bollingerIntervalSession?.session
         || context.intervalRevision !== context.intervalSession.revision
       ) return;
-      const failureKind = applyBollingerAlertTaskFailure(context, error);
+      let failureKind;
+      let classificationFailed = false;
+      try {
+        failureKind = applyBollingerAlertTaskFailure(context, error);
+      } catch {
+        // A revoked host Proxy can throw during instanceof; an unclassifiable rejection must stop this context.
+        classificationFailed = true;
+        context.failed = true;
+        context.cleanupPending = true;
+        failureKind = 'fatal';
+      }
       if (failureKind === 'retry') {
         // TradingView can expose one feed-update race through exportData(). Keep the
         // already-rendered layer and retry the next poll instead of turning a transient
@@ -191,6 +201,7 @@ export function createBollingerMonitor({
       }
       lastLocalFailure = Object.freeze({
         thrownType: error === null ? 'null' : typeof error,
+        classificationFailed,
         ...details,
         unreadableFields: Object.freeze(unreadableFields),
         stage,
