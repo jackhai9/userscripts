@@ -9,7 +9,7 @@ already-loaded native chart candles. The optional summary reads the authenticate
 loopback observer gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.2.1 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.2.2 with orderbook 2.7.199 or later, or use it alone.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
@@ -35,6 +35,20 @@ BFCache pagehide pause it; visibility/pageshow resumes it. Permanent disposal
 removes its listeners, aborts an in-flight summary request, and invalidates
 pending drawing work. Non-trading routes perform no candle exports or gateway
 requests.
+The read-only diagnostics retain one `lastLocalFailure` after local fatal cleanup
+or stop. It records the export/reconcile/detect/render stage, thrown value type,
+bounded name (64 characters) and message (512 characters), route, interval and
+pre-cleanup counts. String rejections supply the message directly; missing string
+name/message fields are null, and arbitrary rejected objects are not serialized.
+Each field is read once. A throwing host accessor leaves that field null and adds
+its name to `unreadableFields`; this diagnostic boundary cannot replace the original
+monitor failure with a property-read failure.
+If a host Proxy throws during rejection classification, the monitor stops that
+context and records `classificationFailed: true`; normal fatal errors record false.
+The frozen detector/core source and its direct invalid-context assertion remain unchanged.
+It describes the last fatal event, not necessarily the active context. It does not
+store stack traces, candles, requests or gateway credentials, and is never persisted
+or sent to the remote service. Recoverable snapshot races leave it unchanged.
 Independent instances of each bundle share the same controller regardless of
 load order. Strategy27 does not participate in this protocol.
 
