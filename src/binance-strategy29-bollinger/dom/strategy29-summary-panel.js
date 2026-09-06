@@ -174,7 +174,9 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
         : `Last successful selection ${formatClock(universe.last_successful_refreshed_at_ms)} · ${universe.last_success_age_seconds.toFixed(1)}s ago`;
       units.replaceChildren();
       const selected = universe.selected_markets.includes(canonicalSymbol);
-      const matching = unavailable || !selected ? [] : snapshot.units.filter(unit => unit.symbol === canonicalSymbol);
+      const matching = unavailable || !selected ? [] : snapshot.units.filter(unit => (
+        unit.symbol === canonicalSymbol && universe.configured_timeframes.includes(unit.timeframe)
+      ));
       for (const unit of matching) {
         const row = element(document, 'div', {
           role: 'unit',

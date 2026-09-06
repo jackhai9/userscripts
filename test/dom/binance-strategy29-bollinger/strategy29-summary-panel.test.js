@@ -36,11 +36,14 @@ test('replaces dynamic membership while retaining durable signal history', () =>
   panel.renderStatus(status);
   panel.addEvents(events.events);
   assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 2);
+  panel.renderStatus({ ...status, universe: { ...status.universe, configured_timeframes: ['1h'] } });
+  assert.deepEqual([...dom.window.document.querySelectorAll('[data-role=unit]')].map(row => row.firstChild.textContent), ['1h']);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
   panel.renderStatus({ ...status, universe: { ...status.universe, selected_markets: ['ETH/USDT:USDT'] }, units: [] });
   assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 0);
   assert.match(dom.window.document.body.textContent, /Symbol is not watched/);
   assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
-  panel.renderStatus({ ...status, units: [{ ...status.units[0], timeframe: '4h', status: 'warming', reason: 'awaiting_producer_generation' }] });
+  panel.renderStatus({ ...status, universe: { ...status.universe, configured_timeframes: ['4h'] }, units: [{ ...status.units[0], timeframe: '4h', status: 'warming', reason: 'awaiting_producer_generation' }] });
   const units = dom.window.document.querySelectorAll('[data-role=unit]');
   assert.equal(units.length, 1);
   assert.match(units[0].textContent, /4h.*warming.*awaiting_producer_generation/);
