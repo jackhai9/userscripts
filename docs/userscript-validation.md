@@ -25,6 +25,9 @@ are owned by `skills/userscript-release/SKILL.md`.
 Run the full `npm test` suite before a release. A focused check can establish
 that one layer passed; it does not replace a required build, generated-artifact
 comparison, or live validation step.
+The default suite runs all `test/unit/**/*.test.js` and `test/dom/**/*.test.js`
+files. Scripts under `test/manual/` are explicit manual probes and previews;
+they are not automatically executed by the test runner.
 
 ## Shared Contracts
 

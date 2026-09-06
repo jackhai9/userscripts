@@ -103,7 +103,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   }
   function renderEvents() {
     events.replaceChildren();
-    const ordered = [...eventRecords.values()].sort((left, right) => right.detected_at_ms - left.detected_at_ms || right.sequence - left.sequence);
+    const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
     for (const event of ordered) {
       const row = element(document, 'div', {
         role: 'remote-event',
@@ -164,7 +164,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     addEvents(incoming, observedAtMs = null) {
       assertLive();
       for (const event of incoming) eventRecords.set(event.event_id, event);
-      const ordered = [...eventRecords.values()].sort((left, right) => right.detected_at_ms - left.detected_at_ms || right.sequence - left.sequence);
+      const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
       while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
       if (observedAtMs !== null) eventsFreshness.textContent = `Events checked ${formatClock(observedAtMs)}`;
       renderEvents();

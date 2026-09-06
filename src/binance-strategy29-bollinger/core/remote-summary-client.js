@@ -64,7 +64,10 @@ function assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPer
 function buildEventsUrl(origin, canonicalSymbol, cursor) {
   const url = new URL('/v1/strategy29/events', origin);
   url.searchParams.set('symbol', canonicalSymbol);
-  if (cursor !== null) url.searchParams.set('cursor', String(cursor));
+  if (cursor === null) {
+    url.searchParams.set('mode', 'latest');
+    url.searchParams.set('limit', '20');
+  } else url.searchParams.set('cursor', String(cursor));
   return url.href;
 }
 
@@ -93,6 +96,8 @@ export function createStrategy29SummaryClient({
 
   async function poll(signal) {
     const statusResponse = await perform(`${origin}/v1/strategy29/status`, signal);
+    // Aborted host requests can still resolve; they must not mutate a resumed client.
+    if (signal.aborted) throw signal.reason;
     const statusBody = parseJsonResponse(statusResponse, 'Strategy29 status');
     if (statusResponse.status === 503) {
       validateStrategy29GatewayError(statusBody, 503);
@@ -113,12 +118,13 @@ export function createStrategy29SummaryClient({
     while (pages < maxPagesPerPoll) {
       const requestedCursor = cursor;
       const eventsResponse = await perform(buildEventsUrl(origin, canonicalSymbol, cursor), signal);
+      if (signal.aborted) throw signal.reason;
       const eventsBody = parseJsonResponse(eventsResponse, 'Strategy29 events');
       pages += 1;
       if (eventsResponse.status === 409) {
         const error = validateStrategy29GatewayError(eventsBody, 409);
-        cursor = error.oldest_cursor;
-        onCursorReset(cursor);
+        cursor = null;
+        onCursorReset(error.oldest_cursor);
         hasMore = true;
         continue;
       }
@@ -131,6 +137,9 @@ export function createStrategy29SummaryClient({
         throw new Error(`Strategy29 events request failed with HTTP ${eventsResponse.status}`);
       }
       const page = validateStrategy29EventsResponse(eventsBody, 200);
+      if (requestedCursor === null && (page.has_more || page.events.length > 20)) {
+        throw new TypeError('Strategy29 latest snapshot must be complete and bounded to 20 events');
+      }
       if (requestedCursor !== null && page.next_cursor < requestedCursor) {
         throw new TypeError('Strategy29 event cursor moved backwards');
       }

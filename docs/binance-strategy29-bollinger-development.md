@@ -9,7 +9,7 @@ already-loaded native chart candles. The optional summary reads the authenticate
 loopback observer gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.2.0 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.2.1 with orderbook 2.7.199 or later, or use it alone.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
@@ -17,7 +17,7 @@ If the old script loads later, existing markers can remain because its private
 save owner can block safe cleanup. This is not a supported compatibility mode;
 Strategy29 never removes old-script or user drawings.
 
-The orderbook runs in page context. Strategy29 0.2.0 runs in a Tampermonkey
+The orderbook runs in page context. Strategy29 runs in a Tampermonkey
 sandbox so its gateway secret remains in private userscript storage, and passes
 `unsafeWindow` explicitly to the chart runtime. The orderbook registers a
 synchronous boolean drawing-busy predicate under
@@ -56,13 +56,26 @@ Panel timestamps explicitly use `UTC+08` rather than inheriting the browser's
 ambient timezone.
 
 The browser polls status first and then consumes at most two event pages per
-scheduled poll. A page may contain no matching events while still advancing the
-global cursor; that progress is accepted. `cursor_expired` clears only the remote
-event rows and resumes from the explicit server cursor. Route changes, page
-hiding, disabling, and disposal abort the owned request. Every response checks
-context ownership before changing the panel, so a late old-symbol response is
-ignored. No extra recurring timer is installed: the existing one-second runtime
-sample applies a five-second remote gate and keeps requests single-flight.
+scheduled poll. A new route requests `mode=latest&limit=20` for its canonical
+symbol: the server returns the latest retained sequences and a global increment
+cursor from one SQLite snapshot. It does not scan retained global history to
+fill the panel. Subsequent increments can contain no matching events while still
+advancing that cursor. `cursor_expired` clears only remote rows and requests a new
+latest snapshot. Rows are displayed and bounded by descending durable sequence,
+independent of detection timestamps. This requires the server's explicit latest
+query contract; a server rejecting it stops the remote context visibly.
+Publish the gateway contract before the `0.2.1` client, then verify installed
+source identity and reload before remote acceptance. Publication of either
+component does not enable the observer, gateway, or notifications.
+
+Route changes, page hiding, disabling, and disposal abort the owned request.
+Hiding retains the current client, cursor, and panel rows; resume uses a fresh
+request owner and continues increments. Route/settings changes retire the old
+context. A permanent local runtime failure disposes the remote summary and removes
+its panel; visibility or pageshow cannot revive it. Responses check their original abort signal before changing client state;
+completion handlers also check request ownership, so an old request cannot publish
+or clear the in-flight flag of resumed work. No extra recurring timer is installed:
+the existing one-second runtime sample applies a five-second remote gate.
 
 Transport failures and a temporarily unavailable database remain retryable
 remote states. Authentication, request, JSON, and response-contract failures

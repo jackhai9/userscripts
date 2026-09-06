@@ -58,6 +58,7 @@ export function installStrategy29(view, remoteAdapters = null) {
   function fail(message) {
     failed = message;
     pause();
+    remoteSummary?.dispose();
     showFailure();
   }
   function sample() {

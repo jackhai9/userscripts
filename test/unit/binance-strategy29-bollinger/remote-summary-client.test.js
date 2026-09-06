@@ -48,6 +48,66 @@ test('normalizes only an explicit loopback HTTP origin', () => {
   ]) assert.throws(() => normalizeStrategy29GatewayOrigin(value), /loopback origin/);
 });
 
+test('bootstraps recent events once then follows the global high-water cursor', async () => {
+  const fixture = clientFixture([
+    response(status), response({ ...events, next_cursor: 100_000, has_more: false }),
+    response(status), response({ ...events, events: [], next_cursor: 100_200, has_more: false }),
+  ]);
+  await fixture.client.poll(new AbortController().signal);
+  const firstUrl = new URL(fixture.requests[1].url);
+  assert.equal(firstUrl.searchParams.get('mode'), 'latest');
+  assert.equal(firstUrl.searchParams.get('limit'), '20');
+  assert.equal(firstUrl.searchParams.has('cursor'), false);
+  assert.deepEqual(fixture.received.map(event => event.sequence), [41, 42]);
+  await fixture.client.poll(new AbortController().signal);
+  const nextUrl = new URL(fixture.requests[3].url);
+  assert.equal(nextUrl.searchParams.get('cursor'), '100000');
+  assert.equal(nextUrl.searchParams.has('mode'), false);
+  assert.equal(fixture.client.diagnostics.cursor, 100_200);
+});
+
+test('a cancelled response cannot advance a resumed client cursor or publish events', async () => {
+  let completeOld;
+  const oldResponse = new Promise(resolve => { completeOld = resolve; });
+  const fixture = clientFixture([
+    response(status), oldResponse,
+    response(status), response({ ...events, next_cursor: 100_000, has_more: false }),
+  ]);
+  const oldController = new AbortController();
+  const oldPoll = fixture.client.poll(oldController.signal);
+  await new Promise(resolve => setImmediate(resolve));
+  oldController.abort(new DOMException('hidden', 'AbortError'));
+  await fixture.client.poll(new AbortController().signal);
+  completeOld(response({ ...events, next_cursor: 500, has_more: false }));
+  await assert.rejects(oldPoll, error => error.name === 'AbortError');
+  assert.equal(fixture.client.diagnostics.cursor, 100_000);
+  assert.deepEqual(fixture.received.map(event => event.sequence), [41, 42]);
+});
+
+test('rejects incomplete or oversized latest snapshots', async () => {
+  for (const latest of [
+    { ...events, has_more: true },
+    { ...events, has_more: false, events: Array(21).fill(events.events[0]) },
+  ]) {
+    const fixture = clientFixture([response(status), response(latest)]);
+    await assert.rejects(fixture.client.poll(new AbortController().signal), /complete and bounded/);
+    assert.equal(fixture.client.diagnostics.cursor, null);
+    assert.deepEqual(fixture.received, []);
+  }
+});
+
+test('a cancelled status response cannot publish status or start another request', async () => {
+  let complete;
+  const fixture = clientFixture([new Promise(resolve => { complete = resolve; })]);
+  const controller = new AbortController();
+  const poll = fixture.client.poll(controller.signal);
+  controller.abort(new DOMException('retired', 'AbortError'));
+  complete(response(status));
+  await assert.rejects(poll, error => error.name === 'AbortError');
+  assert.deepEqual(fixture.snapshots, []);
+  assert.equal(fixture.requests.length, 1);
+});
+
 test('GM transport sends the secret only in Authorization and owns abort', async () => {
   let options;
   let aborted = false;
@@ -93,37 +153,48 @@ test('GM transport classifies synchronous initialization failure and synchronous
 test('polls status then bounded event pages and accepts filtered empty progress', async () => {
   const first = { ...events, events: [], next_cursor: 20, has_more: true };
   const second = { ...events, next_cursor: 42, has_more: false };
-  const fixture = clientFixture([response(status), response(first), response(second)]);
+  const fixture = clientFixture([
+    response(status), response({ ...events, events: [], next_cursor: 0, has_more: false }),
+    response(status), response(first), response(second),
+  ]);
+  await fixture.client.poll(new AbortController().signal);
   const result = await fixture.client.poll(new AbortController().signal);
   assert.deepEqual(result, { state: 'connected', pages: 2, hasMore: false });
   assert.equal(fixture.requests[0].url, 'http://127.0.0.1:8729/v1/strategy29/status');
   assert.match(fixture.requests[1].url, /symbol=BTC%2FUSDT%3AUSDT/);
   assert.doesNotMatch(fixture.requests[1].url, /secret|Authorization/i);
-  assert.match(fixture.requests[2].url, /cursor=20/);
+  assert.match(fixture.requests[4].url, /cursor=20/);
   assert.deepEqual(fixture.received.map((event) => event.sequence), [41, 42]);
   assert.equal(fixture.client.diagnostics.cursor, 42);
 });
 
-test('409 advances to the explicit recovery cursor without clearing local chart state', async () => {
+test('409 replaces retained history with a recent snapshot without clearing local chart state', async () => {
   const fixture = clientFixture([
+    response(status), response({ ...events, events: [], next_cursor: 0, has_more: false }),
     response(status),
     response({ schema_version: 1, error: 'cursor_expired', oldest_cursor: 40 }, 409),
     response({ ...events, next_cursor: 42, has_more: false }),
   ]);
+  await fixture.client.poll(new AbortController().signal);
   const result = await fixture.client.poll(new AbortController().signal);
   assert.deepEqual(result, { state: 'connected', pages: 2, hasMore: false });
   assert.deepEqual(fixture.resets, [40]);
-  assert.match(fixture.requests[2].url, /cursor=40/);
+  assert.match(fixture.requests[4].url, /mode=latest/);
+  assert.doesNotMatch(fixture.requests[4].url, /cursor=/);
 });
 
 test('rejects has_more without cursor progress and does not loop', async () => {
   const stalled = { ...events, events: [], next_cursor: 0, has_more: true };
-  const fixture = clientFixture([response(status), response(stalled)]);
+  const fixture = clientFixture([
+    response(status), response({ ...events, events: [], next_cursor: 0, has_more: false }),
+    response(status), response(stalled),
+  ]);
+  await fixture.client.poll(new AbortController().signal);
   await assert.rejects(
     fixture.client.poll(new AbortController().signal),
     /cursor did not advance/,
   );
-  assert.equal(fixture.requests.length, 2);
+  assert.equal(fixture.requests.length, 4);
 });
 
 test('rejects an event for a symbol other than the strict requested identity', async () => {

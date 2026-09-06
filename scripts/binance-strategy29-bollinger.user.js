@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.0
+// @version      0.2.1
 // @author       jackhai9
 // @description  Native Bollinger/SMA60 markers with an optional read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -255,7 +255,10 @@
   function buildEventsUrl(origin, canonicalSymbol, cursor) {
     const url = new URL("/v1/strategy29/events", origin);
     url.searchParams.set("symbol", canonicalSymbol);
-    if (cursor !== null) url.searchParams.set("cursor", String(cursor));
+    if (cursor === null) {
+      url.searchParams.set("mode", "latest");
+      url.searchParams.set("limit", "20");
+    } else url.searchParams.set("cursor", String(cursor));
     return url.href;
   }
   function createStrategy29SummaryClient({
@@ -280,6 +283,7 @@
     }
     async function poll(signal) {
       const statusResponse = await perform(`${origin}/v1/strategy29/status`, signal);
+      if (signal.aborted) throw signal.reason;
       const statusBody = parseJsonResponse(statusResponse, "Strategy29 status");
       if (statusResponse.status === 503) {
         validateStrategy29GatewayError(statusBody, 503);
@@ -299,12 +303,13 @@
       while (pages < maxPagesPerPoll) {
         const requestedCursor = cursor;
         const eventsResponse = await perform(buildEventsUrl(origin, canonicalSymbol, cursor), signal);
+        if (signal.aborted) throw signal.reason;
         const eventsBody = parseJsonResponse(eventsResponse, "Strategy29 events");
         pages += 1;
         if (eventsResponse.status === 409) {
           const error = validateStrategy29GatewayError(eventsBody, 409);
-          cursor = error.oldest_cursor;
-          onCursorReset(cursor);
+          cursor = null;
+          onCursorReset(error.oldest_cursor);
           hasMore = true;
           continue;
         }
@@ -317,6 +322,9 @@
           throw new Error(`Strategy29 events request failed with HTTP ${eventsResponse.status}`);
         }
         const page = validateStrategy29EventsResponse(eventsBody, 200);
+        if (requestedCursor === null && (page.has_more || page.events.length > 20)) {
+          throw new TypeError("Strategy29 latest snapshot must be complete and bounded to 20 events");
+        }
         if (requestedCursor !== null && page.next_cursor < requestedCursor) {
           throw new TypeError("Strategy29 event cursor moved backwards");
         }
@@ -1807,7 +1815,7 @@
     }
     function renderEvents() {
       events.replaceChildren();
-      const ordered = [...eventRecords.values()].sort((left, right) => right.detected_at_ms - left.detected_at_ms || right.sequence - left.sequence);
+      const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
       for (const event of ordered) {
         const row = element(document, "div", {
           role: "remote-event",
@@ -1864,7 +1872,7 @@
       addEvents(incoming, observedAtMs = null) {
         assertLive();
         for (const event of incoming) eventRecords.set(event.event_id, event);
-        const ordered = [...eventRecords.values()].sort((left, right) => right.detected_at_ms - left.detected_at_ms || right.sequence - left.sequence);
+        const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
         while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
         if (observedAtMs !== null) eventsFreshness.textContent = `Events checked ${formatClock(observedAtMs)}`;
         renderEvents();
@@ -2034,15 +2042,21 @@
       }
     }
     function sample(nowMs = Date.now()) {
-      if (disposed) return;
+      if (disposed || view.document.hidden) return;
       const context = synchronizeContext();
       if (!context || !context.client || context.inFlight || context.failed || nowMs < context.nextPollAtMs) return;
+      if (context.abortController.signal.aborted) {
+        const AbortControllerConstructor = view.AbortController ?? AbortController;
+        context.abortController = new AbortControllerConstructor();
+      }
+      const controller = context.abortController;
+      const ownsRequest = () => isCurrent(context) && context.abortController === controller;
       context.nextPollAtMs = nowMs + pollIntervalMs;
       context.inFlight = true;
       context.state = "connecting";
       context.panel.setConnection("connecting", "Connecting to Strategy 29 gateway");
-      return context.client.poll(context.abortController.signal).then((result) => {
-        if (!isCurrent(context)) return;
+      return context.client.poll(controller.signal).then((result) => {
+        if (!ownsRequest()) return;
         context.lastResult = result;
         context.lastError = null;
         context.state = result.state;
@@ -2054,7 +2068,7 @@
         if (!presentation) throw new Error(`Strategy 29 remote state is invalid: ${result.state}`);
         context.panel.setConnection(...presentation);
       }).catch((error) => {
-        if (!isCurrent(context) || error?.name === "AbortError") return;
+        if (!ownsRequest() || error?.name === "AbortError") return;
         context.lastError = error.message;
         if (error instanceof Strategy29GatewayTransportError) {
           context.state = "disconnected";
@@ -2066,7 +2080,7 @@
         }
         view.console.warn("[Strategy29 remote]", error.message);
       }).finally(() => {
-        context.inFlight = false;
+        if (ownsRequest()) context.inFlight = false;
       });
     }
     function restart() {
@@ -2096,7 +2110,10 @@
     return Object.freeze({
       sample,
       pause() {
-        stopActive("Strategy 29 remote summary paused");
+        if (!active) return;
+        active.abortController.abort(abortError(view, "Strategy 29 remote summary paused"));
+        active.inFlight = false;
+        active.nextPollAtMs = 0;
       },
       restart,
       dispose() {
@@ -2172,6 +2189,7 @@
     function fail(message) {
       failed = message;
       pause();
+      remoteSummary?.dispose();
       showFailure();
     }
     function sample() {
