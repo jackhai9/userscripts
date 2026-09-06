@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.4
+// @version      0.4.5
 // @author       jackhai9
 // @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
 // @match        https://www.binance.com/*/futures/*
@@ -120,6 +120,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
     context.failed = true;
     context.controller.abort();
     context.layer.suspend();
+    context.panel.setOrdinaryConnection('stopped');
     showStatus(context.target.chartRoot, `Strategy 27 stopped; history retained. Use the reconnect menu to resume: ${error.message}`, 'error');
   }
 
@@ -138,6 +139,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 
   async function renderGatewayResponse(context, response) {
     if (active !== context || context.failed) return;
+    context.panel.setOrdinaryConnection('connected');
     pruneOrdinaryEvents(context);
     if (response.status === 'reset') {
       context.lifecycle.reset(response.reason);
@@ -176,6 +178,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
         continue;
       }
       if (action.type === 'event_evicted') continue;
+      context.panel.observeOrdinaryEvent(action.event, action.observedAtMs);
       const retainedAtMs = retainOrdinaryEvent(context, action.eventId, action.observedAtMs);
       if (!context.ordinaryHistory.has(action.eventId)) continue;
       const annotation = stabilizeCandidatePresentation(
@@ -245,6 +248,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
       canonicalSymbol,
       onConnectionStateChange: (state) => {
         if (active !== context || context.failed) return;
+        context.panel.setOrdinaryConnection(state);
         if (state === 'reconnecting') {
           showStatus(context.target.chartRoot, 'Strategy 27 网关连接中断，正在重连', 'inactive');
         } else {

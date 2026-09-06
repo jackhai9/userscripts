@@ -3,9 +3,9 @@ import { createCompoundCandidateClient } from './compound-candidate-client.js';
 import { CompoundCandidateLifecycle } from './compound-candidate-lifecycle.js';
 
 const CONNECTION_STATUS = Object.freeze({
-  connected: ['复合候选已连接', 'normal'],
-  reconnecting: ['复合候选连接中断，正在重连', 'inactive'],
-  unavailable: ['复合候选暂不可用，正在重连', 'inactive'],
+  connected: ['Compound data: connected. Connection does not confirm symbol monitoring.', 'normal'],
+  reconnecting: ['Compound data connection lost; reconnecting.', 'inactive'],
+  unavailable: ['Compound data temporarily unavailable; reconnecting.', 'inactive'],
   unsupported: ['网关尚未启用复合候选', 'inactive'],
 });
 

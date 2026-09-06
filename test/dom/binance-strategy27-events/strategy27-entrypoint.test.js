@@ -578,3 +578,43 @@ test('older bootstrap replay cannot shorten the retained display lifetime', asyn
   assert.deepEqual([...h.shapes.keys()], ['user-owned']);
   assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
 });
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} removed-symbol bootstrap exposes monitoring status across stream reset`, async (t) => {
+    const h = await harness(t, { generated });
+    const removed = { ...ordinaryMessage(), message_kind: 'event_closed', data_status: 'incomplete',
+      payload: { event: { ...ordinaryOutcomeMessage().payload.event, event_status: 'incomplete', close_reason: 'universe_removed' } } };
+    await h.respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null,
+      next_cursor: '2-0', runtime_epoch: removed.runtime_epoch, last_sequence: 2, bootstrap_observed_at_ms: 7000,
+      records: [{ event_id: removed.event_id, event_envelope: removed, marker_envelope: removed, outcome_envelope: null }] });
+    await until(() => h.pending('ordinary').length === 1);
+    const status = h.page.document.querySelector('[data-role="ordinary-monitoring-status"]');
+    assert.equal(status?.dataset.state, 'removed');
+    assert.match(status.textContent, /Symbol removed from monitoring/);
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '2-0', next_cursor: '3-0', messages: [ordinaryStreamReset()] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(status.dataset.state, 'removed');
+    const connection = h.page.document.querySelector('[data-role="ordinary-connection-status"]');
+    assert.match(connection.textContent, /Connected/);
+    assert.equal(h.shapes.size, 2);
+    h.setResolution('1'); h.tick();
+    assert.equal(h.page.document.querySelector('[data-role="ordinary-monitoring-status"]'), null);
+  });
+}
+
+for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} outcome-only bootstrap restores removed-symbol status`, async (t) => {
+    const h = await harness(t, { generated });
+    const outcome = ordinaryOutcomeMessage();
+    outcome.data_status = 'terminated';
+    outcome.payload.event.event_status = 'incomplete';
+    outcome.payload.event.close_reason = 'universe_removed';
+    Object.assign(outcome.payload.outcome, { outcome_status: 'terminated', terminated_at_ms: 2000, termination_reason: 'universe_removed', directional_outcome: null });
+    await h.respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null,
+      next_cursor: '3-0', runtime_epoch: outcome.runtime_epoch, last_sequence: 3, bootstrap_observed_at_ms: 7000,
+      records: [{ event_id: outcome.event_id, event_envelope: outcome, marker_envelope: null, outcome_envelope: outcome }] });
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(h.page.document.querySelector('[data-role="ordinary-monitoring-status"]').dataset.state, 'removed');
+    assert.equal(h.page.document.querySelector('[data-role="ordinary-connection-status"]').dataset.state, 'connected');
+  });
+}
