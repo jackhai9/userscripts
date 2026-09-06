@@ -9,7 +9,7 @@ already-loaded native chart candles. The optional summary reads the authenticate
 loopback observer gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.2.2 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.3.0 with orderbook 2.7.199 or later, or use it alone.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
@@ -52,6 +52,28 @@ or sent to the remote service. Recoverable snapshot races leave it unchanged.
 Independent instances of each bundle share the same controller regardless of
 load order. Strategy27 does not participate in this protocol.
 
+## Panel Language and Position
+
+The summary follows the existing pathname locale contract: `/zh-CN/` uses Chinese,
+while English and other routes use English. Strategy29 imports the existing pure
+orderbook locale helpers without modifying orderbook or shared runtime behavior.
+Headers, connection and selection states, signal names, processing labels,
+notification totals, empty states, menus and prompts have bilingual copy. Technical
+identifiers and arbitrary server diagnostic details remain verbatim, with localized
+labels. Chart arrows contain no textual labels.
+
+A same-symbol locale change rerenders retained status, events and connection text
+without retiring requests, rebuilding the client or resetting its cursor. Existing
+Tampermonkey menu IDs are updated using the documented `GM_registerMenuCommand`
+options contract (Tampermonkey 5.0 or later); no extra grant is required.
+
+Drag the header with the primary mouse button. Header buttons do not start a drag.
+Mouse release or window blur saves only `{left, top}` under the private userscript
+key `strategy29SummaryPanelPosition`; route changes and page reloads restore it.
+The panel clamps its position after viewport, content, collapse and language changes.
+Destroying the panel removes its document/window drag listeners. Invalid persisted
+coordinates fail explicitly. No credentials cross the page boundary.
+
 ## Optional Cross-Timeframe Server Summary
 
 The remote summary is disabled by default. Tampermonkey exposes three Strategy29
@@ -69,6 +91,42 @@ Server status freshness and signal times remain separate from local chart state.
 Panel timestamps explicitly use `UTC+08` rather than inheriting the browser's
 ambient timezone.
 
+Observer compatibility is `29_2_spec_v2`; the chart detector retains the frozen
+V1 reference and unchanged hash. The server independently ranks an activity-score
+universe and applies its configured intervals. Each status poll replaces current
+membership: removed symbols show "Symbol is not watched by the current selection" while
+retained event history remains visible, and re-entering units can show warming
+until producer readiness and historical baseline complete. The browser does not
+choose markets or infer intervals from other strategies.
+
+The exact status contract includes public `universe` metadata: generation, refresh
+state/reason, selected markets, configured intervals, selected/ready/pending unit
+counts and refresh timestamps/age. It shares the server SQLite snapshot with unit
+progress and delivery counts. The panel distinguishes unavailable selection,
+selected units awaiting observation and a healthy selection excluding the current
+market. Unavailable selection suppresses healthy-looking processing rows while
+retained events remain visible. A never-successful refresh displays no successful
+time; generation-mismatched producer readiness contributes no ready units.
+The aggregate is labeled `live units ready`. Per-period rows show the last stored
+processing status, with `ready` displayed as neutral `Processed`; they do not
+certify current live readiness. A stored ready row with zero live-ready units is
+valid during producer-generation or admission/baseline transitions and must not
+be rejected by the client validator.
+Refresh metadata must match the reported state: successful and stale selections
+require success time, age and expiry; failed refreshes require an error time;
+missing or incompatible facts carry null metadata. Fail-closed selection may
+retain a complete prior-success group. Expired selection can originate from fresh
+or stale facts. Clock rollback does not invalidate otherwise coherent metadata.
+
+The current remote summary is disabled by default and has no panel while disabled.
+Authentication failure affects only the remote summary, not local chart detection.
+Strategy27 and Strategy29 currently use separate private userscript storage. The
+requested one-time gateway configuration across current and future strategies is
+a pending unified-client design, including credential ownership, module lifecycle
+and migration. Do not bridge credentials through page globals, localStorage or
+page events, and do not ask users to duplicate secrets as the long-term solution.
+A discoverable disabled-state entry is also pending, not implemented in 0.3.0.
+
 The browser polls status first and then consumes at most two event pages per
 scheduled poll. A new route requests `mode=latest&limit=20` for its canonical
 symbol: the server returns the latest retained sequences and a global increment
@@ -78,7 +136,7 @@ advancing that cursor. `cursor_expired` clears only remote rows and requests a n
 latest snapshot. Rows are displayed and bounded by descending durable sequence,
 independent of detection timestamps. This requires the server's explicit latest
 query contract; a server rejecting it stops the remote context visibly.
-Publish the gateway contract before the `0.2.1` client, then verify installed
+Publish the V2 gateway contract before the `0.3.0` client, then verify installed
 source identity and reload before remote acceptance. Publication of either
 component does not enable the observer, gateway, or notifications.
 
@@ -95,8 +153,12 @@ Transport failures and a temporarily unavailable database remain retryable
 remote states. Authentication, request, JSON, and response-contract failures
 stop only the remote context until it is restarted through a route or settings
 change. None of these states stop the local detector or remove local markers.
-The panel compares server and local `spec_version`; a mismatch is visible and
-event consumption is blocked. The local reference hash is displayed and exposed
+The status validator first checks the shared schema/spec/time identity envelope.
+A different spec exposes only those three fields; no incompatible unit, selection
+or delivery payload is interpreted. The panel clears current health rows, displays
+the mismatch and preserves retained events; event consumption is blocked. Matching
+V2 responses still require every exact field and a coherent refresh state/reason
+combination. An unknown schema envelope remains a contract error. The local reference hash is displayed and exposed
 for audit, but the current server status schema does not carry a hash, so the UI
 does not claim hash-level remote parity.
 

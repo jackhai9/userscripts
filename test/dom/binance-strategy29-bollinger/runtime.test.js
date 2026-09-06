@@ -67,7 +67,7 @@ for (const [name, remoteResponse, expectedState] of [
   ['HTTP 401', { status: 401, responseText: JSON.stringify({ schema_version: 1, error: 'unauthorized' }) }, 'stopped'],
   ['HTTP 503', { status: 503, responseText: JSON.stringify({ schema_version: 1, error: 'database_unavailable' }) }, 'unavailable'],
   ['invalid JSON', { status: 200, responseText: '<html>' }, 'stopped'],
-  ['spec mismatch', { status: 200, responseText: JSON.stringify({ ...gatewayStatus, spec_version: '29_2_spec_v2' }) }, 'incompatible'],
+  ['spec mismatch', { status: 200, responseText: JSON.stringify({ ...gatewayStatus, spec_version: 'other_spec' }) }, 'incompatible'],
 ]) {
   test(`${name} remains a remote-only state while the local timer continues`, async () => {
     const f = fixture();
