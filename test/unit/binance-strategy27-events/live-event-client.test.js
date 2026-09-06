@@ -5,6 +5,7 @@ import {
   createGmJsonRequest,
   createLiveEventClient,
   normalizeGatewayBaseUrl,
+  Strategy27GatewayTransportError,
 } from '../../../src/binance-strategy27-events/core/live-event-client.js';
 
 const bootstrap = (next = '5-0') => ({
@@ -170,4 +171,72 @@ test('does not retry response contract failures', async () => {
 
   await assert.rejects(client.run(new AbortController().signal), /invalid JSON/);
   assert.equal(requestCount, 1);
+});
+
+test('validated 503 retains the bootstrap phase and the live cursor until recovery', async () => {
+  const urls = [];
+  const states = [];
+  const published = [];
+  const controller = new AbortController();
+  const unavailable = { status: 503, responseText: JSON.stringify({ schema_version: 1, status: 'error', error_code: 'redis_unavailable' }) };
+  const responses = [unavailable, { status: 200, responseText: JSON.stringify(bootstrap()) }, unavailable, unavailable,
+    { status: 200, responseText: JSON.stringify({ schema_version: 1, status: 'ok', requested_cursor: '5-0', next_cursor: '8-0', messages: [] }) }];
+  const client = createLiveEventClient({
+    request: async ({ url }) => { urls.push(new URL(url)); assert.ok(responses.length > 0); return responses.shift(); },
+    gatewayBaseUrl: 'http://127.0.0.1:18765', authSecret: 'synthetic-test-value', canonicalSymbol: 'BTR/USDT:USDT',
+    reconnectDelayMs: 0, onConnectionStateChange: (state) => states.push(state),
+    onResponse: async (payload) => { published.push(payload.status); if (published.length === 2) controller.abort(); },
+  });
+  await client.run(controller.signal);
+  assert.deepEqual(urls.map((url) => url.pathname.endsWith('/bootstrap')), [true, true, false, false, false]);
+  assert.deepEqual(urls.map((url) => url.searchParams.get('cursor')), [null, null, '5-0', '5-0', '5-0']);
+  assert.deepEqual(published, ['bootstrap', 'ok']);
+  assert.deepEqual(states, ['reconnecting', 'connected', 'reconnecting', 'connected']);
+});
+
+test('a stopped request cannot publish a late response or connection status', async () => {
+  const controller = new AbortController();
+  const states = [];
+  const published = [];
+  const client = createLiveEventClient({
+    request: async () => { controller.abort(); return { status: 200, responseText: JSON.stringify(bootstrap()) }; },
+    gatewayBaseUrl: 'http://127.0.0.1:18765', authSecret: 'synthetic-test-value', canonicalSymbol: 'BTR/USDT:USDT',
+    onConnectionStateChange: (state) => states.push(state), onResponse: async (payload) => published.push(payload),
+  });
+  await client.run(controller.signal);
+  assert.deepEqual(states, []);
+  assert.deepEqual(published, []);
+});
+
+for (const lateFailure of ['503', 'transport']) {
+  test(`aborting before a late ${lateFailure} suppresses reconnecting state`, async () => {
+    const controller = new AbortController();
+    const states = [];
+    const client = createLiveEventClient({
+      request: async () => {
+        controller.abort();
+        if (lateFailure === 'transport') throw new Strategy27GatewayTransportError('synthetic transport failure');
+        return { status: 503, responseText: JSON.stringify({ schema_version: 1, status: 'error', error_code: 'redis_unavailable' }) };
+      },
+      gatewayBaseUrl: 'http://127.0.0.1:18765', authSecret: 'synthetic-test-value', canonicalSymbol: 'BTR/USDT:USDT',
+      onConnectionStateChange: (state) => states.push(state), onResponse: async () => assert.fail('Stopped response was published'),
+    });
+    await client.run(controller.signal);
+    assert.deepEqual(states, []);
+  });
+}
+
+test('a validated authorization error remains terminal after live polling starts', async () => {
+  let attempts = 0;
+  const states = [];
+  const client = createLiveEventClient({
+    request: async () => ++attempts === 1
+      ? { status: 200, responseText: JSON.stringify(bootstrap()) }
+      : { status: 401, responseText: JSON.stringify({ schema_version: 1, status: 'error', error_code: 'unauthorized' }) },
+    gatewayBaseUrl: 'http://127.0.0.1:18765', authSecret: 'synthetic-test-value', canonicalSymbol: 'BTR/USDT:USDT',
+    onConnectionStateChange: (state) => states.push(state), onResponse: async () => {},
+  });
+  await assert.rejects(client.run(new AbortController().signal), /gateway error: unauthorized/);
+  assert.equal(attempts, 2);
+  assert.deepEqual(states, []);
 });

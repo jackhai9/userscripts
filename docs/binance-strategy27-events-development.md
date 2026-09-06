@@ -30,11 +30,23 @@ symbol.
 
 The macOS operator machine keeps this forward under a `launchd` user agent so
 the SSH process is restarted after sleep, network changes, or a broken
-connection. The browser client treats only `GM_xmlhttpRequest` transport errors
-and timeouts as recoverable: it retains the current cursor, displays a
-reconnecting status, and retries after two seconds. HTTP responses, gateway
-errors, malformed JSON, cursor violations, and rendering contract failures
-still stop immediately.
+connection. The ordinary browser client treats `GM_xmlhttpRequest` transport
+errors/timeouts and protocol-validated HTTP 503 unavailability as recoverable:
+it retains the current cursor and displayed history, shows a reconnecting status,
+and retries after two seconds. A bootstrap 503 remains in bootstrap; a live
+`redis_unavailable` response retries the same live cursor. Stale cursors still
+use the existing reset/bootstrap contract. Other HTTP/gateway errors, malformed
+JSON, cursor violations, and rendering contract failures stop immediately.
+
+A terminal ordinary-job failure suspends drawing and polling without deleting
+previously verified markers or panel history. Pending candle waits and late
+creations/repairs lose presentation ownership; late entities are removed.
+Retained history is frozen evidence, not a live connection, and the visible
+error remains until explicit recovery or a context change. The existing context
+timer continues two-hour retention pruning but does not repair a suspended
+layer. Use the `Reconnect Strategy 27 and restore history` userscript menu after
+resolving the error to start a new context and restore the gateway snapshot.
+Manual clear remains available and does not dismiss a terminal error.
 
 ## Rendering Contract
 
@@ -83,8 +95,9 @@ be later than that snapshot's end when an ineligible bucket advances the event
 to its lifecycle deadline without joining the event.
 
 The script stores only its own returned marker IDs and its bounded in-memory
-panel records. Route, symbol, interval, epoch, cursor, or sequence
-discontinuities abort the request and remove only those transient entities.
+panel records. Route, symbol, interval, epoch and explicit cursor resets remove
+only those transient entities. Sequence/cursor contract violations stop the
+ordinary job with an error while retaining its already verified history.
 Marker count and age are bounded on the chart; the panel retains at most eight
 events.
 
@@ -111,7 +124,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.4.2 with identical metadata headers.
+generated install artifact are version 0.4.3 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
