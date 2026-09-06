@@ -1,6 +1,14 @@
 import { STRATEGY29_REFERENCE_SHA256, STRATEGY29_SPEC_VERSION } from '../core/remote-summary-contract.js';
 
 const PANEL_ID = 'jh-strategy29-summary-panel';
+const SELECTION_REASONS = Object.freeze({
+  current: 'Selection is current',
+  using_stale_selection_after_refresh_error: 'Refresh failed; using the previous selection until expiry',
+  selection_fail_closed: 'Selection unavailable after refresh failure',
+  selection_expired_or_unusable: 'Selection expired; waiting for a successful refresh',
+  missing_current_universe_facts: 'Waiting for server selection to initialize',
+  incompatible_current_universe_facts: 'Server selection has an incompatible specification',
+});
 const STATE_COLORS = Object.freeze({
   connected: '#0ECB81',
   connecting: '#F0B90B',
@@ -86,7 +94,9 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   const reference = element(document, 'div', { text: `Local reference ${STRATEGY29_REFERENCE_SHA256}`, role: 'reference', styles: { color: '#848E9C', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'text' } });
   const statusFreshness = element(document, 'div', { text: 'Status not received', role: 'status-freshness', styles: { color: '#848E9C', fontSize: '11px' } });
   const eventsFreshness = element(document, 'div', { text: 'Events not checked', role: 'events-freshness', styles: { color: '#848E9C', fontSize: '11px' } });
-  overview.append(connection, spec, reference, statusFreshness, eventsFreshness);
+  const selection = element(document, 'div', { role: 'selection', styles: { color: '#EAECEF', fontSize: '11px' } });
+  const selectionRefresh = element(document, 'div', { role: 'selection-refresh', styles: { color: '#848E9C', fontSize: '11px' } });
+  overview.append(connection, spec, reference, statusFreshness, selection, selectionRefresh, eventsFreshness);
   const unitsTitle = element(document, 'div', { text: 'Watched timeframes', styles: { padding: '7px 10px 4px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontWeight: '600' } });
   const units = element(document, 'div', { role: 'units', styles: { display: 'grid', gap: '3px', padding: '0 7px 8px' } });
   const delivery = element(document, 'div', { text: 'Global delivery — waiting', role: 'delivery', styles: { padding: '7px 10px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontSize: '11px' } });
@@ -145,8 +155,17 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
         ? `Spec version matched · ${STRATEGY29_SPEC_VERSION}`
         : `Spec mismatch · local ${STRATEGY29_SPEC_VERSION} · server ${snapshot.spec_version}`;
       statusFreshness.textContent = `Status ${formatClock(snapshot.observed_at_ms)}`;
+      const universe = snapshot.universe;
+      const unavailable = universe.refresh_status === 'fail_closed';
+      selection.dataset.state = universe.refresh_status;
+      selection.style.color = unavailable ? '#F6465D' : universe.refresh_status === 'fresh' ? '#0ECB81' : '#F0B90B';
+      selection.textContent = `${SELECTION_REASONS[universe.reason]} · Generation ${universe.generation ?? 'pending'} · ${universe.selected_markets.length} markets · ${universe.ready_unit_count}/${universe.selected_unit_count} units ready · Intervals ${universe.configured_timeframes.join(', ') || 'pending'}`;
+      selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null
+        ? 'No successful selection has been observed'
+        : `Last successful selection ${formatClock(universe.last_successful_refreshed_at_ms)} · ${universe.last_success_age_seconds.toFixed(1)}s ago`;
       units.replaceChildren();
-      const matching = snapshot.units.filter(unit => unit.symbol === canonicalSymbol);
+      const selected = universe.selected_markets.includes(canonicalSymbol);
+      const matching = unavailable || !selected ? [] : snapshot.units.filter(unit => unit.symbol === canonicalSymbol);
       for (const unit of matching) {
         const row = element(document, 'div', {
           role: 'unit',
@@ -157,7 +176,10 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
         row.appendChild(element(document, 'span', { text: unit.reason, styles: { color: '#848E9C', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }));
         units.appendChild(row);
       }
-      if (matching.length === 0) units.appendChild(element(document, 'span', { text: 'Symbol is not watched by the server', styles: { color: '#F0B90B', padding: '4px' } }));
+      if (matching.length === 0) units.appendChild(element(document, 'span', {
+        text: unavailable ? 'Server selection is unavailable' : selected ? 'Symbol is selected; waiting for unit status' : 'Symbol is not watched by the current server selection',
+        styles: { color: '#F0B90B', padding: '4px' },
+      }));
       const counts = snapshot.delivery_counts;
       delivery.textContent = `Global delivery · Pending ${counts.pending} · Sending ${counts.sending} · Sent ${counts.sent} · Unknown ${counts.unknown} · Expired ${counts.expired} · Failed ${counts.failed}`;
     },

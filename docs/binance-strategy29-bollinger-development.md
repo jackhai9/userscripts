@@ -72,10 +72,28 @@ ambient timezone.
 Observer compatibility is `29_2_spec_v2`; the chart detector retains the frozen
 V1 reference and unchanged hash. The server independently ranks an activity-score
 universe and applies its configured intervals. Each status poll replaces current
-membership: removed symbols show "Symbol is not watched by the server" while
+membership: removed symbols show "Symbol is not watched by the current selection" while
 retained event history remains visible, and re-entering units can show warming
 until producer readiness and historical baseline complete. The browser does not
 choose markets or infer intervals from other strategies.
+
+The exact status contract includes public `universe` metadata: generation, refresh
+state/reason, selected markets, configured intervals, selected/ready/pending unit
+counts and refresh timestamps/age. It shares the server SQLite snapshot with unit
+progress and delivery counts. The panel distinguishes unavailable selection,
+selected units awaiting observation and a healthy selection excluding the current
+market. Unavailable selection suppresses healthy-looking processing rows while
+retained events remain visible. A never-successful refresh displays no successful
+time; generation-mismatched producer readiness contributes no ready units.
+
+The current remote summary is disabled by default and has no panel while disabled.
+Authentication failure affects only the remote summary, not local chart detection.
+Strategy27 and Strategy29 currently use separate private userscript storage. The
+requested one-time gateway configuration across current and future strategies is
+a pending unified-client design, including credential ownership, module lifecycle
+and migration. Do not bridge credentials through page globals, localStorage or
+page events, and do not ask users to duplicate secrets as the long-term solution.
+A discoverable disabled-state entry is also pending, not implemented in 0.3.0.
 
 The browser polls status first and then consumes at most two event pages per
 scheduled poll. A new route requests `mode=latest&limit=20` for its canonical

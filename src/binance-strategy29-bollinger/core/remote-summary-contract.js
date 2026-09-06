@@ -10,7 +10,17 @@ const SIGNAL_SIDES = new Set(['short', 'long']);
 const ORIGINS = new Set(['historical', 'catch_up', 'live']);
 const DELIVERY_STATES = new Set(['pending', 'sending', 'sent', 'unknown', 'expired', 'failed']);
 const DELIVERY_COUNT_KEYS = ['pending', 'sending', 'sent', 'unknown', 'expired', 'failed'];
-const STATUS_KEYS = ['schema_version', 'spec_version', 'observed_at_ms', 'units', 'delivery_counts'];
+const STATUS_KEYS = ['schema_version', 'spec_version', 'observed_at_ms', 'universe', 'units', 'delivery_counts'];
+const UNIVERSE_KEYS = [
+  'source_monitor', 'generation', 'refresh_status', 'reason', 'selected_markets', 'configured_timeframes',
+  'selected_unit_count', 'ready_unit_count', 'pending_unit_count', 'refreshed_at_ms',
+  'last_successful_refreshed_at_ms', 'last_success_age_seconds', 'last_refresh_error_at_ms', 'selection_expires_at_ms',
+];
+const UNIVERSE_STATES = new Set(['fresh', 'stale_if_error', 'fail_closed']);
+const UNIVERSE_REASONS = new Set([
+  'current', 'using_stale_selection_after_refresh_error', 'selection_fail_closed',
+  'selection_expired_or_unusable', 'missing_current_universe_facts', 'incompatible_current_universe_facts',
+]);
 const UNIT_KEYS = [
   'symbol', 'timeframe', 'status', 'reason', 'last_processed_open_ms', 'last_data_at_ms', 'last_event_id',
 ];
@@ -96,12 +106,45 @@ function validateUnit(value, index) {
   }
 }
 
+function validateUniverse(value) {
+  assertExactKeys(value, UNIVERSE_KEYS, 'status.universe');
+  if (value.source_monitor !== 'monitor29_bollinger_ma60') throw new TypeError('status.universe.source_monitor is invalid');
+  assertInteger(value.generation, 'status.universe.generation', { nullable: true, minimum: 1 });
+  assertEnum(value.refresh_status, UNIVERSE_STATES, 'status.universe.refresh_status');
+  assertEnum(value.reason, UNIVERSE_REASONS, 'status.universe.reason');
+  for (const key of ['selected_markets', 'configured_timeframes']) {
+    if (!Array.isArray(value[key]) || value[key].length > 128 || new Set(value[key]).size !== value[key].length) {
+      throw new TypeError(`status.universe.${key} must be a bounded unique array`);
+    }
+  }
+  value.selected_markets.forEach(symbol => assertCanonicalSymbol(symbol, 'status.universe.selected_markets'));
+  value.configured_timeframes.forEach(timeframe => assertEnum(timeframe, TIMEFRAMES, 'status.universe.configured_timeframes'));
+  for (const key of ['selected_unit_count', 'ready_unit_count', 'pending_unit_count']) {
+    assertInteger(value[key], `status.universe.${key}`);
+    if (value[key] > 128) throw new TypeError(`status.universe.${key} exceeds the unit bound`);
+  }
+  if (value.ready_unit_count + value.pending_unit_count !== value.selected_unit_count
+    || value.selected_markets.length > value.selected_unit_count) throw new TypeError('status.universe counts are inconsistent');
+  if (value.refresh_status === 'fail_closed' && value.selected_unit_count !== 0) throw new TypeError('status.universe unavailable selection must be empty');
+  for (const key of ['refreshed_at_ms', 'last_successful_refreshed_at_ms', 'last_refresh_error_at_ms', 'selection_expires_at_ms']) {
+    assertInteger(value[key], `status.universe.${key}`, { nullable: true });
+  }
+  if (value.last_success_age_seconds !== null) {
+    assertFiniteNumber(value.last_success_age_seconds, 'status.universe.last_success_age_seconds');
+    if (value.last_success_age_seconds < 0) throw new TypeError('status.universe last success age must be non-negative');
+  }
+  if ((value.last_successful_refreshed_at_ms === null) !== (value.last_success_age_seconds === null)) {
+    throw new TypeError('status.universe last success fields are inconsistent');
+  }
+}
+
 export function validateStrategy29StatusResponse(value, httpStatus) {
   if (httpStatus !== 200) throw new TypeError(`status response requires HTTP 200, received ${httpStatus}`);
   assertExactKeys(value, STATUS_KEYS, 'status response');
   assertSchema(value.schema_version, 'status.schema_version');
   assertString(value.spec_version, 'status.spec_version');
   assertInteger(value.observed_at_ms, 'status.observed_at_ms');
+  validateUniverse(value.universe);
   if (!Array.isArray(value.units)) throw new TypeError('status.units must be an array');
   if (value.units.length > 128) throw new TypeError('status.units exceeds the 128-unit bound');
   value.units.forEach(validateUnit);

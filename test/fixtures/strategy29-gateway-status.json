@@ -2,6 +2,22 @@
   "schema_version": 1,
   "spec_version": "29_2_spec_v2",
   "observed_at_ms": 1788580805000,
+  "universe": {
+    "source_monitor": "monitor29_bollinger_ma60",
+    "generation": 1,
+    "refresh_status": "fresh",
+    "reason": "current",
+    "selected_markets": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+    "configured_timeframes": ["1m", "5m", "1h"],
+    "selected_unit_count": 3,
+    "ready_unit_count": 1,
+    "pending_unit_count": 2,
+    "refreshed_at_ms": 1788580800000,
+    "last_successful_refreshed_at_ms": 1788580800000,
+    "last_success_age_seconds": 5,
+    "last_refresh_error_at_ms": null,
+    "selection_expires_at_ms": 1788583800000
+  },
   "units": [
     {
       "symbol": "BTC/USDT:USDT",

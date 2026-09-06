@@ -33,7 +33,32 @@
   var ORIGINS = /* @__PURE__ */ new Set(["historical", "catch_up", "live"]);
   var DELIVERY_STATES = /* @__PURE__ */ new Set(["pending", "sending", "sent", "unknown", "expired", "failed"]);
   var DELIVERY_COUNT_KEYS = ["pending", "sending", "sent", "unknown", "expired", "failed"];
-  var STATUS_KEYS = ["schema_version", "spec_version", "observed_at_ms", "units", "delivery_counts"];
+  var STATUS_KEYS = ["schema_version", "spec_version", "observed_at_ms", "universe", "units", "delivery_counts"];
+  var UNIVERSE_KEYS = [
+    "source_monitor",
+    "generation",
+    "refresh_status",
+    "reason",
+    "selected_markets",
+    "configured_timeframes",
+    "selected_unit_count",
+    "ready_unit_count",
+    "pending_unit_count",
+    "refreshed_at_ms",
+    "last_successful_refreshed_at_ms",
+    "last_success_age_seconds",
+    "last_refresh_error_at_ms",
+    "selection_expires_at_ms"
+  ];
+  var UNIVERSE_STATES = /* @__PURE__ */ new Set(["fresh", "stale_if_error", "fail_closed"]);
+  var UNIVERSE_REASONS = /* @__PURE__ */ new Set([
+    "current",
+    "using_stale_selection_after_refresh_error",
+    "selection_fail_closed",
+    "selection_expired_or_unusable",
+    "missing_current_universe_facts",
+    "incompatible_current_universe_facts"
+  ]);
   var UNIT_KEYS = [
     "symbol",
     "timeframe",
@@ -125,12 +150,43 @@
       throw new TypeError(`${name}.last_event_id must be null or a lowercase hexadecimal event id`);
     }
   }
+  function validateUniverse(value) {
+    assertExactKeys(value, UNIVERSE_KEYS, "status.universe");
+    if (value.source_monitor !== "monitor29_bollinger_ma60") throw new TypeError("status.universe.source_monitor is invalid");
+    assertInteger(value.generation, "status.universe.generation", { nullable: true, minimum: 1 });
+    assertEnum(value.refresh_status, UNIVERSE_STATES, "status.universe.refresh_status");
+    assertEnum(value.reason, UNIVERSE_REASONS, "status.universe.reason");
+    for (const key of ["selected_markets", "configured_timeframes"]) {
+      if (!Array.isArray(value[key]) || value[key].length > 128 || new Set(value[key]).size !== value[key].length) {
+        throw new TypeError(`status.universe.${key} must be a bounded unique array`);
+      }
+    }
+    value.selected_markets.forEach((symbol) => assertCanonicalSymbol(symbol, "status.universe.selected_markets"));
+    value.configured_timeframes.forEach((timeframe) => assertEnum(timeframe, TIMEFRAMES, "status.universe.configured_timeframes"));
+    for (const key of ["selected_unit_count", "ready_unit_count", "pending_unit_count"]) {
+      assertInteger(value[key], `status.universe.${key}`);
+      if (value[key] > 128) throw new TypeError(`status.universe.${key} exceeds the unit bound`);
+    }
+    if (value.ready_unit_count + value.pending_unit_count !== value.selected_unit_count || value.selected_markets.length > value.selected_unit_count) throw new TypeError("status.universe counts are inconsistent");
+    if (value.refresh_status === "fail_closed" && value.selected_unit_count !== 0) throw new TypeError("status.universe unavailable selection must be empty");
+    for (const key of ["refreshed_at_ms", "last_successful_refreshed_at_ms", "last_refresh_error_at_ms", "selection_expires_at_ms"]) {
+      assertInteger(value[key], `status.universe.${key}`, { nullable: true });
+    }
+    if (value.last_success_age_seconds !== null) {
+      assertFiniteNumber(value.last_success_age_seconds, "status.universe.last_success_age_seconds");
+      if (value.last_success_age_seconds < 0) throw new TypeError("status.universe last success age must be non-negative");
+    }
+    if (value.last_successful_refreshed_at_ms === null !== (value.last_success_age_seconds === null)) {
+      throw new TypeError("status.universe last success fields are inconsistent");
+    }
+  }
   function validateStrategy29StatusResponse(value, httpStatus) {
     if (httpStatus !== 200) throw new TypeError(`status response requires HTTP 200, received ${httpStatus}`);
     assertExactKeys(value, STATUS_KEYS, "status response");
     assertSchema(value.schema_version, "status.schema_version");
     assertString(value.spec_version, "status.spec_version");
     assertInteger(value.observed_at_ms, "status.observed_at_ms");
+    validateUniverse(value.universe);
     if (!Array.isArray(value.units)) throw new TypeError("status.units must be an array");
     if (value.units.length > 128) throw new TypeError("status.units exceeds the 128-unit bound");
     value.units.forEach(validateUnit);
@@ -1749,6 +1805,14 @@
 
   // src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js
   var PANEL_ID = "jh-strategy29-summary-panel";
+  var SELECTION_REASONS = Object.freeze({
+    current: "Selection is current",
+    using_stale_selection_after_refresh_error: "Refresh failed; using the previous selection until expiry",
+    selection_fail_closed: "Selection unavailable after refresh failure",
+    selection_expired_or_unusable: "Selection expired; waiting for a successful refresh",
+    missing_current_universe_facts: "Waiting for server selection to initialize",
+    incompatible_current_universe_facts: "Server selection has an incompatible specification"
+  });
   var STATE_COLORS = Object.freeze({
     connected: "#0ECB81",
     connecting: "#F0B90B",
@@ -1845,7 +1909,9 @@
     const reference = element(document, "div", { text: `Local reference ${STRATEGY29_REFERENCE_SHA256}`, role: "reference", styles: { color: "#848E9C", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "text" } });
     const statusFreshness = element(document, "div", { text: "Status not received", role: "status-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
     const eventsFreshness = element(document, "div", { text: "Events not checked", role: "events-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
-    overview.append(connection, spec, reference, statusFreshness, eventsFreshness);
+    const selection = element(document, "div", { role: "selection", styles: { color: "#EAECEF", fontSize: "11px" } });
+    const selectionRefresh = element(document, "div", { role: "selection-refresh", styles: { color: "#848E9C", fontSize: "11px" } });
+    overview.append(connection, spec, reference, statusFreshness, selection, selectionRefresh, eventsFreshness);
     const unitsTitle = element(document, "div", { text: "Watched timeframes", styles: { padding: "7px 10px 4px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontWeight: "600" } });
     const units = element(document, "div", { role: "units", styles: { display: "grid", gap: "3px", padding: "0 7px 8px" } });
     const delivery = element(document, "div", { text: "Global delivery — waiting", role: "delivery", styles: { padding: "7px 10px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontSize: "11px" } });
@@ -1899,8 +1965,15 @@
         spec.style.color = matched ? "#0ECB81" : "#F6465D";
         spec.textContent = matched ? `Spec version matched · ${STRATEGY29_SPEC_VERSION}` : `Spec mismatch · local ${STRATEGY29_SPEC_VERSION} · server ${snapshot.spec_version}`;
         statusFreshness.textContent = `Status ${formatClock(snapshot.observed_at_ms)}`;
+        const universe = snapshot.universe;
+        const unavailable = universe.refresh_status === "fail_closed";
+        selection.dataset.state = universe.refresh_status;
+        selection.style.color = unavailable ? "#F6465D" : universe.refresh_status === "fresh" ? "#0ECB81" : "#F0B90B";
+        selection.textContent = `${SELECTION_REASONS[universe.reason]} · Generation ${universe.generation ?? "pending"} · ${universe.selected_markets.length} markets · ${universe.ready_unit_count}/${universe.selected_unit_count} units ready · Intervals ${universe.configured_timeframes.join(", ") || "pending"}`;
+        selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null ? "No successful selection has been observed" : `Last successful selection ${formatClock(universe.last_successful_refreshed_at_ms)} · ${universe.last_success_age_seconds.toFixed(1)}s ago`;
         units.replaceChildren();
-        const matching = snapshot.units.filter((unit) => unit.symbol === canonicalSymbol);
+        const selected = universe.selected_markets.includes(canonicalSymbol);
+        const matching = unavailable || !selected ? [] : snapshot.units.filter((unit) => unit.symbol === canonicalSymbol);
         for (const unit of matching) {
           const row = element(document, "div", {
             role: "unit",
@@ -1911,7 +1984,10 @@
           row.appendChild(element(document, "span", { text: unit.reason, styles: { color: "#848E9C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }));
           units.appendChild(row);
         }
-        if (matching.length === 0) units.appendChild(element(document, "span", { text: "Symbol is not watched by the server", styles: { color: "#F0B90B", padding: "4px" } }));
+        if (matching.length === 0) units.appendChild(element(document, "span", {
+          text: unavailable ? "Server selection is unavailable" : selected ? "Symbol is selected; waiting for unit status" : "Symbol is not watched by the current server selection",
+          styles: { color: "#F0B90B", padding: "4px" }
+        }));
         const counts = snapshot.delivery_counts;
         delivery.textContent = `Global delivery · Pending ${counts.pending} · Sending ${counts.sending} · Sent ${counts.sent} · Unknown ${counts.unknown} · Expired ${counts.expired} · Failed ${counts.failed}`;
       },

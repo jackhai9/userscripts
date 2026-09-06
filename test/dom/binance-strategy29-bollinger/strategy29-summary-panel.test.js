@@ -8,13 +8,35 @@ import { createStrategy29SummaryPanel } from '../../../src/binance-strategy29-bo
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('distinguishes unavailable selection, unselected symbol and pending unit registration', () => {
+  const dom = new JSDOM('<body></body>');
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
+  panel.addEvents(events.events);
+  panel.renderStatus({ ...status, units: [] });
+  assert.match(dom.window.document.body.textContent, /Symbol is selected; waiting for unit status/);
+  assert.doesNotMatch(dom.window.document.body.textContent, /Symbol is not watched/);
+  panel.renderStatus({ ...status, universe: {
+    ...status.universe, refresh_status: 'fail_closed', reason: 'selection_expired_or_unusable',
+    selected_markets: [], selected_unit_count: 0, ready_unit_count: 0, pending_unit_count: 0,
+  } });
+  assert.match(dom.window.document.body.textContent, /Selection expired/);
+  assert.match(dom.window.document.body.textContent, /Server selection is unavailable/);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 0);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
+  panel.renderStatus({ ...status, universe: { ...status.universe, refresh_status: 'stale_if_error', reason: 'using_stale_selection_after_refresh_error' } });
+  assert.match(dom.window.document.body.textContent, /Refresh failed; using the previous selection until expiry/);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 2);
+  panel.destroy();
+  dom.window.close();
+});
+
 test('replaces dynamic membership while retaining durable signal history', () => {
   const dom = new JSDOM('<body></body>');
   const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
   panel.renderStatus(status);
   panel.addEvents(events.events);
   assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 2);
-  panel.renderStatus({ ...status, units: [] });
+  panel.renderStatus({ ...status, universe: { ...status.universe, selected_markets: ['ETH/USDT:USDT'] }, units: [] });
   assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 0);
   assert.match(dom.window.document.body.textContent, /Symbol is not watched/);
   assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);

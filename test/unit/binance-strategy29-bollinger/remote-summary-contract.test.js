@@ -14,6 +14,18 @@ import {
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('rejects malformed or contradictory universe status fields', () => {
+  for (const change of [
+    { generation: '1' }, { refresh_status: 'unknown' }, { unexpected: true },
+    { selected_markets: ['BTC'] }, { configured_timeframes: ['1s'] },
+    { ready_unit_count: 2 }, { selected_unit_count: 129 },
+    { last_success_age_seconds: -1 }, { last_successful_refreshed_at_ms: null },
+    { refresh_status: 'fail_closed' },
+  ]) {
+    assert.throws(() => validateStrategy29StatusResponse({ ...status, universe: { ...status.universe, ...change } }, 200), /universe/);
+  }
+});
+
 test('canonical Strategy29 symbols round-trip without server-side normalization', () => {
   assert.equal(routeSymbolToCanonical('BTRUSDT'), 'BTR/USDT:USDT');
   assert.equal(canonicalSymbolToRoute('BTR/USDT:USDT'), 'BTRUSDT');
