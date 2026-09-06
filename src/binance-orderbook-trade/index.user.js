@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.201
+// @version      2.7.202
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -91,7 +91,9 @@ import {
   getUnavailableLadderQuantityMessage,
 } from './core/ladder-plan.js';
 import { keepInteractionFeedbackVisible } from './core/interaction-feedback.js';
+import { capCloseLadderBaseQty, runCloseLadderWithPositionRecovery } from './core/close-ladder-recovery.js';
 import {
+  CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
   createContinuousLadderProgress,
   formatActiveContinuousLadderProgress,
   formatContinuousLadderProgress,
@@ -130,6 +132,7 @@ import {
   isPostOnlyMakerRejectionFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
   isPotentialOrderFeedbackText,
+  readConfirmedReduceOnlyRejection,
   resolveBinanceSubmitResponseRecovery,
   summarizeBinancePlaceOrderPayload,
 } from './core/order-feedback.js';
@@ -2546,6 +2549,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       throw new Error('确认平仓结果时下单模式已变化');
     }
     if (state.status === 'flat') throw createClosePositionCompletedError();
+    return state;
   }
 
   async function buildLadderPlan(actionType, expectedContext = null) {
@@ -2595,6 +2599,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     }
 
     const optionContext = readLadderOptionContext(spec, startSymbol, startPrecision);
+    if (expectedContext?.optionContext && !areLadderOptionContextsEqual(optionContext, expectedContext.optionContext)) {
+      throw new Error('Ladder settings changed during reduce-only recovery');
+    }
     const levels = optionContext.levels;
     const ladderStep = optionContext.ladderStep;
     const prices = getBufferedMakerPrices(spec.priceSide, levels, ladderStep);
@@ -2664,7 +2671,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         '读取下单数量时比例、笔数或间距已变化',
       );
     }
-    const baseQty = normalizeDecimalString(base?.qty ?? '');
+    const baseQty = expectedContext?.closePositionQty !== undefined
+      ? capCloseLadderBaseQty(base.qty, expectedContext.closePositionQty)
+      : normalizeDecimalString(base?.qty ?? '');
     let unavailableQuantityMessage = getUnavailableLadderQuantityMessage(
       spec.mode,
       baseQty,
@@ -2863,6 +2872,19 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     const error = new Error(`${apiError.message || '达到最大下单限制'}（错误码 ${apiError.code}）`);
     error.binanceCode = apiError.code;
     error.ladderFailureKind = 'max_open_orders';
+    error.safeNoSubmit = true;
+    return error;
+  }
+
+  function createLadderReduceOnlyConflictError(apiError) {
+    const parts = [localizedText('只减仓订单被拒绝', 'Reduce-only order rejected')];
+    if (typeof apiError.message === 'string' && apiError.message.length > 0) parts.push(apiError.message);
+    parts.push(localizedText(`错误码 ${apiError.code}`, `Error code ${apiError.code}`));
+    const message = combineLocalizedText(parts, ' · ');
+    const error = new Error(formatLocalizedText(message, 'zh-CN'));
+    error.localizedText = message;
+    error.binanceCode = apiError.code;
+    error.ladderFailureKind = 'reduce_only_conflict';
     error.safeNoSubmit = true;
     return error;
   }
@@ -3251,6 +3273,19 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     const capturedApiErrors = responseObservation.apiErrors;
     const capturedApiSuccesses = readLadderSubmitApiSuccesses(submitCaptureId);
 
+    const reduceOnlyRejection = readConfirmedReduceOnlyRejection(
+      mode,
+      responseObservation,
+      capturedApiSuccesses,
+    );
+    if (reduceOnlyRejection) throw createLadderReduceOnlyConflictError(reduceOnlyRejection);
+    if (mode === 'CLOSE' && capturedApiErrors.some(({ code }) => code === 90802022)) {
+      const error = new Error('只减仓拒单响应不完整或存在冲突，订单结果未确认（错误码 90802022）');
+      error.localizedText = localizedText(error.message,
+        'Incomplete or conflicting reduce-only response; order outcome unconfirmed (90802022)');
+      throw error;
+    }
+
     if (
       capturedApiErrors.length === 1
       && isBinancePostOnlyMakerRejectCode(capturedApiErrors[0].code)
@@ -3638,6 +3673,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         abortController.signal,
         {
           allowMaxOpenOrdersRecovery: continuousSession && spec.mode === 'CLOSE',
+          allowReduceOnlyRecovery: continuousSession && spec.mode === 'CLOSE',
           chartSaveController,
           chartSaveRound,
         },
@@ -6045,6 +6081,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   function isReplaceableCloseLadderOpenOrdersFailure(plan, error) {
     if (plan?.spec?.mode !== 'CLOSE') return false;
+    if (error?.ladderFailureKind === 'reduce_only_conflict' && error.safeNoSubmit === true) return true;
     return isReduceOnlyOpenOrdersConflictFeedback(error?.message || '');
   }
 
@@ -6105,6 +6142,64 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     };
   }
 
+  async function runContinuousCloseLadderPlan(actionType, progress, setExecutionStatus, abortSignal, options) {
+    let expectedContext = null;
+    const result = await runCloseLadderWithPositionRecovery({
+      signal: abortSignal,
+      assertContext: assertLadderExecutionContext,
+      buildPlan: async (positionQty) => {
+        const context = expectedContext === null
+          ? null
+          : { ...expectedContext, closePositionQty: positionQty };
+        const plan = await buildLadderPlan(actionType, context);
+        if (expectedContext === null) {
+          expectedContext = { ...createLadderExpectedContext(plan), optionContext: plan.optionContext };
+        }
+        setLadderPlannedOrders(progress, plan.orders.length);
+        setExecutionStatus(formatLadderPlanStatus(plan), formatLadderPlanDetail(plan));
+        return plan;
+      },
+      executePlan: (plan, { recovering }) => executeLadderPlan(plan, progress, setExecutionStatus, abortSignal, {
+        ...options,
+        allowMaxOpenOrdersRecovery: options.allowMaxOpenOrdersRecovery && !recovering,
+      }),
+      readPositionQty: async (plan) => (await throwIfClosePositionCompleted(plan, abortSignal)).positionQty,
+      replaceOrders: (plan) => cancelCurrentSymbolOpenOrdersForPlan(
+        plan, progress, setExecutionStatus, abortSignal,
+      ),
+      waitForRecovery: async (plan) => {
+        let nextPositionCheckAt = Date.now() + CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS;
+        await waitForContinuousLadderNextRound({
+          signal: abortSignal,
+          delay,
+          cooldownMs: CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS,
+          readReadiness: async () => {
+            assertLadderExecutionContext(plan);
+            const button = plan.spec.buttonGetter();
+            const ready = !document.hidden && isCloseSnapshotReady(plan.symbol)
+              && button && button.isConnected && isVisibleElement(button) && !isSubmitButtonBusy(button);
+            // A completed close can disable the button permanently; recheck the
+            // position while waiting rather than waiting for an impossible ready state.
+            if (!ready && !document.hidden && Date.now() >= nextPositionCheckAt) {
+              await throwIfClosePositionCompleted(plan, abortSignal);
+              nextPositionCheckAt = Date.now() + CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS;
+              assertLadderExecutionContext(plan);
+            }
+            return { status: ready ? 'ready' : 'waiting' };
+          },
+          onWaitStateChange: ({ phase }) => {
+            const detail = phase === 'waiting_ready'
+              ? localizedText('只减仓冲突，等待按钮恢复后复核', 'Reduce-only conflict; waiting for the button before rechecking')
+              : localizedText('只减仓冲突，3s 后复核仓位', 'Reduce-only conflict; rechecking position in 3s');
+            setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], ' · '), detail);
+          },
+        });
+      },
+    });
+    if (result.status === 'position_closed') throw createClosePositionCompletedError();
+    return result;
+  }
+
   async function runLadderPlanWithOpenOrderReplacement(
     actionType,
     progress,
@@ -6112,6 +6207,9 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     abortSignal = null,
     options = null,
   ) {
+    if (options?.allowReduceOnlyRecovery === true && getLadderActionSpec(actionType)?.mode === 'CLOSE') {
+      return runContinuousCloseLadderPlan(actionType, progress, setExecutionStatus, abortSignal, options);
+    }
     let replacementContext = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       throwIfAborted(abortSignal);

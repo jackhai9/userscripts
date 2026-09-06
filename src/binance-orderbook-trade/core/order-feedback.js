@@ -95,6 +95,19 @@ export function isBinanceMaxOpenOrdersErrorCode(code) {
   return code === BINANCE_MAX_OPEN_ORDERS_ERROR_CODE;
 }
 
+/** Only a single settled native rejection can authorize position recovery. */
+export function readConfirmedReduceOnlyRejection(mode, observation, successes) {
+  if (mode !== 'CLOSE' || observation.settled !== true || successes.length !== 0) return null;
+  if (observation.diagnostics.length !== 1 || observation.apiErrors.length !== 1) return null;
+  const diagnostic = observation.diagnostics[0];
+  const apiError = observation.apiErrors[0];
+  if (!Number.isInteger(diagnostic.httpStatus)
+    || diagnostic.httpStatus < 200 || diagnostic.httpStatus >= 300 || diagnostic.bodyKind !== 'json') return null;
+  if (diagnostic.payloadSummary?.success !== false || getBinanceApiErrorCode(diagnostic.payloadSummary) !== 90802022) return null;
+  if (apiError.success !== false || apiError.code !== 90802022) return null;
+  return apiError;
+}
+
 function parseRetryAfterMs(value) {
   if (value == null || value === '') return null;
   const seconds = Number(value);

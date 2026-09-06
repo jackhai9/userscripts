@@ -1,3 +1,5 @@
+import { addDecimalStrings, formatDecimalParts, normalizeDecimalString } from './decimal.js';
+
 const POSITION_STATUSES = new Set(['unknown', 'has_position', 'flat']);
 
 function createPositionPayloadContractError(message) {
@@ -12,6 +14,28 @@ function parsePositionAmount(value) {
     return Number(value);
   }
   throw createPositionPayloadContractError(`持仓数量无效：${String(value)}`);
+}
+
+/** Preserve API decimal strings when measuring progress between position reads. */
+function parsePositionQuantity(value) {
+  parsePositionAmount(value);
+  const raw = String(value).trim();
+  const negative = raw.startsWith('-');
+  const magnitude = negative ? raw.slice(1) : raw;
+  let quantity;
+  if (typeof value === 'number' && /e/i.test(magnitude)) {
+    const [coefficient, exponent] = magnitude.toLowerCase().split('e');
+    const [integer, fraction = ''] = coefficient.split('.');
+    const scale = fraction.length - Number(exponent);
+    const digits = BigInt(integer + fraction);
+    quantity = scale >= 0
+      ? formatDecimalParts(digits, scale)
+      : formatDecimalParts(digits * 10n ** BigInt(-scale), 0);
+  } else {
+    quantity = normalizeDecimalString(magnitude.replace(/^\./, '0.').replace(/\.$/, '.0'));
+  }
+  if (quantity === null) throw createPositionPayloadContractError('Invalid position quantity');
+  return { negative, quantity };
 }
 
 export function resolveSymbolPositionStatus(payload, symbol) {
@@ -37,28 +61,29 @@ export function resolveSymbolPositionSideStatus(payload, symbol, side) {
 
   const positions = payload.data.filter((position) => position?.symbol === symbol);
   let matchingPositionCount = 0;
-  let hasPosition = false;
+  let positionQty = '0';
   for (const position of positions) {
     const positionSide = position.positionSide;
     if (!['BOTH', 'LONG', 'SHORT'].includes(positionSide)) {
       throw createPositionPayloadContractError(`持仓方向无效：${String(positionSide)}`);
     }
-    const amount = parsePositionAmount(position.positionAmount);
+    const { negative, quantity } = parsePositionQuantity(position.positionAmount);
     if (positionSide === side) {
       matchingPositionCount += 1;
-      if (amount !== 0) hasPosition = true;
+      positionQty = addDecimalStrings(positionQty, quantity);
       continue;
     }
     if (positionSide === 'BOTH') {
       matchingPositionCount += 1;
-      if ((side === 'LONG' && amount > 0) || (side === 'SHORT' && amount < 0)) {
-        hasPosition = true;
+      if ((side === 'LONG' && !negative) || (side === 'SHORT' && negative)) {
+        positionQty = addDecimalStrings(positionQty, quantity);
       }
     }
   }
   return {
-    status: hasPosition ? 'has_position' : 'flat',
+    status: positionQty !== '0' ? 'has_position' : 'flat',
     matchingPositionCount,
+    positionQty,
   };
 }
 

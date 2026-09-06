@@ -171,6 +171,34 @@ Required properties:
 - readable, non-minified output
 - generated `@version` matches `src/binance-orderbook-trade/index.user.js`
 
+## Continuous Close Reduce-Only Recovery
+
+A continuous close round handles `90802022` only when one settled native JSON
+response reports `success=false`, its parsed code is `90802022`, and no successful
+or additional response was captured. Toast text alone never authorizes recovery.
+The first rejection establishes an authoritative same-symbol, same-side position
+quantity baseline. Recovery waits the existing three-second readiness cooldown
+and reads that quantity again. Confirmed flat ends normally; an increased
+position stops the round. A strict decrease permits rebuilding without cancelling.
+
+An unchanged quantity permits one confirmed replacement through the existing
+current-symbol, same-close-direction Basic-order workflow. Rejection after that
+replacement triggers another cooldown and position read, not another immediate
+replacement. If the position still has not decreased, recovery ends with the
+native error and a no-progress explanation. Further replacements require a strict
+decrease in authoritative position quantity. Submissions and cancellations do not
+count as position progress. The guard lasts for the whole active round.
+
+Recovery rebuilds use the smaller of the confirmed API position quantity and the
+latest valid DOM closeable quantity. Missing DOM quantity never falls back to the
+API amount. Symbol, direction, precision, and option context stay pinned to the
+active round. Cancel, position-read, context, and unconfirmed-submit errors during
+this recovery are terminal and cannot inherit unrelated continuous retry policies.
+Once reduce-only recovery begins, the executor disables max-open-orders capacity
+recovery too, so a later `90802025` cannot trigger a separate batch of cancellations.
+Ordinary single-round clicks and OPEN ladders retain their existing replacement
+contract. No additional API or DOM cancellation path is introduced.
+
 ## Versioning
 
 Bump `@version` in `src/binance-orderbook-trade/index.user.js` when behavior changes, then run:
