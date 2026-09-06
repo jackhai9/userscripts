@@ -1,3 +1,4 @@
+import { createStrategy27Translator } from '../core/ui-copy.js';
 import { createAlignedShape, createTradingViewMarkerPlacement, pinMarkerChartContext, readLiveShapeIds } from './tradingview-event-layer.js';
 
 const ICON_SIZE_PX = 36;
@@ -20,8 +21,10 @@ function drawingOptions(color) {
  * resolved candle/side, not the decision timestamp: no-trade seconds can share
  * a prior candle. Eviction frees a slot without repositioning any survivor.
  */
-export function createTradingViewCompoundLayer(target, { maxCandidates, candleWaitMs = 3000 }) {
+export function createTradingViewCompoundLayer(target, { maxCandidates, candleWaitMs = 3000, locale = 'zh-CN' }) {
   if (!Number.isSafeInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 80) throw new Error('Compound chart capacity must be 1..80');
+  let t = createStrategy27Translator(locale);
+  const markerLabel = (shape) => shape === 'arrow_down' ? t('候选高', 'High candidate') : t('候选低', 'Low candidate');
   const { chart } = target;
   const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
   const isChartCurrent = pinMarkerChartContext(chart);
@@ -46,7 +49,8 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
     if (errors.length) throw new AggregateError(errors, `Compound chart cleanup failed: ${errors.map((error) => error.message).join('; ')}`);
   }
 
-  async function createDrawing(point, drawing) {
+  async function createDrawing(point, options) {
+    const drawing = { ...options };
     const entityId = await createAlignedShape(chart, point, drawing);
     try {
       const properties = chart.getShapeById(entityId).getProperties();
@@ -82,6 +86,7 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
           return false;
         }
         record.ids[index] = entityId;
+        if (drawing.shape === 'text') updateLabel(entityId, drawing, record.markerShape);
         liveIds = readLiveShapeIds(chart);
       }
       return true;
@@ -132,8 +137,9 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
     if (records.size >= maxCandidates) throw new Error('Compound chart capacity exceeded before eviction');
     if (typeof id !== 'string' || id.length === 0 || !Number.isSafeInteger(decisionAtMs) || decisionAtMs < 1) throw new Error('Compound chart candidate identity/time is invalid');
     const icon = ICONS[annotation.markerShape];
-    if (icon === undefined || !['候选高', '候选低'].includes(annotation.markerLabel)) throw new Error('Compound chart direction/label is invalid');
-    const operation = { id, controller: new AbortController(), ids: [] };
+    const labels = annotation.markerShape === 'arrow_down' ? ['候选高', 'High candidate'] : ['候选低', 'Low candidate'];
+    if (icon === undefined || !labels.includes(annotation.markerLabel)) throw new Error('Compound chart direction/label is invalid');
+    const operation = { id, markerShape: annotation.markerShape, controller: new AbortController(), ids: [] };
     pending = operation;
     try {
       const base = await placement.wait(annotation, {
@@ -150,17 +156,19 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
       const options = drawingOptions(annotation.markerColor);
       const drawings = [
         [point, { ...options, shape: 'icon', icon, overrides: { ...options.overrides, size: ICON_SIZE_PX } }],
-        [labelPoint, { ...options, shape: 'text', text: annotation.markerLabel, overrides: { ...options.overrides, fontsize: 12, bold: true, fillBackground: false, drawBorder: false } }],
+        [labelPoint, { ...options, shape: 'text', text: markerLabel(annotation.markerShape), overrides: { ...options.overrides, fontsize: 12, bold: true, fillBackground: false, drawBorder: false } }],
       ];
+      operation.drawings = drawings;
       for (const [drawingPoint, drawing] of drawings) {
         const entityId = await createDrawing(drawingPoint, drawing);
         operation.ids.push(entityId);
+        if (drawing.shape === 'text') updateLabel(entityId, drawing, annotation.markerShape);
         if (operation.controller.signal.aborted || !isChartCurrent()) {
           dispose([operation]);
           return false;
         }
       }
-      records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, drawings, restoring: null });
+      records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, markerShape: annotation.markerShape, drawings, restoring: null });
       return true;
     } catch (error) {
       try {
@@ -174,5 +182,27 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
     }
   }
 
-  return Object.freeze({ renderCandidate, reconcile, remove, clear, get size() { return records.size; } });
+  function updateLabel(entityId, drawing, shape) {
+    const text = markerLabel(shape);
+    drawing.text = text;
+    const entity = chart.getShapeById(entityId);
+    if (entity.getProperties().text !== text) {
+      entity.setProperties({ text }, false);
+      if (entity.getProperties().text !== text) throw new Error('Compound chart label did not match the selected language');
+    }
+  }
+
+  /** Update only owned text entities; preserve arrow IDs, slots and restoration ownership. */
+  function setLocale(nextLocale) {
+    t = createStrategy27Translator(nextLocale);
+    const liveIds = readLiveShapeIds(chart);
+    for (const record of [...records.values(), ...(pending ? [pending] : [])]) {
+      if (!record.drawings) continue;
+      const drawing = record.drawings[1][1];
+      drawing.text = markerLabel(record.markerShape);
+      if (liveIds.has(record.ids[1])) updateLabel(record.ids[1], drawing, record.markerShape);
+    }
+  }
+
+  return Object.freeze({ setLocale, renderCandidate, reconcile, remove, clear, get size() { return records.size; } });
 }

@@ -119,7 +119,7 @@ test('controller composes real protocol/lifecycle/panel and renders each indepen
   assert.deepEqual(h.renders.map((item) => item.decisionAtMs), [7000, 7000]);
   assert.deepEqual(h.renders.map((item) => item.annotation.markerShape), ['arrow_down', 'arrow_up']);
   assert.equal(h.layerCreates, 1);
-  assert.equal(h.status(), 'Compound data: connected. Connection does not confirm symbol monitoring.');
+  assert.equal(h.status(), '复合候选数据：已连接。接口连通不代表该币种仍在监控中。');
   assert.throws(() => h.controller.run(), /already started/);
   h.controller.stop('route_changed');
   assert.equal(h.shapes.size, 0);
@@ -162,7 +162,7 @@ test('503 clears compound state and recovers with a new cursor without clearing 
   await h.parked;
   assert.equal(h.panel.compoundSize, 1);
   assert.deepEqual([...h.shapes.keys()], [fixtures[1].candidate_id]);
-  assert.equal(h.status(), 'Compound data: connected. Connection does not confirm symbol monitoring.');
+  assert.equal(h.status(), '复合候选数据：已连接。接口连通不代表该币种仍在监控中。');
 });
 
 test('network reconnect retains compound history and original cursor', async (t) => {

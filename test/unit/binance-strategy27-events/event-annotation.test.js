@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createLocalizedAnnotation, localizeAnnotation } from '../../../src/binance-strategy27-events/core/ui-copy.js';
 
 import {
   buildEventAnnotation,
@@ -164,30 +165,51 @@ test('rejects an unmapped user-visible trigger instead of exposing an internal k
 
 test('freezes the first red or green candidate presentation for an event', () => {
   const presentations = new Map();
-  const first = {
+  const first = createLocalizedAnnotation((locale) => ({
+    locale,
     candidateText: '买入推动失效 · 承接转弱',
     markerShape: 'arrow_down',
     markerColor: '#F6465D',
     markerTime: 10,
     markerPrice: 1.2,
     summary: 'first',
-  };
-  const later = {
+  }), 'zh-CN');
+  const later = createLocalizedAnnotation((locale) => ({
+    locale,
     candidateText: '卖出推动失效 · 抛压转弱',
     markerShape: 'arrow_up',
     markerColor: '#0ECB81',
     markerTime: 11,
     markerPrice: 1.3,
     summary: 'later',
-  };
+  }), 'zh-CN');
 
   assert.equal(stabilizeCandidatePresentation(presentations, 'event', first), first);
-  assert.deepEqual(stabilizeCandidatePresentation(presentations, 'event', later), {
-    ...later,
-    candidateText: first.candidateText,
-    markerShape: first.markerShape,
-    markerColor: first.markerColor,
-    markerTime: first.markerTime,
-    markerPrice: first.markerPrice,
-  });
+  const stable = stabilizeCandidatePresentation(presentations, 'event', later);
+  for (const locale of ['zh-CN', 'en']) {
+    const translated = localizeAnnotation(stable, locale);
+    assert.equal(translated.candidateText, first.candidateText);
+    assert.equal(translated.markerShape, first.markerShape);
+    assert.equal(translated.markerTime, first.markerTime);
+    assert.equal(translated.markerPrice, first.markerPrice);
+    assert.equal(translated.summary, 'later');
+  }
+});
+
+test('ordinary bilingual copy translates facts and preserves the first candidate across language changes', () => {
+  const event = { event_kind: 'orderflow_event', event_status: 'incomplete', close_reason: 'universe_removed', trigger_reasons: ['mid_return_bps'], latest_snapshot: snapshot('4.2', ['bullish_sell_impact_failure']) };
+  const first = buildEventAnnotation({ event, rehydrated: true, locale: 'en' });
+  assert.equal(first.title, 'Order-flow observation');
+  assert.equal(first.closeText, 'Removed from monitoring');
+  assert.equal(first.windowText, 'Window 1 s · 4 buckets');
+  assert.equal(first.candidateText, 'Sell impact failure · Weakening selling pressure');
+  assert.doesNotMatch(JSON.stringify(first.localizedCopy.en), /\p{Script=Han}/u);
+  const presentations = new Map();
+  stabilizeCandidatePresentation(presentations, 'event', first);
+  const updated = buildEventAnnotation({ event: { ...event, latest_snapshot: snapshot() }, rehydrated: false });
+  const stable = stabilizeCandidatePresentation(presentations, 'event', updated);
+  assert.equal(stable.candidateText, '卖出推动失效 · 抛压转弱');
+  assert.equal(localizeAnnotation(stable, 'en').candidateText, first.candidateText);
+  assert.equal(stable.markerTime, first.markerTime);
+  assert.equal(localizeAnnotation(first, 'zh-CN').closeText, '移出监控范围');
 });

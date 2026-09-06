@@ -138,7 +138,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.4.5 with identical metadata headers.
+generated install artifact are version 0.4.6 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
@@ -284,3 +284,33 @@ for the current symbol. Both clients use the same gateway with separate existing
 paths; neither a successful empty response nor compound connectivity can mark a
 symbol as re-added. No live universe-membership endpoint is available to this UI,
 so the banner reports the last event evidence, not a current membership guarantee.
+
+## Interface Language
+
+The interface follows the existing Binance userscript locale contract: the
+`/zh-CN/` route selects Simplified Chinese, and other routes select English.
+Strategy 27 reuses the existing orderbook locale helpers without importing its
+runtime or trading actions. The helper module also contains a static copy table;
+its small initialization remains in the bundle until a separate shared-helper
+extraction can migrate consumers together.
+
+Panel headings, monitoring/connection/history notices, ordinary and compound
+facts, candidate labels, menus and prompts all use the selected locale. Proper
+terms such as Strategy 27, bid, ask, bps, USDT and diagnostic identities retain
+their original spelling. Raw diagnostic errors retain their technical details
+under a localized failure prefix.
+
+A language-only route change repaints the same panel and preserves selection,
+collapse state, monitoring evidence, both requests/cursors, history retention
+and marker IDs. Bilingual annotation copies retain the first directional
+candidate presentation in both languages. Compound labels update only owned
+text properties with saving defaults disabled, including labels that finish
+creation or repair after a language change. Changing symbol/chart/interval and
+explicit reconnect still use their existing context lifecycle.
+
+The menu uses Tampermonkey 5's returned registration IDs to update its four
+entries in place. No additional grants or menu duplicates are introduced.
+The English detail column wraps long labels without overlapping fact values.
+Source/generated entrypoint tests cover language-only switching without new
+requests or entity removal. The isolated panel preview covers both languages;
+it does not certify the production gateway or a live compound sample.

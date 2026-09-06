@@ -22,7 +22,7 @@ function fixture({ bars = [[10, 1.25, 1.3, 1.2, 1.25]], beforeCreate, shiftSecon
       if (beforeCreate) await beforeCreate(counter);
       const properties = { ...options.overrides, ...(options.icon === undefined ? {} : { icon: options.icon }), ...(options.text === undefined ? {} : { text: options.text }) };
       if (wrongProperties) properties.color = '#000000';
-      const shape = { getPoints: () => [{ ...point, time: point.time + shiftSeconds }], getProperties: () => properties };
+      const shape = { getPoints: () => [{ ...point, time: point.time + shiftSeconds }], getProperties: () => properties, setProperties: (next, saveDefaults) => { assert.equal(saveDefaults, false); Object.assign(properties, next); } };
       shapes.set(id, shape);
       created.push({ id, point, options });
       return id;
@@ -265,3 +265,39 @@ test('cleanup skips evicted compound parts and still reports a live part removal
   layer.clear();
   assert.deepEqual(f.removed, ['owned-2']);
 });
+
+for (const phase of ['settled', 'creating', 'restoring']) {
+  test(`locale changes preserve compound entity ownership while ${phase}`, async () => {
+    const gate = deferred();
+    let blocked = false;
+    const f = fixture({ beforeCreate: (count) => {
+      if ((phase === 'creating' && count === 2) || (phase === 'restoring' && count === 3)) {
+        blocked = true;
+        return gate.promise;
+      }
+    } });
+    const layer = f.layer();
+    let pending = layer.renderCandidate('high', annotation(), 11000);
+    if (phase !== 'creating') await pending;
+    if (phase === 'restoring') {
+      f.shapes.delete('owned-2');
+      pending = layer.reconcile();
+    }
+    if (phase !== 'settled') {
+      while (!blocked) await new Promise(setImmediate);
+    }
+    const ids = [...f.shapes.keys()];
+    layer.setLocale('en');
+    gate.resolve();
+    await pending;
+    assert.equal(f.shapes.get(phase === 'restoring' ? 'owned-3' : 'owned-2').getProperties().text, 'High candidate');
+    assert.equal(f.shapes.has('owned-1'), true);
+    assert.deepEqual(f.removed, []);
+    if (phase === 'settled') assert.deepEqual([...f.shapes.keys()], ids);
+    layer.setLocale('zh-CN');
+    assert.equal(f.shapes.get(phase === 'restoring' ? 'owned-3' : 'owned-2').getProperties().text, '候选高');
+    assert.equal(layer.size, 1);
+    layer.clear();
+    assert.deepEqual([...f.shapes.keys()], ['user-owned']);
+  });
+}
