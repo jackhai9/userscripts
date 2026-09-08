@@ -1,6 +1,6 @@
 import { isCanonicalUsdtSymbol } from '../../shared/canonical-symbol.js';
 import {
-  STRATEGY29_SPEC_VERSION,
+  STRATEGY29_API_SPEC_VERSION,
   validateStrategy29EventsResponse,
   validateStrategy29GatewayError,
   validateStrategy29StatusResponse,
@@ -82,7 +82,7 @@ export function createStrategy29SummaryClient({
     }
     const status = validateStrategy29StatusResponse(statusBody, 200);
     onStatus(status);
-    if (status.spec_version !== STRATEGY29_SPEC_VERSION) {
+    if (status.spec_version !== STRATEGY29_API_SPEC_VERSION) {
       return { state: 'incompatible', pages: 0, hasMore: false };
     }
 

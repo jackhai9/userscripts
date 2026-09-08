@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "spec_version": "29_2_spec_v2",
+  "spec_version": "29_2_spec_v3",
   "observed_at_ms": 1788580805000,
   "universe": {
     "source_monitor": "monitor29_bollinger_ma60",

@@ -4,7 +4,7 @@ import {
 } from './core/remote-summary-client.js';
 import {
   STRATEGY29_REFERENCE_SHA256,
-  STRATEGY29_SPEC_VERSION,
+  STRATEGY29_API_SPEC_VERSION,
   routeSymbolToCanonical,
 } from './core/remote-summary-contract.js';
 import { createStrategy29SummaryPanel } from './dom/strategy29-summary-panel.js';
@@ -271,7 +271,7 @@ export function createStrategy29RemoteSummary({
         lastError: moduleFailure ?? active?.lastError ?? null,
         lastResult: active?.lastResult ?? null,
         cursor: active?.client?.diagnostics.cursor ?? null,
-        specVersion: STRATEGY29_SPEC_VERSION,
+        specVersion: STRATEGY29_API_SPEC_VERSION,
         referenceSha256: STRATEGY29_REFERENCE_SHA256,
       });
     },

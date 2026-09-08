@@ -1402,7 +1402,8 @@
 
   // src/binance-strategy29-bollinger/core/remote-summary-contract.js
   var STRATEGY29_SCHEMA_VERSION = 1;
-  var STRATEGY29_SPEC_VERSION = "29_2_spec_v2";
+  var STRATEGY29_API_SPEC_VERSION = "29_2_spec_v3";
+  var STRATEGY29_EVENT_SPEC_VERSION = "29_2_spec_v2";
   var STRATEGY29_REFERENCE_SHA256 = "eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d";
   var TIMEFRAMES = /* @__PURE__ */ new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]);
   var UNIT_STATUSES = /* @__PURE__ */ new Set(["warming", "ready", "stale", "insufficient_history", "data_gap", "failed"]);
@@ -1592,7 +1593,7 @@
     assertSchema(value.schema_version, "status.schema_version");
     assertString(value.spec_version, "status.spec_version");
     assertInteger(value.observed_at_ms, "status.observed_at_ms");
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) return {
+    if (value.spec_version !== STRATEGY29_API_SPEC_VERSION) return {
       schema_version: value.schema_version,
       spec_version: value.spec_version,
       observed_at_ms: value.observed_at_ms
@@ -1621,8 +1622,8 @@
     }
     assertSchema(value.schema_version, `${name}.schema_version`);
     if (value.strategy_id !== "29") throw new TypeError(`${name}.strategy_id must equal 29`);
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
-      throw new TypeError(`${name}.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
+    if (value.spec_version !== STRATEGY29_EVENT_SPEC_VERSION) {
+      throw new TypeError(`${name}.spec_version must equal ${STRATEGY29_EVENT_SPEC_VERSION}`);
     }
     assertCanonicalSymbol(value.symbol, `${name}.symbol`);
     assertEnum(value.timeframe, TIMEFRAMES, `${name}.timeframe`);
@@ -1648,8 +1649,8 @@
     if (httpStatus !== 200) throw new TypeError(`events response requires HTTP 200, received ${httpStatus}`);
     assertExactKeys(value, EVENTS_KEYS, "events response");
     assertSchema(value.schema_version, "events.schema_version");
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
-      throw new TypeError(`events.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
+    if (value.spec_version !== STRATEGY29_API_SPEC_VERSION) {
+      throw new TypeError(`events.spec_version must equal ${STRATEGY29_API_SPEC_VERSION}`);
     }
     assertInteger(value.observed_at_ms, "events.observed_at_ms");
     assertInteger(value.next_cursor, "events.next_cursor");
@@ -1754,7 +1755,7 @@
       }
       const status = validateStrategy29StatusResponse(statusBody, 200);
       onStatus(status);
-      if (status.spec_version !== STRATEGY29_SPEC_VERSION) {
+      if (status.spec_version !== STRATEGY29_API_SPEC_VERSION) {
         return { state: "incompatible", pages: 0, hasMore: false };
       }
       let pages = 0;
@@ -2207,7 +2208,7 @@
     const overview = element(document, "div", { styles: { display: "grid", gap: "4px", padding: "9px 10px" } });
     overview.appendChild(element(document, "div", { text: canonicalSymbol, role: "symbol", styles: { fontWeight: "700" } }));
     const connection = element(document, "div", { text: text(SUMMARY_COPY.waiting), role: "connection", styles: { color: "#848E9C", fontSize: "11px" } });
-    const spec = element(document, "div", { text: text(SUMMARY_COPY.observerSpec(STRATEGY29_SPEC_VERSION)), role: "spec", styles: { color: "#848E9C", fontSize: "11px" } });
+    const spec = element(document, "div", { text: text(SUMMARY_COPY.observerSpec(STRATEGY29_API_SPEC_VERSION)), role: "spec", styles: { color: "#848E9C", fontSize: "11px" } });
     const reference = element(document, "div", { text: text(SUMMARY_COPY.reference(STRATEGY29_REFERENCE_SHA256)), role: "reference", styles: { color: "#848E9C", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "text" } });
     const statusFreshness = element(document, "div", { text: text(SUMMARY_COPY.noStatus), role: "status-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
     const eventsFreshness = element(document, "div", { text: text(SUMMARY_COPY.noEventsCheck), role: "events-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
@@ -2234,7 +2235,7 @@
       lastStatus = null;
       spec.dataset.state = "unavailable";
       spec.style.color = "#848E9C";
-      spec.textContent = text(SUMMARY_COPY.observerSpec(STRATEGY29_SPEC_VERSION));
+      spec.textContent = text(SUMMARY_COPY.observerSpec(STRATEGY29_API_SPEC_VERSION));
       statusFreshness.textContent = text(SUMMARY_COPY.noStatus);
       selection.dataset.state = "unavailable";
       selection.style.color = "#848E9C";
@@ -2308,10 +2309,10 @@
       renderStatus(snapshot) {
         assertLive();
         lastStatus = snapshot;
-        const matched = snapshot.spec_version === STRATEGY29_SPEC_VERSION;
+        const matched = snapshot.spec_version === STRATEGY29_API_SPEC_VERSION;
         spec.dataset.state = matched ? "matched" : "error";
         spec.style.color = matched ? "#0ECB81" : "#F6465D";
-        spec.textContent = matched ? text(SUMMARY_COPY.matched(STRATEGY29_SPEC_VERSION)) : text(SUMMARY_COPY.mismatch(STRATEGY29_SPEC_VERSION, snapshot.spec_version));
+        spec.textContent = matched ? text(SUMMARY_COPY.matched(STRATEGY29_API_SPEC_VERSION)) : text(SUMMARY_COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version));
         statusFreshness.textContent = text(SUMMARY_COPY.statusAt(formatClock(snapshot.observed_at_ms)));
         if (!matched) {
           selection.dataset.state = "incompatible";
@@ -2632,7 +2633,7 @@
           lastError: moduleFailure ?? active?.lastError ?? null,
           lastResult: active?.lastResult ?? null,
           cursor: active?.client?.diagnostics.cursor ?? null,
-          specVersion: STRATEGY29_SPEC_VERSION,
+          specVersion: STRATEGY29_API_SPEC_VERSION,
           referenceSha256: STRATEGY29_REFERENCE_SHA256
         });
       }

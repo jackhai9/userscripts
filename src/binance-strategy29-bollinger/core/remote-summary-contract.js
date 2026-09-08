@@ -1,7 +1,8 @@
 import { isCanonicalUsdtSymbol, usdtRouteToCanonical, canonicalUsdtToRoute } from '../../shared/canonical-symbol.js';
 
 export const STRATEGY29_SCHEMA_VERSION = 1;
-export const STRATEGY29_SPEC_VERSION = '29_2_spec_v2';
+export const STRATEGY29_API_SPEC_VERSION = '29_2_spec_v3';
+export const STRATEGY29_EVENT_SPEC_VERSION = '29_2_spec_v2';
 export const STRATEGY29_REFERENCE_SHA256 = 'eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d';
 
 const TIMEFRAMES = new Set(['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w']);
@@ -168,7 +169,7 @@ export function validateStrategy29StatusResponse(value, httpStatus) {
   assertString(value.spec_version, 'status.spec_version');
   assertInteger(value.observed_at_ms, 'status.observed_at_ms');
   // An incompatible spec exposes identity only; its payload is not our contract.
-  if (value.spec_version !== STRATEGY29_SPEC_VERSION) return {
+  if (value.spec_version !== STRATEGY29_API_SPEC_VERSION) return {
     schema_version: value.schema_version, spec_version: value.spec_version, observed_at_ms: value.observed_at_ms,
   };
   assertExactKeys(value, STATUS_KEYS, 'status response');
@@ -197,8 +198,8 @@ function validateEvent(value, index) {
   }
   assertSchema(value.schema_version, `${name}.schema_version`);
   if (value.strategy_id !== '29') throw new TypeError(`${name}.strategy_id must equal 29`);
-  if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
-    throw new TypeError(`${name}.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
+  if (value.spec_version !== STRATEGY29_EVENT_SPEC_VERSION) {
+    throw new TypeError(`${name}.spec_version must equal ${STRATEGY29_EVENT_SPEC_VERSION}`);
   }
   assertCanonicalSymbol(value.symbol, `${name}.symbol`);
   assertEnum(value.timeframe, TIMEFRAMES, `${name}.timeframe`);
@@ -225,8 +226,8 @@ export function validateStrategy29EventsResponse(value, httpStatus) {
   if (httpStatus !== 200) throw new TypeError(`events response requires HTTP 200, received ${httpStatus}`);
   assertExactKeys(value, EVENTS_KEYS, 'events response');
   assertSchema(value.schema_version, 'events.schema_version');
-  if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
-    throw new TypeError(`events.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
+  if (value.spec_version !== STRATEGY29_API_SPEC_VERSION) {
+    throw new TypeError(`events.spec_version must equal ${STRATEGY29_API_SPEC_VERSION}`);
   }
   assertInteger(value.observed_at_ms, 'events.observed_at_ms');
   assertInteger(value.next_cursor, 'events.next_cursor');
