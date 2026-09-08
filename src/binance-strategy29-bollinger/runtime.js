@@ -3,12 +3,12 @@ import { isChartMutationBlocked } from '../shared/chart-mutation-owners.js';
 import { isFuturesTradingPathname, parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 import { ensureSpaRouteChangePatched, installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 import { createStrategy29RemoteSummary } from './remote-summary.js';
-import { SIGNAL_HOST_READY, SIGNAL_HOST_READY_EVENT } from '../shared/strategy29-preferences-migration.js';
+import { SIGNAL_GATEWAY_BRIDGE } from '../shared/signal-gateway-bridge.js';
 
 import { SUMMARY_COPY as COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 
 const INSTANCE = Symbol.for('jh-userscripts.strategy29-bollinger');
-const RUNTIME_VERSION = 3;
+const RUNTIME_VERSION = 4;
 const CONFLICT = COPY.conflict;
 
 /** This is a migration refusal, not compatibility with the old independently owned save wrapper. */
@@ -34,7 +34,7 @@ export function installStrategy29(view, remoteAdapters = null) {
   const noticeId = 'jh-strategy29-bollinger-status';
   const upgradeNoticeId = 'jh-strategy29-client-upgrade';
   function showUpgradeNotice() {
-    if (remoteSummary !== null || disposed || view[SIGNAL_HOST_READY] === true || !isFuturesTradingPathname(view.location.pathname)) {
+    if (disposed || view[SIGNAL_GATEWAY_BRIDGE]?.version === 1 || !isFuturesTradingPathname(view.location.pathname)) {
       document.getElementById(upgradeNoticeId)?.remove();
       return;
     }
@@ -119,7 +119,6 @@ export function installStrategy29(view, remoteAdapters = null) {
       document.removeEventListener('visibilitychange', onVisibility);
       document.removeEventListener('DOMContentLoaded', showFailure);
       document.removeEventListener('DOMContentLoaded', showUpgradeNotice);
-      view.removeEventListener(SIGNAL_HOST_READY_EVENT, showUpgradeNotice);
       view.removeEventListener('pagehide', onPageHide);
       view.removeEventListener('pageshow', onPageShow);
       document.getElementById(noticeId)?.remove();
@@ -132,7 +131,6 @@ export function installStrategy29(view, remoteAdapters = null) {
   document.addEventListener('visibilitychange', onVisibility);
   document.addEventListener('DOMContentLoaded', showFailure, { once: true });
   document.addEventListener('DOMContentLoaded', showUpgradeNotice, { once: true });
-  view.addEventListener(SIGNAL_HOST_READY_EVENT, showUpgradeNotice);
   view.addEventListener('pagehide', onPageHide);
   view.addEventListener('pageshow', onPageShow);
   resume();

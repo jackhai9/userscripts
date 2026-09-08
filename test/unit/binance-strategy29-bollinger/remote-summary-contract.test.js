@@ -112,11 +112,13 @@ test('rejects malformed or contradictory universe status fields', () => {
 });
 
 test('canonical Strategy29 symbols round-trip without server-side normalization', () => {
+  assert.equal(routeSymbolToCanonical('牛来USDT'), '牛来/USDT:USDT');
+  assert.equal(canonicalSymbolToRoute('牛来/USDT:USDT'), '牛来USDT');
   assert.equal(routeSymbolToCanonical('BTRUSDT'), 'BTR/USDT:USDT');
   assert.equal(canonicalSymbolToRoute('BTR/USDT:USDT'), 'BTRUSDT');
   assert.throws(() => routeSymbolToCanonical('BTRUSD'), /route symbol/);
   assert.throws(() => routeSymbolToCanonical('btrUSDT'), /route symbol/);
-  assert.throws(() => canonicalSymbolToRoute('BTR/USDT'), /canonical symbol/);
+  assert.throws(() => canonicalSymbolToRoute('BTR/USDT'), /canonical USDT symbol/);
 });
 
 test('accepts only coherent universe refresh state and reason combinations', () => {

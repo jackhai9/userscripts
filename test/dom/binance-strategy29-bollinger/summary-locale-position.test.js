@@ -15,8 +15,17 @@ function fixture(locale = 'zh-CN', stored = { left: 100, top: 120 }) {
     locale, loadPosition: () => stored, savePosition: value => saves.push(value),
   });
   const panel = dom.window.document.getElementById('jh-strategy29-summary-panel');
+  const header = panel.querySelector('header');
+  const captured = new Set();
+  header.setPointerCapture = id => captured.add(id);
+  header.hasPointerCapture = id => captured.has(id);
+  header.releasePointerCapture = id => captured.delete(id);
+  const fire = (node, type, x, y, overrides = {}) => node.dispatchEvent(new dom.window.PointerEvent(type, {
+    bubbles: true, clientX: x, clientY: y, pointerId: 1, isPrimary: true,
+    button: 0, buttons: type === 'pointerup' ? 0 : 1, ...overrides,
+  }));
   const close = () => { controller.destroy(); dom.window.close(); };
-  return { dom, controller, panel, saves, close };
+  return { dom, controller, panel, header, captured, fire, saves, close };
 }
 
 test('Chinese panel translates retained status and signals and switches to English without losing rows', () => {
@@ -48,25 +57,60 @@ test('header drag restores, clamps and saves position while buttons and destroye
     Object.defineProperties(f.dom.window, { innerWidth: { value: 500, configurable: true }, innerHeight: { value: 400, configurable: true } });
     f.panel.getBoundingClientRect = () => ({ left: parseFloat(f.panel.style.left), top: parseFloat(f.panel.style.top), width: 340, height: 200 });
     const header = f.panel.querySelector('header');
-    const fire = (node, type, x, y, button = 0) => node.dispatchEvent(new f.dom.window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button }));
+    const { fire } = f;
     assert.equal(f.panel.style.left, '100px');
     assert.equal(f.panel.style.top, '120px');
-    fire(header, 'mousedown', 120, 130);
-    fire(f.dom.window.document, 'mousemove', 700, 600);
-    fire(f.dom.window.document, 'mouseup', 700, 600);
+    fire(header, 'pointerdown', 120, 130);
+    assert.deepEqual([...f.captured], [1]);
+    fire(header, 'pointermove', 700, 600);
+    fire(header, 'pointerup', 700, 600);
+    assert.equal(f.captured.size, 0);
     assert.equal(f.panel.style.left, '160px');
     assert.equal(f.panel.style.top, '200px');
     assert.deepEqual(f.saves, [{ left: 160, top: 200 }]);
-    fire(f.panel.querySelector('[data-role=collapse]'), 'mousedown', 170, 210);
-    fire(f.dom.window.document, 'mousemove', 0, 0);
-    fire(f.dom.window.document, 'mouseup', 0, 0);
+    fire(f.panel.querySelector('[data-role=collapse]'), 'pointerdown', 170, 210);
+    fire(header, 'pointermove', 0, 0);
+    fire(header, 'pointerup', 0, 0);
     assert.equal(f.saves.length, 1);
-    fire(header, 'mousedown', 170, 210);
+    fire(header, 'pointerdown', 170, 210);
     f.controller.destroy();
-    fire(f.dom.window.document, 'mousemove', 0, 0);
-    fire(f.dom.window.document, 'mouseup', 0, 0);
+    assert.equal(f.captured.size, 0);
+    fire(header, 'pointermove', 0, 0);
+    fire(header, 'pointerup', 0, 0);
     assert.equal(f.saves.length, 1);
   } finally { f.close(); }
+});
+
+test('drag ignores other pointers and saves once on cancel, capture loss or blur', () => {
+  for (const ending of ['pointercancel', 'lostpointercapture', 'blur']) {
+    const f = fixture();
+    try {
+      f.panel.getBoundingClientRect = () => ({ left: parseFloat(f.panel.style.left), top: parseFloat(f.panel.style.top), width: 340, height: 200 });
+      for (const overrides of [{ isPrimary: false }, { button: 2, buttons: 2 }, { buttons: 0 }]) {
+        f.fire(f.header, 'pointerdown', 120, 130, overrides);
+        assert.equal(f.captured.size, 0);
+      }
+      f.fire(f.header, 'pointerdown', 120, 130);
+      f.fire(f.header, 'pointerdown', 900, 900, { pointerId: 2 });
+      f.fire(f.header, 'pointermove', 800, 800, { pointerId: 2 });
+      f.fire(f.header, 'pointerup', 800, 800, { pointerId: 2 });
+      assert.equal(f.panel.style.left, '100px');
+      assert.deepEqual(f.saves, []);
+      f.fire(f.header, 'pointermove', 180, 170);
+      if (ending === 'blur') f.dom.window.dispatchEvent(new f.dom.window.Event('blur'));
+      else {
+        if (ending === 'lostpointercapture') f.captured.clear();
+        f.fire(f.header, ending, 180, 170);
+      }
+      f.fire(f.header, 'lostpointercapture', 180, 170);
+      f.fire(f.header, 'pointerup', 180, 170);
+      f.fire(f.header, 'pointermove', 900, 900);
+      assert.deepEqual(f.saves, [{ left: 160, top: 160 }]);
+      assert.equal(f.captured.size, 0);
+      assert.equal(f.panel.style.left, '160px');
+      assert.equal(f.panel.style.top, '160px');
+    } finally { f.close(); }
+  }
 });
 
 test('resize and content growth keep the panel visible, including collapse/expand and locale rerender', () => {

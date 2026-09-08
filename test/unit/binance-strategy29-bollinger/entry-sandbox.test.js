@@ -20,7 +20,7 @@ test('sandbox entry installs the runtime on unsafeWindow and keeps the shared pa
   const sandbox = {
     unsafeWindow: dom.window,
     prompt(message) { return message.includes('secret') ? 'sandbox-secret' : null; },
-    GM_xmlhttpRequest() { throw new Error('remote summary is disabled by default'); },
+    GM_xmlhttpRequest() { throw new Error('Strategy29 must use the shared transport'); },
     GM_getValue(key, fallback) { return stored.has(key) ? stored.get(key) : fallback; },
     GM_setValue(key, value) { stored.set(key, value); },
     GM_registerMenuCommand(label, callback) { menus.push({ label, callback }); },
@@ -32,12 +32,11 @@ test('sandbox entry installs the runtime on unsafeWindow and keeps the shared pa
   vm.runInNewContext(await bundledEntry(), sandbox);
   assert.equal(typeof dom.window.__TM_STRATEGY29_DEBUG__.dispose, 'function');
   assert.equal(sandbox.__TM_STRATEGY29_DEBUG__, undefined);
-  assert.equal(dom.window[Symbol.for('jh-userscripts.strategy29-bollinger')].version, 3);
+  assert.equal(dom.window[Symbol.for('jh-userscripts.strategy29-bollinger')].version, 4);
   assert.deepEqual(menus, []);
   assert.equal(stored.size, 0);
-  assert.deepEqual(JSON.parse(JSON.stringify(dom.window[Symbol.for('jh-userscripts.strategy29-preferences-migration')])), {
-    version: 1, enabled: false, position: null,
-  });
+  assert.equal(dom.window[Symbol.for('jh-userscripts.strategy29-preferences-migration')], undefined);
+  assert.equal(dom.window.__TM_STRATEGY29_DEBUG__.diagnostics.remoteSummary.state, 'waiting_for_gateway');
   assert.equal(pagePromptCalls, 0);
   assert.match(dom.window.document.getElementById('jh-strategy29-client-upgrade').textContent, /Update or install the Strategy 27 signal client/);
   assert.equal(dom.window.document.getElementById('jh-strategy29-summary-panel'), null);

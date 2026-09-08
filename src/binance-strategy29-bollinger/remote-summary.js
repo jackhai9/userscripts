@@ -1,7 +1,6 @@
 import {
   Strategy29GatewayTransportError,
   createStrategy29SummaryClient,
-  normalizeStrategy29GatewayOrigin,
 } from './core/remote-summary-client.js';
 import {
   STRATEGY29_REFERENCE_SHA256,
@@ -14,7 +13,6 @@ import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures
 import { SUMMARY_COPY as COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 
 export const STRATEGY29_PANEL_POSITION_KEY = 'strategy29SummaryPanelPosition';
-export const STRATEGY29_REMOTE_ENABLED_KEY = 'strategy29RemoteSummaryEnabled';
 export const STRATEGY29_REMOTE_POLL_INTERVAL_MS = 5_000;
 
 function abortError(view, message) {
@@ -22,35 +20,35 @@ function abortError(view, message) {
   return new ErrorConstructor(message, 'AbortError');
 }
 
-function assertAdapters({ view, request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient }) {
+function assertAdapters({ view, request, getValue, setValue, getGatewayState, createPanel, createClient }) {
   if (!view?.document || !view?.location) throw new TypeError('Strategy 29 remote summary requires a page window');
   for (const [name, value] of Object.entries({
-    request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient,
+    request, getValue, setValue, getGatewayState, createPanel, createClient,
   })) {
     if (typeof value !== 'function') throw new TypeError(`Strategy 29 remote summary ${name} is invalid`);
   }
 }
 
-/** Optional remote projection. Its state machine cannot stop or mutate the local chart observer. */
+/** Default read-only remote projection. Its state machine cannot stop or mutate the local chart observer. */
 export function createStrategy29RemoteSummary({
   view,
   request,
   getValue,
   setValue,
-  registerMenuCommand,
-  getGatewaySettings,
+  getGatewayState,
   createPanel = createStrategy29SummaryPanel,
   createClient = createStrategy29SummaryClient,
   pollIntervalMs = STRATEGY29_REMOTE_POLL_INTERVAL_MS,
 }) {
-  assertAdapters({ view, request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient });
+  assertAdapters({ view, request, getValue, setValue, getGatewayState, createPanel, createClient });
   if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1_000) throw new TypeError('Strategy 29 remote poll interval is invalid');
-  let enabled = getValue(STRATEGY29_REMOTE_ENABLED_KEY, false) === true;
   let active = null;
   let disposed = false;
   let unsupportedRoute = null;
+  let moduleFailure = null;
+  let gatewayAvailable = false;
+  let failureNotice = null;
   let locale = resolveUiLocaleFromPathname(view.location.pathname);
-  const text = value => formatLocalizedText(value, locale);
 
   function isCurrent(context) {
     return !disposed && active === context && !context.abortController.signal.aborted;
@@ -64,14 +62,7 @@ export function createStrategy29RemoteSummary({
     context.panel.destroy();
   }
 
-  function configuredSettings() {
-    const { authSecret, gatewayOrigin } = getGatewaySettings();
-    if (typeof authSecret !== 'string') throw new TypeError('Strategy 29 gateway secret storage is invalid');
-    return { authSecret, gatewayOrigin: normalizeStrategy29GatewayOrigin(gatewayOrigin) };
-  }
-
-  function startContext(routeSymbol) {
-    const canonicalSymbol = routeSymbolToCanonical(routeSymbol);
+  function startContext(routeSymbol, gatewayState, canonicalSymbol) {
     const panel = createPanel(view.document, canonicalSymbol, {
       maxEvents: 20, locale,
       loadPosition: () => getValue(STRATEGY29_PANEL_POSITION_KEY, null),
@@ -81,7 +72,7 @@ export function createStrategy29RemoteSummary({
     const context = {
       routeSymbol,
       canonicalSymbol,
-      gatewayOrigin: null,
+      gatewayState: { ...gatewayState },
       panel,
       abortController: new AbortControllerConstructor(),
       client: null,
@@ -93,25 +84,7 @@ export function createStrategy29RemoteSummary({
       lastResult: null,
     };
     active = context;
-    if (!enabled) {
-      context.state = 'disabled';
-      panel.setConnection('disabled', COPY.disabled);
-      return context;
-    }
-    let settings;
-    try {
-      settings = configuredSettings();
-      context.gatewayOrigin = settings.gatewayOrigin;
-    } catch (error) {
-      context.failed = true;
-      context.state = 'stopped';
-      context.lastError = error.message;
-      panel.setConnection('stopped', COPY.stopped(error.message));
-      view.console.warn('[Strategy29 remote]', error.message);
-      return context;
-    }
-    const { authSecret, gatewayOrigin } = settings;
-    if (authSecret.length === 0) {
+    if (!gatewayState.configured) {
       context.state = 'configuration_required';
       panel.setConnection('configuration_required', COPY.configuration);
       return context;
@@ -119,8 +92,6 @@ export function createStrategy29RemoteSummary({
     try {
       context.client = createClient({
         request,
-        gatewayOrigin,
-        authSecret,
         canonicalSymbol,
         maxPagesPerPoll: 2,
         onStatus: snapshot => {
@@ -155,21 +126,31 @@ export function createStrategy29RemoteSummary({
       stopActive('Strategy 29 route changed');
       return null;
     }
-    if (active?.routeSymbol === routeSymbol) return active;
+    const gatewayState = getGatewayState();
+    gatewayAvailable = gatewayState.available;
+    if (!gatewayState.available) {
+      stopActive('Shared signal gateway unavailable');
+      return null;
+    }
+    if (active?.routeSymbol === routeSymbol
+      && active.gatewayState.settingsRevision === gatewayState.settingsRevision
+      && active.gatewayState.configured === gatewayState.configured) return active;
     if (unsupportedRoute === routeSymbol) return null;
     unsupportedRoute = null;
     stopActive('Strategy 29 route changed');
+    let canonicalSymbol;
     try {
-      return startContext(routeSymbol);
+      canonicalSymbol = routeSymbolToCanonical(routeSymbol);
     } catch (error) {
       unsupportedRoute = routeSymbol;
       stopActive('Strategy 29 remote context initialization failed');
       view.console.warn('[Strategy29 remote]', error.message);
       return null;
     }
+    return startContext(routeSymbol, gatewayState, canonicalSymbol);
   }
 
-  function sample(nowMs = Date.now()) {
+  function sampleRemote(nowMs) {
     if (disposed || view.document.hidden) return;
     synchronizeLocale();
     const context = synchronizeContext();
@@ -179,7 +160,8 @@ export function createStrategy29RemoteSummary({
       context.abortController = new AbortControllerConstructor();
     }
     const controller = context.abortController;
-    const ownsRequest = () => isCurrent(context) && context.abortController === controller;
+    const ownsRequest = () => isCurrent(context) && context.abortController === controller
+      && getGatewayState().settingsRevision === context.gatewayState.settingsRevision;
     context.nextPollAtMs = nowMs + pollIntervalMs;
     context.inFlight = true;
     context.state = 'connecting';
@@ -216,27 +198,47 @@ export function createStrategy29RemoteSummary({
       .finally(() => { if (ownsRequest()) context.inFlight = false; });
   }
 
+  function showModuleFailure() {
+    if (!view.document.body) return;
+    if (failureNotice === null) {
+      const notice = view.document.createElement('div');
+      notice.id = 'jh-strategy29-summary-error';
+      notice.setAttribute('role', 'status');
+      notice.style.cssText = 'position:fixed;left:16px;top:68px;z-index:10000;max-width:420px;padding:10px;background:#332b16;color:#ffcf67;font:13px sans-serif;pointer-events:none';
+      view.document.body.append(notice);
+      failureNotice = notice;
+    }
+    failureNotice.textContent = formatLocalizedText(COPY.stopped(moduleFailure), resolveUiLocaleFromPathname(view.location.pathname));
+  }
+
+  /** Remote job boundary: invalid provider state stops this module while local chart sampling continues. */
+  function failModule(error) {
+    moduleFailure = error.message;
+    stopActive('Strategy 29 remote provider failed');
+    showModuleFailure();
+    view.console.warn('[Strategy29 remote]', error.message);
+  }
+
+  function sample(nowMs = Date.now()) {
+    if (disposed || view.document.hidden) return;
+    if (moduleFailure !== null) { showModuleFailure(); return; }
+    try {
+      return sampleRemote(nowMs)?.catch(failModule);
+    } catch (error) {
+      failModule(error);
+    }
+  }
+
   function restart() {
-    enabled = getValue(STRATEGY29_REMOTE_ENABLED_KEY, false) === true;
     unsupportedRoute = null;
     stopActive('Strategy 29 remote settings changed');
     if (!disposed) void sample(Date.now());
   }
 
-  const menus = [
-    { copy: COPY.menuToggle, run() {
-      enabled = !enabled;
-      setValue(STRATEGY29_REMOTE_ENABLED_KEY, enabled);
-      restart();
-    } },
-  ];
-  for (const menu of menus) menu.id = registerMenuCommand(text(menu.copy), menu.run);
   function synchronizeLocale() {
     const current = resolveUiLocaleFromPathname(view.location.pathname);
     if (current === locale) return;
     locale = current;
-    // Updating menu IDs and rendering text do not retire a client or its cursor.
-    for (const menu of menus) menu.id = registerMenuCommand(text(menu.copy), menu.run, { id: menu.id });
     active?.panel.setLocale(locale);
   }
 
@@ -253,17 +255,18 @@ export function createStrategy29RemoteSummary({
       if (disposed) return;
       disposed = true;
       stopActive('Strategy 29 remote summary disposed');
+      failureNotice?.remove();
+      failureNotice = null;
     },
     get diagnostics() {
       return Object.freeze({
-        enabled,
         contextPresent: active !== null,
         canonicalSymbol: active?.canonicalSymbol ?? null,
-        gatewayOrigin: active?.gatewayOrigin ?? null,
-        state: active?.state ?? (unsupportedRoute ? 'unsupported_route' : enabled ? 'waiting_for_route' : 'disabled'),
+        gatewayRevision: active?.gatewayState.settingsRevision ?? null,
+        state: moduleFailure !== null ? 'stopped' : active?.state ?? (unsupportedRoute ? 'unsupported_route' : !gatewayAvailable ? 'waiting_for_gateway' : 'waiting_for_route'),
         inFlight: active?.inFlight ?? false,
-        stopped: active?.failed ?? false,
-        lastError: active?.lastError ?? null,
+        stopped: moduleFailure !== null || (active?.failed ?? false),
+        lastError: moduleFailure ?? active?.lastError ?? null,
         lastResult: active?.lastResult ?? null,
         cursor: active?.client?.diagnostics.cursor ?? null,
         specVersion: STRATEGY29_SPEC_VERSION,

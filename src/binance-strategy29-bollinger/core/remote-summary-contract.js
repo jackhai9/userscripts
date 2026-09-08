@@ -1,3 +1,5 @@
+import { isCanonicalUsdtSymbol, usdtRouteToCanonical, canonicalUsdtToRoute } from '../../shared/canonical-symbol.js';
+
 export const STRATEGY29_SCHEMA_VERSION = 1;
 export const STRATEGY29_SPEC_VERSION = '29_2_spec_v2';
 export const STRATEGY29_REFERENCE_SHA256 = 'eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d';
@@ -36,8 +38,6 @@ const EVENT_KEYS = [
   'origin', 'delivery_state', 'delivery_failure_reason',
 ];
 const EVENT_ID_PATTERN = /^[0-9a-f]{64}$/;
-const ROUTE_SYMBOL_PATTERN = /^([A-Z0-9]+)USDT$/;
-const CANONICAL_SYMBOL_PATTERN = /^([A-Z0-9]+)\/USDT:USDT$/;
 
 function assertObject(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -77,23 +77,17 @@ function assertSchema(value, name) {
 }
 
 function assertCanonicalSymbol(value, name) {
-  if (typeof value !== 'string' || !CANONICAL_SYMBOL_PATTERN.test(value)) {
+  if (!isCanonicalUsdtSymbol(value)) {
     throw new TypeError(`${name} must use canonical symbol format`);
   }
 }
 
 export function routeSymbolToCanonical(value) {
-  if (typeof value !== 'string') throw new TypeError('route symbol must be a string');
-  const match = ROUTE_SYMBOL_PATTERN.exec(value);
-  if (!match || match[1] === '') throw new TypeError('route symbol must end in USDT and use uppercase canonical route syntax');
-  return `${match[1]}/USDT:USDT`;
+  return usdtRouteToCanonical(value);
 }
 
 export function canonicalSymbolToRoute(value) {
-  if (typeof value !== 'string') throw new TypeError('canonical symbol must be a string');
-  const match = CANONICAL_SYMBOL_PATTERN.exec(value);
-  if (!match || match[1] === '') throw new TypeError('canonical symbol must use BASE/USDT:USDT syntax');
-  return `${match[1]}USDT`;
+  return canonicalUsdtToRoute(value);
 }
 
 function validateUnit(value, index) {

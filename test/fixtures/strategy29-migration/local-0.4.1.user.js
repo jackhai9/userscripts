@@ -3,9 +3,9 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.0
+// @version      0.4.1
 // @author       jackhai9
-// @description  Native Bollinger/SMA60 markers and the default read-only cross-timeframe summary
+// @description  Native Bollinger/SMA60 markers with an optional read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @exclude      https://www.binance.com/*/my/wallet/futures/*
@@ -15,7 +15,6 @@
 // @run-at       document-start
 // @grant        unsafeWindow
 // @grant        GM_getValue
-// @grant        GM_setValue
 // ==/UserScript==
 (() => {
   // src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js
@@ -1384,22 +1383,6 @@
     };
   }
 
-  // src/shared/canonical-symbol.js
-  var CANONICAL_SYMBOL_PATTERN = /^([\p{L}\p{N}]+)\/USDT:USDT$/u;
-  var ROUTE_SYMBOL_PATTERN = /^([\p{L}\p{N}]+)USDT$/u;
-  function isCanonicalUsdtSymbol(value) {
-    if (typeof value !== "string") return false;
-    const match = value.match(CANONICAL_SYMBOL_PATTERN);
-    return Boolean(match && match[0] === value && match[1] === match[1].toUpperCase());
-  }
-  function usdtRouteToCanonical(value) {
-    const match = typeof value === "string" && value.match(ROUTE_SYMBOL_PATTERN);
-    if (!match || match[0] !== value || match[1] !== match[1].toUpperCase()) {
-      throw new TypeError("Invalid Binance futures route symbol");
-    }
-    return `${match[1]}/USDT:USDT`;
-  }
-
   // src/binance-strategy29-bollinger/core/remote-summary-contract.js
   var STRATEGY29_SCHEMA_VERSION = 1;
   var STRATEGY29_SPEC_VERSION = "29_2_spec_v2";
@@ -1475,6 +1458,8 @@
     "delivery_failure_reason"
   ];
   var EVENT_ID_PATTERN = /^[0-9a-f]{64}$/;
+  var ROUTE_SYMBOL_PATTERN = /^([A-Z0-9]+)USDT$/;
+  var CANONICAL_SYMBOL_PATTERN = /^([A-Z0-9]+)\/USDT:USDT$/;
   function assertObject(value, name) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
   }
@@ -1506,12 +1491,15 @@
     if (value !== STRATEGY29_SCHEMA_VERSION) throw new TypeError(`${name} must equal ${STRATEGY29_SCHEMA_VERSION}`);
   }
   function assertCanonicalSymbol(value, name) {
-    if (!isCanonicalUsdtSymbol(value)) {
+    if (typeof value !== "string" || !CANONICAL_SYMBOL_PATTERN.test(value)) {
       throw new TypeError(`${name} must use canonical symbol format`);
     }
   }
   function routeSymbolToCanonical(value) {
-    return usdtRouteToCanonical(value);
+    if (typeof value !== "string") throw new TypeError("route symbol must be a string");
+    const match = ROUTE_SYMBOL_PATTERN.exec(value);
+    if (!match || match[1] === "") throw new TypeError("route symbol must end in USDT and use uppercase canonical route syntax");
+    return `${match[1]}/USDT:USDT`;
   }
   function validateUnit(value, index) {
     const name = `status.units[${index}]`;
@@ -1692,6 +1680,16 @@
       this.name = "Strategy29GatewayTransportError";
     }
   };
+  function normalizeStrategy29GatewayOrigin(value) {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new TypeError("Strategy29 gateway must be an explicit loopback origin");
+    }
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port === "" || url.username !== "" || url.password !== "" || url.pathname !== "/" || url.search !== "" || url.hash !== "") throw new TypeError("Strategy29 gateway must be an explicit loopback origin");
+    return url.origin;
+  }
   function parseJsonResponse(response, label) {
     if (!response || !Number.isInteger(response.status) || typeof response.responseText !== "string") {
       throw new Strategy29GatewayTransportError(`${label} returned an invalid transport response`);
@@ -1702,9 +1700,10 @@
       throw new TypeError(`${label} returned invalid JSON`);
     }
   }
-  function assertConfiguration({ request, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset }) {
+  function assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset }) {
     if (typeof request !== "function") throw new TypeError("request must be a function");
-    if (!isCanonicalUsdtSymbol(canonicalSymbol)) {
+    if (typeof authSecret !== "string" || authSecret.length === 0) throw new TypeError("authSecret must be non-empty");
+    if (typeof canonicalSymbol !== "string" || !/^[A-Z0-9]+\/USDT:USDT$/.test(canonicalSymbol)) {
       throw new TypeError("canonicalSymbol must use canonical symbol format");
     }
     if (!Number.isInteger(maxPagesPerPoll) || maxPagesPerPoll < 1 || maxPagesPerPoll > 10) {
@@ -1714,34 +1713,37 @@
       if (typeof callback !== "function") throw new TypeError(`${name} must be a function`);
     }
   }
-  function buildEventsPath(canonicalSymbol, cursor) {
-    const url = new URL("/v1/strategy29/events", "https://gateway.invalid");
+  function buildEventsUrl(origin, canonicalSymbol, cursor) {
+    const url = new URL("/v1/strategy29/events", origin);
     url.searchParams.set("symbol", canonicalSymbol);
     if (cursor === null) {
       url.searchParams.set("mode", "latest");
       url.searchParams.set("limit", "20");
     } else url.searchParams.set("cursor", String(cursor));
-    return url.pathname + url.search;
+    return url.href;
   }
   function createStrategy29SummaryClient({
     request,
+    gatewayOrigin,
+    authSecret,
     canonicalSymbol,
     maxPagesPerPoll = 2,
     onStatus,
     onEvents,
     onCursorReset
   }) {
-    assertConfiguration({ request, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset });
+    const origin = normalizeStrategy29GatewayOrigin(gatewayOrigin);
+    assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset });
     let cursor = null;
-    async function perform(path, signal) {
+    async function perform(url, signal) {
       if (!signal || typeof signal.aborted !== "boolean" || typeof signal.addEventListener !== "function") {
         throw new TypeError("poll requires an AbortSignal");
       }
       if (signal.aborted) throw signal.reason;
-      return request({ path, signal });
+      return request({ url, authSecret, signal });
     }
     async function poll(signal) {
-      const statusResponse = await perform("/v1/strategy29/status", signal);
+      const statusResponse = await perform(`${origin}/v1/strategy29/status`, signal);
       if (signal.aborted) throw signal.reason;
       const statusBody = parseJsonResponse(statusResponse, "Strategy29 status");
       if (statusResponse.status === 503) {
@@ -1761,7 +1763,7 @@
       let hasMore = false;
       while (pages < maxPagesPerPoll) {
         const requestedCursor = cursor;
-        const eventsResponse = await perform(buildEventsPath(canonicalSymbol, cursor), signal);
+        const eventsResponse = await perform(buildEventsUrl(origin, canonicalSymbol, cursor), signal);
         if (signal.aborted) throw signal.reason;
         const eventsBody = parseJsonResponse(eventsResponse, "Strategy29 events");
         pages += 1;
@@ -1956,6 +1958,7 @@
   var pair = localizedText;
   var SUMMARY_COPY = Object.freeze({
     upgradeClient: pair("Strategy 29 本地信号已加载。跨周期汇总需要更新或安装 Strategy 27 信号客户端，并刷新页面。", "Strategy 29 local signals are loaded. Update or install the Strategy 27 signal client and reload for the cross-timeframe summary."),
+    disabled: pair("跨周期汇总未启用，可在 CorsairQuant 信号客户端菜单中开启。", "Cross-timeframe summary is disabled. Enable it in the CorsairQuant signal client menu."),
     moduleDisabled: pair("服务端尚未启用 Strategy 29 监控汇总", "Strategy 29 monitoring summary is not enabled on the server"),
     gatewayUnavailable: pair("Strategy 29 后端暂不可用，等待恢复", "Strategy 29 backend is unavailable; waiting for recovery"),
     noLiveStatus: pair("当前监控状态不可用；下方仅保留历史信号。", "Current monitoring status is unavailable; only retained signals are shown below."),
@@ -1999,6 +2002,7 @@
     incompatible: pair("服务端与本地规格不一致", "Server and local specs are incompatible"),
     disconnected: pair("网关连接失败，将在下次定时检查时重试", "Gateway connection failed; next scheduled poll will retry"),
     stopped: (detail) => pair(`远程汇总已停止。技术详情：${detail}`, `Remote summary stopped: ${detail}`),
+    menuToggle: pair("切换 Strategy 29 跨周期汇总", "Toggle Strategy 29 cross-timeframe summary"),
     localStopped: (detail) => pair(`Strategy 29 已停止。技术详情：${detail}`, `Strategy 29 stopped: ${detail}`),
     conflict: pair("Strategy 29 已停止：请将订单簿脚本更新至 2.7.199 或更高版本，或禁用内嵌布林带观察器的旧版本，然后刷新页面。", "Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.")
   });
@@ -2061,49 +2065,35 @@
       apply(position);
     }
     function onDown(event) {
-      if (drag || !event.isPrimary || event.button !== 0 || event.buttons !== 1 || event.target.closest("button,a")) return;
+      if (event.button !== 0 || event.target.closest("button,a")) return;
       const rect = panel.getBoundingClientRect();
-      header.setPointerCapture(event.pointerId);
-      drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+      drag = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
       event.preventDefault();
     }
     function onMove(event) {
-      if (!drag || event.pointerId !== drag.pointerId) return;
+      if (!drag) return;
       apply({ left: drag.left + event.clientX - drag.x, top: drag.top + event.clientY - drag.y });
-    }
-    function release() {
-      const { pointerId } = drag;
-      drag = null;
-      if (header.hasPointerCapture(pointerId)) header.releasePointerCapture(pointerId);
     }
     function finish() {
       if (!drag) return;
-      release();
+      drag = null;
       clamp();
       savePosition({ ...position });
     }
-    function onEnd(event) {
-      if (drag && event.pointerId === drag.pointerId) finish();
-    }
     clamp();
     header.style.cursor = "move";
-    header.style.touchAction = "none";
-    header.addEventListener("pointerdown", onDown);
-    header.addEventListener("pointermove", onMove);
-    header.addEventListener("pointerup", onEnd);
-    header.addEventListener("pointercancel", onEnd);
-    header.addEventListener("lostpointercapture", onEnd);
+    header.addEventListener("mousedown", onDown);
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", finish);
     view.addEventListener("blur", finish);
     view.addEventListener("resize", clamp);
     return Object.freeze({
       clamp,
       destroy() {
-        if (drag) release();
-        header.removeEventListener("pointerdown", onDown);
-        header.removeEventListener("pointermove", onMove);
-        header.removeEventListener("pointerup", onEnd);
-        header.removeEventListener("pointercancel", onEnd);
-        header.removeEventListener("lostpointercapture", onEnd);
+        drag = null;
+        header.removeEventListener("mousedown", onDown);
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", finish);
         view.removeEventListener("blur", finish);
         view.removeEventListener("resize", clamp);
       }
@@ -2382,18 +2372,20 @@
 
   // src/binance-strategy29-bollinger/remote-summary.js
   var STRATEGY29_PANEL_POSITION_KEY = "strategy29SummaryPanelPosition";
+  var STRATEGY29_REMOTE_ENABLED_KEY = "strategy29RemoteSummaryEnabled";
   var STRATEGY29_REMOTE_POLL_INTERVAL_MS = 5e3;
   function abortError(view, message) {
     const ErrorConstructor = view.DOMException ?? DOMException;
     return new ErrorConstructor(message, "AbortError");
   }
-  function assertAdapters({ view, request, getValue, setValue, getGatewayState, createPanel, createClient }) {
+  function assertAdapters({ view, request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient }) {
     if (!view?.document || !view?.location) throw new TypeError("Strategy 29 remote summary requires a page window");
     for (const [name, value] of Object.entries({
       request,
       getValue,
       setValue,
-      getGatewayState,
+      registerMenuCommand,
+      getGatewaySettings,
       createPanel,
       createClient
     })) {
@@ -2405,20 +2397,20 @@
     request,
     getValue,
     setValue,
-    getGatewayState,
+    registerMenuCommand,
+    getGatewaySettings,
     createPanel = createStrategy29SummaryPanel,
     createClient = createStrategy29SummaryClient,
     pollIntervalMs = STRATEGY29_REMOTE_POLL_INTERVAL_MS
   }) {
-    assertAdapters({ view, request, getValue, setValue, getGatewayState, createPanel, createClient });
+    assertAdapters({ view, request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient });
     if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1e3) throw new TypeError("Strategy 29 remote poll interval is invalid");
+    let enabled = getValue(STRATEGY29_REMOTE_ENABLED_KEY, false) === true;
     let active = null;
     let disposed = false;
     let unsupportedRoute = null;
-    let moduleFailure = null;
-    let gatewayAvailable = false;
-    let failureNotice = null;
     let locale = resolveUiLocaleFromPathname(view.location.pathname);
+    const text = (value) => formatLocalizedText(value, locale);
     function isCurrent(context) {
       return !disposed && active === context && !context.abortController.signal.aborted;
     }
@@ -2429,7 +2421,13 @@
       context.abortController.abort(abortError(view, reason));
       context.panel.destroy();
     }
-    function startContext(routeSymbol, gatewayState, canonicalSymbol) {
+    function configuredSettings() {
+      const { authSecret, gatewayOrigin } = getGatewaySettings();
+      if (typeof authSecret !== "string") throw new TypeError("Strategy 29 gateway secret storage is invalid");
+      return { authSecret, gatewayOrigin: normalizeStrategy29GatewayOrigin(gatewayOrigin) };
+    }
+    function startContext(routeSymbol) {
+      const canonicalSymbol = routeSymbolToCanonical(routeSymbol);
       const panel = createPanel(view.document, canonicalSymbol, {
         maxEvents: 20,
         locale,
@@ -2440,7 +2438,7 @@
       const context = {
         routeSymbol,
         canonicalSymbol,
-        gatewayState: { ...gatewayState },
+        gatewayOrigin: null,
         panel,
         abortController: new AbortControllerConstructor(),
         client: null,
@@ -2452,7 +2450,25 @@
         lastResult: null
       };
       active = context;
-      if (!gatewayState.configured) {
+      if (!enabled) {
+        context.state = "disabled";
+        panel.setConnection("disabled", SUMMARY_COPY.disabled);
+        return context;
+      }
+      let settings;
+      try {
+        settings = configuredSettings();
+        context.gatewayOrigin = settings.gatewayOrigin;
+      } catch (error) {
+        context.failed = true;
+        context.state = "stopped";
+        context.lastError = error.message;
+        panel.setConnection("stopped", SUMMARY_COPY.stopped(error.message));
+        view.console.warn("[Strategy29 remote]", error.message);
+        return context;
+      }
+      const { authSecret, gatewayOrigin } = settings;
+      if (authSecret.length === 0) {
         context.state = "configuration_required";
         panel.setConnection("configuration_required", SUMMARY_COPY.configuration);
         return context;
@@ -2460,6 +2476,8 @@
       try {
         context.client = createClient({
           request,
+          gatewayOrigin,
+          authSecret,
           canonicalSymbol,
           maxPagesPerPoll: 2,
           onStatus: (snapshot) => {
@@ -2493,28 +2511,20 @@
         stopActive("Strategy 29 route changed");
         return null;
       }
-      const gatewayState = getGatewayState();
-      gatewayAvailable = gatewayState.available;
-      if (!gatewayState.available) {
-        stopActive("Shared signal gateway unavailable");
-        return null;
-      }
-      if (active?.routeSymbol === routeSymbol && active.gatewayState.settingsRevision === gatewayState.settingsRevision && active.gatewayState.configured === gatewayState.configured) return active;
+      if (active?.routeSymbol === routeSymbol) return active;
       if (unsupportedRoute === routeSymbol) return null;
       unsupportedRoute = null;
       stopActive("Strategy 29 route changed");
-      let canonicalSymbol;
       try {
-        canonicalSymbol = routeSymbolToCanonical(routeSymbol);
+        return startContext(routeSymbol);
       } catch (error) {
         unsupportedRoute = routeSymbol;
         stopActive("Strategy 29 remote context initialization failed");
         view.console.warn("[Strategy29 remote]", error.message);
         return null;
       }
-      return startContext(routeSymbol, gatewayState, canonicalSymbol);
     }
-    function sampleRemote(nowMs) {
+    function sample(nowMs = Date.now()) {
       if (disposed || view.document.hidden) return;
       synchronizeLocale();
       const context = synchronizeContext();
@@ -2524,7 +2534,7 @@
         context.abortController = new AbortControllerConstructor();
       }
       const controller = context.abortController;
-      const ownsRequest = () => isCurrent(context) && context.abortController === controller && getGatewayState().settingsRevision === context.gatewayState.settingsRevision;
+      const ownsRequest = () => isCurrent(context) && context.abortController === controller;
       context.nextPollAtMs = nowMs + pollIntervalMs;
       context.inFlight = true;
       context.state = "connecting";
@@ -2559,45 +2569,25 @@
         if (ownsRequest()) context.inFlight = false;
       });
     }
-    function showModuleFailure() {
-      if (!view.document.body) return;
-      if (failureNotice === null) {
-        const notice = view.document.createElement("div");
-        notice.id = "jh-strategy29-summary-error";
-        notice.setAttribute("role", "status");
-        notice.style.cssText = "position:fixed;left:16px;top:68px;z-index:10000;max-width:420px;padding:10px;background:#332b16;color:#ffcf67;font:13px sans-serif;pointer-events:none";
-        view.document.body.append(notice);
-        failureNotice = notice;
-      }
-      failureNotice.textContent = formatLocalizedText(SUMMARY_COPY.stopped(moduleFailure), resolveUiLocaleFromPathname(view.location.pathname));
-    }
-    function failModule(error) {
-      moduleFailure = error.message;
-      stopActive("Strategy 29 remote provider failed");
-      showModuleFailure();
-      view.console.warn("[Strategy29 remote]", error.message);
-    }
-    function sample(nowMs = Date.now()) {
-      if (disposed || view.document.hidden) return;
-      if (moduleFailure !== null) {
-        showModuleFailure();
-        return;
-      }
-      try {
-        return sampleRemote(nowMs)?.catch(failModule);
-      } catch (error) {
-        failModule(error);
-      }
-    }
     function restart() {
+      enabled = getValue(STRATEGY29_REMOTE_ENABLED_KEY, false) === true;
       unsupportedRoute = null;
       stopActive("Strategy 29 remote settings changed");
       if (!disposed) void sample(Date.now());
     }
+    const menus = [
+      { copy: SUMMARY_COPY.menuToggle, run() {
+        enabled = !enabled;
+        setValue(STRATEGY29_REMOTE_ENABLED_KEY, enabled);
+        restart();
+      } }
+    ];
+    for (const menu of menus) menu.id = registerMenuCommand(text(menu.copy), menu.run);
     function synchronizeLocale() {
       const current = resolveUiLocaleFromPathname(view.location.pathname);
       if (current === locale) return;
       locale = current;
+      for (const menu of menus) menu.id = registerMenuCommand(text(menu.copy), menu.run, { id: menu.id });
       active?.panel.setLocale(locale);
     }
     return Object.freeze({
@@ -2613,18 +2603,17 @@
         if (disposed) return;
         disposed = true;
         stopActive("Strategy 29 remote summary disposed");
-        failureNotice?.remove();
-        failureNotice = null;
       },
       get diagnostics() {
         return Object.freeze({
+          enabled,
           contextPresent: active !== null,
           canonicalSymbol: active?.canonicalSymbol ?? null,
-          gatewayRevision: active?.gatewayState.settingsRevision ?? null,
-          state: moduleFailure !== null ? "stopped" : active?.state ?? (unsupportedRoute ? "unsupported_route" : !gatewayAvailable ? "waiting_for_gateway" : "waiting_for_route"),
+          gatewayOrigin: active?.gatewayOrigin ?? null,
+          state: active?.state ?? (unsupportedRoute ? "unsupported_route" : enabled ? "waiting_for_route" : "disabled"),
           inFlight: active?.inFlight ?? false,
-          stopped: moduleFailure !== null || (active?.failed ?? false),
-          lastError: moduleFailure ?? active?.lastError ?? null,
+          stopped: active?.failed ?? false,
+          lastError: active?.lastError ?? null,
           lastResult: active?.lastResult ?? null,
           cursor: active?.client?.diagnostics.cursor ?? null,
           specVersion: STRATEGY29_SPEC_VERSION,
@@ -2634,13 +2623,37 @@
     });
   }
 
-  // src/shared/signal-gateway-bridge.js
-  var SIGNAL_GATEWAY_BRIDGE = Symbol.for("jh-userscripts.signal-gateway");
-  var MAX_RESPONSE_LENGTH = 2 * 1024 * 1024;
+  // src/shared/strategy29-preferences-migration.js
+  var RECORD = Symbol.for("jh-userscripts.strategy29-preferences-migration");
+  var STRATEGY29_PREFERENCES_EVENT = "jh-strategy29-preferences-ready";
+  var SIGNAL_HOST_READY = Symbol.for("jh-userscripts.strategy29-signal-host-ready");
+  var SIGNAL_HOST_READY_EVENT = "jh-strategy29-signal-host-ready";
+  var ENABLED = "strategy29RemoteSummaryEnabled";
+  var POSITION = "strategy29SummaryPanelPosition";
+  function validate(record) {
+    if (!record || Object.keys(record).sort().join(",") !== "enabled,position,version" || record.version !== 1 || typeof record.enabled !== "boolean") {
+      throw new TypeError("Strategy29 preference migration record is invalid");
+    }
+    const point = record.position;
+    if (point !== null && (Object.keys(point).sort().join(",") !== "left,top" || !Number.isFinite(point.left) || !Number.isFinite(point.top))) {
+      throw new TypeError("Strategy29 preference migration position is invalid");
+    }
+    return { version: 1, enabled: record.enabled, position: point === null ? null : { left: point.left, top: point.top } };
+  }
+  function publishStrategy29Preferences(view, getValue) {
+    if (view[RECORD] !== void 0) {
+      validate(view[RECORD]);
+      return;
+    }
+    const record = validate({ version: 1, enabled: getValue(ENABLED, false), position: getValue(POSITION, null) });
+    if (record.position !== null) Object.freeze(record.position);
+    Object.defineProperty(view, RECORD, { value: Object.freeze(record) });
+    view.dispatchEvent(new view.Event(STRATEGY29_PREFERENCES_EVENT));
+  }
 
   // src/binance-strategy29-bollinger/runtime.js
   var INSTANCE = Symbol.for("jh-userscripts.strategy29-bollinger");
-  var RUNTIME_VERSION = 4;
+  var RUNTIME_VERSION = 3;
   var CONFLICT = SUMMARY_COPY.conflict;
   function hasEmbeddedBollinger(view) {
     const debug = view.__TM_CLOSE_LONG_DEBUG__;
@@ -2660,7 +2673,7 @@
     const noticeId = "jh-strategy29-bollinger-status";
     const upgradeNoticeId = "jh-strategy29-client-upgrade";
     function showUpgradeNotice() {
-      if (disposed || view[SIGNAL_GATEWAY_BRIDGE]?.version === 1 || !isFuturesTradingPathname(view.location.pathname)) {
+      if (remoteSummary !== null || disposed || view[SIGNAL_HOST_READY] === true || !isFuturesTradingPathname(view.location.pathname)) {
         document.getElementById(upgradeNoticeId)?.remove();
         return;
       }
@@ -2761,6 +2774,7 @@
         document.removeEventListener("visibilitychange", onVisibility);
         document.removeEventListener("DOMContentLoaded", showFailure);
         document.removeEventListener("DOMContentLoaded", showUpgradeNotice);
+        view.removeEventListener(SIGNAL_HOST_READY_EVENT, showUpgradeNotice);
         view.removeEventListener("pagehide", onPageHide);
         view.removeEventListener("pageshow", onPageShow);
         document.getElementById(noticeId)?.remove();
@@ -2773,84 +2787,14 @@
     document.addEventListener("visibilitychange", onVisibility);
     document.addEventListener("DOMContentLoaded", showFailure, { once: true });
     document.addEventListener("DOMContentLoaded", showUpgradeNotice, { once: true });
+    view.addEventListener(SIGNAL_HOST_READY_EVENT, showUpgradeNotice);
     view.addEventListener("pagehide", onPageHide);
     view.addEventListener("pageshow", onPageShow);
     resume();
     return runtime;
   }
 
-  // src/binance-strategy29-bollinger/core/shared-gateway-client.js
-  function createSharedGatewayClient(view) {
-    function bridge() {
-      const value = view[SIGNAL_GATEWAY_BRIDGE];
-      if (value === void 0) return null;
-      if (value.version !== 1 || typeof value.getState !== "function" || typeof value.request !== "function") {
-        throw new TypeError("Shared signal gateway version is incompatible; update both scripts and reload");
-      }
-      return value;
-    }
-    function getGatewayState() {
-      const api = bridge();
-      if (api === null) return { available: false, configured: false, settingsRevision: null };
-      const state = api.getState();
-      if (typeof state.available !== "boolean" || typeof state.configured !== "boolean" || !Number.isSafeInteger(state.settingsRevision) || state.settingsRevision < 0) {
-        throw new TypeError("Shared signal gateway state is invalid");
-      }
-      return { available: state.available, configured: state.configured, settingsRevision: state.settingsRevision };
-    }
-    return Object.freeze({
-      getGatewayState,
-      async request({ path, signal }) {
-        const api = bridge();
-        if (api === null) throw new Strategy29GatewayTransportError("Shared signal gateway is unavailable");
-        const revision = api.getState().settingsRevision;
-        const result = await api.request(path, signal);
-        if (signal.aborted) throw signal.reason;
-        if (view[SIGNAL_GATEWAY_BRIDGE] !== api || api.getState().settingsRevision !== revision || result.kind === "aborted") {
-          throw new view.DOMException("Shared signal gateway request retired", "AbortError");
-        }
-        if (result.kind === "transport_error") throw new Strategy29GatewayTransportError("Shared signal gateway transport failure");
-        if (result.kind !== "response" || !Number.isInteger(result.status) || typeof result.responseText !== "string" || Object.keys(result).sort().join(",") !== "kind,responseText,status") {
-          throw new TypeError("Shared signal gateway response is invalid");
-        }
-        return { status: result.status, responseText: result.responseText };
-      }
-    });
-  }
-
-  // src/shared/strategy29-panel-position-handoff.js
-  var HANDOFF = Symbol.for("jh-userscripts.strategy29-panel-position-handoff");
-  var POSITION_KEY = "strategy29SummaryPanelPosition";
-  var VERSION_KEY = "strategy29PanelPositionHandoffVersion";
-  function copyPosition(value) {
-    if (value === null) return null;
-    if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== "left,top" || !Number.isFinite(value.left) || !Number.isFinite(value.top)) {
-      throw new TypeError("Previous Strategy 29 panel position is invalid");
-    }
-    return Object.freeze({ left: value.left, top: value.top });
-  }
-  function createStrategy29PositionReader(view, getValue, setValue) {
-    return (key, initial) => {
-      if (key !== POSITION_KEY) throw new TypeError("Strategy29 position reader received an unexpected key");
-      const version = getValue(VERSION_KEY, null);
-      if (version !== null && version !== 1) throw new TypeError("Strategy29 position handoff version is invalid");
-      if (version === null) {
-        const record = view[HANDOFF];
-        if (!record || record.version !== 1 || Object.keys(record).sort().join(",") !== "position,version") {
-          throw new TypeError("Previous Strategy 29 panel position handoff is invalid");
-        }
-        const position = copyPosition(record.position);
-        if (position !== null) setValue(POSITION_KEY, { ...position });
-        setValue(VERSION_KEY, 1);
-      }
-      return getValue(key, initial);
-    };
-  }
-
   // src/binance-strategy29-bollinger/index.user.js
-  installStrategy29(unsafeWindow, {
-    ...createSharedGatewayClient(unsafeWindow),
-    getValue: createStrategy29PositionReader(unsafeWindow, GM_getValue, GM_setValue),
-    setValue: GM_setValue
-  });
+  installStrategy29(unsafeWindow);
+  publishStrategy29Preferences(unsafeWindow, GM_getValue);
 })();
