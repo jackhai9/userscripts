@@ -3,13 +3,15 @@
 ## Scope and Installation
 
 The standalone `binance-strategy29-bollinger.user.js` owns the local
-Bollinger/SMA60 observer and an optional read-only Strategy29 server summary.
+Bollinger/SMA60 observer. The CorsairQuant signal client, delivered through the
+existing Strategy27 installation, owns the read-only Strategy29 server summary.
 Source is `src/binance-strategy29-bollinger/`. The local observer reads only
-already-loaded native chart candles. The optional summary reads the authenticated
-loopback observer gateway; it does not call Binance market-data or account APIs,
+already-loaded native chart candles. The summary reads the authenticated
+unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.3.0 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.4.0 with orderbook 2.7.199 or later, or use it alone.
+Install CorsairQuant signal client 0.5.0 for the remote summary.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
@@ -18,8 +20,9 @@ save owner can block safe cleanup. This is not a supported compatibility mode;
 Strategy29 never removes old-script or user drawings.
 
 The orderbook runs in page context. Strategy29 runs in a Tampermonkey
-sandbox so its gateway secret remains in private userscript storage, and passes
-`unsafeWindow` explicitly to the chart runtime. The orderbook registers a
+sandbox with read access to its previous non-sensitive preferences, and passes
+`unsafeWindow` explicitly to the chart runtime. Gateway credentials belong only
+to the separate unified client's private storage. The orderbook registers a
 synchronous boolean drawing-busy predicate under
 `Symbol.for('jh-userscripts.chart-mutation-owners')`; it unregisters on permanent
 page teardown. A missing owner means there is no coordinated orderbook instance,
@@ -46,6 +49,9 @@ monitor failure with a property-read failure.
 If a host Proxy throws during rejection classification, the monitor stops that
 context and records `classificationFailed: true`; normal fatal errors record false.
 The frozen detector/core source and its direct invalid-context assertion remain unchanged.
+Time-alignment failure messages include both the requested and native returned
+timestamp. A later healthy context does not clear that historical evidence or
+establish why the native chart shifted the earlier marker.
 It describes the last fatal event, not necessarily the active context. It does not
 store stack traces, candles, requests or gateway credentials, and is never persisted
 or sent to the remote service. Recoverable snapshot races leave it unchanged.
@@ -76,10 +82,11 @@ coordinates fail explicitly. No credentials cross the page boundary.
 
 ## Optional Cross-Timeframe Server Summary
 
-The remote summary is disabled by default. Tampermonkey exposes three Strategy29
-menu commands: toggle the cross-timeframe summary, set the loopback gateway
-origin, and set the gateway secret. The origin contract is an explicit
-`http://127.0.0.1:<port>` origin; the default is `http://127.0.0.1:8729`. The
+The remote summary is owned by the CorsairQuant signal client. Its single
+gateway URL and secret configuration serves both Strategy27 and Strategy29,
+using the existing `http://127.0.0.1:18765` local forward. The Strategy29 module
+has one enable/disable menu and no separate gateway configuration. An inactive
+module still displays a discoverable panel without making requests. The
 secret is never stored in the page, URL, panel DOM, or debug diagnostics.
 
 When enabled, the panel follows only the current Binance route symbol but shows
@@ -118,14 +125,20 @@ missing or incompatible facts carry null metadata. Fail-closed selection may
 retain a complete prior-success group. Expired selection can originate from fresh
 or stale facts. Clock rollback does not invalidate otherwise coherent metadata.
 
-The current remote summary is disabled by default and has no panel while disabled.
 Authentication failure affects only the remote summary, not local chart detection.
-Strategy27 and Strategy29 currently use separate private userscript storage. The
-requested one-time gateway configuration across current and future strategies is
-a pending unified-client design, including credential ownership, module lifecycle
-and migration. Do not bridge credentials through page globals, localStorage or
-page events, and do not ask users to duplicate secrets as the long-term solution.
-A discoverable disabled-state entry is also pending, not implemented in 0.3.0.
+The unified client preserves the Strategy27 installation namespace, update URL and
+private gateway keys. Update that existing installation in place. Strategy29's
+standalone entry is local-only and publishes only a versioned preference record
+containing enabled state and panel coordinates. The host validates its exact keys,
+copies missing preferences once into its own private storage and preserves existing
+host choices. This public record cannot supply gateway credentials, origins or
+event state. Both script load orders are supported; update both scripts before
+reloading. The host never installs or replaces the local detector singleton.
+
+The unified gateway reports `module_disabled` when the server module is intentionally
+off, `gateway_unavailable` when an enabled fixed backend cannot be reached, and
+`database_unavailable` only for the backend's own database failure. The panel labels
+these separately. Installing the unified client does not activate server monitoring.
 
 The browser polls status first and then consumes at most two event pages per
 scheduled poll. A new route requests `mode=latest&limit=20` for its canonical
@@ -136,7 +149,7 @@ advancing that cursor. `cursor_expired` clears only remote rows and requests a n
 latest snapshot. Rows are displayed and bounded by descending durable sequence,
 independent of detection timestamps. This requires the server's explicit latest
 query contract; a server rejecting it stops the remote context visibly.
-Publish the V2 gateway contract before the `0.3.0` client, then verify installed
+Publish the unified V2 gateway contract before the client, then verify installed
 source identity and reload before remote acceptance. Publication of either
 component does not enable the observer, gateway, or notifications.
 

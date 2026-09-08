@@ -15,9 +15,6 @@ import { SUMMARY_COPY as COPY, formatLocalizedText, resolveUiLocaleFromPathname 
 
 export const STRATEGY29_PANEL_POSITION_KEY = 'strategy29SummaryPanelPosition';
 export const STRATEGY29_REMOTE_ENABLED_KEY = 'strategy29RemoteSummaryEnabled';
-export const STRATEGY29_GATEWAY_ORIGIN_KEY = 'strategy29GatewayOrigin';
-export const STRATEGY29_GATEWAY_SECRET_KEY = 'strategy29GatewayAuthSecret';
-export const STRATEGY29_DEFAULT_GATEWAY_ORIGIN = 'http://127.0.0.1:8729';
 export const STRATEGY29_REMOTE_POLL_INTERVAL_MS = 5_000;
 
 function abortError(view, message) {
@@ -25,10 +22,10 @@ function abortError(view, message) {
   return new ErrorConstructor(message, 'AbortError');
 }
 
-function assertAdapters({ view, request, getValue, setValue, registerMenuCommand, promptUser, createPanel, createClient }) {
+function assertAdapters({ view, request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient }) {
   if (!view?.document || !view?.location) throw new TypeError('Strategy 29 remote summary requires a page window');
   for (const [name, value] of Object.entries({
-    request, getValue, setValue, registerMenuCommand, promptUser, createPanel, createClient,
+    request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient,
   })) {
     if (typeof value !== 'function') throw new TypeError(`Strategy 29 remote summary ${name} is invalid`);
   }
@@ -41,12 +38,12 @@ export function createStrategy29RemoteSummary({
   getValue,
   setValue,
   registerMenuCommand,
-  promptUser,
+  getGatewaySettings,
   createPanel = createStrategy29SummaryPanel,
   createClient = createStrategy29SummaryClient,
   pollIntervalMs = STRATEGY29_REMOTE_POLL_INTERVAL_MS,
 }) {
-  assertAdapters({ view, request, getValue, setValue, registerMenuCommand, promptUser, createPanel, createClient });
+  assertAdapters({ view, request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient });
   if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1_000) throw new TypeError('Strategy 29 remote poll interval is invalid');
   let enabled = getValue(STRATEGY29_REMOTE_ENABLED_KEY, false) === true;
   let active = null;
@@ -68,12 +65,9 @@ export function createStrategy29RemoteSummary({
   }
 
   function configuredSettings() {
-    const authSecret = getValue(STRATEGY29_GATEWAY_SECRET_KEY, '');
+    const { authSecret, gatewayOrigin } = getGatewaySettings();
     if (typeof authSecret !== 'string') throw new TypeError('Strategy 29 gateway secret storage is invalid');
-    const gatewayOrigin = normalizeStrategy29GatewayOrigin(
-      getValue(STRATEGY29_GATEWAY_ORIGIN_KEY, STRATEGY29_DEFAULT_GATEWAY_ORIGIN),
-    );
-    return { authSecret, gatewayOrigin };
+    return { authSecret, gatewayOrigin: normalizeStrategy29GatewayOrigin(gatewayOrigin) };
   }
 
   function startContext(routeSymbol) {
@@ -99,6 +93,11 @@ export function createStrategy29RemoteSummary({
       lastResult: null,
     };
     active = context;
+    if (!enabled) {
+      context.state = 'disabled';
+      panel.setConnection('disabled', COPY.disabled);
+      return context;
+    }
     let settings;
     try {
       settings = configuredSettings();
@@ -145,7 +144,7 @@ export function createStrategy29RemoteSummary({
   }
 
   function synchronizeContext() {
-    if (!enabled || !view.document.body) {
+    if (!view.document.body) {
       unsupportedRoute = null;
       stopActive('Strategy 29 remote summary disabled');
       return null;
@@ -194,6 +193,8 @@ export function createStrategy29RemoteSummary({
         const presentation = {
           connected: ['connected', result.hasMore ? COPY.moreHistory : COPY.connected],
           unavailable: ['unavailable', COPY.unavailable],
+          module_disabled: ['module_disabled', COPY.moduleDisabled],
+          gateway_unavailable: ['gateway_unavailable', COPY.gatewayUnavailable],
           incompatible: ['incompatible', COPY.incompatible],
         }[result.state];
         if (!presentation) throw new Error(`Strategy 29 remote state is invalid: ${result.state}`);
@@ -216,6 +217,7 @@ export function createStrategy29RemoteSummary({
   }
 
   function restart() {
+    enabled = getValue(STRATEGY29_REMOTE_ENABLED_KEY, false) === true;
     unsupportedRoute = null;
     stopActive('Strategy 29 remote settings changed');
     if (!disposed) void sample(Date.now());
@@ -225,20 +227,6 @@ export function createStrategy29RemoteSummary({
     { copy: COPY.menuToggle, run() {
       enabled = !enabled;
       setValue(STRATEGY29_REMOTE_ENABLED_KEY, enabled);
-      restart();
-    } },
-    { copy: COPY.menuSecret, run() {
-      const value = promptUser(formatLocalizedText(COPY.promptSecret, resolveUiLocaleFromPathname(view.location.pathname)));
-      if (value === null) return;
-      if (value.length === 0) throw new Error(text(COPY.emptySecret));
-      setValue(STRATEGY29_GATEWAY_SECRET_KEY, value);
-      restart();
-    } },
-    { copy: COPY.menuOrigin, run() {
-      const current = getValue(STRATEGY29_GATEWAY_ORIGIN_KEY, STRATEGY29_DEFAULT_GATEWAY_ORIGIN);
-      const value = promptUser(formatLocalizedText(COPY.promptOrigin, resolveUiLocaleFromPathname(view.location.pathname)), current);
-      if (value === null) return;
-      setValue(STRATEGY29_GATEWAY_ORIGIN_KEY, normalizeStrategy29GatewayOrigin(value));
       restart();
     } },
   ];

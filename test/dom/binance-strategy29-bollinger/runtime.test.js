@@ -52,7 +52,7 @@ test('remote transport failure never stops the local observer timer', async () =
     getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
     setValue: (key, value) => values.set(key, value),
     registerMenuCommand() {},
-    promptUser() { return null; },
+    getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
   });
   await new Promise(resolve => f.view.setTimeout(resolve, 0));
   assert.equal(runtime.diagnostics.runtimeFailure, null);
@@ -81,7 +81,7 @@ for (const [name, remoteResponse, expectedState] of [
       getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
       setValue: (key, value) => values.set(key, value),
       registerMenuCommand() {},
-      promptUser() { return null; },
+      getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
     });
     await new Promise(resolve => f.view.setTimeout(resolve, 0));
     assert.equal(runtime.diagnostics.runtimeFailure, null);
@@ -107,7 +107,7 @@ test('hiding the page aborts the remote request and resumes with one shared runt
     getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
     setValue: (key, value) => values.set(key, value),
     registerMenuCommand() {},
-    promptUser() { return null; },
+    getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
   });
   assert.equal(runtime.diagnostics.remoteSummary.inFlight, true);
   f.hide(true);
@@ -145,7 +145,7 @@ test('actual remote client retains rows and cursor across visibility and bootstr
     },
     getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
     setValue: (key, value) => values.set(key, value),
-    registerMenuCommand() {}, promptUser() { return null; },
+    registerMenuCommand() {}, getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
   });
   const settle = () => new Promise(resolve => f.view.setTimeout(resolve, 0));
   await settle();
@@ -195,7 +195,7 @@ for (const failure of ['embedded conflict', 'interval subscription failure']) {
       },
       getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
       setValue: (key, value) => values.set(key, value),
-      registerMenuCommand() {}, promptUser() { return null; },
+      registerMenuCommand() {}, getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
     });
     const settle = () => new Promise(resolve => f.view.setTimeout(resolve, 0));
     try {

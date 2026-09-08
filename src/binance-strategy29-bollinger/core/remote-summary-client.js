@@ -100,8 +100,8 @@ export function createStrategy29SummaryClient({
     if (signal.aborted) throw signal.reason;
     const statusBody = parseJsonResponse(statusResponse, 'Strategy29 status');
     if (statusResponse.status === 503) {
-      validateStrategy29GatewayError(statusBody, 503);
-      return { state: 'unavailable', pages: 0, hasMore: false };
+      const error = validateStrategy29GatewayError(statusBody, 503);
+      return { state: error.error === 'database_unavailable' ? 'unavailable' : error.error, pages: 0, hasMore: false };
     }
     if (statusResponse.status !== 200) {
       validateStrategy29GatewayError(statusBody, statusResponse.status);
@@ -129,8 +129,8 @@ export function createStrategy29SummaryClient({
         continue;
       }
       if (eventsResponse.status === 503) {
-        validateStrategy29GatewayError(eventsBody, 503);
-        return { state: 'unavailable', pages, hasMore: false };
+        const error = validateStrategy29GatewayError(eventsBody, 503);
+        return { state: error.error === 'database_unavailable' ? 'unavailable' : error.error, pages, hasMore: false };
       }
       if (eventsResponse.status !== 200) {
         validateStrategy29GatewayError(eventsBody, eventsResponse.status);

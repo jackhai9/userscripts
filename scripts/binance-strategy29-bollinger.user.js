@@ -3,488 +3,20 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.3.0
+// @version      0.4.0
 // @author       jackhai9
 // @description  Native Bollinger/SMA60 markers with an optional read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @exclude      https://www.binance.com/*/my/wallet/futures/*
 // @exclude      https://www.binance.com/my/wallet/futures/*
-// @connect      127.0.0.1
 // @updateURL    https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy29-bollinger.user.js
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy29-bollinger.user.js
 // @run-at       document-start
 // @grant        unsafeWindow
-// @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_registerMenuCommand
 // ==/UserScript==
 (() => {
-  // src/binance-strategy29-bollinger/core/remote-summary-contract.js
-  var STRATEGY29_SCHEMA_VERSION = 1;
-  var STRATEGY29_SPEC_VERSION = "29_2_spec_v2";
-  var STRATEGY29_REFERENCE_SHA256 = "eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d";
-  var TIMEFRAMES = /* @__PURE__ */ new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]);
-  var UNIT_STATUSES = /* @__PURE__ */ new Set(["warming", "ready", "stale", "insufficient_history", "data_gap", "failed"]);
-  var DIRECTIONS = /* @__PURE__ */ new Set(["bearish", "bullish"]);
-  var SIGNAL_TYPES = /* @__PURE__ */ new Set(["warning", "confirmed", "reversal"]);
-  var SIGNAL_SIDES = /* @__PURE__ */ new Set(["short", "long"]);
-  var ORIGINS = /* @__PURE__ */ new Set(["historical", "catch_up", "live"]);
-  var DELIVERY_STATES = /* @__PURE__ */ new Set(["pending", "sending", "sent", "unknown", "expired", "failed"]);
-  var DELIVERY_COUNT_KEYS = ["pending", "sending", "sent", "unknown", "expired", "failed"];
-  var STATUS_KEYS = ["schema_version", "spec_version", "observed_at_ms", "universe", "units", "delivery_counts"];
-  var UNIVERSE_KEYS = [
-    "source_monitor",
-    "generation",
-    "refresh_status",
-    "reason",
-    "selected_markets",
-    "configured_timeframes",
-    "selected_unit_count",
-    "ready_unit_count",
-    "pending_unit_count",
-    "refreshed_at_ms",
-    "last_successful_refreshed_at_ms",
-    "last_success_age_seconds",
-    "last_refresh_error_at_ms",
-    "selection_expires_at_ms"
-  ];
-  var UNIVERSE_STATES = /* @__PURE__ */ new Set(["fresh", "stale_if_error", "fail_closed"]);
-  var UNIVERSE_REASONS = {
-    fresh: /* @__PURE__ */ new Set(["current"]),
-    stale_if_error: /* @__PURE__ */ new Set(["using_stale_selection_after_refresh_error"]),
-    fail_closed: /* @__PURE__ */ new Set([
-      "selection_fail_closed",
-      "selection_expired_or_unusable",
-      "missing_current_universe_facts",
-      "incompatible_current_universe_facts"
-    ])
-  };
-  var UNIT_KEYS = [
-    "symbol",
-    "timeframe",
-    "status",
-    "reason",
-    "last_processed_open_ms",
-    "last_data_at_ms",
-    "last_event_id"
-  ];
-  var EVENTS_KEYS = ["schema_version", "spec_version", "observed_at_ms", "next_cursor", "has_more", "events"];
-  var EVENT_KEYS = [
-    "sequence",
-    "event_id",
-    "schema_version",
-    "strategy_id",
-    "spec_version",
-    "symbol",
-    "timeframe",
-    "setup_direction",
-    "signal_type",
-    "signal_side",
-    "setup_open_ms",
-    "bar_open_ms",
-    "bar_close_ms",
-    "detected_at_ms",
-    "close_price",
-    "marker_price",
-    "warning_open_ms",
-    "warning_high",
-    "warning_low",
-    "origin",
-    "delivery_state",
-    "delivery_failure_reason"
-  ];
-  var EVENT_ID_PATTERN = /^[0-9a-f]{64}$/;
-  var ROUTE_SYMBOL_PATTERN = /^([A-Z0-9]+)USDT$/;
-  var CANONICAL_SYMBOL_PATTERN = /^([A-Z0-9]+)\/USDT:USDT$/;
-  function assertObject(value, name) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
-  }
-  function assertExactKeys(value, keys, name) {
-    assertObject(value, name);
-    const actual = Object.keys(value).sort();
-    const expected = [...keys].sort();
-    if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
-      throw new TypeError(`${name} must contain exact keys: ${expected.join(", ")}`);
-    }
-  }
-  function assertInteger(value, name, { nullable = false, minimum = 0 } = {}) {
-    if (nullable && value === null) return;
-    if (!Number.isSafeInteger(value) || value < minimum) throw new TypeError(`${name} must be an integer >= ${minimum}`);
-  }
-  function assertString(value, name, { nullable = false, maximumLength = 256 } = {}) {
-    if (nullable && value === null) return;
-    if (typeof value !== "string" || value.length === 0) throw new TypeError(`${name} must be a non-empty string`);
-    if (value.length > maximumLength) throw new TypeError(`${name} exceeds ${maximumLength} characters`);
-  }
-  function assertEnum(value, allowed, name, { nullable = false } = {}) {
-    if (nullable && value === null) return;
-    if (!allowed.has(value)) throw new TypeError(`${name} is invalid`);
-  }
-  function assertFiniteNumber(value, name) {
-    if (!Number.isFinite(value)) throw new TypeError(`${name} must be a finite number`);
-  }
-  function assertSchema(value, name) {
-    if (value !== STRATEGY29_SCHEMA_VERSION) throw new TypeError(`${name} must equal ${STRATEGY29_SCHEMA_VERSION}`);
-  }
-  function assertCanonicalSymbol(value, name) {
-    if (typeof value !== "string" || !CANONICAL_SYMBOL_PATTERN.test(value)) {
-      throw new TypeError(`${name} must use canonical symbol format`);
-    }
-  }
-  function routeSymbolToCanonical(value) {
-    if (typeof value !== "string") throw new TypeError("route symbol must be a string");
-    const match = ROUTE_SYMBOL_PATTERN.exec(value);
-    if (!match || match[1] === "") throw new TypeError("route symbol must end in USDT and use uppercase canonical route syntax");
-    return `${match[1]}/USDT:USDT`;
-  }
-  function validateUnit(value, index) {
-    const name = `status.units[${index}]`;
-    assertExactKeys(value, UNIT_KEYS, name);
-    assertCanonicalSymbol(value.symbol, `${name}.symbol`);
-    assertEnum(value.timeframe, TIMEFRAMES, `${name}.timeframe`);
-    assertEnum(value.status, UNIT_STATUSES, `${name}.status`);
-    assertString(value.reason, `${name}.reason`);
-    assertInteger(value.last_processed_open_ms, `${name}.last_processed_open_ms`, { nullable: true });
-    assertInteger(value.last_data_at_ms, `${name}.last_data_at_ms`, { nullable: true });
-    if (value.last_event_id !== null && (typeof value.last_event_id !== "string" || !EVENT_ID_PATTERN.test(value.last_event_id))) {
-      throw new TypeError(`${name}.last_event_id must be null or a lowercase hexadecimal event id`);
-    }
-  }
-  function validateUniverse(value) {
-    assertExactKeys(value, UNIVERSE_KEYS, "status.universe");
-    if (value.source_monitor !== "monitor29_bollinger_ma60") throw new TypeError("status.universe.source_monitor is invalid");
-    assertInteger(value.generation, "status.universe.generation", { nullable: true, minimum: 1 });
-    assertEnum(value.refresh_status, UNIVERSE_STATES, "status.universe.refresh_status");
-    assertEnum(value.reason, UNIVERSE_REASONS[value.refresh_status], "status.universe.reason");
-    for (const key of ["selected_markets", "configured_timeframes"]) {
-      if (!Array.isArray(value[key]) || value[key].length > 128 || new Set(value[key]).size !== value[key].length) {
-        throw new TypeError(`status.universe.${key} must be a bounded unique array`);
-      }
-    }
-    value.selected_markets.forEach((symbol) => assertCanonicalSymbol(symbol, "status.universe.selected_markets"));
-    value.configured_timeframes.forEach((timeframe) => assertEnum(timeframe, TIMEFRAMES, "status.universe.configured_timeframes"));
-    for (const key of ["selected_unit_count", "ready_unit_count", "pending_unit_count"]) {
-      assertInteger(value[key], `status.universe.${key}`);
-      if (value[key] > 128) throw new TypeError(`status.universe.${key} exceeds the unit bound`);
-    }
-    if (value.ready_unit_count + value.pending_unit_count !== value.selected_unit_count || value.selected_markets.length > value.selected_unit_count) throw new TypeError("status.universe counts are inconsistent");
-    if (value.refresh_status === "fail_closed" && value.selected_unit_count !== 0) throw new TypeError("status.universe unavailable selection must be empty");
-    for (const key of ["refreshed_at_ms", "last_successful_refreshed_at_ms", "last_refresh_error_at_ms", "selection_expires_at_ms"]) {
-      assertInteger(value[key], `status.universe.${key}`, { nullable: true });
-    }
-    if (value.last_success_age_seconds !== null) {
-      assertFiniteNumber(value.last_success_age_seconds, "status.universe.last_success_age_seconds");
-      if (value.last_success_age_seconds < 0) throw new TypeError("status.universe last success age must be non-negative");
-    }
-    if (value.last_successful_refreshed_at_ms === null !== (value.last_success_age_seconds === null)) {
-      throw new TypeError("status.universe last success fields are inconsistent");
-    }
-    const successMissing = value.last_successful_refreshed_at_ms === null;
-    if (successMissing !== (value.selection_expires_at_ms === null)) {
-      throw new TypeError("status.universe successful selection requires its expiry");
-    }
-    const absentFacts = value.reason === "missing_current_universe_facts" || value.reason === "incompatible_current_universe_facts";
-    if (absentFacts) {
-      if ([
-        value.generation,
-        value.refreshed_at_ms,
-        value.last_successful_refreshed_at_ms,
-        value.last_success_age_seconds,
-        value.last_refresh_error_at_ms,
-        value.selection_expires_at_ms
-      ].some((item) => item !== null)) {
-        throw new TypeError("status.universe unavailable facts must have null refresh metadata");
-      }
-    } else {
-      if (value.generation === null || value.refreshed_at_ms === null) {
-        throw new TypeError("status.universe current facts require generation and refresh time");
-      }
-      if (value.reason !== "selection_fail_closed" && successMissing) {
-        throw new TypeError("status.universe successful selection metadata is required");
-      }
-      if (value.refresh_status === "fresh" && value.last_refresh_error_at_ms !== null) {
-        throw new TypeError("status.universe fresh selection cannot report a refresh error");
-      }
-      if ((value.refresh_status === "stale_if_error" || value.reason === "selection_fail_closed") && value.last_refresh_error_at_ms === null) {
-        throw new TypeError("status.universe failed refresh requires its error time");
-      }
-    }
-  }
-  function validateStrategy29StatusResponse(value, httpStatus) {
-    if (httpStatus !== 200) throw new TypeError(`status response requires HTTP 200, received ${httpStatus}`);
-    assertObject(value, "status response");
-    assertSchema(value.schema_version, "status.schema_version");
-    assertString(value.spec_version, "status.spec_version");
-    assertInteger(value.observed_at_ms, "status.observed_at_ms");
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) return {
-      schema_version: value.schema_version,
-      spec_version: value.spec_version,
-      observed_at_ms: value.observed_at_ms
-    };
-    assertExactKeys(value, STATUS_KEYS, "status response");
-    validateUniverse(value.universe);
-    if (!Array.isArray(value.units)) throw new TypeError("status.units must be an array");
-    if (value.units.length > 128) throw new TypeError("status.units exceeds the 128-unit bound");
-    value.units.forEach(validateUnit);
-    assertExactKeys(value.delivery_counts, DELIVERY_COUNT_KEYS, "status.delivery_counts");
-    for (const key of DELIVERY_COUNT_KEYS) {
-      assertInteger(value.delivery_counts[key], `status.delivery_counts.${key}`);
-    }
-    return value;
-  }
-  function expectedSignalSide(direction, signalType) {
-    if (signalType === "reversal") return direction === "bearish" ? "long" : "short";
-    return direction === "bearish" ? "short" : "long";
-  }
-  function validateEvent(value, index) {
-    const name = `events.events[${index}]`;
-    assertExactKeys(value, EVENT_KEYS, name);
-    assertInteger(value.sequence, `${name}.sequence`, { minimum: 1 });
-    if (typeof value.event_id !== "string" || !EVENT_ID_PATTERN.test(value.event_id)) {
-      throw new TypeError(`${name}.event_id must be a lowercase hexadecimal event id`);
-    }
-    assertSchema(value.schema_version, `${name}.schema_version`);
-    if (value.strategy_id !== "29") throw new TypeError(`${name}.strategy_id must equal 29`);
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
-      throw new TypeError(`${name}.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
-    }
-    assertCanonicalSymbol(value.symbol, `${name}.symbol`);
-    assertEnum(value.timeframe, TIMEFRAMES, `${name}.timeframe`);
-    assertEnum(value.setup_direction, DIRECTIONS, `${name}.setup_direction`);
-    assertEnum(value.signal_type, SIGNAL_TYPES, `${name}.signal_type`);
-    assertEnum(value.signal_side, SIGNAL_SIDES, `${name}.signal_side`);
-    if (value.signal_side !== expectedSignalSide(value.setup_direction, value.signal_type)) {
-      throw new TypeError(`${name}.signal_side does not match direction and signal type`);
-    }
-    for (const field of ["setup_open_ms", "bar_open_ms", "bar_close_ms", "detected_at_ms", "warning_open_ms"]) {
-      assertInteger(value[field], `${name}.${field}`);
-    }
-    if (value.bar_close_ms <= value.bar_open_ms) throw new TypeError(`${name}.bar_close_ms must follow bar_open_ms`);
-    for (const field of ["close_price", "marker_price", "warning_high", "warning_low"]) {
-      assertFiniteNumber(value[field], `${name}.${field}`);
-    }
-    if (value.warning_high < value.warning_low) throw new TypeError(`${name}.warning_high must not be below warning_low`);
-    assertEnum(value.origin, ORIGINS, `${name}.origin`);
-    assertEnum(value.delivery_state, DELIVERY_STATES, `${name}.delivery_state`, { nullable: true });
-    assertString(value.delivery_failure_reason, `${name}.delivery_failure_reason`, { nullable: true, maximumLength: 512 });
-  }
-  function validateStrategy29EventsResponse(value, httpStatus) {
-    if (httpStatus !== 200) throw new TypeError(`events response requires HTTP 200, received ${httpStatus}`);
-    assertExactKeys(value, EVENTS_KEYS, "events response");
-    assertSchema(value.schema_version, "events.schema_version");
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
-      throw new TypeError(`events.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
-    }
-    assertInteger(value.observed_at_ms, "events.observed_at_ms");
-    assertInteger(value.next_cursor, "events.next_cursor");
-    if (typeof value.has_more !== "boolean") throw new TypeError("events.has_more must be boolean");
-    if (!Array.isArray(value.events)) throw new TypeError("events.events must be an array");
-    if (value.events.length > 200) throw new TypeError("events.events exceeds the 200-event page bound");
-    value.events.forEach(validateEvent);
-    return value;
-  }
-  function validateStrategy29GatewayError(value, httpStatus) {
-    if (httpStatus === 409) {
-      assertExactKeys(value, ["schema_version", "error", "oldest_cursor"], "gateway error");
-      assertSchema(value.schema_version, "gateway error.schema_version");
-      if (value.error !== "cursor_expired") throw new TypeError("gateway error.error must equal cursor_expired");
-      assertInteger(value.oldest_cursor, "gateway error.oldest_cursor");
-      return value;
-    }
-    const expected = /* @__PURE__ */ new Map([[400, "invalid_request"], [401, "unauthorized"], [503, "database_unavailable"]]);
-    if (!expected.has(httpStatus)) throw new TypeError(`unsupported gateway HTTP status ${httpStatus}`);
-    assertExactKeys(value, ["schema_version", "error"], "gateway error");
-    assertSchema(value.schema_version, "gateway error.schema_version");
-    if (value.error !== expected.get(httpStatus)) {
-      throw new TypeError(`gateway error.error must equal ${expected.get(httpStatus)}`);
-    }
-    return value;
-  }
-
-  // src/binance-strategy29-bollinger/core/remote-summary-client.js
-  var Strategy29GatewayTransportError = class extends Error {
-    constructor(message) {
-      super(message);
-      this.name = "Strategy29GatewayTransportError";
-    }
-  };
-  function gatewayAbortError() {
-    return new DOMException("Strategy29 gateway request aborted", "AbortError");
-  }
-  function normalizeStrategy29GatewayOrigin(value) {
-    let url;
-    try {
-      url = new URL(value);
-    } catch {
-      throw new TypeError("Strategy29 gateway must be an explicit loopback origin");
-    }
-    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port === "" || url.username !== "" || url.password !== "" || url.pathname !== "/" || url.search !== "" || url.hash !== "") throw new TypeError("Strategy29 gateway must be an explicit loopback origin");
-    return url.origin;
-  }
-  function parseJsonResponse(response, label) {
-    if (!response || !Number.isInteger(response.status) || typeof response.responseText !== "string") {
-      throw new Strategy29GatewayTransportError(`${label} returned an invalid transport response`);
-    }
-    try {
-      return JSON.parse(response.responseText);
-    } catch {
-      throw new TypeError(`${label} returned invalid JSON`);
-    }
-  }
-  function assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset }) {
-    if (typeof request !== "function") throw new TypeError("request must be a function");
-    if (typeof authSecret !== "string" || authSecret.length === 0) throw new TypeError("authSecret must be non-empty");
-    if (typeof canonicalSymbol !== "string" || !/^[A-Z0-9]+\/USDT:USDT$/.test(canonicalSymbol)) {
-      throw new TypeError("canonicalSymbol must use canonical symbol format");
-    }
-    if (!Number.isInteger(maxPagesPerPoll) || maxPagesPerPoll < 1 || maxPagesPerPoll > 10) {
-      throw new TypeError("maxPagesPerPoll must be between 1 and 10");
-    }
-    for (const [name, callback] of Object.entries({ onStatus, onEvents, onCursorReset })) {
-      if (typeof callback !== "function") throw new TypeError(`${name} must be a function`);
-    }
-  }
-  function buildEventsUrl(origin, canonicalSymbol, cursor) {
-    const url = new URL("/v1/strategy29/events", origin);
-    url.searchParams.set("symbol", canonicalSymbol);
-    if (cursor === null) {
-      url.searchParams.set("mode", "latest");
-      url.searchParams.set("limit", "20");
-    } else url.searchParams.set("cursor", String(cursor));
-    return url.href;
-  }
-  function createStrategy29SummaryClient({
-    request,
-    gatewayOrigin,
-    authSecret,
-    canonicalSymbol,
-    maxPagesPerPoll = 2,
-    onStatus,
-    onEvents,
-    onCursorReset
-  }) {
-    const origin = normalizeStrategy29GatewayOrigin(gatewayOrigin);
-    assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset });
-    let cursor = null;
-    async function perform(url, signal) {
-      if (!signal || typeof signal.aborted !== "boolean" || typeof signal.addEventListener !== "function") {
-        throw new TypeError("poll requires an AbortSignal");
-      }
-      if (signal.aborted) throw signal.reason;
-      return request({ url, authSecret, signal });
-    }
-    async function poll(signal) {
-      const statusResponse = await perform(`${origin}/v1/strategy29/status`, signal);
-      if (signal.aborted) throw signal.reason;
-      const statusBody = parseJsonResponse(statusResponse, "Strategy29 status");
-      if (statusResponse.status === 503) {
-        validateStrategy29GatewayError(statusBody, 503);
-        return { state: "unavailable", pages: 0, hasMore: false };
-      }
-      if (statusResponse.status !== 200) {
-        validateStrategy29GatewayError(statusBody, statusResponse.status);
-        throw new Error(`Strategy29 status request failed with HTTP ${statusResponse.status}`);
-      }
-      const status = validateStrategy29StatusResponse(statusBody, 200);
-      onStatus(status);
-      if (status.spec_version !== STRATEGY29_SPEC_VERSION) {
-        return { state: "incompatible", pages: 0, hasMore: false };
-      }
-      let pages = 0;
-      let hasMore = false;
-      while (pages < maxPagesPerPoll) {
-        const requestedCursor = cursor;
-        const eventsResponse = await perform(buildEventsUrl(origin, canonicalSymbol, cursor), signal);
-        if (signal.aborted) throw signal.reason;
-        const eventsBody = parseJsonResponse(eventsResponse, "Strategy29 events");
-        pages += 1;
-        if (eventsResponse.status === 409) {
-          const error = validateStrategy29GatewayError(eventsBody, 409);
-          cursor = null;
-          onCursorReset(error.oldest_cursor);
-          hasMore = true;
-          continue;
-        }
-        if (eventsResponse.status === 503) {
-          validateStrategy29GatewayError(eventsBody, 503);
-          return { state: "unavailable", pages, hasMore: false };
-        }
-        if (eventsResponse.status !== 200) {
-          validateStrategy29GatewayError(eventsBody, eventsResponse.status);
-          throw new Error(`Strategy29 events request failed with HTTP ${eventsResponse.status}`);
-        }
-        const page = validateStrategy29EventsResponse(eventsBody, 200);
-        if (requestedCursor === null && (page.has_more || page.events.length > 20)) {
-          throw new TypeError("Strategy29 latest snapshot must be complete and bounded to 20 events");
-        }
-        if (requestedCursor !== null && page.next_cursor < requestedCursor) {
-          throw new TypeError("Strategy29 event cursor moved backwards");
-        }
-        if (page.has_more && (requestedCursor === null ? page.next_cursor <= 0 : page.next_cursor <= requestedCursor)) {
-          throw new TypeError("Strategy29 event cursor did not advance while has_more is true");
-        }
-        let previousSequence = requestedCursor;
-        for (const event of page.events) {
-          if (event.symbol !== canonicalSymbol) throw new TypeError("Strategy29 event symbol does not match the requested symbol");
-          if (previousSequence !== null && event.sequence <= previousSequence) {
-            throw new TypeError("Strategy29 event sequences must advance strictly");
-          }
-          if (event.sequence > page.next_cursor) throw new TypeError("Strategy29 event sequence exceeds next_cursor");
-          previousSequence = event.sequence;
-        }
-        onEvents(page.events, page.observed_at_ms);
-        cursor = page.next_cursor;
-        hasMore = page.has_more;
-        if (!hasMore) break;
-      }
-      return { state: "connected", pages, hasMore };
-    }
-    return Object.freeze({
-      poll,
-      get diagnostics() {
-        return Object.freeze({ cursor });
-      }
-    });
-  }
-  function createStrategy29GmJsonRequest(gmXmlHttpRequest, timeoutMs = 1e4) {
-    if (typeof gmXmlHttpRequest !== "function") throw new TypeError("GM_xmlhttpRequest must be a function");
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new TypeError("timeoutMs must be a positive integer");
-    return ({ url, authSecret, signal }) => new Promise((resolve, reject) => {
-      let settled = false;
-      function finish(callback, value) {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener("abort", onAbort);
-        callback(value);
-      }
-      let request;
-      function onAbort() {
-        request.abort();
-        finish(reject, signal.reason ?? gatewayAbortError());
-      }
-      try {
-        request = gmXmlHttpRequest({
-          method: "GET",
-          url,
-          headers: { Authorization: `Bearer ${authSecret}` },
-          timeout: timeoutMs,
-          onload: (response) => finish(resolve, response),
-          onerror: () => finish(reject, new Strategy29GatewayTransportError("Strategy29 gateway transport failure")),
-          ontimeout: () => finish(reject, new Strategy29GatewayTransportError("Strategy29 gateway transport timeout")),
-          onabort: () => finish(reject, signal.reason ?? gatewayAbortError())
-        });
-      } catch {
-        finish(reject, new Strategy29GatewayTransportError("Strategy29 gateway transport initialization failed"));
-        return;
-      }
-      if (settled) return;
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
-    });
-  }
-
   // src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js
   var BOLLINGER_PATTERN = Object.freeze({
     bollingerPeriod: 20,
@@ -520,7 +52,7 @@
     context.cleanupPending = true;
     return "fatal";
   }
-  function assertFiniteNumber2(value, label) {
+  function assertFiniteNumber(value, label) {
     if (!Number.isFinite(value)) throw new Error(`${label} is invalid`);
   }
   function assertBars(bars, directionLabel) {
@@ -539,7 +71,7 @@
         );
       }
       for (const field of ["open", "high", "low", "close"]) {
-        assertFiniteNumber2(bar[field], `${directionLabel} Bollinger bar ${index} ${field}`);
+        assertFiniteNumber(bar[field], `${directionLabel} Bollinger bar ${index} ${field}`);
       }
       if (bar.high < bar.low || bar.high < Math.max(bar.open, bar.close) || bar.low > Math.min(bar.open, bar.close)) {
         throw new TradingViewBarSnapshotInconsistentError(
@@ -562,7 +94,7 @@
       }
       for (const field of fields) {
         if (bar[field] !== null) {
-          assertFiniteNumber2(
+          assertFiniteNumber(
             bar[field],
             `${directionLabel} Bollinger indicator bar ${index} ${field}`
           );
@@ -1511,7 +1043,7 @@
             const shape = chart.getShapeById(markerId);
             const point = readMarkerPoint(shape);
             if (point.time !== signal.time) {
-              throw new Error(`TradingView Bollinger alert time alignment failed for ${signal.time}`);
+              throw new Error(`TradingView Bollinger alert time alignment failed: expected ${signal.time}, received ${point.time}`);
             }
             if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
             mutate(() => shape.setProperties(options.overrides, false));
@@ -1841,6 +1373,439 @@
     };
   }
 
+  // src/binance-strategy29-bollinger/core/remote-summary-contract.js
+  var STRATEGY29_SCHEMA_VERSION = 1;
+  var STRATEGY29_SPEC_VERSION = "29_2_spec_v2";
+  var STRATEGY29_REFERENCE_SHA256 = "eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d";
+  var TIMEFRAMES = /* @__PURE__ */ new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]);
+  var UNIT_STATUSES = /* @__PURE__ */ new Set(["warming", "ready", "stale", "insufficient_history", "data_gap", "failed"]);
+  var DIRECTIONS = /* @__PURE__ */ new Set(["bearish", "bullish"]);
+  var SIGNAL_TYPES = /* @__PURE__ */ new Set(["warning", "confirmed", "reversal"]);
+  var SIGNAL_SIDES = /* @__PURE__ */ new Set(["short", "long"]);
+  var ORIGINS = /* @__PURE__ */ new Set(["historical", "catch_up", "live"]);
+  var DELIVERY_STATES = /* @__PURE__ */ new Set(["pending", "sending", "sent", "unknown", "expired", "failed"]);
+  var DELIVERY_COUNT_KEYS = ["pending", "sending", "sent", "unknown", "expired", "failed"];
+  var STATUS_KEYS = ["schema_version", "spec_version", "observed_at_ms", "universe", "units", "delivery_counts"];
+  var UNIVERSE_KEYS = [
+    "source_monitor",
+    "generation",
+    "refresh_status",
+    "reason",
+    "selected_markets",
+    "configured_timeframes",
+    "selected_unit_count",
+    "ready_unit_count",
+    "pending_unit_count",
+    "refreshed_at_ms",
+    "last_successful_refreshed_at_ms",
+    "last_success_age_seconds",
+    "last_refresh_error_at_ms",
+    "selection_expires_at_ms"
+  ];
+  var UNIVERSE_STATES = /* @__PURE__ */ new Set(["fresh", "stale_if_error", "fail_closed"]);
+  var UNIVERSE_REASONS = {
+    fresh: /* @__PURE__ */ new Set(["current"]),
+    stale_if_error: /* @__PURE__ */ new Set(["using_stale_selection_after_refresh_error"]),
+    fail_closed: /* @__PURE__ */ new Set([
+      "selection_fail_closed",
+      "selection_expired_or_unusable",
+      "missing_current_universe_facts",
+      "incompatible_current_universe_facts"
+    ])
+  };
+  var UNIT_KEYS = [
+    "symbol",
+    "timeframe",
+    "status",
+    "reason",
+    "last_processed_open_ms",
+    "last_data_at_ms",
+    "last_event_id"
+  ];
+  var EVENTS_KEYS = ["schema_version", "spec_version", "observed_at_ms", "next_cursor", "has_more", "events"];
+  var EVENT_KEYS = [
+    "sequence",
+    "event_id",
+    "schema_version",
+    "strategy_id",
+    "spec_version",
+    "symbol",
+    "timeframe",
+    "setup_direction",
+    "signal_type",
+    "signal_side",
+    "setup_open_ms",
+    "bar_open_ms",
+    "bar_close_ms",
+    "detected_at_ms",
+    "close_price",
+    "marker_price",
+    "warning_open_ms",
+    "warning_high",
+    "warning_low",
+    "origin",
+    "delivery_state",
+    "delivery_failure_reason"
+  ];
+  var EVENT_ID_PATTERN = /^[0-9a-f]{64}$/;
+  var ROUTE_SYMBOL_PATTERN = /^([A-Z0-9]+)USDT$/;
+  var CANONICAL_SYMBOL_PATTERN = /^([A-Z0-9]+)\/USDT:USDT$/;
+  function assertObject(value, name) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
+  }
+  function assertExactKeys(value, keys, name) {
+    assertObject(value, name);
+    const actual = Object.keys(value).sort();
+    const expected = [...keys].sort();
+    if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+      throw new TypeError(`${name} must contain exact keys: ${expected.join(", ")}`);
+    }
+  }
+  function assertInteger(value, name, { nullable = false, minimum = 0 } = {}) {
+    if (nullable && value === null) return;
+    if (!Number.isSafeInteger(value) || value < minimum) throw new TypeError(`${name} must be an integer >= ${minimum}`);
+  }
+  function assertString(value, name, { nullable = false, maximumLength = 256 } = {}) {
+    if (nullable && value === null) return;
+    if (typeof value !== "string" || value.length === 0) throw new TypeError(`${name} must be a non-empty string`);
+    if (value.length > maximumLength) throw new TypeError(`${name} exceeds ${maximumLength} characters`);
+  }
+  function assertEnum(value, allowed, name, { nullable = false } = {}) {
+    if (nullable && value === null) return;
+    if (!allowed.has(value)) throw new TypeError(`${name} is invalid`);
+  }
+  function assertFiniteNumber2(value, name) {
+    if (!Number.isFinite(value)) throw new TypeError(`${name} must be a finite number`);
+  }
+  function assertSchema(value, name) {
+    if (value !== STRATEGY29_SCHEMA_VERSION) throw new TypeError(`${name} must equal ${STRATEGY29_SCHEMA_VERSION}`);
+  }
+  function assertCanonicalSymbol(value, name) {
+    if (typeof value !== "string" || !CANONICAL_SYMBOL_PATTERN.test(value)) {
+      throw new TypeError(`${name} must use canonical symbol format`);
+    }
+  }
+  function routeSymbolToCanonical(value) {
+    if (typeof value !== "string") throw new TypeError("route symbol must be a string");
+    const match = ROUTE_SYMBOL_PATTERN.exec(value);
+    if (!match || match[1] === "") throw new TypeError("route symbol must end in USDT and use uppercase canonical route syntax");
+    return `${match[1]}/USDT:USDT`;
+  }
+  function validateUnit(value, index) {
+    const name = `status.units[${index}]`;
+    assertExactKeys(value, UNIT_KEYS, name);
+    assertCanonicalSymbol(value.symbol, `${name}.symbol`);
+    assertEnum(value.timeframe, TIMEFRAMES, `${name}.timeframe`);
+    assertEnum(value.status, UNIT_STATUSES, `${name}.status`);
+    assertString(value.reason, `${name}.reason`);
+    assertInteger(value.last_processed_open_ms, `${name}.last_processed_open_ms`, { nullable: true });
+    assertInteger(value.last_data_at_ms, `${name}.last_data_at_ms`, { nullable: true });
+    if (value.last_event_id !== null && (typeof value.last_event_id !== "string" || !EVENT_ID_PATTERN.test(value.last_event_id))) {
+      throw new TypeError(`${name}.last_event_id must be null or a lowercase hexadecimal event id`);
+    }
+  }
+  function validateUniverse(value) {
+    assertExactKeys(value, UNIVERSE_KEYS, "status.universe");
+    if (value.source_monitor !== "monitor29_bollinger_ma60") throw new TypeError("status.universe.source_monitor is invalid");
+    assertInteger(value.generation, "status.universe.generation", { nullable: true, minimum: 1 });
+    assertEnum(value.refresh_status, UNIVERSE_STATES, "status.universe.refresh_status");
+    assertEnum(value.reason, UNIVERSE_REASONS[value.refresh_status], "status.universe.reason");
+    for (const key of ["selected_markets", "configured_timeframes"]) {
+      if (!Array.isArray(value[key]) || value[key].length > 128 || new Set(value[key]).size !== value[key].length) {
+        throw new TypeError(`status.universe.${key} must be a bounded unique array`);
+      }
+    }
+    value.selected_markets.forEach((symbol) => assertCanonicalSymbol(symbol, "status.universe.selected_markets"));
+    value.configured_timeframes.forEach((timeframe) => assertEnum(timeframe, TIMEFRAMES, "status.universe.configured_timeframes"));
+    for (const key of ["selected_unit_count", "ready_unit_count", "pending_unit_count"]) {
+      assertInteger(value[key], `status.universe.${key}`);
+      if (value[key] > 128) throw new TypeError(`status.universe.${key} exceeds the unit bound`);
+    }
+    if (value.ready_unit_count + value.pending_unit_count !== value.selected_unit_count || value.selected_markets.length > value.selected_unit_count) throw new TypeError("status.universe counts are inconsistent");
+    if (value.refresh_status === "fail_closed" && value.selected_unit_count !== 0) throw new TypeError("status.universe unavailable selection must be empty");
+    for (const key of ["refreshed_at_ms", "last_successful_refreshed_at_ms", "last_refresh_error_at_ms", "selection_expires_at_ms"]) {
+      assertInteger(value[key], `status.universe.${key}`, { nullable: true });
+    }
+    if (value.last_success_age_seconds !== null) {
+      assertFiniteNumber2(value.last_success_age_seconds, "status.universe.last_success_age_seconds");
+      if (value.last_success_age_seconds < 0) throw new TypeError("status.universe last success age must be non-negative");
+    }
+    if (value.last_successful_refreshed_at_ms === null !== (value.last_success_age_seconds === null)) {
+      throw new TypeError("status.universe last success fields are inconsistent");
+    }
+    const successMissing = value.last_successful_refreshed_at_ms === null;
+    if (successMissing !== (value.selection_expires_at_ms === null)) {
+      throw new TypeError("status.universe successful selection requires its expiry");
+    }
+    const absentFacts = value.reason === "missing_current_universe_facts" || value.reason === "incompatible_current_universe_facts";
+    if (absentFacts) {
+      if ([
+        value.generation,
+        value.refreshed_at_ms,
+        value.last_successful_refreshed_at_ms,
+        value.last_success_age_seconds,
+        value.last_refresh_error_at_ms,
+        value.selection_expires_at_ms
+      ].some((item) => item !== null)) {
+        throw new TypeError("status.universe unavailable facts must have null refresh metadata");
+      }
+    } else {
+      if (value.generation === null || value.refreshed_at_ms === null) {
+        throw new TypeError("status.universe current facts require generation and refresh time");
+      }
+      if (value.reason !== "selection_fail_closed" && successMissing) {
+        throw new TypeError("status.universe successful selection metadata is required");
+      }
+      if (value.refresh_status === "fresh" && value.last_refresh_error_at_ms !== null) {
+        throw new TypeError("status.universe fresh selection cannot report a refresh error");
+      }
+      if ((value.refresh_status === "stale_if_error" || value.reason === "selection_fail_closed") && value.last_refresh_error_at_ms === null) {
+        throw new TypeError("status.universe failed refresh requires its error time");
+      }
+    }
+  }
+  function validateStrategy29StatusResponse(value, httpStatus) {
+    if (httpStatus !== 200) throw new TypeError(`status response requires HTTP 200, received ${httpStatus}`);
+    assertObject(value, "status response");
+    assertSchema(value.schema_version, "status.schema_version");
+    assertString(value.spec_version, "status.spec_version");
+    assertInteger(value.observed_at_ms, "status.observed_at_ms");
+    if (value.spec_version !== STRATEGY29_SPEC_VERSION) return {
+      schema_version: value.schema_version,
+      spec_version: value.spec_version,
+      observed_at_ms: value.observed_at_ms
+    };
+    assertExactKeys(value, STATUS_KEYS, "status response");
+    validateUniverse(value.universe);
+    if (!Array.isArray(value.units)) throw new TypeError("status.units must be an array");
+    if (value.units.length > 128) throw new TypeError("status.units exceeds the 128-unit bound");
+    value.units.forEach(validateUnit);
+    assertExactKeys(value.delivery_counts, DELIVERY_COUNT_KEYS, "status.delivery_counts");
+    for (const key of DELIVERY_COUNT_KEYS) {
+      assertInteger(value.delivery_counts[key], `status.delivery_counts.${key}`);
+    }
+    return value;
+  }
+  function expectedSignalSide(direction, signalType) {
+    if (signalType === "reversal") return direction === "bearish" ? "long" : "short";
+    return direction === "bearish" ? "short" : "long";
+  }
+  function validateEvent(value, index) {
+    const name = `events.events[${index}]`;
+    assertExactKeys(value, EVENT_KEYS, name);
+    assertInteger(value.sequence, `${name}.sequence`, { minimum: 1 });
+    if (typeof value.event_id !== "string" || !EVENT_ID_PATTERN.test(value.event_id)) {
+      throw new TypeError(`${name}.event_id must be a lowercase hexadecimal event id`);
+    }
+    assertSchema(value.schema_version, `${name}.schema_version`);
+    if (value.strategy_id !== "29") throw new TypeError(`${name}.strategy_id must equal 29`);
+    if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
+      throw new TypeError(`${name}.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
+    }
+    assertCanonicalSymbol(value.symbol, `${name}.symbol`);
+    assertEnum(value.timeframe, TIMEFRAMES, `${name}.timeframe`);
+    assertEnum(value.setup_direction, DIRECTIONS, `${name}.setup_direction`);
+    assertEnum(value.signal_type, SIGNAL_TYPES, `${name}.signal_type`);
+    assertEnum(value.signal_side, SIGNAL_SIDES, `${name}.signal_side`);
+    if (value.signal_side !== expectedSignalSide(value.setup_direction, value.signal_type)) {
+      throw new TypeError(`${name}.signal_side does not match direction and signal type`);
+    }
+    for (const field of ["setup_open_ms", "bar_open_ms", "bar_close_ms", "detected_at_ms", "warning_open_ms"]) {
+      assertInteger(value[field], `${name}.${field}`);
+    }
+    if (value.bar_close_ms <= value.bar_open_ms) throw new TypeError(`${name}.bar_close_ms must follow bar_open_ms`);
+    for (const field of ["close_price", "marker_price", "warning_high", "warning_low"]) {
+      assertFiniteNumber2(value[field], `${name}.${field}`);
+    }
+    if (value.warning_high < value.warning_low) throw new TypeError(`${name}.warning_high must not be below warning_low`);
+    assertEnum(value.origin, ORIGINS, `${name}.origin`);
+    assertEnum(value.delivery_state, DELIVERY_STATES, `${name}.delivery_state`, { nullable: true });
+    assertString(value.delivery_failure_reason, `${name}.delivery_failure_reason`, { nullable: true, maximumLength: 512 });
+  }
+  function validateStrategy29EventsResponse(value, httpStatus) {
+    if (httpStatus !== 200) throw new TypeError(`events response requires HTTP 200, received ${httpStatus}`);
+    assertExactKeys(value, EVENTS_KEYS, "events response");
+    assertSchema(value.schema_version, "events.schema_version");
+    if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
+      throw new TypeError(`events.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
+    }
+    assertInteger(value.observed_at_ms, "events.observed_at_ms");
+    assertInteger(value.next_cursor, "events.next_cursor");
+    if (typeof value.has_more !== "boolean") throw new TypeError("events.has_more must be boolean");
+    if (!Array.isArray(value.events)) throw new TypeError("events.events must be an array");
+    if (value.events.length > 200) throw new TypeError("events.events exceeds the 200-event page bound");
+    value.events.forEach(validateEvent);
+    return value;
+  }
+  function validateStrategy29GatewayError(value, httpStatus) {
+    if (httpStatus === 503 && (value.error === "module_disabled" || value.error === "gateway_unavailable")) {
+      assertExactKeys(value, value.error === "module_disabled" ? ["schema_version", "error", "strategy_id", "status"] : ["schema_version", "error", "strategy_id"], "gateway error");
+      assertSchema(value.schema_version, "gateway error.schema_version");
+      if (value.strategy_id !== "29" || value.error === "module_disabled" && value.status !== "disabled") {
+        throw new TypeError("Strategy29 gateway module identity is invalid");
+      }
+      return value;
+    }
+    if (httpStatus === 409) {
+      assertExactKeys(value, ["schema_version", "error", "oldest_cursor"], "gateway error");
+      assertSchema(value.schema_version, "gateway error.schema_version");
+      if (value.error !== "cursor_expired") throw new TypeError("gateway error.error must equal cursor_expired");
+      assertInteger(value.oldest_cursor, "gateway error.oldest_cursor");
+      return value;
+    }
+    const expected = /* @__PURE__ */ new Map([[400, "invalid_request"], [401, "unauthorized"], [503, "database_unavailable"]]);
+    if (!expected.has(httpStatus)) throw new TypeError(`unsupported gateway HTTP status ${httpStatus}`);
+    assertExactKeys(value, ["schema_version", "error"], "gateway error");
+    assertSchema(value.schema_version, "gateway error.schema_version");
+    if (value.error !== expected.get(httpStatus)) {
+      throw new TypeError(`gateway error.error must equal ${expected.get(httpStatus)}`);
+    }
+    return value;
+  }
+
+  // src/binance-strategy29-bollinger/core/remote-summary-client.js
+  var Strategy29GatewayTransportError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "Strategy29GatewayTransportError";
+    }
+  };
+  function normalizeStrategy29GatewayOrigin(value) {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new TypeError("Strategy29 gateway must be an explicit loopback origin");
+    }
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port === "" || url.username !== "" || url.password !== "" || url.pathname !== "/" || url.search !== "" || url.hash !== "") throw new TypeError("Strategy29 gateway must be an explicit loopback origin");
+    return url.origin;
+  }
+  function parseJsonResponse(response, label) {
+    if (!response || !Number.isInteger(response.status) || typeof response.responseText !== "string") {
+      throw new Strategy29GatewayTransportError(`${label} returned an invalid transport response`);
+    }
+    try {
+      return JSON.parse(response.responseText);
+    } catch {
+      throw new TypeError(`${label} returned invalid JSON`);
+    }
+  }
+  function assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset }) {
+    if (typeof request !== "function") throw new TypeError("request must be a function");
+    if (typeof authSecret !== "string" || authSecret.length === 0) throw new TypeError("authSecret must be non-empty");
+    if (typeof canonicalSymbol !== "string" || !/^[A-Z0-9]+\/USDT:USDT$/.test(canonicalSymbol)) {
+      throw new TypeError("canonicalSymbol must use canonical symbol format");
+    }
+    if (!Number.isInteger(maxPagesPerPoll) || maxPagesPerPoll < 1 || maxPagesPerPoll > 10) {
+      throw new TypeError("maxPagesPerPoll must be between 1 and 10");
+    }
+    for (const [name, callback] of Object.entries({ onStatus, onEvents, onCursorReset })) {
+      if (typeof callback !== "function") throw new TypeError(`${name} must be a function`);
+    }
+  }
+  function buildEventsUrl(origin, canonicalSymbol, cursor) {
+    const url = new URL("/v1/strategy29/events", origin);
+    url.searchParams.set("symbol", canonicalSymbol);
+    if (cursor === null) {
+      url.searchParams.set("mode", "latest");
+      url.searchParams.set("limit", "20");
+    } else url.searchParams.set("cursor", String(cursor));
+    return url.href;
+  }
+  function createStrategy29SummaryClient({
+    request,
+    gatewayOrigin,
+    authSecret,
+    canonicalSymbol,
+    maxPagesPerPoll = 2,
+    onStatus,
+    onEvents,
+    onCursorReset
+  }) {
+    const origin = normalizeStrategy29GatewayOrigin(gatewayOrigin);
+    assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset });
+    let cursor = null;
+    async function perform(url, signal) {
+      if (!signal || typeof signal.aborted !== "boolean" || typeof signal.addEventListener !== "function") {
+        throw new TypeError("poll requires an AbortSignal");
+      }
+      if (signal.aborted) throw signal.reason;
+      return request({ url, authSecret, signal });
+    }
+    async function poll(signal) {
+      const statusResponse = await perform(`${origin}/v1/strategy29/status`, signal);
+      if (signal.aborted) throw signal.reason;
+      const statusBody = parseJsonResponse(statusResponse, "Strategy29 status");
+      if (statusResponse.status === 503) {
+        const error = validateStrategy29GatewayError(statusBody, 503);
+        return { state: error.error === "database_unavailable" ? "unavailable" : error.error, pages: 0, hasMore: false };
+      }
+      if (statusResponse.status !== 200) {
+        validateStrategy29GatewayError(statusBody, statusResponse.status);
+        throw new Error(`Strategy29 status request failed with HTTP ${statusResponse.status}`);
+      }
+      const status = validateStrategy29StatusResponse(statusBody, 200);
+      onStatus(status);
+      if (status.spec_version !== STRATEGY29_SPEC_VERSION) {
+        return { state: "incompatible", pages: 0, hasMore: false };
+      }
+      let pages = 0;
+      let hasMore = false;
+      while (pages < maxPagesPerPoll) {
+        const requestedCursor = cursor;
+        const eventsResponse = await perform(buildEventsUrl(origin, canonicalSymbol, cursor), signal);
+        if (signal.aborted) throw signal.reason;
+        const eventsBody = parseJsonResponse(eventsResponse, "Strategy29 events");
+        pages += 1;
+        if (eventsResponse.status === 409) {
+          const error = validateStrategy29GatewayError(eventsBody, 409);
+          cursor = null;
+          onCursorReset(error.oldest_cursor);
+          hasMore = true;
+          continue;
+        }
+        if (eventsResponse.status === 503) {
+          const error = validateStrategy29GatewayError(eventsBody, 503);
+          return { state: error.error === "database_unavailable" ? "unavailable" : error.error, pages, hasMore: false };
+        }
+        if (eventsResponse.status !== 200) {
+          validateStrategy29GatewayError(eventsBody, eventsResponse.status);
+          throw new Error(`Strategy29 events request failed with HTTP ${eventsResponse.status}`);
+        }
+        const page = validateStrategy29EventsResponse(eventsBody, 200);
+        if (requestedCursor === null && (page.has_more || page.events.length > 20)) {
+          throw new TypeError("Strategy29 latest snapshot must be complete and bounded to 20 events");
+        }
+        if (requestedCursor !== null && page.next_cursor < requestedCursor) {
+          throw new TypeError("Strategy29 event cursor moved backwards");
+        }
+        if (page.has_more && (requestedCursor === null ? page.next_cursor <= 0 : page.next_cursor <= requestedCursor)) {
+          throw new TypeError("Strategy29 event cursor did not advance while has_more is true");
+        }
+        let previousSequence = requestedCursor;
+        for (const event of page.events) {
+          if (event.symbol !== canonicalSymbol) throw new TypeError("Strategy29 event symbol does not match the requested symbol");
+          if (previousSequence !== null && event.sequence <= previousSequence) {
+            throw new TypeError("Strategy29 event sequences must advance strictly");
+          }
+          if (event.sequence > page.next_cursor) throw new TypeError("Strategy29 event sequence exceeds next_cursor");
+          previousSequence = event.sequence;
+        }
+        onEvents(page.events, page.observed_at_ms);
+        cursor = page.next_cursor;
+        hasMore = page.has_more;
+        if (!hasMore) break;
+      }
+      return { state: "connected", pages, hasMore };
+    }
+    return Object.freeze({
+      poll,
+      get diagnostics() {
+        return Object.freeze({ cursor });
+      }
+    });
+  }
+
   // src/binance-orderbook-trade/contracts/panel-copy.js
   var UI_LOCALE_ZH_CN = "zh-CN";
   var UI_LOCALE_EN = "en";
@@ -1982,6 +1947,10 @@
   // src/binance-strategy29-bollinger/ui-copy.js
   var pair = localizedText;
   var SUMMARY_COPY = Object.freeze({
+    disabled: pair("跨周期汇总未启用，可在 CorsairQuant 信号客户端菜单中开启。", "Cross-timeframe summary is disabled. Enable it in the CorsairQuant signal client menu."),
+    moduleDisabled: pair("服务端尚未启用 Strategy 29 监控汇总", "Strategy 29 monitoring summary is not enabled on the server"),
+    gatewayUnavailable: pair("Strategy 29 后端暂不可用，等待恢复", "Strategy 29 backend is unavailable; waiting for recovery"),
+    noLiveStatus: pair("当前监控状态不可用；下方仅保留历史信号。", "Current monitoring status is unavailable; only retained signals are shown below."),
     title: pair("Strategy 29 汇总", "Strategy 29 Summary"),
     drag: pair("拖动面板", "Drag panel"),
     collapse: pair("收起", "Collapse"),
@@ -2023,11 +1992,6 @@
     disconnected: pair("网关连接失败，将在下次定时检查时重试", "Gateway connection failed; next scheduled poll will retry"),
     stopped: (detail) => pair(`远程汇总已停止。技术详情：${detail}`, `Remote summary stopped: ${detail}`),
     menuToggle: pair("切换 Strategy 29 跨周期汇总", "Toggle Strategy 29 cross-timeframe summary"),
-    menuSecret: pair("设置 Strategy 29 网关密钥", "Set Strategy 29 gateway secret"),
-    menuOrigin: pair("设置 Strategy 29 网关地址", "Set Strategy 29 gateway origin"),
-    promptSecret: pair("请输入本地 Strategy 29 网关密钥，仅保存在此用户脚本的私有存储中。", "Enter the local Strategy 29 gateway secret. It is stored only in this userscript storage."),
-    promptOrigin: pair("请输入本机网关地址（http://127.0.0.1:<port>）", "Enter the loopback gateway origin (http://127.0.0.1:<port>)"),
-    emptySecret: pair("Strategy 29 网关密钥不能为空", "Strategy 29 gateway secret cannot be empty"),
     localStopped: (detail) => pair(`Strategy 29 已停止。技术详情：${detail}`, `Strategy 29 stopped: ${detail}`),
     conflict: pair("Strategy 29 已停止：请将订单簿脚本更新至 2.7.199 或更高版本，或禁用内嵌布林带观察器的旧版本，然后刷新页面。", "Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.")
   });
@@ -2128,6 +2092,9 @@
   // src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js
   var PANEL_ID = "jh-strategy29-summary-panel";
   var STATE_COLORS = Object.freeze({
+    disabled: "#848E9C",
+    module_disabled: "#848E9C",
+    gateway_unavailable: "#F0B90B",
     connected: "#0ECB81",
     connecting: "#F0B90B",
     unavailable: "#F0B90B",
@@ -2239,6 +2206,19 @@
     const position = installPanelPosition(document, panel, header, { initialPosition: stored, savePosition });
     const eventRecords = /* @__PURE__ */ new Map();
     let lastStatus = null;
+    function clearCurrentStatus() {
+      lastStatus = null;
+      spec.dataset.state = "unavailable";
+      spec.style.color = "#848E9C";
+      spec.textContent = text(SUMMARY_COPY.observerSpec(STRATEGY29_SPEC_VERSION));
+      statusFreshness.textContent = text(SUMMARY_COPY.noStatus);
+      selection.dataset.state = "unavailable";
+      selection.style.color = "#848E9C";
+      selection.textContent = text(SUMMARY_COPY.noLiveStatus);
+      selectionRefresh.textContent = "";
+      units.replaceChildren();
+      delivery.textContent = text(SUMMARY_COPY.waitingDelivery);
+    }
     let lastEventsAt = null;
     let connectionCopy = SUMMARY_COPY.waiting;
     let destroyed = false;
@@ -2287,11 +2267,7 @@
         eventsTitle.textContent = text(SUMMARY_COPY.recent);
         eventsFreshness.textContent = text(lastEventsAt === null ? SUMMARY_COPY.noEventsCheck : SUMMARY_COPY.eventsAt(formatClock(lastEventsAt)));
         if (lastStatus !== null) api.renderStatus(lastStatus);
-        else {
-          spec.textContent = text(SUMMARY_COPY.observerSpec(STRATEGY29_SPEC_VERSION));
-          statusFreshness.textContent = text(SUMMARY_COPY.noStatus);
-          delivery.textContent = text(SUMMARY_COPY.waitingDelivery);
-        }
+        else clearCurrentStatus();
         renderEvents();
         position.clamp();
       },
@@ -2302,6 +2278,7 @@
         connection.style.color = STATE_COLORS[state];
         connectionCopy = message;
         connection.textContent = text(message);
+        if (["disabled", "module_disabled", "gateway_unavailable", "unavailable"].includes(state)) clearCurrentStatus();
         position.clamp();
       },
       renderStatus(snapshot) {
@@ -2385,22 +2362,19 @@
   // src/binance-strategy29-bollinger/remote-summary.js
   var STRATEGY29_PANEL_POSITION_KEY = "strategy29SummaryPanelPosition";
   var STRATEGY29_REMOTE_ENABLED_KEY = "strategy29RemoteSummaryEnabled";
-  var STRATEGY29_GATEWAY_ORIGIN_KEY = "strategy29GatewayOrigin";
-  var STRATEGY29_GATEWAY_SECRET_KEY = "strategy29GatewayAuthSecret";
-  var STRATEGY29_DEFAULT_GATEWAY_ORIGIN = "http://127.0.0.1:8729";
   var STRATEGY29_REMOTE_POLL_INTERVAL_MS = 5e3;
   function abortError(view, message) {
     const ErrorConstructor = view.DOMException ?? DOMException;
     return new ErrorConstructor(message, "AbortError");
   }
-  function assertAdapters({ view, request, getValue, setValue, registerMenuCommand, promptUser: promptUser2, createPanel, createClient }) {
+  function assertAdapters({ view, request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient }) {
     if (!view?.document || !view?.location) throw new TypeError("Strategy 29 remote summary requires a page window");
     for (const [name, value] of Object.entries({
       request,
       getValue,
       setValue,
       registerMenuCommand,
-      promptUser: promptUser2,
+      getGatewaySettings,
       createPanel,
       createClient
     })) {
@@ -2413,12 +2387,12 @@
     getValue,
     setValue,
     registerMenuCommand,
-    promptUser: promptUser2,
+    getGatewaySettings,
     createPanel = createStrategy29SummaryPanel,
     createClient = createStrategy29SummaryClient,
     pollIntervalMs = STRATEGY29_REMOTE_POLL_INTERVAL_MS
   }) {
-    assertAdapters({ view, request, getValue, setValue, registerMenuCommand, promptUser: promptUser2, createPanel, createClient });
+    assertAdapters({ view, request, getValue, setValue, registerMenuCommand, getGatewaySettings, createPanel, createClient });
     if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1e3) throw new TypeError("Strategy 29 remote poll interval is invalid");
     let enabled = getValue(STRATEGY29_REMOTE_ENABLED_KEY, false) === true;
     let active = null;
@@ -2437,12 +2411,9 @@
       context.panel.destroy();
     }
     function configuredSettings() {
-      const authSecret = getValue(STRATEGY29_GATEWAY_SECRET_KEY, "");
+      const { authSecret, gatewayOrigin } = getGatewaySettings();
       if (typeof authSecret !== "string") throw new TypeError("Strategy 29 gateway secret storage is invalid");
-      const gatewayOrigin = normalizeStrategy29GatewayOrigin(
-        getValue(STRATEGY29_GATEWAY_ORIGIN_KEY, STRATEGY29_DEFAULT_GATEWAY_ORIGIN)
-      );
-      return { authSecret, gatewayOrigin };
+      return { authSecret, gatewayOrigin: normalizeStrategy29GatewayOrigin(gatewayOrigin) };
     }
     function startContext(routeSymbol) {
       const canonicalSymbol = routeSymbolToCanonical(routeSymbol);
@@ -2468,6 +2439,11 @@
         lastResult: null
       };
       active = context;
+      if (!enabled) {
+        context.state = "disabled";
+        panel.setConnection("disabled", SUMMARY_COPY.disabled);
+        return context;
+      }
       let settings;
       try {
         settings = configuredSettings();
@@ -2513,7 +2489,7 @@
       return context;
     }
     function synchronizeContext() {
-      if (!enabled || !view.document.body) {
+      if (!view.document.body) {
         unsupportedRoute = null;
         stopActive("Strategy 29 remote summary disabled");
         return null;
@@ -2560,6 +2536,8 @@
         const presentation = {
           connected: ["connected", result.hasMore ? SUMMARY_COPY.moreHistory : SUMMARY_COPY.connected],
           unavailable: ["unavailable", SUMMARY_COPY.unavailable],
+          module_disabled: ["module_disabled", SUMMARY_COPY.moduleDisabled],
+          gateway_unavailable: ["gateway_unavailable", SUMMARY_COPY.gatewayUnavailable],
           incompatible: ["incompatible", SUMMARY_COPY.incompatible]
         }[result.state];
         if (!presentation) throw new Error(`Strategy 29 remote state is invalid: ${result.state}`);
@@ -2581,6 +2559,7 @@
       });
     }
     function restart() {
+      enabled = getValue(STRATEGY29_REMOTE_ENABLED_KEY, false) === true;
       unsupportedRoute = null;
       stopActive("Strategy 29 remote settings changed");
       if (!disposed) void sample(Date.now());
@@ -2589,20 +2568,6 @@
       { copy: SUMMARY_COPY.menuToggle, run() {
         enabled = !enabled;
         setValue(STRATEGY29_REMOTE_ENABLED_KEY, enabled);
-        restart();
-      } },
-      { copy: SUMMARY_COPY.menuSecret, run() {
-        const value = promptUser2(formatLocalizedText(SUMMARY_COPY.promptSecret, resolveUiLocaleFromPathname(view.location.pathname)));
-        if (value === null) return;
-        if (value.length === 0) throw new Error(text(SUMMARY_COPY.emptySecret));
-        setValue(STRATEGY29_GATEWAY_SECRET_KEY, value);
-        restart();
-      } },
-      { copy: SUMMARY_COPY.menuOrigin, run() {
-        const current = getValue(STRATEGY29_GATEWAY_ORIGIN_KEY, STRATEGY29_DEFAULT_GATEWAY_ORIGIN);
-        const value = promptUser2(formatLocalizedText(SUMMARY_COPY.promptOrigin, resolveUiLocaleFromPathname(view.location.pathname)), current);
-        if (value === null) return;
-        setValue(STRATEGY29_GATEWAY_ORIGIN_KEY, normalizeStrategy29GatewayOrigin(value));
         restart();
       } }
     ];
@@ -2767,13 +2732,33 @@
     return runtime;
   }
 
+  // src/shared/strategy29-preferences-migration.js
+  var RECORD = Symbol.for("jh-userscripts.strategy29-preferences-migration");
+  var STRATEGY29_PREFERENCES_EVENT = "jh-strategy29-preferences-ready";
+  var ENABLED = "strategy29RemoteSummaryEnabled";
+  var POSITION = "strategy29SummaryPanelPosition";
+  function validate(record) {
+    if (!record || Object.keys(record).sort().join(",") !== "enabled,position,version" || record.version !== 1 || typeof record.enabled !== "boolean") {
+      throw new TypeError("Strategy29 preference migration record is invalid");
+    }
+    const point = record.position;
+    if (point !== null && (Object.keys(point).sort().join(",") !== "left,top" || !Number.isFinite(point.left) || !Number.isFinite(point.top))) {
+      throw new TypeError("Strategy29 preference migration position is invalid");
+    }
+    return { version: 1, enabled: record.enabled, position: point === null ? null : { left: point.left, top: point.top } };
+  }
+  function publishStrategy29Preferences(view, getValue) {
+    if (view[RECORD] !== void 0) {
+      validate(view[RECORD]);
+      return;
+    }
+    const record = validate({ version: 1, enabled: getValue(ENABLED, false), position: getValue(POSITION, null) });
+    if (record.position !== null) Object.freeze(record.position);
+    Object.defineProperty(view, RECORD, { value: Object.freeze(record) });
+    view.dispatchEvent(new view.Event(STRATEGY29_PREFERENCES_EVENT));
+  }
+
   // src/binance-strategy29-bollinger/index.user.js
-  var promptUser = globalThis.prompt.bind(globalThis);
-  installStrategy29(unsafeWindow, {
-    request: createStrategy29GmJsonRequest(GM_xmlhttpRequest),
-    getValue: GM_getValue,
-    setValue: GM_setValue,
-    registerMenuCommand: GM_registerMenuCommand,
-    promptUser
-  });
+  installStrategy29(unsafeWindow);
+  publishStrategy29Preferences(unsafeWindow, GM_getValue);
 })();

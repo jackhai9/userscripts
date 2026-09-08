@@ -578,7 +578,7 @@ function createMarkerLayer(target, defaultDirection, {
           const shape = chart.getShapeById(markerId);
           const point = readMarkerPoint(shape);
           if (point.time !== signal.time) {
-            throw new Error(`TradingView Bollinger alert time alignment failed for ${signal.time}`);
+            throw new Error(`TradingView Bollinger alert time alignment failed: expected ${signal.time}, received ${point.time}`);
           }
           if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
           mutate(() => shape.setProperties(options.overrides, false));

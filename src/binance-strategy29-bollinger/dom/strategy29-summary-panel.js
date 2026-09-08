@@ -5,6 +5,9 @@ import { installPanelPosition } from './panel-position.js';
 
 const PANEL_ID = 'jh-strategy29-summary-panel';
 const STATE_COLORS = Object.freeze({
+  disabled: '#848E9C',
+  module_disabled: '#848E9C',
+  gateway_unavailable: '#F0B90B',
   connected: '#0ECB81',
   connecting: '#F0B90B',
   unavailable: '#F0B90B',
@@ -105,6 +108,19 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   const position = installPanelPosition(document, panel, header, { initialPosition: stored, savePosition });
   const eventRecords = new Map();
   let lastStatus = null;
+  function clearCurrentStatus() {
+    lastStatus = null;
+    spec.dataset.state = 'unavailable';
+    spec.style.color = '#848E9C';
+    spec.textContent = text(COPY.observerSpec(STRATEGY29_SPEC_VERSION));
+    statusFreshness.textContent = text(COPY.noStatus);
+    selection.dataset.state = 'unavailable';
+    selection.style.color = '#848E9C';
+    selection.textContent = text(COPY.noLiveStatus);
+    selectionRefresh.textContent = '';
+    units.replaceChildren();
+    delivery.textContent = text(COPY.waitingDelivery);
+  }
   let lastEventsAt = null;
   let connectionCopy = COPY.waiting;
   let destroyed = false;
@@ -155,11 +171,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
       eventsTitle.textContent = text(COPY.recent);
       eventsFreshness.textContent = text(lastEventsAt === null ? COPY.noEventsCheck : COPY.eventsAt(formatClock(lastEventsAt)));
       if (lastStatus !== null) api.renderStatus(lastStatus);
-      else {
-        spec.textContent = text(COPY.observerSpec(STRATEGY29_SPEC_VERSION));
-        statusFreshness.textContent = text(COPY.noStatus);
-        delivery.textContent = text(COPY.waitingDelivery);
-      }
+      else clearCurrentStatus();
       renderEvents();
       position.clamp();
     },
@@ -170,6 +182,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
       connection.style.color = STATE_COLORS[state];
       connectionCopy = message;
       connection.textContent = text(message);
+      if (['disabled', 'module_disabled', 'gateway_unavailable', 'unavailable'].includes(state)) clearCurrentStatus();
       position.clamp();
     },
     renderStatus(snapshot) {

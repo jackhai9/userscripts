@@ -227,6 +227,21 @@ test('reports unavailable status separately from fatal HTTP and contract errors'
   await assert.rejects(transport.client.poll(new AbortController().signal), /transport failure/);
 });
 
+for (const error of ['module_disabled', 'gateway_unavailable']) {
+  for (const endpoint of ['status', 'events']) {
+    test(`${endpoint} preserves the typed ${error} state without requesting extra pages`, async () => {
+      const body = { schema_version: 1, error, strategy_id: '29', ...(error === 'module_disabled' ? { status: 'disabled' } : {}) };
+      const fixture = clientFixture(endpoint === 'status' ? [response(body, 503)] : [response(status), response(body, 503)]);
+      assert.deepEqual(await fixture.client.poll(new AbortController().signal), {
+        state: error, pages: endpoint === 'status' ? 0 : 1, hasMore: false,
+      });
+      assert.equal(fixture.requests.length, endpoint === 'status' ? 1 : 2);
+      assert.deepEqual(fixture.resets, []);
+      assert.deepEqual(fixture.received, []);
+    });
+  }
+}
+
 test('exposes remote/local spec mismatch before requesting event history', async () => {
   const mismatch = { ...status, spec_version: 'other_spec' };
   delete mismatch.universe;

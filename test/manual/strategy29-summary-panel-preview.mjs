@@ -83,6 +83,12 @@ try {
   await page.evaluate(() => window.fixturePanel.setLocale('en'));
   assert.match(await panel.textContent(), /Bearish warning/);
   assert.equal(await panel.locator('[data-role="remote-event"]').count(), 2);
+  await page.evaluate(() => {
+    window.fixturePanel.setLocale('zh-CN');
+    window.fixturePanel.setConnection('module_disabled', { zhCN: '服务端尚未启用 Strategy 29 监控汇总', en: 'Strategy 29 monitoring summary is not enabled on the server' });
+  });
+  assert.match(await panel.locator('[data-role="connection"]').textContent(), /服务端尚未启用/);
+  await panel.screenshot({ path: join(output, 'chinese-module-disabled.png') });
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ output, checked: ['two-timeframe-status', 'two-events', 'global-delivery-label', 'separate-freshness', 'collapse', 'viewport', 'Chinese-English-retained-state', 'header-drag-position-storage', 'narrow-viewport'], pageErrors: errors }));
 } finally {

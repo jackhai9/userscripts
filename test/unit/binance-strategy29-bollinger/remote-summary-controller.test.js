@@ -33,7 +33,7 @@ function fixture({ enabled = true, authSecret = 'synthetic-secret', poll } = {})
       menus[id] = { label, callback };
       return id;
     },
-    promptUser: (...args) => { prompts.push(args); return null; },
+    getGatewaySettings: () => ({ authSecret: values.get('strategy29GatewayAuthSecret'), gatewayOrigin: values.get('strategy29GatewayOrigin') }),
     createPanel: (_document, canonicalSymbol, options) => {
       const calls = [];
       const panel = {
@@ -64,12 +64,12 @@ function fixture({ enabled = true, authSecret = 'synthetic-secret', poll } = {})
   return { view, values, menus, prompts, panels, clients, summary };
 }
 
-test('remote summary is opt-in and registers configuration without requesting data', async () => {
+test('disabled remote summary remains discoverable without requesting data or reading credentials', async () => {
   const f = fixture({ enabled: false });
   assert.equal(f.summary.sample(0), undefined);
-  assert.equal(f.panels.length, 0);
+  assert.equal(f.panels.length, 1);
   assert.equal(f.clients.length, 0);
-  assert.equal(f.menus.length, 3);
+  assert.equal(f.menus.length, 1);
   assert.equal(f.summary.diagnostics.enabled, false);
 });
 
@@ -101,12 +101,12 @@ test('pause preserves the current client and panel and permits one resumed reque
   f.summary.dispose();
 });
 
-test('gateway configuration uses only the injected userscript prompt adapter', () => {
-  const f = fixture({ enabled: false });
-  f.view.prompt = () => { throw new Error('page prompt must not be called'); };
-  f.menus.find(menu => menu.label === 'Set Strategy 29 gateway secret').callback();
-  assert.equal(f.prompts.length, 1);
-  assert.match(f.prompts[0][0], /gateway secret/);
+test('remote module owns no gateway configuration menu and uses host settings', async () => {
+  const f = fixture();
+  await f.summary.sample(0);
+  assert.deepEqual(f.menus.map(menu => menu.label), ['Toggle Strategy 29 cross-timeframe summary']);
+  assert.equal(f.clients[0].options.authSecret, 'synthetic-secret');
+  assert.equal(f.clients[0].options.gatewayOrigin, 'http://127.0.0.1:8729');
 });
 
 test('polls the current route symbol independently of the visible chart interval', async () => {
@@ -195,8 +195,8 @@ test('locale switches preserve the pending request, client cursor and panel whil
   assert.equal(f.panels[0].locale, 'zh-CN');
   assert.equal(f.summary.diagnostics.cursor, 41);
   assert.equal(requestSignal.aborted, false);
-  assert.equal(f.menus.length, 3);
-  assert.deepEqual(f.menus.map(menu => menu.label), ['切换 Strategy 29 跨周期汇总', '设置 Strategy 29 网关密钥', '设置 Strategy 29 网关地址']);
+  assert.equal(f.menus.length, 1);
+  assert.deepEqual(f.menus.map(menu => menu.label), ['切换 Strategy 29 跨周期汇总']);
   complete({ state: 'connected', pages: 1, hasMore: false });
   await pending;
   assert.deepEqual(f.panels[0].calls.at(-1), ['connection', 'connected', '已连接']);
@@ -205,7 +205,7 @@ test('locale switches preserve the pending request, client cursor and panel whil
   assert.equal(f.panels[0].locale, 'en');
   assert.equal(f.summary.diagnostics.cursor, 41);
   assert.equal(f.clients.length, 1);
-  assert.equal(f.menus.length, 3);
+  assert.equal(f.menus.length, 1);
   assert.equal(f.menus[0].label, 'Toggle Strategy 29 cross-timeframe summary');
   f.summary.dispose();
 });
@@ -219,8 +219,7 @@ test('no-auth locale change updates the existing panel and localized prompts wit
   assert.equal(f.panels[0].locale, 'zh-CN');
   assert.equal(f.clients.length, 0);
   assert.equal(f.summary.diagnostics.state, 'configuration_required');
-  f.menus[1].callback();
-  assert.match(f.prompts[0][0], /请输入本地 Strategy 29 网关密钥/);
+  assert.deepEqual(f.menus.map(menu => menu.label), ['切换 Strategy 29 跨周期汇总']);
   f.summary.dispose();
 });
 

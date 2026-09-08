@@ -33,8 +33,11 @@ test('sandbox entry installs the runtime on unsafeWindow and keeps the shared pa
   assert.equal(typeof dom.window.__TM_STRATEGY29_DEBUG__.dispose, 'function');
   assert.equal(sandbox.__TM_STRATEGY29_DEBUG__, undefined);
   assert.equal(dom.window[Symbol.for('jh-userscripts.strategy29-bollinger')].version, 2);
-  menus.find(menu => menu.label === 'Set Strategy 29 gateway secret').callback();
-  assert.equal(stored.get('strategy29GatewayAuthSecret'), 'sandbox-secret');
+  assert.deepEqual(menus, []);
+  assert.equal(stored.size, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(dom.window[Symbol.for('jh-userscripts.strategy29-preferences-migration')])), {
+    version: 1, enabled: false, position: null,
+  });
   assert.equal(pagePromptCalls, 0);
   dom.window.__TM_STRATEGY29_DEBUG__.dispose();
   dom.window.close();

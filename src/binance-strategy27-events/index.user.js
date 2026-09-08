@@ -3,9 +3,9 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.4.6
+// @version      0.5.0
 // @author       jackhai9
-// @description  在 Binance 一秒图表标注 VPS Strategy 27 的实时订单流候选观察
+// @description  统一配置 CorsairQuant 网关，显示 Strategy 27 事件与 Strategy 29 跨周期汇总
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @exclude      https://www.binance.com/*/my/wallet/futures/*
@@ -49,13 +49,19 @@ import { createTradingViewCompoundLayer } from './dom/tradingview-compound-layer
 import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 import { createStrategy27Translator, localizeAnnotation, resolveUiLocaleFromPathname } from './core/ui-copy.js';
 import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
+import { createStrategy29RemoteSummary } from '../binance-strategy29-bollinger/remote-summary.js';
+import { createStrategy29GmJsonRequest } from '../binance-strategy29-bollinger/core/remote-summary-client.js';
+import { readSignalGatewaySettings, SIGNAL_GATEWAY_ORIGIN, SIGNAL_GATEWAY_ORIGIN_KEY, SIGNAL_GATEWAY_SECRET_KEY } from '../shared/signal-client-settings.js';
+import { migrateStrategy29Preferences, STRATEGY29_PREFERENCES_EVENT } from '../shared/strategy29-preferences-migration.js';
+
+const promptUser = globalThis.prompt.bind(globalThis);
 
 (function () {
   'use strict';
 
-  const DEFAULT_GATEWAY_ORIGIN = 'http://127.0.0.1:18765';
-  const GATEWAY_ORIGIN_KEY = 'strategy27GatewayOrigin';
-  const GATEWAY_SECRET_KEY = 'strategy27GatewayAuthSecret';
+  const DEFAULT_GATEWAY_ORIGIN = SIGNAL_GATEWAY_ORIGIN;
+  const GATEWAY_ORIGIN_KEY = SIGNAL_GATEWAY_ORIGIN_KEY;
+  const GATEWAY_SECRET_KEY = SIGNAL_GATEWAY_SECRET_KEY;
   const PANEL_POSITION_KEY = 'strategy27EventPanelPosition';
   const CONTEXT_CHECK_INTERVAL_MS = 1_000;
   const MAX_RETAINED_EVENTS = 80;
@@ -69,6 +75,54 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
   let uiLocale = resolveUiLocaleFromPathname(page.location.pathname);
   let t = createStrategy27Translator(uiLocale);
   let statusCopy = null;
+  let strategy29Summary = null;
+  let strategy29Failure = null;
+  function failStrategy29(error) {
+    if (strategy29Failure !== null) return;
+    strategy29Failure = String(error.message).slice(0, 512);
+    if (strategy29Summary !== null) strategy29Summary.dispose();
+    page.console.warn('[CorsairQuant Strategy29]', strategy29Failure);
+  }
+  try {
+    migrateStrategy29Preferences(page, GM_getValue, GM_setValue);
+    strategy29Summary = createStrategy29RemoteSummary({
+      view: page,
+      request: createStrategy29GmJsonRequest(GM_xmlhttpRequest),
+      getValue: GM_getValue,
+      setValue: GM_setValue,
+      registerMenuCommand: GM_registerMenuCommand,
+      getGatewaySettings: () => readSignalGatewaySettings(GM_getValue),
+    });
+  } catch (error) { failStrategy29(error); }
+  /** Module boundary: a panel failure must not interrupt independent Strategy27 consumers. */
+  function sampleStrategy29() {
+    if (strategy29Failure !== null) return;
+    try {
+      const pending = strategy29Summary.sample(Date.now());
+      if (pending) void pending.catch(failStrategy29);
+    } catch (error) { failStrategy29(error); }
+  }
+  function onStrategy29Preferences() {
+    if (strategy29Failure !== null) return;
+    try {
+      if (migrateStrategy29Preferences(page, GM_getValue, GM_setValue)) strategy29Summary.restart();
+    } catch (error) { failStrategy29(error); }
+  }
+  page.addEventListener(STRATEGY29_PREFERENCES_EVENT, onStrategy29Preferences);
+  function onSummaryVisibility() {
+    if (strategy29Failure !== null) return;
+    if (pageDocument.hidden) strategy29Summary.pause();
+    else sampleStrategy29();
+  }
+  function pauseSummary() { if (strategy29Failure === null) strategy29Summary.pause(); }
+  pageDocument.addEventListener('visibilitychange', onSummaryVisibility);
+  page.addEventListener('pagehide', pauseSummary);
+  page.addEventListener('pageshow', onSummaryVisibility);
+  Object.defineProperty(page, '__TM_SIGNAL_CLIENT_DEBUG__', {
+    value: Object.freeze({ get strategy29() { return strategy29Summary === null
+      ? { state: 'initialization_failed', moduleFailure: strategy29Failure }
+      : { ...strategy29Summary.diagnostics, moduleFailure: strategy29Failure }; } }),
+  });
 
   function stopActive(resetReason) {
     if (!active) return;
@@ -270,6 +324,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
   }
 
   function synchronizeContext() {
+    sampleStrategy29();
     const nextLocale = resolveUiLocaleFromPathname(page.location.pathname);
     if (nextLocale !== uiLocale) {
       uiLocale = nextLocale;
@@ -355,20 +410,23 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 
   function restart() {
     stopActive('route_changed');
+    if (strategy29Failure === null) {
+      try { strategy29Summary.restart(); } catch (error) { failStrategy29(error); }
+    }
     synchronizeContext();
   }
 
   const menuDefinitions = [
-    { label: () => t('设置 Strategy 27 网关密钥', 'Set Strategy 27 gateway secret'), run: () => {
-      const value = page.prompt(t('输入本机 Strategy 27 网关密钥。该值只保存在此油猴脚本的私有存储中。', 'Enter the local Strategy 27 gateway secret. It is saved only in this userscript’s private storage.'));
+    { label: () => t('设置 CorsairQuant 网关密钥', 'Set CorsairQuant gateway secret'), run: () => {
+      const value = promptUser(t('输入 CorsairQuant 网关密钥。所有远程策略模块共用此配置，仅保存在当前用户脚本私有存储中。', 'Enter the CorsairQuant gateway secret. All remote strategy modules share this private userscript configuration.'));
       if (value === null) return;
-      if (value.length === 0) throw new Error(t('Strategy 27 网关密钥不能为空', 'Strategy 27 gateway secret must not be empty'));
+      if (value.length === 0) throw new Error(t('CorsairQuant 网关密钥不能为空', 'CorsairQuant gateway secret must not be empty'));
       GM_setValue(GATEWAY_SECRET_KEY, value);
       restart();
     } },
-    { label: () => t('设置 Strategy 27 本机网关地址', 'Set Strategy 27 local gateway URL'), run: () => {
+    { label: () => t('设置 CorsairQuant 本机网关地址', 'Set CorsairQuant local gateway URL'), run: () => {
       const current = GM_getValue(GATEWAY_ORIGIN_KEY, DEFAULT_GATEWAY_ORIGIN);
-      const value = page.prompt(t('输入 SSH 本地转发地址（仅允许 http://127.0.0.1:<端口>）', 'Enter the SSH local forwarding URL (only http://127.0.0.1:<port> is allowed)'), current);
+      const value = promptUser(t('输入 SSH 本地转发地址（仅允许 http://127.0.0.1:<端口>）', 'Enter the SSH local forwarding URL (only http://127.0.0.1:<port> is allowed)'), current);
       if (value === null) return;
       GM_setValue(GATEWAY_ORIGIN_KEY, normalizeGatewayBaseUrl(value));
       restart();
@@ -397,6 +455,11 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
   page.addEventListener('beforeunload', () => {
     page.clearInterval(contextTimer);
     removeRouteListener();
+    page.removeEventListener(STRATEGY29_PREFERENCES_EVENT, onStrategy29Preferences);
+    pageDocument.removeEventListener('visibilitychange', onSummaryVisibility);
+    page.removeEventListener('pagehide', pauseSummary);
+    page.removeEventListener('pageshow', onSummaryVisibility);
+    if (strategy29Summary !== null) strategy29Summary.dispose();
     stopActive('route_changed');
   }, { once: true });
   synchronizeContext();
