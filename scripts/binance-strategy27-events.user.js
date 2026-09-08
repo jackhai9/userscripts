@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.0
+// @version      0.5.1
 // @author       jackhai9
 // @description  统一配置 CorsairQuant 网关，显示 Strategy 27 事件与 Strategy 29 跨周期汇总
 // @match        https://www.binance.com/*/futures/*
@@ -31,8 +31,8 @@
   var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 
   // src/binance-strategy27-events/core/live-event-contract.js
-  var CANONICAL_SYMBOL_PATTERN = /^([A-Z0-9]+)\/USDT:USDT$/;
-  var ROUTE_SYMBOL_PATTERN = /^([A-Z0-9]+)USDT$/;
+  var CANONICAL_SYMBOL_PATTERN = /^([\p{L}\p{N}]+)\/USDT:USDT$/u;
+  var ROUTE_SYMBOL_PATTERN = /^([\p{L}\p{N}]+)USDT$/u;
   var STREAM_ID_PATTERN = /^(0|[1-9]\d*)-(0|[1-9]\d*)$/;
   var EPOCH_PATTERN = /^[0-9a-f]{32}$/;
   var EVENT_ID_PATTERN = /^[0-9a-f]{64}$/;
@@ -285,14 +285,19 @@
       }
     }
   }
+  function isCanonicalStrategy27Symbol(value) {
+    if (typeof value !== "string") return false;
+    const match = value.match(CANONICAL_SYMBOL_PATTERN);
+    return Boolean(match && match[0] === value && match[1] === match[1].toUpperCase());
+  }
   function routeSymbolToCanonical(routeSymbol) {
     const match = String(routeSymbol).match(ROUTE_SYMBOL_PATTERN);
-    assertCondition(match && match[1].length > 0, "Invalid Binance futures route symbol");
+    assertCondition(typeof routeSymbol === "string" && match && match[0] === routeSymbol && match[1] === match[1].toUpperCase(), "Invalid Binance futures route symbol");
     return `${match[1]}/USDT:USDT`;
   }
   function canonicalSymbolToRoute(canonicalSymbol) {
     const match = String(canonicalSymbol).match(CANONICAL_SYMBOL_PATTERN);
-    assertCondition(match && match[1].length > 0, "Invalid canonical Strategy 27 symbol");
+    assertCondition(isCanonicalStrategy27Symbol(canonicalSymbol), "Invalid canonical Strategy 27 symbol");
     const routeSymbol = `${match[1]}USDT`;
     assertCondition(routeSymbolToCanonical(routeSymbol) === canonicalSymbol, "Canonical Strategy 27 symbol does not round-trip");
     return routeSymbol;
@@ -2145,7 +2150,6 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalCompoundJson(value[key])}`).join(",")}}`;
     }
     check(value === null || typeof value === "string" || Number.isSafeInteger(value), "canonical value is invalid");
-    if (typeof value === "string") check(/^[\x00-\x7f]*$/.test(value), "canonical text must be ASCII");
     return JSON.stringify(value);
   }
   async function compoundHash(value) {
@@ -2197,7 +2201,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     hash(value.profile_id, "profile_id");
     hash(value.source_id, "source_id");
     profile(value.profile);
-    check(typeof value.symbol === "string" && /^[A-Z0-9]+\/USDT:USDT$/.test(value.symbol), "symbol is invalid");
+    check(isCanonicalStrategy27Symbol(value.symbol), "symbol is invalid");
     check(["impact_failure", "passive_support_loss", "failed_rebound"].includes(value.family), "family is invalid");
     check(["high", "low"].includes(value.direction), "direction is invalid");
     check(value.validation_status === (value.direction === "high" ? "exploratory" : "unvalidated_mirror"), "validation status does not match direction");
@@ -2332,7 +2336,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
   function createCompoundCandidateClient({ request, gatewayBaseUrl, authSecret, canonicalSymbol, onResponse, onConnectionStateChange, reconnectDelayMs = 2e3 }) {
     if (typeof request !== "function" || typeof onResponse !== "function" || typeof onConnectionStateChange !== "function") throw new Error("Compound client callbacks are required");
     if (typeof authSecret !== "string" || authSecret.length === 0) throw new Error("Compound gateway secret is not configured");
-    if (typeof canonicalSymbol !== "string" || !/^[A-Z0-9]+\/USDT:USDT$/.test(canonicalSymbol)) throw new Error("Compound canonical symbol is invalid");
+    if (!isCanonicalStrategy27Symbol(canonicalSymbol)) throw new Error("Compound canonical symbol is invalid");
     if (!Number.isSafeInteger(reconnectDelayMs) || reconnectDelayMs < 0) throw new Error("Compound reconnect delay is invalid");
     const origin = normalizeGatewayBaseUrl(gatewayBaseUrl);
     let cursor = null;
@@ -2926,11 +2930,21 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
   }
 
   // src/shared/binance-futures-route.js
-  var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([A-Za-z0-9_]{3,})\/?$/;
+  var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([^/]+)\/?$/;
+  var TRADING_SYMBOL_RE = /^[\p{L}\p{N}_]{3,}$/u;
   function parseFuturesTradingSymbolFromPathname(pathname) {
     const normalized = String(pathname || "").split(/[?#]/, 1)[0];
     const match = normalized.match(FUTURES_TRADING_PATH_RE);
-    return match?.[1] ? match[1].toUpperCase() : null;
+    if (!match || match[0] !== normalized) return null;
+    let symbol;
+    try {
+      symbol = decodeURIComponent(match[1]);
+    } catch (error) {
+      if (error instanceof URIError) return null;
+      throw error;
+    }
+    const symbolMatch = symbol.match(TRADING_SYMBOL_RE);
+    return symbolMatch && symbolMatch[0] === symbol ? symbol.toUpperCase() : null;
   }
 
   // src/shared/spa-route-change.js

@@ -710,9 +710,10 @@ for (const generated of [false, true]) {
 }
 
 
-test('Unicode URL and chart symbol start both clients and draw the Python candidate', async (t) => {
+for (const generated of [false, true]) {
+test(`${generated ? 'generated' : 'source'} Unicode URL and chart symbol start both clients and draw the Python candidate`, async (t) => {
   const candidateFixture = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-unicode-candidate.json', import.meta.url), 'utf8'));
-  const h = await harness(t, {routeSymbol: '币安人生USDT', candidateFixture});
+  const h = await harness(t, {generated, routeSymbol: '币安人生USDT', candidateFixture});
   assert.equal(h.pending('ordinary').length, 1);
   assert.equal(h.pending('compound').length, 1);
   await h.reset();
@@ -721,3 +722,4 @@ test('Unicode URL and chart symbol start both clients and draw the Python candid
   assert.equal(h.shapes.size, 3);
   assert.ok(h.requests.every((request) => new URL(request.options.url).searchParams.get('symbol') === candidateFixture.symbol));
 });
+}

@@ -169,7 +169,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.5.0 with identical metadata headers.
+generated install artifact are version 0.5.1 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
