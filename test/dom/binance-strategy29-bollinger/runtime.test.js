@@ -254,3 +254,57 @@ for (const legacyFirst of [true, false]) {
     runtime.dispose(); f.dom.window.close();
   });
 }
+
+test('invalid shared gateway state remains isolated from the local observer at startup', () => {
+  const f = fixture();
+  try {
+    const runtime = installStrategy29(f.view, {
+      request: async () => { throw new Error('must not request'); },
+      getValue: (_key, fallback) => fallback,
+      setValue() {},
+      getGatewayState() { throw new TypeError('Shared signal gateway state is invalid'); },
+    });
+    assert.equal(runtime.diagnostics.runtimeFailure, null);
+    assert.equal(runtime.diagnostics.remoteSummary.state, 'stopped');
+    assert.equal(runtime.diagnostics.remoteSummary.lastError, 'Shared signal gateway state is invalid');
+    assert.match(f.view.document.getElementById('jh-strategy29-summary-error').textContent, /Shared signal gateway state is invalid/);
+    assert.equal(f.timers.size, 1);
+    f.tick();
+    assert.equal(f.timers.size, 1);
+    runtime.dispose();
+  } finally { f.dom.window.close(); }
+});
+
+test('a failed provider retires an active remote request and does not retry while local sampling continues', async () => {
+  const f = fixture();
+  let invalid = false;
+  let stateReads = 0;
+  let requestSignal;
+  const runtime = installStrategy29(f.view, {
+    request: ({ signal }) => new Promise((_resolve, reject) => {
+      requestSignal = signal;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+    getValue: (_key, fallback) => fallback,
+    setValue() {},
+    getGatewayState() {
+      stateReads += 1;
+      if (invalid) throw new TypeError('Shared signal gateway state is invalid');
+      return { available: true, configured: true, settingsRevision: 0 };
+    },
+  });
+  assert.equal(f.view.document.querySelectorAll('#jh-strategy29-summary-panel').length, 1);
+  invalid = true;
+  f.tick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requestSignal.aborted, true);
+  assert.equal(f.view.document.querySelectorAll('#jh-strategy29-summary-panel').length, 0);
+  assert.equal(runtime.diagnostics.remoteSummary.state, 'stopped');
+  const readsAtFailure = stateReads;
+  f.tick();
+  assert.equal(stateReads, readsAtFailure);
+  assert.equal(f.timers.size, 1);
+  runtime.dispose();
+  assert.equal(f.view.document.querySelectorAll('#jh-strategy29-summary-error').length, 0);
+  f.dom.window.close();
+});

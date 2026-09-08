@@ -3126,6 +3126,27 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     });
   }
 
+  // src/shared/strategy29-panel-position-handoff.js
+  var HANDOFF = Symbol.for("jh-userscripts.strategy29-panel-position-handoff");
+  var POSITION_KEY = "strategy29SummaryPanelPosition";
+  function copyPosition(value) {
+    if (value === null) return null;
+    if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== "left,top" || !Number.isFinite(value.left) || !Number.isFinite(value.top)) {
+      throw new TypeError("Previous Strategy 29 panel position is invalid");
+    }
+    return Object.freeze({ left: value.left, top: value.top });
+  }
+  function publishStrategy29PanelPosition(view, getValue) {
+    let record;
+    try {
+      record = { version: 1, position: copyPosition(getValue(POSITION_KEY, null)) };
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      record = { version: 1, error: "invalid_position" };
+    }
+    Object.defineProperty(view, HANDOFF, { value: Object.freeze(record) });
+  }
+
   // src/binance-strategy27-events/index.user.js
   var promptUser = globalThis.prompt.bind(globalThis);
   (function() {
@@ -3146,6 +3167,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     let uiLocale = resolveUiLocaleFromPathname(page.location.pathname);
     let t = createStrategy27Translator(uiLocale);
     let statusCopy = null;
+    publishStrategy29PanelPosition(page, GM_getValue);
     const gatewayBridge = installSignalGatewayBridge(page, { getValue: GM_getValue, gmXmlHttpRequest: GM_xmlhttpRequest });
     function stopActive(resetReason) {
       if (!active) return;

@@ -51,6 +51,7 @@ import { createStrategy27Translator, localizeAnnotation, resolveUiLocaleFromPath
 import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 import { SIGNAL_GATEWAY_ORIGIN, SIGNAL_GATEWAY_ORIGIN_KEY, SIGNAL_GATEWAY_SECRET_KEY } from '../shared/signal-client-settings.js';
 import { installSignalGatewayBridge } from '../shared/signal-gateway-bridge.js';
+import { publishStrategy29PanelPosition } from '../shared/strategy29-panel-position-handoff.js';
 
 const promptUser = globalThis.prompt.bind(globalThis);
 
@@ -73,6 +74,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
   let uiLocale = resolveUiLocaleFromPathname(page.location.pathname);
   let t = createStrategy27Translator(uiLocale);
   let statusCopy = null;
+  publishStrategy29PanelPosition(page, GM_getValue);
   const gatewayBridge = installSignalGatewayBridge(page, { getValue: GM_getValue, gmXmlHttpRequest: GM_xmlhttpRequest });
 
   function stopActive(resetReason) {

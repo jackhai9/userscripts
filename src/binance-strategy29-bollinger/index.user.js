@@ -19,9 +19,10 @@
 // ==/UserScript==
 import { installStrategy29 } from './runtime.js';
 import { createSharedGatewayClient } from './core/shared-gateway-client.js';
+import { createStrategy29PositionReader } from '../shared/strategy29-panel-position-handoff.js';
 
 installStrategy29(unsafeWindow, {
   ...createSharedGatewayClient(unsafeWindow),
-  getValue: GM_getValue,
+  getValue: createStrategy29PositionReader(unsafeWindow, GM_getValue, GM_setValue),
   setValue: GM_setValue,
 });

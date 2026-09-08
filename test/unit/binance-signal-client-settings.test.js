@@ -15,14 +15,14 @@ test('signal settings retain the existing private installation keys', () => {
   assert.deepEqual(settings, { authSecret: 'synthetic-existing-secret', gatewayOrigin: 'http://127.0.0.1:18765' });
 });
 
-async function fixture(t) {
+async function fixture(t, existingStores = null) {
   const page = new JSDOM('<body></body>', { url: 'https://www.binance.com/zh-CN/futures/ARBUSDT', pretendToBeVisual: true }).window;
   const requests = [], menus = [], reads = [], writes = [], timers = new Map();
   let nextTimer = 0;
   page.setInterval = callback => { const id = ++nextTimer; timers.set(id, callback); return id; };
   page.clearInterval = id => timers.delete(id);
   t.after(() => { page.dispatchEvent(new page.Event('beforeunload')); page.__TM_STRATEGY29_DEBUG__?.dispose(); page.close(); });
-  const stores = {
+  const stores = existingStores ?? {
     host: new Map([['strategy27GatewayAuthSecret', 'synthetic-existing-secret']]),
     local: new Map([['strategy29SummaryPanelPosition', { left: 30, top: 40 }], ['strategy29RemoteSummaryEnabled', false]]),
   };
@@ -72,8 +72,8 @@ for (const order of [['host', 'local'], ['local', 'host']]) {
     assert.match(panel.textContent, /服务端尚未启用/);
     assert.equal(panel.style.left, '30px');
     assert.equal(panel.style.top, '40px');
-    assert.deepEqual([...new Set(f.reads.filter(read => read.kind === 'local').map(read => read.key))], ['strategy29SummaryPanelPosition']);
-    assert.deepEqual(f.writes, []);
+    assert.deepEqual([...new Set(f.reads.filter(read => read.kind === 'local').map(read => read.key))], ['strategy29PanelPositionHandoffVersion', 'strategy29SummaryPanelPosition']);
+    assert.deepEqual(f.writes, [{ kind: 'local', key: 'strategy29PanelPositionHandoffVersion' }]);
     assert.equal(f.menus.length, 4);
     assert.equal(f.menus.some(menu => /切换.*29|Toggle.*29/.test(menu.label)), false);
     assert.equal(f.timers.size, 2);
@@ -109,3 +109,40 @@ for (const pair of [['old-host', 'local'], ['host', 'old-local'], ['host', 'lega
     });
   }
 }
+
+
+for (const order of [['host', 'local'], ['local', 'host']]) {
+  test(`host-owned position is handed back once: ${order.join('-')}`, async t => {
+    const f = await fixture(t);
+    f.stores.host.set('strategy29SummaryPanelPosition', { left: 200, top: 250 });
+    for (const kind of order) await f.run(kind);
+    await f.tick();
+    const panel = f.page.document.getElementById('jh-strategy29-summary-panel');
+    assert.equal(panel.style.left, '200px');
+    assert.equal(panel.style.top, '250px');
+    assert.equal(f.stores.local.get('strategy29PanelPositionHandoffVersion'), 1);
+    f.stores.local.set('strategy29SummaryPanelPosition', { left: 80, top: 90 });
+    const reloaded = await fixture(t, f.stores);
+    for (const kind of order) await reloaded.run(kind);
+    await reloaded.tick();
+    const restored = reloaded.page.document.getElementById('jh-strategy29-summary-panel');
+    assert.equal(restored.style.left, '80px');
+    assert.equal(restored.style.top, '90px');
+    assert.equal(reloaded.writes.filter(write => write.kind === 'local').length, 0);
+  });
+}
+
+test('invalid legacy position stops only the summary without copying malformed private values', async t => {
+  const f = await fixture(t);
+  f.stores.host.set('strategy29SummaryPanelPosition', { left: 'broken', top: 80, privateExtra: 'synthetic-value' });
+  await f.run('host');
+  await f.run('local');
+  await f.tick();
+  const record = f.page[Symbol.for('jh-userscripts.strategy29-panel-position-handoff')];
+  assert.equal(JSON.stringify(record), JSON.stringify({ version: 1, error: 'invalid_position' }));
+  assert.equal(f.page[Symbol.for('jh-userscripts.signal-gateway')].version, 1);
+  assert.equal(f.page.__TM_STRATEGY29_DEBUG__.diagnostics.remoteSummary.state, 'stopped');
+  assert.equal(f.page.__TM_STRATEGY29_DEBUG__.diagnostics.runtimeFailure, null);
+  assert.equal(f.writes.filter(write => write.kind === 'local').length, 0);
+  assert.equal(f.timers.size, 2);
+});

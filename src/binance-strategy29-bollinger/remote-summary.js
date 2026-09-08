@@ -10,7 +10,7 @@ import {
 import { createStrategy29SummaryPanel } from './dom/strategy29-summary-panel.js';
 import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 
-import { SUMMARY_COPY as COPY, resolveUiLocaleFromPathname } from './ui-copy.js';
+import { SUMMARY_COPY as COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 
 export const STRATEGY29_PANEL_POSITION_KEY = 'strategy29SummaryPanelPosition';
 export const STRATEGY29_REMOTE_POLL_INTERVAL_MS = 5_000;
@@ -45,6 +45,9 @@ export function createStrategy29RemoteSummary({
   let active = null;
   let disposed = false;
   let unsupportedRoute = null;
+  let moduleFailure = null;
+  let gatewayAvailable = false;
+  let failureNotice = null;
   let locale = resolveUiLocaleFromPathname(view.location.pathname);
 
   function isCurrent(context) {
@@ -59,8 +62,7 @@ export function createStrategy29RemoteSummary({
     context.panel.destroy();
   }
 
-  function startContext(routeSymbol, gatewayState) {
-    const canonicalSymbol = routeSymbolToCanonical(routeSymbol);
+  function startContext(routeSymbol, gatewayState, canonicalSymbol) {
     const panel = createPanel(view.document, canonicalSymbol, {
       maxEvents: 20, locale,
       loadPosition: () => getValue(STRATEGY29_PANEL_POSITION_KEY, null),
@@ -125,6 +127,7 @@ export function createStrategy29RemoteSummary({
       return null;
     }
     const gatewayState = getGatewayState();
+    gatewayAvailable = gatewayState.available;
     if (!gatewayState.available) {
       stopActive('Shared signal gateway unavailable');
       return null;
@@ -135,17 +138,19 @@ export function createStrategy29RemoteSummary({
     if (unsupportedRoute === routeSymbol) return null;
     unsupportedRoute = null;
     stopActive('Strategy 29 route changed');
+    let canonicalSymbol;
     try {
-      return startContext(routeSymbol, gatewayState);
+      canonicalSymbol = routeSymbolToCanonical(routeSymbol);
     } catch (error) {
       unsupportedRoute = routeSymbol;
       stopActive('Strategy 29 remote context initialization failed');
       view.console.warn('[Strategy29 remote]', error.message);
       return null;
     }
+    return startContext(routeSymbol, gatewayState, canonicalSymbol);
   }
 
-  function sample(nowMs = Date.now()) {
+  function sampleRemote(nowMs) {
     if (disposed || view.document.hidden) return;
     synchronizeLocale();
     const context = synchronizeContext();
@@ -193,6 +198,37 @@ export function createStrategy29RemoteSummary({
       .finally(() => { if (ownsRequest()) context.inFlight = false; });
   }
 
+  function showModuleFailure() {
+    if (!view.document.body) return;
+    if (failureNotice === null) {
+      const notice = view.document.createElement('div');
+      notice.id = 'jh-strategy29-summary-error';
+      notice.setAttribute('role', 'status');
+      notice.style.cssText = 'position:fixed;left:16px;top:68px;z-index:10000;max-width:420px;padding:10px;background:#332b16;color:#ffcf67;font:13px sans-serif;pointer-events:none';
+      view.document.body.append(notice);
+      failureNotice = notice;
+    }
+    failureNotice.textContent = formatLocalizedText(COPY.stopped(moduleFailure), resolveUiLocaleFromPathname(view.location.pathname));
+  }
+
+  /** Remote job boundary: invalid provider state stops this module while local chart sampling continues. */
+  function failModule(error) {
+    moduleFailure = error.message;
+    stopActive('Strategy 29 remote provider failed');
+    showModuleFailure();
+    view.console.warn('[Strategy29 remote]', error.message);
+  }
+
+  function sample(nowMs = Date.now()) {
+    if (disposed || view.document.hidden) return;
+    if (moduleFailure !== null) { showModuleFailure(); return; }
+    try {
+      return sampleRemote(nowMs)?.catch(failModule);
+    } catch (error) {
+      failModule(error);
+    }
+  }
+
   function restart() {
     unsupportedRoute = null;
     stopActive('Strategy 29 remote settings changed');
@@ -219,16 +255,18 @@ export function createStrategy29RemoteSummary({
       if (disposed) return;
       disposed = true;
       stopActive('Strategy 29 remote summary disposed');
+      failureNotice?.remove();
+      failureNotice = null;
     },
     get diagnostics() {
       return Object.freeze({
         contextPresent: active !== null,
         canonicalSymbol: active?.canonicalSymbol ?? null,
         gatewayRevision: active?.gatewayState.settingsRevision ?? null,
-        state: active?.state ?? (unsupportedRoute ? 'unsupported_route' : !getGatewayState().available ? 'waiting_for_gateway' : 'waiting_for_route'),
+        state: moduleFailure !== null ? 'stopped' : active?.state ?? (unsupportedRoute ? 'unsupported_route' : !gatewayAvailable ? 'waiting_for_gateway' : 'waiting_for_route'),
         inFlight: active?.inFlight ?? false,
-        stopped: active?.failed ?? false,
-        lastError: active?.lastError ?? null,
+        stopped: moduleFailure !== null || (active?.failed ?? false),
+        lastError: moduleFailure ?? active?.lastError ?? null,
         lastResult: active?.lastResult ?? null,
         cursor: active?.client?.diagnostics.cursor ?? null,
         specVersion: STRATEGY29_SPEC_VERSION,

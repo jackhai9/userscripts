@@ -16,7 +16,10 @@ provides a shared read-only transport. Strategy29 owns its own summary panel,
 lifecycle and panel position. The existing `strategy27GatewayOrigin` and
 `strategy27GatewayAuthSecret` storage keys remain the single credential source;
 no second setup or credential transfer is required. Installation identity and
-update URLs remain unchanged.
+update URLs remain unchanged. A one-time nonsecret coordinate handoff preserves
+the last Strategy29 panel position saved by the former host; this does not give
+Strategy27 ownership of the new panel. Invalid old coordinates are reported to
+Strategy29 without preventing the shared provider or Strategy27 from starting.
 
 The page-visible `jh-userscripts.signal-gateway` capability exposes only fixed
 Strategy29 status and event reads. It is intentionally a public-data capability:

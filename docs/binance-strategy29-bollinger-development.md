@@ -127,13 +127,21 @@ retain a complete prior-success group. Expired selection can originate from fres
 or stale facts. Clock rollback does not invalidate otherwise coherent metadata.
 
 Authentication failure affects only the remote summary, not local chart detection.
+Invalid provider state stops the remote module at its job boundary, retires its
+panel and request, and displays a localized failure notice. Local sampling keeps
+running. The stopped module does not automatically retry invalid configuration.
 The shared provider preserves the Strategy27 installation namespace, update URL
 and private gateway keys. Update both existing scripts and reload. Both load
 orders are supported. Without the current provider, Strategy29 displays a localized
 update/reload notice while local chart detection continues. Previous host-owned
 summary releases do not receive the retired readiness handshake, so they cannot
 start a second panel beside the current Strategy29 runtime. Runtime version 4
-refuses to reuse the legacy singleton.
+refuses to reuse the legacy singleton. The final position saved by the old
+Strategy27 host is handed back once as a strictly validated nonsecret coordinate
+record. Strategy29 saves its own completion version and position; later reloads
+preserve subsequent Strategy29 drags instead of reapplying the old host position.
+An invalid handoff stops only the remote summary without copying a position or
+completion marker. Credentials and the retired enable preference never migrate.
 
 The public transport accepts only exact fixed status/event routes and validated
 query fields. Requests carry no caller-selected origin, headers or body. The

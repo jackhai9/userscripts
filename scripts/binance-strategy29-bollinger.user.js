@@ -2415,6 +2415,9 @@
     let active = null;
     let disposed = false;
     let unsupportedRoute = null;
+    let moduleFailure = null;
+    let gatewayAvailable = false;
+    let failureNotice = null;
     let locale = resolveUiLocaleFromPathname(view.location.pathname);
     function isCurrent(context) {
       return !disposed && active === context && !context.abortController.signal.aborted;
@@ -2426,8 +2429,7 @@
       context.abortController.abort(abortError(view, reason));
       context.panel.destroy();
     }
-    function startContext(routeSymbol, gatewayState) {
-      const canonicalSymbol = routeSymbolToCanonical(routeSymbol);
+    function startContext(routeSymbol, gatewayState, canonicalSymbol) {
       const panel = createPanel(view.document, canonicalSymbol, {
         maxEvents: 20,
         locale,
@@ -2492,6 +2494,7 @@
         return null;
       }
       const gatewayState = getGatewayState();
+      gatewayAvailable = gatewayState.available;
       if (!gatewayState.available) {
         stopActive("Shared signal gateway unavailable");
         return null;
@@ -2500,16 +2503,18 @@
       if (unsupportedRoute === routeSymbol) return null;
       unsupportedRoute = null;
       stopActive("Strategy 29 route changed");
+      let canonicalSymbol;
       try {
-        return startContext(routeSymbol, gatewayState);
+        canonicalSymbol = routeSymbolToCanonical(routeSymbol);
       } catch (error) {
         unsupportedRoute = routeSymbol;
         stopActive("Strategy 29 remote context initialization failed");
         view.console.warn("[Strategy29 remote]", error.message);
         return null;
       }
+      return startContext(routeSymbol, gatewayState, canonicalSymbol);
     }
-    function sample(nowMs = Date.now()) {
+    function sampleRemote(nowMs) {
       if (disposed || view.document.hidden) return;
       synchronizeLocale();
       const context = synchronizeContext();
@@ -2554,6 +2559,36 @@
         if (ownsRequest()) context.inFlight = false;
       });
     }
+    function showModuleFailure() {
+      if (!view.document.body) return;
+      if (failureNotice === null) {
+        const notice = view.document.createElement("div");
+        notice.id = "jh-strategy29-summary-error";
+        notice.setAttribute("role", "status");
+        notice.style.cssText = "position:fixed;left:16px;top:68px;z-index:10000;max-width:420px;padding:10px;background:#332b16;color:#ffcf67;font:13px sans-serif;pointer-events:none";
+        view.document.body.append(notice);
+        failureNotice = notice;
+      }
+      failureNotice.textContent = formatLocalizedText(SUMMARY_COPY.stopped(moduleFailure), resolveUiLocaleFromPathname(view.location.pathname));
+    }
+    function failModule(error) {
+      moduleFailure = error.message;
+      stopActive("Strategy 29 remote provider failed");
+      showModuleFailure();
+      view.console.warn("[Strategy29 remote]", error.message);
+    }
+    function sample(nowMs = Date.now()) {
+      if (disposed || view.document.hidden) return;
+      if (moduleFailure !== null) {
+        showModuleFailure();
+        return;
+      }
+      try {
+        return sampleRemote(nowMs)?.catch(failModule);
+      } catch (error) {
+        failModule(error);
+      }
+    }
     function restart() {
       unsupportedRoute = null;
       stopActive("Strategy 29 remote settings changed");
@@ -2578,16 +2613,18 @@
         if (disposed) return;
         disposed = true;
         stopActive("Strategy 29 remote summary disposed");
+        failureNotice?.remove();
+        failureNotice = null;
       },
       get diagnostics() {
         return Object.freeze({
           contextPresent: active !== null,
           canonicalSymbol: active?.canonicalSymbol ?? null,
           gatewayRevision: active?.gatewayState.settingsRevision ?? null,
-          state: active?.state ?? (unsupportedRoute ? "unsupported_route" : !getGatewayState().available ? "waiting_for_gateway" : "waiting_for_route"),
+          state: moduleFailure !== null ? "stopped" : active?.state ?? (unsupportedRoute ? "unsupported_route" : !gatewayAvailable ? "waiting_for_gateway" : "waiting_for_route"),
           inFlight: active?.inFlight ?? false,
-          stopped: active?.failed ?? false,
-          lastError: active?.lastError ?? null,
+          stopped: moduleFailure !== null || (active?.failed ?? false),
+          lastError: moduleFailure ?? active?.lastError ?? null,
           lastResult: active?.lastResult ?? null,
           cursor: active?.client?.diagnostics.cursor ?? null,
           specVersion: STRATEGY29_SPEC_VERSION,
@@ -2781,10 +2818,39 @@
     });
   }
 
+  // src/shared/strategy29-panel-position-handoff.js
+  var HANDOFF = Symbol.for("jh-userscripts.strategy29-panel-position-handoff");
+  var POSITION_KEY = "strategy29SummaryPanelPosition";
+  var VERSION_KEY = "strategy29PanelPositionHandoffVersion";
+  function copyPosition(value) {
+    if (value === null) return null;
+    if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== "left,top" || !Number.isFinite(value.left) || !Number.isFinite(value.top)) {
+      throw new TypeError("Previous Strategy 29 panel position is invalid");
+    }
+    return Object.freeze({ left: value.left, top: value.top });
+  }
+  function createStrategy29PositionReader(view, getValue, setValue) {
+    return (key, initial) => {
+      if (key !== POSITION_KEY) throw new TypeError("Strategy29 position reader received an unexpected key");
+      const version = getValue(VERSION_KEY, null);
+      if (version !== null && version !== 1) throw new TypeError("Strategy29 position handoff version is invalid");
+      if (version === null) {
+        const record = view[HANDOFF];
+        if (!record || record.version !== 1 || Object.keys(record).sort().join(",") !== "position,version") {
+          throw new TypeError("Previous Strategy 29 panel position handoff is invalid");
+        }
+        const position = copyPosition(record.position);
+        if (position !== null) setValue(POSITION_KEY, { ...position });
+        setValue(VERSION_KEY, 1);
+      }
+      return getValue(key, initial);
+    };
+  }
+
   // src/binance-strategy29-bollinger/index.user.js
   installStrategy29(unsafeWindow, {
     ...createSharedGatewayClient(unsafeWindow),
-    getValue: GM_getValue,
+    getValue: createStrategy29PositionReader(unsafeWindow, GM_getValue, GM_setValue),
     setValue: GM_setValue
   });
 })();
