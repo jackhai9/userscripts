@@ -642,7 +642,7 @@ for (const generated of [false, true]) {
     h.page.document.querySelector('[data-role="event-row"]').click();
     assert.match(panel().textContent, /Order-flow observation/);
     assert.doesNotMatch(panel().textContent, /\p{Script=Han}/u);
-    assert.equal(h.menus.size, 5);
+    assert.equal(h.menus.size, 4);
     assert.equal([...h.menus.keys()].some(text => /\p{Script=Han}/u.test(text)), false);
     const priorPanel = panel();
     const ordinaryRequest = h.pending('ordinary')[0];
@@ -658,7 +658,7 @@ for (const generated of [false, true]) {
     assert.equal([...h.shapes.values()].filter(shape => shape.getProperties?.().text === '候选高').length, 1);
     assert.match(panel().textContent, /已收到观察记录/);
     assert.doesNotMatch(panel().textContent, /Monitoring|Connected|Historical/);
-    assert.equal(h.menus.size, 5);
+    assert.equal(h.menus.size, 4);
     assert.equal(h.menus.has('重新连接 Strategy 27 并恢复历史'), true);
     h.page.history.pushState({}, '', '/en/futures/BTCUSDT');
     await until(() => h.menus.has('Reconnect Strategy 27 and restore history'));
@@ -667,7 +667,7 @@ for (const generated of [false, true]) {
     assert.equal(h.pending('compound')[0], compoundRequest);
     assert.deepEqual([...h.shapes.keys()], shapeIds);
     assert.doesNotMatch(panel().textContent, /\p{Script=Han}/u);
-    assert.equal(h.menus.size, 5);
+    assert.equal(h.menus.size, 4);
   });
 }
 
@@ -705,6 +705,6 @@ for (const generated of [false, true]) {
     h.menus.get('设置 CorsairQuant 本机网关地址')();
     assert.match(prompts[2], /输入 CorsairQuant/);
     assert.match(prompts[3], /输入 SSH/);
-    assert.equal(h.menus.size, 5);
+    assert.equal(h.menus.size, 4);
   });
 }

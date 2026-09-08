@@ -12,6 +12,12 @@ authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
 Version 0.5.0 uses the existing installation as the CorsairQuant signal client.
+Strategy29 remote ownership starts only after the local-only Strategy29 companion
+publishes a valid page-scoped readiness record. Without it, the host reports
+`waiting_for_companion` and leaves any legacy Strategy29 remote owner untouched.
+This handshake is separate from one-time preference migration, so later reloads
+continue to use the host's saved choices. Update both existing installations and
+reload to complete a staged upgrade.
 The historical installed script name is retained to preserve update identity.
 Its private gateway URL and secret are shared by the Strategy27 consumers and
 the independently controlled Strategy29 remote summary. The installation namespace

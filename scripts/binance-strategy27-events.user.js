@@ -3454,6 +3454,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
   // src/binance-strategy29-bollinger/ui-copy.js
   var pair = localizedText;
   var SUMMARY_COPY = Object.freeze({
+    upgradeClient: pair("Strategy 29 本地信号已加载。跨周期汇总需要更新或安装 Strategy 27 信号客户端，并刷新页面。", "Strategy 29 local signals are loaded. Update or install the Strategy 27 signal client and reload for the cross-timeframe summary."),
     disabled: pair("跨周期汇总未启用，可在 CorsairQuant 信号客户端菜单中开启。", "Cross-timeframe summary is disabled. Enable it in the CorsairQuant signal client menu."),
     moduleDisabled: pair("服务端尚未启用 Strategy 29 监控汇总", "Strategy 29 monitoring summary is not enabled on the server"),
     gatewayUnavailable: pair("Strategy 29 后端暂不可用，等待恢复", "Strategy 29 backend is unavailable; waiting for recovery"),
@@ -4135,6 +4136,8 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
   // src/shared/strategy29-preferences-migration.js
   var RECORD = Symbol.for("jh-userscripts.strategy29-preferences-migration");
   var STRATEGY29_PREFERENCES_EVENT = "jh-strategy29-preferences-ready";
+  var SIGNAL_HOST_READY = Symbol.for("jh-userscripts.strategy29-signal-host-ready");
+  var SIGNAL_HOST_READY_EVENT = "jh-strategy29-signal-host-ready";
   var COMPLETE = "strategy29UnifiedPreferencesMigrated";
   var ENABLED = "strategy29RemoteSummaryEnabled";
   var POSITION = "strategy29SummaryPanelPosition";
@@ -4149,11 +4152,16 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     return { version: 1, enabled: record.enabled, position: point === null ? null : { left: point.left, top: point.top } };
   }
   function migrateStrategy29Preferences(view, getValue, setValue) {
-    if (getValue(COMPLETE, false) === true || view[RECORD] === void 0) return false;
+    if (!isStrategy29CompanionReady(view) || getValue(COMPLETE, false) === true) return false;
     const record = validate(view[RECORD]);
     if (getValue(ENABLED, null) === null) setValue(ENABLED, record.enabled);
     if (getValue(POSITION, null) === null && record.position !== null) setValue(POSITION, record.position);
     setValue(COMPLETE, true);
+    return true;
+  }
+  function isStrategy29CompanionReady(view) {
+    if (view[RECORD] === void 0) return false;
+    validate(view[RECORD]);
     return true;
   }
 
@@ -4185,7 +4193,8 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       if (strategy29Summary !== null) strategy29Summary.dispose();
       page.console.warn("[CorsairQuant Strategy29]", strategy29Failure);
     }
-    try {
+    function initializeStrategy29() {
+      if (strategy29Summary !== null || !isStrategy29CompanionReady(page)) return;
       migrateStrategy29Preferences(page, GM_getValue, GM_setValue);
       strategy29Summary = createStrategy29RemoteSummary({
         view: page,
@@ -4195,11 +4204,16 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         registerMenuCommand: GM_registerMenuCommand,
         getGatewaySettings: () => readSignalGatewaySettings(GM_getValue)
       });
+      Object.defineProperty(page, SIGNAL_HOST_READY, { value: true });
+      page.dispatchEvent(new page.Event(SIGNAL_HOST_READY_EVENT));
+    }
+    try {
+      initializeStrategy29();
     } catch (error) {
       failStrategy29(error);
     }
     function sampleStrategy29() {
-      if (strategy29Failure !== null) return;
+      if (strategy29Failure !== null || strategy29Summary === null) return;
       try {
         const pending = strategy29Summary.sample(Date.now());
         if (pending) void pending.catch(failStrategy29);
@@ -4210,26 +4224,27 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     function onStrategy29Preferences() {
       if (strategy29Failure !== null) return;
       try {
-        if (migrateStrategy29Preferences(page, GM_getValue, GM_setValue)) strategy29Summary.restart();
+        initializeStrategy29();
+        sampleStrategy29();
       } catch (error) {
         failStrategy29(error);
       }
     }
     page.addEventListener(STRATEGY29_PREFERENCES_EVENT, onStrategy29Preferences);
     function onSummaryVisibility() {
-      if (strategy29Failure !== null) return;
+      if (strategy29Failure !== null || strategy29Summary === null) return;
       if (pageDocument.hidden) strategy29Summary.pause();
       else sampleStrategy29();
     }
     function pauseSummary() {
-      if (strategy29Failure === null) strategy29Summary.pause();
+      if (strategy29Failure === null && strategy29Summary !== null) strategy29Summary.pause();
     }
     pageDocument.addEventListener("visibilitychange", onSummaryVisibility);
     page.addEventListener("pagehide", pauseSummary);
     page.addEventListener("pageshow", onSummaryVisibility);
     Object.defineProperty(page, "__TM_SIGNAL_CLIENT_DEBUG__", {
       value: Object.freeze({ get strategy29() {
-        return strategy29Summary === null ? { state: "initialization_failed", moduleFailure: strategy29Failure } : { ...strategy29Summary.diagnostics, moduleFailure: strategy29Failure };
+        return strategy29Summary === null ? { state: strategy29Failure === null ? "waiting_for_companion" : "initialization_failed", moduleFailure: strategy29Failure } : { ...strategy29Summary.diagnostics, moduleFailure: strategy29Failure };
       } })
     });
     function stopActive(resetReason) {
@@ -4499,7 +4514,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     }
     function restart() {
       stopActive("route_changed");
-      if (strategy29Failure === null) {
+      if (strategy29Failure === null && strategy29Summary !== null) {
         try {
           strategy29Summary.restart();
         } catch (error) {

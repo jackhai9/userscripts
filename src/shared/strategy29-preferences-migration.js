@@ -1,5 +1,7 @@
 const RECORD = Symbol.for('jh-userscripts.strategy29-preferences-migration');
 export const STRATEGY29_PREFERENCES_EVENT = 'jh-strategy29-preferences-ready';
+export const SIGNAL_HOST_READY = Symbol.for('jh-userscripts.strategy29-signal-host-ready');
+export const SIGNAL_HOST_READY_EVENT = 'jh-strategy29-signal-host-ready';
 const COMPLETE = 'strategy29UnifiedPreferencesMigrated';
 const ENABLED = 'strategy29RemoteSummaryEnabled';
 const POSITION = 'strategy29SummaryPanelPosition';
@@ -29,10 +31,17 @@ export function publishStrategy29Preferences(view, getValue) {
 
 /** Private destination values win; untrusted page preferences cannot supply a gateway or secret. */
 export function migrateStrategy29Preferences(view, getValue, setValue) {
-  if (getValue(COMPLETE, false) === true || view[RECORD] === undefined) return false;
+  if (!isStrategy29CompanionReady(view) || getValue(COMPLETE, false) === true) return false;
   const record = validate(view[RECORD]);
   if (getValue(ENABLED, null) === null) setValue(ENABLED, record.enabled);
   if (getValue(POSITION, null) === null && record.position !== null) setValue(POSITION, record.position);
   setValue(COMPLETE, true);
+  return true;
+}
+
+/** Readiness is page-scoped; completing a previous migration does not establish a remote owner. */
+export function isStrategy29CompanionReady(view) {
+  if (view[RECORD] === undefined) return false;
+  validate(view[RECORD]);
   return true;
 }

@@ -127,7 +127,16 @@ or stale facts. Clock rollback does not invalidate otherwise coherent metadata.
 
 Authentication failure affects only the remote summary, not local chart detection.
 The unified client preserves the Strategy27 installation namespace, update URL and
-private gateway keys. Update that existing installation in place. Strategy29's
+private gateway keys. Independent automatic updates require a readiness handshake:
+the host waits for the local-only companion before creating a remote panel. A
+legacy companion retains its panel and polling until refresh with both scripts
+updated. The new local-only runtime has a new singleton version and refuses to
+reuse a legacy remote-owning runtime. If the host has not updated, the companion
+shows a localized update/reload notice while local chart detection continues.
+The notice disappears when the host acknowledges ownership. Existing private
+host preferences win on subsequent reloads as well as initial migration.
+
+Update the existing installation in place. Strategy29's
 standalone entry is local-only and publishes only a versioned preference record
 containing enabled state and panel coordinates. The host validates its exact keys,
 copies missing preferences once into its own private storage and preserves existing

@@ -52,7 +52,7 @@ import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 import { createStrategy29RemoteSummary } from '../binance-strategy29-bollinger/remote-summary.js';
 import { createStrategy29GmJsonRequest } from '../binance-strategy29-bollinger/core/remote-summary-client.js';
 import { readSignalGatewaySettings, SIGNAL_GATEWAY_ORIGIN, SIGNAL_GATEWAY_ORIGIN_KEY, SIGNAL_GATEWAY_SECRET_KEY } from '../shared/signal-client-settings.js';
-import { migrateStrategy29Preferences, STRATEGY29_PREFERENCES_EVENT } from '../shared/strategy29-preferences-migration.js';
+import { migrateStrategy29Preferences, isStrategy29CompanionReady, STRATEGY29_PREFERENCES_EVENT, SIGNAL_HOST_READY, SIGNAL_HOST_READY_EVENT } from '../shared/strategy29-preferences-migration.js';
 
 const promptUser = globalThis.prompt.bind(globalThis);
 
@@ -83,7 +83,9 @@ const promptUser = globalThis.prompt.bind(globalThis);
     if (strategy29Summary !== null) strategy29Summary.dispose();
     page.console.warn('[CorsairQuant Strategy29]', strategy29Failure);
   }
-  try {
+  /** The companion must relinquish legacy remote ownership before this installation takes it. */
+  function initializeStrategy29() {
+    if (strategy29Summary !== null || !isStrategy29CompanionReady(page)) return;
     migrateStrategy29Preferences(page, GM_getValue, GM_setValue);
     strategy29Summary = createStrategy29RemoteSummary({
       view: page,
@@ -93,10 +95,13 @@ const promptUser = globalThis.prompt.bind(globalThis);
       registerMenuCommand: GM_registerMenuCommand,
       getGatewaySettings: () => readSignalGatewaySettings(GM_getValue),
     });
-  } catch (error) { failStrategy29(error); }
+    Object.defineProperty(page, SIGNAL_HOST_READY, { value: true });
+    page.dispatchEvent(new page.Event(SIGNAL_HOST_READY_EVENT));
+  }
+  try { initializeStrategy29(); } catch (error) { failStrategy29(error); }
   /** Module boundary: a panel failure must not interrupt independent Strategy27 consumers. */
   function sampleStrategy29() {
-    if (strategy29Failure !== null) return;
+    if (strategy29Failure !== null || strategy29Summary === null) return;
     try {
       const pending = strategy29Summary.sample(Date.now());
       if (pending) void pending.catch(failStrategy29);
@@ -105,22 +110,23 @@ const promptUser = globalThis.prompt.bind(globalThis);
   function onStrategy29Preferences() {
     if (strategy29Failure !== null) return;
     try {
-      if (migrateStrategy29Preferences(page, GM_getValue, GM_setValue)) strategy29Summary.restart();
+      initializeStrategy29();
+      sampleStrategy29();
     } catch (error) { failStrategy29(error); }
   }
   page.addEventListener(STRATEGY29_PREFERENCES_EVENT, onStrategy29Preferences);
   function onSummaryVisibility() {
-    if (strategy29Failure !== null) return;
+    if (strategy29Failure !== null || strategy29Summary === null) return;
     if (pageDocument.hidden) strategy29Summary.pause();
     else sampleStrategy29();
   }
-  function pauseSummary() { if (strategy29Failure === null) strategy29Summary.pause(); }
+  function pauseSummary() { if (strategy29Failure === null && strategy29Summary !== null) strategy29Summary.pause(); }
   pageDocument.addEventListener('visibilitychange', onSummaryVisibility);
   page.addEventListener('pagehide', pauseSummary);
   page.addEventListener('pageshow', onSummaryVisibility);
   Object.defineProperty(page, '__TM_SIGNAL_CLIENT_DEBUG__', {
     value: Object.freeze({ get strategy29() { return strategy29Summary === null
-      ? { state: 'initialization_failed', moduleFailure: strategy29Failure }
+      ? { state: strategy29Failure === null ? 'waiting_for_companion' : 'initialization_failed', moduleFailure: strategy29Failure }
       : { ...strategy29Summary.diagnostics, moduleFailure: strategy29Failure }; } }),
   });
 
@@ -410,7 +416,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
 
   function restart() {
     stopActive('route_changed');
-    if (strategy29Failure === null) {
+    if (strategy29Failure === null && strategy29Summary !== null) {
       try { strategy29Summary.restart(); } catch (error) { failStrategy29(error); }
     }
     synchronizeContext();

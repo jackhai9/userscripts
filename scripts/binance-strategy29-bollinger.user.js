@@ -1947,6 +1947,7 @@
   // src/binance-strategy29-bollinger/ui-copy.js
   var pair = localizedText;
   var SUMMARY_COPY = Object.freeze({
+    upgradeClient: pair("Strategy 29 本地信号已加载。跨周期汇总需要更新或安装 Strategy 27 信号客户端，并刷新页面。", "Strategy 29 local signals are loaded. Update or install the Strategy 27 signal client and reload for the cross-timeframe summary."),
     disabled: pair("跨周期汇总未启用，可在 CorsairQuant 信号客户端菜单中开启。", "Cross-timeframe summary is disabled. Enable it in the CorsairQuant signal client menu."),
     moduleDisabled: pair("服务端尚未启用 Strategy 29 监控汇总", "Strategy 29 monitoring summary is not enabled on the server"),
     gatewayUnavailable: pair("Strategy 29 后端暂不可用，等待恢复", "Strategy 29 backend is unavailable; waiting for recovery"),
@@ -2612,9 +2613,37 @@
     });
   }
 
+  // src/shared/strategy29-preferences-migration.js
+  var RECORD = Symbol.for("jh-userscripts.strategy29-preferences-migration");
+  var STRATEGY29_PREFERENCES_EVENT = "jh-strategy29-preferences-ready";
+  var SIGNAL_HOST_READY = Symbol.for("jh-userscripts.strategy29-signal-host-ready");
+  var SIGNAL_HOST_READY_EVENT = "jh-strategy29-signal-host-ready";
+  var ENABLED = "strategy29RemoteSummaryEnabled";
+  var POSITION = "strategy29SummaryPanelPosition";
+  function validate(record) {
+    if (!record || Object.keys(record).sort().join(",") !== "enabled,position,version" || record.version !== 1 || typeof record.enabled !== "boolean") {
+      throw new TypeError("Strategy29 preference migration record is invalid");
+    }
+    const point = record.position;
+    if (point !== null && (Object.keys(point).sort().join(",") !== "left,top" || !Number.isFinite(point.left) || !Number.isFinite(point.top))) {
+      throw new TypeError("Strategy29 preference migration position is invalid");
+    }
+    return { version: 1, enabled: record.enabled, position: point === null ? null : { left: point.left, top: point.top } };
+  }
+  function publishStrategy29Preferences(view, getValue) {
+    if (view[RECORD] !== void 0) {
+      validate(view[RECORD]);
+      return;
+    }
+    const record = validate({ version: 1, enabled: getValue(ENABLED, false), position: getValue(POSITION, null) });
+    if (record.position !== null) Object.freeze(record.position);
+    Object.defineProperty(view, RECORD, { value: Object.freeze(record) });
+    view.dispatchEvent(new view.Event(STRATEGY29_PREFERENCES_EVENT));
+  }
+
   // src/binance-strategy29-bollinger/runtime.js
   var INSTANCE = Symbol.for("jh-userscripts.strategy29-bollinger");
-  var RUNTIME_VERSION = 2;
+  var RUNTIME_VERSION = 3;
   var CONFLICT = SUMMARY_COPY.conflict;
   function hasEmbeddedBollinger(view) {
     const debug = view.__TM_CLOSE_LONG_DEBUG__;
@@ -2632,6 +2661,23 @@
     let removeRouteListener = null;
     const remoteSummary = remoteAdapters === null ? null : createStrategy29RemoteSummary({ view, ...remoteAdapters });
     const noticeId = "jh-strategy29-bollinger-status";
+    const upgradeNoticeId = "jh-strategy29-client-upgrade";
+    function showUpgradeNotice() {
+      if (remoteSummary !== null || disposed || view[SIGNAL_HOST_READY] === true || !isFuturesTradingPathname(view.location.pathname)) {
+        document.getElementById(upgradeNoticeId)?.remove();
+        return;
+      }
+      if (!document.body) return;
+      let notice = document.getElementById(upgradeNoticeId);
+      if (!notice) {
+        notice = document.createElement("div");
+        notice.id = upgradeNoticeId;
+        notice.setAttribute("role", "status");
+        notice.style.cssText = "position:fixed;left:16px;top:16px;z-index:10000;max-width:420px;padding:10px;background:#332b16;color:#ffcf67;font:13px sans-serif;pointer-events:none";
+        document.body.append(notice);
+      }
+      notice.textContent = formatLocalizedText(SUMMARY_COPY.upgradeClient, resolveUiLocaleFromPathname(view.location.pathname));
+    }
     function showFailure() {
       if (!failed || !document.body) return;
       let notice = document.getElementById(noticeId);
@@ -2666,6 +2712,7 @@
     }
     function sample() {
       if (disposed || document.hidden) return;
+      showUpgradeNotice();
       if (failed) {
         showFailure();
         return;
@@ -2716,9 +2763,12 @@
         removeRouteListener();
         document.removeEventListener("visibilitychange", onVisibility);
         document.removeEventListener("DOMContentLoaded", showFailure);
+        document.removeEventListener("DOMContentLoaded", showUpgradeNotice);
+        view.removeEventListener(SIGNAL_HOST_READY_EVENT, showUpgradeNotice);
         view.removeEventListener("pagehide", onPageHide);
         view.removeEventListener("pageshow", onPageShow);
         document.getElementById(noticeId)?.remove();
+        document.getElementById(upgradeNoticeId)?.remove();
       }
     });
     Object.defineProperty(view, INSTANCE, { value: Object.freeze({ version: RUNTIME_VERSION, runtime }) });
@@ -2726,36 +2776,12 @@
     removeRouteListener = installSpaRouteChangeListener(view, sample);
     document.addEventListener("visibilitychange", onVisibility);
     document.addEventListener("DOMContentLoaded", showFailure, { once: true });
+    document.addEventListener("DOMContentLoaded", showUpgradeNotice, { once: true });
+    view.addEventListener(SIGNAL_HOST_READY_EVENT, showUpgradeNotice);
     view.addEventListener("pagehide", onPageHide);
     view.addEventListener("pageshow", onPageShow);
     resume();
     return runtime;
-  }
-
-  // src/shared/strategy29-preferences-migration.js
-  var RECORD = Symbol.for("jh-userscripts.strategy29-preferences-migration");
-  var STRATEGY29_PREFERENCES_EVENT = "jh-strategy29-preferences-ready";
-  var ENABLED = "strategy29RemoteSummaryEnabled";
-  var POSITION = "strategy29SummaryPanelPosition";
-  function validate(record) {
-    if (!record || Object.keys(record).sort().join(",") !== "enabled,position,version" || record.version !== 1 || typeof record.enabled !== "boolean") {
-      throw new TypeError("Strategy29 preference migration record is invalid");
-    }
-    const point = record.position;
-    if (point !== null && (Object.keys(point).sort().join(",") !== "left,top" || !Number.isFinite(point.left) || !Number.isFinite(point.top))) {
-      throw new TypeError("Strategy29 preference migration position is invalid");
-    }
-    return { version: 1, enabled: record.enabled, position: point === null ? null : { left: point.left, top: point.top } };
-  }
-  function publishStrategy29Preferences(view, getValue) {
-    if (view[RECORD] !== void 0) {
-      validate(view[RECORD]);
-      return;
-    }
-    const record = validate({ version: 1, enabled: getValue(ENABLED, false), position: getValue(POSITION, null) });
-    if (record.position !== null) Object.freeze(record.position);
-    Object.defineProperty(view, RECORD, { value: Object.freeze(record) });
-    view.dispatchEvent(new view.Event(STRATEGY29_PREFERENCES_EVENT));
   }
 
   // src/binance-strategy29-bollinger/index.user.js

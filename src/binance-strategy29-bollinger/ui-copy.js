@@ -3,6 +3,7 @@ import { localizedText, formatLocalizedText, resolveUiLocaleFromPathname } from 
 export { formatLocalizedText, resolveUiLocaleFromPathname };
 const pair = localizedText;
 export const SUMMARY_COPY = Object.freeze({
+  upgradeClient: pair('Strategy 29 本地信号已加载。跨周期汇总需要更新或安装 Strategy 27 信号客户端，并刷新页面。', 'Strategy 29 local signals are loaded. Update or install the Strategy 27 signal client and reload for the cross-timeframe summary.'),
   disabled: pair('跨周期汇总未启用，可在 CorsairQuant 信号客户端菜单中开启。', 'Cross-timeframe summary is disabled. Enable it in the CorsairQuant signal client menu.'),
   moduleDisabled: pair('服务端尚未启用 Strategy 29 监控汇总', 'Strategy 29 monitoring summary is not enabled on the server'),
   gatewayUnavailable: pair('Strategy 29 后端暂不可用，等待恢复', 'Strategy 29 backend is unavailable; waiting for recovery'),

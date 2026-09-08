@@ -12,7 +12,7 @@ async function bundledEntry() {
 }
 
 test('sandbox entry installs the runtime on unsafeWindow and keeps the shared page singleton visible', async () => {
-  const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTRUSDT' });
+  const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTRUSDT', pretendToBeVisual: true });
   const menus = [];
   const stored = new Map();
   let pagePromptCalls = 0;
@@ -32,13 +32,19 @@ test('sandbox entry installs the runtime on unsafeWindow and keeps the shared pa
   vm.runInNewContext(await bundledEntry(), sandbox);
   assert.equal(typeof dom.window.__TM_STRATEGY29_DEBUG__.dispose, 'function');
   assert.equal(sandbox.__TM_STRATEGY29_DEBUG__, undefined);
-  assert.equal(dom.window[Symbol.for('jh-userscripts.strategy29-bollinger')].version, 2);
+  assert.equal(dom.window[Symbol.for('jh-userscripts.strategy29-bollinger')].version, 3);
   assert.deepEqual(menus, []);
   assert.equal(stored.size, 0);
   assert.deepEqual(JSON.parse(JSON.stringify(dom.window[Symbol.for('jh-userscripts.strategy29-preferences-migration')])), {
     version: 1, enabled: false, position: null,
   });
   assert.equal(pagePromptCalls, 0);
+  assert.match(dom.window.document.getElementById('jh-strategy29-client-upgrade').textContent, /Update or install the Strategy 27 signal client/);
+  assert.equal(dom.window.document.getElementById('jh-strategy29-summary-panel'), null);
+  dom.window.history.pushState({}, '', '/zh-CN/futures/BTRUSDT');
+  assert.match(dom.window.document.getElementById('jh-strategy29-client-upgrade').textContent, /更新或安装 Strategy 27 信号客户端/);
+  assert.equal(dom.window.__TM_STRATEGY29_DEBUG__.diagnostics.timerRunning, true);
   dom.window.__TM_STRATEGY29_DEBUG__.dispose();
+  assert.equal(dom.window.document.getElementById('jh-strategy29-client-upgrade'), null);
   dom.window.close();
 });
