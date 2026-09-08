@@ -1,3 +1,5 @@
+import { isCanonicalStrategy27Symbol } from './live-event-contract.js';
+
 /** Exact ADR 032 display contract; no market interpretation belongs here. */
 const HASH = /^[a-f0-9]{64}$/;
 const DECIMAL = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/;
@@ -45,7 +47,6 @@ export function canonicalCompoundJson(value) {
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalCompoundJson(value[key])}`).join(',')}}`;
   }
   check(value === null || typeof value === 'string' || Number.isSafeInteger(value), 'canonical value is invalid');
-  if (typeof value === 'string') check(/^[\x00-\x7f]*$/.test(value), 'canonical text must be ASCII');
   return JSON.stringify(value);
 }
 
@@ -102,7 +103,7 @@ export async function validateCompoundCandidate(value) {
   hash(value.profile_id, 'profile_id');
   hash(value.source_id, 'source_id');
   profile(value.profile);
-  check(typeof value.symbol === 'string' && /^[A-Z0-9]+\/USDT:USDT$/.test(value.symbol), 'symbol is invalid');
+  check(isCanonicalStrategy27Symbol(value.symbol), 'symbol is invalid');
   check(['impact_failure', 'passive_support_loss', 'failed_rebound'].includes(value.family), 'family is invalid');
   check(['high', 'low'].includes(value.direction), 'direction is invalid');
   check(value.validation_status === (value.direction === 'high' ? 'exploratory' : 'unvalidated_mirror'), 'validation status does not match direction');

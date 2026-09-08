@@ -102,3 +102,20 @@ test('envelope cannot claim a decision before it is available or on a different 
   other.symbol = 'ETH/USDT:USDT';
   await assert.rejects(validateCompoundEnvelope(other), /identity\/time/);
 });
+
+
+test('Unicode canonical JSON uses the same UTF-8 digest as Python', async () => {
+  assert.equal(await compoundHash({symbol: '币安人生/USDT:USDT'}), '3ab4f4a7e5017943dedd5caae3bd17996392a32d843a0cad485f39fba7f96759');
+  const value = candidate();
+  value.symbol = '币安人生/USDT:USDT';
+  const {candidate_id, ...record} = value;
+  value.candidate_id = await compoundHash(record);
+  assert.deepEqual(await validateCompoundEnvelope(envelope(value)), envelope(value));
+});
+
+
+test('Python Unicode detector fixture validates with its original candidate hash', async () => {
+  const fixture = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-unicode-candidate.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.candidate_id, '07bd5eb977953eb1256784ac14f6cff262c0a2bddfa8928e6c4ab2ddc092b0a1');
+  assert.deepEqual(await validateCompoundCandidate(fixture), fixture);
+});

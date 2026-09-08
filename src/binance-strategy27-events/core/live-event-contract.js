@@ -1,5 +1,5 @@
-const CANONICAL_SYMBOL_PATTERN = /^([A-Z0-9]+)\/USDT:USDT$/;
-const ROUTE_SYMBOL_PATTERN = /^([A-Z0-9]+)USDT$/;
+const CANONICAL_SYMBOL_PATTERN = /^([\p{L}\p{N}]+)\/USDT:USDT$/u;
+const ROUTE_SYMBOL_PATTERN = /^([\p{L}\p{N}]+)USDT$/u;
 const STREAM_ID_PATTERN = /^(0|[1-9]\d*)-(0|[1-9]\d*)$/;
 const EPOCH_PATTERN = /^[0-9a-f]{32}$/;
 const EVENT_ID_PATTERN = /^[0-9a-f]{64}$/;
@@ -268,15 +268,22 @@ function validateOutcome(value) {
   }
 }
 
+/** Match the server's Unicode letter/number base and exact uppercase wire form. */
+export function isCanonicalStrategy27Symbol(value) {
+  if (typeof value !== 'string') return false;
+  const match = value.match(CANONICAL_SYMBOL_PATTERN);
+  return Boolean(match && match[0] === value && match[1] === match[1].toUpperCase());
+}
+
 export function routeSymbolToCanonical(routeSymbol) {
   const match = String(routeSymbol).match(ROUTE_SYMBOL_PATTERN);
-  assertCondition(match && match[1].length > 0, 'Invalid Binance futures route symbol');
+  assertCondition(typeof routeSymbol === 'string' && match && match[0] === routeSymbol && match[1] === match[1].toUpperCase(), 'Invalid Binance futures route symbol');
   return `${match[1]}/USDT:USDT`;
 }
 
 export function canonicalSymbolToRoute(canonicalSymbol) {
   const match = String(canonicalSymbol).match(CANONICAL_SYMBOL_PATTERN);
-  assertCondition(match && match[1].length > 0, 'Invalid canonical Strategy 27 symbol');
+  assertCondition(isCanonicalStrategy27Symbol(canonicalSymbol), 'Invalid canonical Strategy 27 symbol');
   const routeSymbol = `${match[1]}USDT`;
   assertCondition(routeSymbolToCanonical(routeSymbol) === canonicalSymbol, 'Canonical Strategy 27 symbol does not round-trip');
   return routeSymbol;

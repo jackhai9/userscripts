@@ -457,3 +457,14 @@ test('bounds retained lifecycle events and reports exact count and age evictions
   assert.equal(ignored.type, 'event_evicted');
   assert.equal(lifecycle.size, 0);
 });
+
+
+test('canonical Unicode symbols round-trip without normalizing invalid wire input', () => {
+  for (const base of ['币安人生', '龙虾', '1000PEPE']) {
+    assert.equal(routeSymbolToCanonical(base + 'USDT'), base + '/USDT:USDT');
+    assert.equal(canonicalSymbolToRoute(base + '/USDT:USDT'), base + 'USDT');
+  }
+  for (const symbol of ['btc/USDT:USDT', '币 安/USDT:USDT', '/USDT:USDT', 'BTC/USDT:USDT\n', 'BTC_/USDT:USDT']) {
+    assert.throws(() => canonicalSymbolToRoute(symbol));
+  }
+});
