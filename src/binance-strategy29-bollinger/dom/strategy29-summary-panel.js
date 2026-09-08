@@ -4,6 +4,12 @@ import { SUMMARY_COPY as COPY, SELECTION_REASONS, STATUS_LABELS, SIGNAL_LABELS, 
 import { installPanelPosition } from './panel-position.js';
 
 const PANEL_ID = 'jh-strategy29-summary-panel';
+
+/** Backfilled intervals can be inserted later than more recent live signals. */
+function newestSignalFirst(left, right) {
+  return right.bar_close_ms - left.bar_close_ms || right.sequence - left.sequence;
+}
+
 const STATE_COLORS = Object.freeze({
   disabled: '#848E9C',
   module_disabled: '#848E9C',
@@ -129,7 +135,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   }
   function renderEvents() {
     events.replaceChildren();
-    const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
+    const ordered = [...eventRecords.values()].sort(newestSignalFirst);
     for (const event of ordered) {
       const row = element(document, 'div', {
         role: 'remote-event',
@@ -240,7 +246,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     addEvents(incoming, observedAtMs = null) {
       assertLive();
       for (const event of incoming) eventRecords.set(event.event_id, event);
-      const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
+      const ordered = [...eventRecords.values()].sort(newestSignalFirst);
       while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
       if (observedAtMs !== null) {
         lastEventsAt = observedAtMs;

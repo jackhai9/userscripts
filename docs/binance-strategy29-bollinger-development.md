@@ -10,7 +10,7 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.0 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.5.1 with orderbook 2.7.199 or later, or use it alone.
 Install CorsairQuant signal client 0.6.0 for the remote summary.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
@@ -157,12 +157,15 @@ these separately. Installing the unified client does not activate server monitor
 
 The browser polls status first and then consumes at most two event pages per
 scheduled poll. A new route requests `mode=latest&limit=20` for its canonical
-symbol: the server returns the latest retained sequences and a global increment
+symbol: the server selects the most recent signal close times and a global increment
 cursor from one SQLite snapshot. It does not scan retained global history to
 fill the panel. Subsequent increments can contain no matching events while still
 advancing that cursor. `cursor_expired` clears only remote rows and requests a new
-latest snapshot. Rows are displayed and bounded by descending durable sequence,
-independent of detection timestamps. This requires the server's explicit latest
+latest snapshot. Rows are displayed and bounded by descending signal close time,
+with descending durable sequence breaking ties. The snapshot response remains
+sequence-ascending so the global increment contract is unchanged. Historical
+backfills cannot evict newer signal times merely by being inserted later.
+This requires the server's explicit latest
 query contract; a server rejecting it stops the remote context visibly.
 Publish the unified V2 gateway contract before the client, then verify installed
 source identity and reload before remote acceptance. Publication of either
@@ -176,6 +179,9 @@ its panel; visibility or pageshow cannot revive it. Responses check their origin
 completion handlers also check request ownership, so an old request cannot publish
 or clear the in-flight flag of resumed work. No extra recurring timer is installed:
 the existing one-second runtime sample applies a five-second remote gate.
+Only the first request displays `Connecting`. Subsequent background polls retain
+the last completed connection state until the new result arrives; genuine
+unavailability and transport errors remain visible during the next request.
 
 Transport failures and a temporarily unavailable database remain retryable
 remote states. Authentication, request, JSON, and response-contract failures

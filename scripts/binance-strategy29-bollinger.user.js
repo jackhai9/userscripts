@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.0
+// @version      0.5.1
 // @author       jackhai9
 // @description  Native Bollinger/SMA60 markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -2112,6 +2112,9 @@
 
   // src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js
   var PANEL_ID = "jh-strategy29-summary-panel";
+  function newestSignalFirst(left, right) {
+    return right.bar_close_ms - left.bar_close_ms || right.sequence - left.sequence;
+  }
   var STATE_COLORS = Object.freeze({
     disabled: "#848E9C",
     module_disabled: "#848E9C",
@@ -2248,7 +2251,7 @@
     }
     function renderEvents() {
       events.replaceChildren();
-      const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
+      const ordered = [...eventRecords.values()].sort(newestSignalFirst);
       for (const event of ordered) {
         const row = element(document, "div", {
           role: "remote-event",
@@ -2350,7 +2353,7 @@
       addEvents(incoming, observedAtMs = null) {
         assertLive();
         for (const event of incoming) eventRecords.set(event.event_id, event);
-        const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
+        const ordered = [...eventRecords.values()].sort(newestSignalFirst);
         while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
         if (observedAtMs !== null) {
           lastEventsAt = observedAtMs;
@@ -2527,8 +2530,10 @@
       const ownsRequest = () => isCurrent(context) && context.abortController === controller && getGatewayState().settingsRevision === context.gatewayState.settingsRevision;
       context.nextPollAtMs = nowMs + pollIntervalMs;
       context.inFlight = true;
-      context.state = "connecting";
-      context.panel.setConnection("connecting", SUMMARY_COPY.connecting);
+      if (context.state === "idle") {
+        context.state = "connecting";
+        context.panel.setConnection("connecting", SUMMARY_COPY.connecting);
+      }
       return context.client.poll(controller.signal).then((result) => {
         if (!ownsRequest()) return;
         context.lastResult = result;

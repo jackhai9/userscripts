@@ -164,8 +164,10 @@ export function createStrategy29RemoteSummary({
       && getGatewayState().settingsRevision === context.gatewayState.settingsRevision;
     context.nextPollAtMs = nowMs + pollIntervalMs;
     context.inFlight = true;
-    context.state = 'connecting';
-    context.panel.setConnection('connecting', COPY.connecting);
+    if (context.state === 'idle') {
+      context.state = 'connecting';
+      context.panel.setConnection('connecting', COPY.connecting);
+    }
     return context.client.poll(controller.signal)
       .then(result => {
         if (!ownsRequest()) return;

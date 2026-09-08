@@ -150,15 +150,15 @@ test('makes server/local spec mismatch visible without rendering it as verified'
   dom.window.close();
 });
 
-test('retains the latest durable sequences even when detection times arrive out of order', () => {
+test('retains newest signal close times regardless of insertion or detection order', () => {
   const dom = new JSDOM('<body></body>');
   const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 2 });
-  const first = { ...events.events[0], event_id: 'a'.repeat(64), sequence: 10, detected_at_ms: 3000 };
-  const second = { ...events.events[0], event_id: 'b'.repeat(64), sequence: 11, detected_at_ms: 2000 };
-  const third = { ...events.events[0], event_id: 'c'.repeat(64), sequence: 12, detected_at_ms: 1000 };
+  const first = { ...events.events[0], event_id: 'a'.repeat(64), sequence: 10, detected_at_ms: 3000, bar_close_ms: 3000 };
+  const second = { ...events.events[0], event_id: 'b'.repeat(64), sequence: 11, detected_at_ms: 2000, bar_close_ms: 3000 };
+  const third = { ...events.events[0], event_id: 'c'.repeat(64), sequence: 12, detected_at_ms: 4000, bar_close_ms: 1000 };
   panel.addEvents([first, second]);
   panel.addEvents([third]);
-  assert.deepEqual([...dom.window.document.querySelectorAll('[data-role=remote-event]')].map(row => row.dataset.eventId), [third.event_id, second.event_id]);
+  assert.deepEqual([...dom.window.document.querySelectorAll('[data-role=remote-event]')].map(row => row.dataset.eventId), [second.event_id, first.event_id]);
   panel.destroy();
   dom.window.close();
 });
