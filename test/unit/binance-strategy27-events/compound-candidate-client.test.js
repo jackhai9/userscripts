@@ -10,7 +10,7 @@ const ok = (requested = '5-0', next = '8-0') => ({ schema_version: 1, status: 'o
 const response = (body, status = 200) => ({ status, responseText: JSON.stringify(body) });
 const unavailable = (code = 'compound_unavailable') => response({ schema_version: 1, status: 'error', error_code: code }, 503);
 
-function harness(steps, { onResponse = () => {}, onState = () => {} } = {}) {
+function harness(steps, { onResponse = () => {}, onState = () => {}, canonicalSymbol = 'BTR/USDT:USDT' } = {}) {
   const controller = new AbortController();
   const calls = [];
   const states = [];
@@ -18,7 +18,7 @@ function harness(steps, { onResponse = () => {}, onState = () => {} } = {}) {
   const client = createCompoundCandidateClient({
     gatewayBaseUrl: 'http://127.0.0.1:18765',
     authSecret: 'fixture-only-not-a-credential',
-    canonicalSymbol: 'BTR/USDT:USDT',
+    canonicalSymbol,
     reconnectDelayMs: 0,
     request: async ({ url }) => {
       calls.push(new URL(url));
@@ -130,4 +130,16 @@ test('bootstrap wrapper validates its exact metadata and record bound', async ()
   assert.deepEqual(await validateCompoundBootstrapResponse(bootstrap(), 200), bootstrap());
   await assert.rejects(validateCompoundBootstrapResponse({ ...bootstrap(), extra: true }, 200));
   await assert.rejects(validateCompoundBootstrapResponse({ ...bootstrap(), records: Array(81).fill({}) }, 200));
+});
+
+
+test('Unicode canonical symbol is encoded in bootstrap and live requests', async () => {
+  const symbol = '币安人生/USDT:USDT';
+  const h = harness([response(bootstrap()), response(ok())], {
+    canonicalSymbol: symbol,
+    onResponse: (payload, controller) => { if (payload.status === 'ok') controller.abort(); },
+  });
+  await h.run();
+  assert.deepEqual(h.calls.map((url) => url.searchParams.get('symbol')), [symbol, symbol]);
+  assert.ok(h.calls.every((url) => url.href.includes('%E5%B8%81')));
 });

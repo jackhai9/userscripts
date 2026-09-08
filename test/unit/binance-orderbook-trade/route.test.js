@@ -22,3 +22,14 @@ test('identifies only futures trading page paths', () => {
   assert.equal(isFuturesTradingPathname('/en/futures/btcusdc'), true);
   assert.equal(isFuturesTradingPathname('/zh-CN/my/wallet/futures/balance'), false);
 });
+
+
+test('parses Unicode futures symbols from actual URL pathnames', () => {
+  for (const symbol of ['币安人生USDT', '龙虾USDT']) {
+    assert.equal(parseFuturesTradingSymbolFromPathname('/zh-CN/futures/' + symbol), symbol);
+    assert.equal(parseFuturesTradingSymbolFromPathname(new URL('https://www.binance.com/zh-CN/futures/' + symbol).pathname), symbol);
+  }
+  for (const path of ['/futures/%ZZUSDT', '/futures/BTC%2FUSDT', '/futures/BTC%20USDT', '/futures/BTCUSDT%0A']) {
+    assert.equal(parseFuturesTradingSymbolFromPathname(path), null);
+  }
+});

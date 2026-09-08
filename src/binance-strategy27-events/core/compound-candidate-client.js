@@ -1,3 +1,4 @@
+import { isCanonicalStrategy27Symbol } from './live-event-contract.js';
 import { normalizeGatewayBaseUrl, Strategy27GatewayTransportError } from './live-event-client.js';
 import { validateCompoundBootstrapResponse, validateCompoundGatewayResponse } from './compound-candidate-contract.js';
 
@@ -27,7 +28,7 @@ function cursorRegressed(next, previous) {
 export function createCompoundCandidateClient({ request, gatewayBaseUrl, authSecret, canonicalSymbol, onResponse, onConnectionStateChange, reconnectDelayMs = 2000 }) {
   if (typeof request !== 'function' || typeof onResponse !== 'function' || typeof onConnectionStateChange !== 'function') throw new Error('Compound client callbacks are required');
   if (typeof authSecret !== 'string' || authSecret.length === 0) throw new Error('Compound gateway secret is not configured');
-  if (typeof canonicalSymbol !== 'string' || !/^[A-Z0-9]+\/USDT:USDT$/.test(canonicalSymbol)) throw new Error('Compound canonical symbol is invalid');
+  if (!isCanonicalStrategy27Symbol(canonicalSymbol)) throw new Error('Compound canonical symbol is invalid');
   if (!Number.isSafeInteger(reconnectDelayMs) || reconnectDelayMs < 0) throw new Error('Compound reconnect delay is invalid');
   const origin = normalizeGatewayBaseUrl(gatewayBaseUrl);
   let cursor = null;

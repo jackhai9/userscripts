@@ -15,16 +15,16 @@ async function until(predicate) {
   }
 }
 
-async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN', migrationRecord } = {}) {
+async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN', migrationRecord, routeSymbol = 'BTCUSDT', candidateFixture = fixtures[0] } = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"><iframe></iframe></div>');
-  dom.reconfigure({ url: `https://www.binance.com/${locale}/futures/BTCUSDT` });
+  dom.reconfigure({ url: `https://www.binance.com/${locale}/futures/${routeSymbol}` });
   const page = dom.window;
   if (migrationRecord !== undefined) Object.defineProperty(page, Symbol.for('jh-userscripts.strategy29-preferences-migration'), { value: migrationRecord });
   const shapes = new Map([['user-owned', {}]]);
   let resolution = '1S';
   let shapeSequence = 0;
   const chart = {
-    resolution: () => resolution, symbol: () => 'BTCUSDT',
+    resolution: () => resolution, symbol: () => routeSymbol,
     createShape: async (point, options) => {
       const id = `entry-owned-${++shapeSequence}`;
       if (beforeCreate) await beforeCreate();
@@ -101,7 +101,7 @@ async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN', m
     await respond('compound', {
       schema_version: 1, status: 'ok', requested_cursor: cursor, next_cursor: next,
       messages: [{ schema_version: 1, projection_kind: 'compound_candidate', runtime_epoch: 'a'.repeat(32),
-        sequence, message_kind: 'candidate', symbol: fixtures[0].symbol, observed_at_ms: 7000, payload: fixtures[0] }],
+        sequence, message_kind: 'candidate', symbol: candidateFixture.symbol, observed_at_ms: 7000, payload: candidateFixture }],
     });
     await until(() => pending('compound').length === 1);
   }
@@ -708,3 +708,16 @@ for (const generated of [false, true]) {
     assert.equal(h.menus.size, 4);
   });
 }
+
+
+test('Unicode URL and chart symbol start both clients and draw the Python candidate', async (t) => {
+  const candidateFixture = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-unicode-candidate.json', import.meta.url), 'utf8'));
+  const h = await harness(t, {routeSymbol: '币安人生USDT', candidateFixture});
+  assert.equal(h.pending('ordinary').length, 1);
+  assert.equal(h.pending('compound').length, 1);
+  await h.reset();
+  await h.candidate();
+  assert.equal(h.rows(), 1);
+  assert.equal(h.shapes.size, 3);
+  assert.ok(h.requests.every((request) => new URL(request.options.url).searchParams.get('symbol') === candidateFixture.symbol));
+});

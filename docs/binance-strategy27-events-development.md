@@ -345,3 +345,15 @@ The English detail column wraps long labels without overlapping fact values.
 Source/generated entrypoint tests cover language-only switching without new
 requests or entity removal. The isolated panel preview covers both languages;
 it does not certify the production gateway or a live compound sample.
+
+
+## Canonical Unicode symbols
+
+The client and Strategy27 server accept exact `BASE/USDT:USDT` symbols whose
+nonempty base consists of Unicode letters or numbers (categories L and N) and
+is unchanged by Unicode uppercasing. This includes Binance's Chinese asset names.
+Wire symbols are never trimmed or normalized. Binance pathname segments are
+percent-decoded before validating the route; malformed encodings are rejected.
+Ordinary events, compound candidates, bootstrap queries, and live polling use the
+same contract. Compound hashes use sorted compact JSON encoded directly as UTF-8,
+matching Python `ensure_ascii=False`; existing ASCII candidate hashes do not change.
