@@ -122,6 +122,27 @@ test('polls the current route symbol independently of the visible chart interval
   assert.equal(f.clients.length, 1);
 });
 
+for (const previousState of ['connected', 'gateway_unavailable', 'unavailable']) {
+  test(`background polls preserve ${previousState} until the next response`, async () => {
+    let complete;
+    let polls = 0;
+    const f = fixture({ poll: () => ++polls === 1
+      ? Promise.resolve({ state: previousState, pages: 1, hasMore: false })
+      : new Promise(resolve => { complete = resolve; }) });
+    await f.summary.sample(0);
+    const before = f.panels[0].calls.length;
+    const pending = f.summary.sample(5_000);
+    assert.equal(f.summary.diagnostics.inFlight, true);
+    assert.equal(f.summary.diagnostics.state, previousState);
+    assert.equal(f.panels[0].calls.length, before);
+    complete({ state: 'gateway_unavailable', pages: 0, hasMore: false });
+    await pending;
+    assert.equal(f.summary.diagnostics.state, 'gateway_unavailable');
+    assert.equal(f.panels[0].calls.at(-1)[1], 'gateway_unavailable');
+    f.summary.dispose();
+  });
+}
+
 test('route retirement aborts ownership and ignores a late old-symbol response', async () => {
   let resolve;
   let polls = 0;

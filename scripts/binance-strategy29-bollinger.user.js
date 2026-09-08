@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.0
+// @version      0.5.1
 // @author       jackhai9
 // @description  Native Bollinger/SMA60 markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -1402,7 +1402,8 @@
 
   // src/binance-strategy29-bollinger/core/remote-summary-contract.js
   var STRATEGY29_SCHEMA_VERSION = 1;
-  var STRATEGY29_SPEC_VERSION = "29_2_spec_v2";
+  var STRATEGY29_API_SPEC_VERSION = "29_2_spec_v3";
+  var STRATEGY29_EVENT_SPEC_VERSION = "29_2_spec_v2";
   var STRATEGY29_REFERENCE_SHA256 = "eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d";
   var TIMEFRAMES = /* @__PURE__ */ new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]);
   var UNIT_STATUSES = /* @__PURE__ */ new Set(["warming", "ready", "stale", "insufficient_history", "data_gap", "failed"]);
@@ -1592,7 +1593,7 @@
     assertSchema(value.schema_version, "status.schema_version");
     assertString(value.spec_version, "status.spec_version");
     assertInteger(value.observed_at_ms, "status.observed_at_ms");
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) return {
+    if (value.spec_version !== STRATEGY29_API_SPEC_VERSION) return {
       schema_version: value.schema_version,
       spec_version: value.spec_version,
       observed_at_ms: value.observed_at_ms
@@ -1621,8 +1622,8 @@
     }
     assertSchema(value.schema_version, `${name}.schema_version`);
     if (value.strategy_id !== "29") throw new TypeError(`${name}.strategy_id must equal 29`);
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
-      throw new TypeError(`${name}.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
+    if (value.spec_version !== STRATEGY29_EVENT_SPEC_VERSION) {
+      throw new TypeError(`${name}.spec_version must equal ${STRATEGY29_EVENT_SPEC_VERSION}`);
     }
     assertCanonicalSymbol(value.symbol, `${name}.symbol`);
     assertEnum(value.timeframe, TIMEFRAMES, `${name}.timeframe`);
@@ -1648,8 +1649,8 @@
     if (httpStatus !== 200) throw new TypeError(`events response requires HTTP 200, received ${httpStatus}`);
     assertExactKeys(value, EVENTS_KEYS, "events response");
     assertSchema(value.schema_version, "events.schema_version");
-    if (value.spec_version !== STRATEGY29_SPEC_VERSION) {
-      throw new TypeError(`events.spec_version must equal ${STRATEGY29_SPEC_VERSION}`);
+    if (value.spec_version !== STRATEGY29_API_SPEC_VERSION) {
+      throw new TypeError(`events.spec_version must equal ${STRATEGY29_API_SPEC_VERSION}`);
     }
     assertInteger(value.observed_at_ms, "events.observed_at_ms");
     assertInteger(value.next_cursor, "events.next_cursor");
@@ -1754,7 +1755,7 @@
       }
       const status = validateStrategy29StatusResponse(statusBody, 200);
       onStatus(status);
-      if (status.spec_version !== STRATEGY29_SPEC_VERSION) {
+      if (status.spec_version !== STRATEGY29_API_SPEC_VERSION) {
         return { state: "incompatible", pages: 0, hasMore: false };
       }
       let pages = 0;
@@ -2112,6 +2113,9 @@
 
   // src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js
   var PANEL_ID = "jh-strategy29-summary-panel";
+  function newestSignalFirst(left, right) {
+    return right.bar_close_ms - left.bar_close_ms || right.sequence - left.sequence;
+  }
   var STATE_COLORS = Object.freeze({
     disabled: "#848E9C",
     module_disabled: "#848E9C",
@@ -2204,7 +2208,7 @@
     const overview = element(document, "div", { styles: { display: "grid", gap: "4px", padding: "9px 10px" } });
     overview.appendChild(element(document, "div", { text: canonicalSymbol, role: "symbol", styles: { fontWeight: "700" } }));
     const connection = element(document, "div", { text: text(SUMMARY_COPY.waiting), role: "connection", styles: { color: "#848E9C", fontSize: "11px" } });
-    const spec = element(document, "div", { text: text(SUMMARY_COPY.observerSpec(STRATEGY29_SPEC_VERSION)), role: "spec", styles: { color: "#848E9C", fontSize: "11px" } });
+    const spec = element(document, "div", { text: text(SUMMARY_COPY.observerSpec(STRATEGY29_API_SPEC_VERSION)), role: "spec", styles: { color: "#848E9C", fontSize: "11px" } });
     const reference = element(document, "div", { text: text(SUMMARY_COPY.reference(STRATEGY29_REFERENCE_SHA256)), role: "reference", styles: { color: "#848E9C", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "text" } });
     const statusFreshness = element(document, "div", { text: text(SUMMARY_COPY.noStatus), role: "status-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
     const eventsFreshness = element(document, "div", { text: text(SUMMARY_COPY.noEventsCheck), role: "events-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
@@ -2231,7 +2235,7 @@
       lastStatus = null;
       spec.dataset.state = "unavailable";
       spec.style.color = "#848E9C";
-      spec.textContent = text(SUMMARY_COPY.observerSpec(STRATEGY29_SPEC_VERSION));
+      spec.textContent = text(SUMMARY_COPY.observerSpec(STRATEGY29_API_SPEC_VERSION));
       statusFreshness.textContent = text(SUMMARY_COPY.noStatus);
       selection.dataset.state = "unavailable";
       selection.style.color = "#848E9C";
@@ -2248,7 +2252,7 @@
     }
     function renderEvents() {
       events.replaceChildren();
-      const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
+      const ordered = [...eventRecords.values()].sort(newestSignalFirst);
       for (const event of ordered) {
         const row = element(document, "div", {
           role: "remote-event",
@@ -2305,10 +2309,10 @@
       renderStatus(snapshot) {
         assertLive();
         lastStatus = snapshot;
-        const matched = snapshot.spec_version === STRATEGY29_SPEC_VERSION;
+        const matched = snapshot.spec_version === STRATEGY29_API_SPEC_VERSION;
         spec.dataset.state = matched ? "matched" : "error";
         spec.style.color = matched ? "#0ECB81" : "#F6465D";
-        spec.textContent = matched ? text(SUMMARY_COPY.matched(STRATEGY29_SPEC_VERSION)) : text(SUMMARY_COPY.mismatch(STRATEGY29_SPEC_VERSION, snapshot.spec_version));
+        spec.textContent = matched ? text(SUMMARY_COPY.matched(STRATEGY29_API_SPEC_VERSION)) : text(SUMMARY_COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version));
         statusFreshness.textContent = text(SUMMARY_COPY.statusAt(formatClock(snapshot.observed_at_ms)));
         if (!matched) {
           selection.dataset.state = "incompatible";
@@ -2350,7 +2354,7 @@
       addEvents(incoming, observedAtMs = null) {
         assertLive();
         for (const event of incoming) eventRecords.set(event.event_id, event);
-        const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
+        const ordered = [...eventRecords.values()].sort(newestSignalFirst);
         while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
         if (observedAtMs !== null) {
           lastEventsAt = observedAtMs;
@@ -2527,8 +2531,10 @@
       const ownsRequest = () => isCurrent(context) && context.abortController === controller && getGatewayState().settingsRevision === context.gatewayState.settingsRevision;
       context.nextPollAtMs = nowMs + pollIntervalMs;
       context.inFlight = true;
-      context.state = "connecting";
-      context.panel.setConnection("connecting", SUMMARY_COPY.connecting);
+      if (context.state === "idle") {
+        context.state = "connecting";
+        context.panel.setConnection("connecting", SUMMARY_COPY.connecting);
+      }
       return context.client.poll(controller.signal).then((result) => {
         if (!ownsRequest()) return;
         context.lastResult = result;
@@ -2627,7 +2633,7 @@
           lastError: moduleFailure ?? active?.lastError ?? null,
           lastResult: active?.lastResult ?? null,
           cursor: active?.client?.diagnostics.cursor ?? null,
-          specVersion: STRATEGY29_SPEC_VERSION,
+          specVersion: STRATEGY29_API_SPEC_VERSION,
           referenceSha256: STRATEGY29_REFERENCE_SHA256
         });
       }

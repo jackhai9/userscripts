@@ -1,9 +1,15 @@
-import { STRATEGY29_REFERENCE_SHA256, STRATEGY29_SPEC_VERSION } from '../core/remote-summary-contract.js';
+import { STRATEGY29_REFERENCE_SHA256, STRATEGY29_API_SPEC_VERSION } from '../core/remote-summary-contract.js';
 
 import { SUMMARY_COPY as COPY, SELECTION_REASONS, STATUS_LABELS, SIGNAL_LABELS, processingReason, formatLocalizedText, resolveUiLocaleFromPathname } from '../ui-copy.js';
 import { installPanelPosition } from './panel-position.js';
 
 const PANEL_ID = 'jh-strategy29-summary-panel';
+
+/** Backfilled intervals can be inserted later than more recent live signals. */
+function newestSignalFirst(left, right) {
+  return right.bar_close_ms - left.bar_close_ms || right.sequence - left.sequence;
+}
+
 const STATE_COLORS = Object.freeze({
   disabled: '#848E9C',
   module_disabled: '#848E9C',
@@ -84,7 +90,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   const overview = element(document, 'div', { styles: { display: 'grid', gap: '4px', padding: '9px 10px' } });
   overview.appendChild(element(document, 'div', { text: canonicalSymbol, role: 'symbol', styles: { fontWeight: '700' } }));
   const connection = element(document, 'div', { text: text(COPY.waiting), role: 'connection', styles: { color: '#848E9C', fontSize: '11px' } });
-  const spec = element(document, 'div', { text: text(COPY.observerSpec(STRATEGY29_SPEC_VERSION)), role: 'spec', styles: { color: '#848E9C', fontSize: '11px' } });
+  const spec = element(document, 'div', { text: text(COPY.observerSpec(STRATEGY29_API_SPEC_VERSION)), role: 'spec', styles: { color: '#848E9C', fontSize: '11px' } });
   const reference = element(document, 'div', { text: text(COPY.reference(STRATEGY29_REFERENCE_SHA256)), role: 'reference', styles: { color: '#848E9C', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'text' } });
   const statusFreshness = element(document, 'div', { text: text(COPY.noStatus), role: 'status-freshness', styles: { color: '#848E9C', fontSize: '11px' } });
   const eventsFreshness = element(document, 'div', { text: text(COPY.noEventsCheck), role: 'events-freshness', styles: { color: '#848E9C', fontSize: '11px' } });
@@ -112,7 +118,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     lastStatus = null;
     spec.dataset.state = 'unavailable';
     spec.style.color = '#848E9C';
-    spec.textContent = text(COPY.observerSpec(STRATEGY29_SPEC_VERSION));
+    spec.textContent = text(COPY.observerSpec(STRATEGY29_API_SPEC_VERSION));
     statusFreshness.textContent = text(COPY.noStatus);
     selection.dataset.state = 'unavailable';
     selection.style.color = '#848E9C';
@@ -129,7 +135,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   }
   function renderEvents() {
     events.replaceChildren();
-    const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
+    const ordered = [...eventRecords.values()].sort(newestSignalFirst);
     for (const event of ordered) {
       const row = element(document, 'div', {
         role: 'remote-event',
@@ -188,12 +194,12 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     renderStatus(snapshot) {
       assertLive();
       lastStatus = snapshot;
-      const matched = snapshot.spec_version === STRATEGY29_SPEC_VERSION;
+      const matched = snapshot.spec_version === STRATEGY29_API_SPEC_VERSION;
       spec.dataset.state = matched ? 'matched' : 'error';
       spec.style.color = matched ? '#0ECB81' : '#F6465D';
       spec.textContent = matched
-        ? text(COPY.matched(STRATEGY29_SPEC_VERSION))
-        : text(COPY.mismatch(STRATEGY29_SPEC_VERSION, snapshot.spec_version));
+        ? text(COPY.matched(STRATEGY29_API_SPEC_VERSION))
+        : text(COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version));
       statusFreshness.textContent = text(COPY.statusAt(formatClock(snapshot.observed_at_ms)));
       if (!matched) {
         selection.dataset.state = 'incompatible';
@@ -240,7 +246,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     addEvents(incoming, observedAtMs = null) {
       assertLive();
       for (const event of incoming) eventRecords.set(event.event_id, event);
-      const ordered = [...eventRecords.values()].sort((left, right) => right.sequence - left.sequence);
+      const ordered = [...eventRecords.values()].sort(newestSignalFirst);
       while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
       if (observedAtMs !== null) {
         lastEventsAt = observedAtMs;
