@@ -16,35 +16,50 @@ export function installPanelPosition(document, panel, header, { initialPosition,
   }
   function clamp() { apply(position); }
   function onDown(event) {
-    if (event.button !== 0 || event.target.closest('button,a')) return;
+    if (drag || !event.isPrimary || event.button !== 0 || event.buttons !== 1 || event.target.closest('button,a')) return;
     const rect = panel.getBoundingClientRect();
-    drag = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+    /** Capture keeps this drag in the parent document when crossing the chart iframe. */
+    header.setPointerCapture(event.pointerId);
+    drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
     event.preventDefault();
   }
   function onMove(event) {
-    if (!drag) return;
+    if (!drag || event.pointerId !== drag.pointerId) return;
     apply({ left: drag.left + event.clientX - drag.x, top: drag.top + event.clientY - drag.y });
+  }
+  function release() {
+    const { pointerId } = drag;
+    drag = null;
+    if (header.hasPointerCapture(pointerId)) header.releasePointerCapture(pointerId);
   }
   function finish() {
     if (!drag) return;
-    drag = null;
+    release();
     clamp();
     savePosition({ ...position });
   }
+  function onEnd(event) {
+    if (drag && event.pointerId === drag.pointerId) finish();
+  }
   clamp();
   header.style.cursor = 'move';
-  header.addEventListener('mousedown', onDown);
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseup', finish);
+  header.style.touchAction = 'none';
+  header.addEventListener('pointerdown', onDown);
+  header.addEventListener('pointermove', onMove);
+  header.addEventListener('pointerup', onEnd);
+  header.addEventListener('pointercancel', onEnd);
+  header.addEventListener('lostpointercapture', onEnd);
   view.addEventListener('blur', finish);
   view.addEventListener('resize', clamp);
   return Object.freeze({
     clamp,
     destroy() {
-      drag = null;
-      header.removeEventListener('mousedown', onDown);
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', finish);
+      if (drag) release();
+      header.removeEventListener('pointerdown', onDown);
+      header.removeEventListener('pointermove', onMove);
+      header.removeEventListener('pointerup', onEnd);
+      header.removeEventListener('pointercancel', onEnd);
+      header.removeEventListener('lostpointercapture', onEnd);
       view.removeEventListener('blur', finish);
       view.removeEventListener('resize', clamp);
     },

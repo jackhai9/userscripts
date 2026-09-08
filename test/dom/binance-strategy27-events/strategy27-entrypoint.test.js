@@ -672,10 +672,10 @@ for (const generated of [false, true]) {
 }
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} rejects malformed preference migration without stopping Strategy27`, async (t) => {
+  test(`${generated ? 'generated' : 'source'} ignores retired preference records and provides only the shared transport`, async (t) => {
     const h = await harness(t, { generated, migrationRecord: { version: 1, enabled: true, position: null, secret: 'synthetic-rejected-value' } });
-    assert.equal(h.page.__TM_SIGNAL_CLIENT_DEBUG__.strategy29.state, 'initialization_failed');
-    assert.match(h.page.__TM_SIGNAL_CLIENT_DEBUG__.strategy29.moduleFailure, /migration record is invalid/);
+    assert.equal(h.page[Symbol.for('jh-userscripts.signal-gateway')].version, 1);
+    assert.equal(h.page.__TM_SIGNAL_CLIENT_DEBUG__, undefined);
     assert.equal(h.pending('ordinary').length, 1);
     assert.equal(h.pending('compound').length, 1);
     await h.ordinaryBootstrap();

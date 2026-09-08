@@ -3,9 +3,9 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.1
+// @version      0.6.0
 // @author       jackhai9
-// @description  统一配置 CorsairQuant 网关，显示 Strategy 27 事件与 Strategy 29 跨周期汇总
+// @description  Display Strategy 27 events and provide the shared private CorsairQuant gateway connection
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @exclude      https://www.binance.com/*/my/wallet/futures/*
@@ -49,10 +49,8 @@ import { createTradingViewCompoundLayer } from './dom/tradingview-compound-layer
 import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 import { createStrategy27Translator, localizeAnnotation, resolveUiLocaleFromPathname } from './core/ui-copy.js';
 import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
-import { createStrategy29RemoteSummary } from '../binance-strategy29-bollinger/remote-summary.js';
-import { createStrategy29GmJsonRequest } from '../binance-strategy29-bollinger/core/remote-summary-client.js';
-import { readSignalGatewaySettings, SIGNAL_GATEWAY_ORIGIN, SIGNAL_GATEWAY_ORIGIN_KEY, SIGNAL_GATEWAY_SECRET_KEY } from '../shared/signal-client-settings.js';
-import { migrateStrategy29Preferences, isStrategy29CompanionReady, STRATEGY29_PREFERENCES_EVENT, SIGNAL_HOST_READY, SIGNAL_HOST_READY_EVENT } from '../shared/strategy29-preferences-migration.js';
+import { SIGNAL_GATEWAY_ORIGIN, SIGNAL_GATEWAY_ORIGIN_KEY, SIGNAL_GATEWAY_SECRET_KEY } from '../shared/signal-client-settings.js';
+import { installSignalGatewayBridge } from '../shared/signal-gateway-bridge.js';
 
 const promptUser = globalThis.prompt.bind(globalThis);
 
@@ -75,60 +73,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
   let uiLocale = resolveUiLocaleFromPathname(page.location.pathname);
   let t = createStrategy27Translator(uiLocale);
   let statusCopy = null;
-  let strategy29Summary = null;
-  let strategy29Failure = null;
-  function failStrategy29(error) {
-    if (strategy29Failure !== null) return;
-    strategy29Failure = String(error.message).slice(0, 512);
-    if (strategy29Summary !== null) strategy29Summary.dispose();
-    page.console.warn('[CorsairQuant Strategy29]', strategy29Failure);
-  }
-  /** The companion must relinquish legacy remote ownership before this installation takes it. */
-  function initializeStrategy29() {
-    if (strategy29Summary !== null || !isStrategy29CompanionReady(page)) return;
-    migrateStrategy29Preferences(page, GM_getValue, GM_setValue);
-    strategy29Summary = createStrategy29RemoteSummary({
-      view: page,
-      request: createStrategy29GmJsonRequest(GM_xmlhttpRequest),
-      getValue: GM_getValue,
-      setValue: GM_setValue,
-      registerMenuCommand: GM_registerMenuCommand,
-      getGatewaySettings: () => readSignalGatewaySettings(GM_getValue),
-    });
-    Object.defineProperty(page, SIGNAL_HOST_READY, { value: true });
-    page.dispatchEvent(new page.Event(SIGNAL_HOST_READY_EVENT));
-  }
-  try { initializeStrategy29(); } catch (error) { failStrategy29(error); }
-  /** Module boundary: a panel failure must not interrupt independent Strategy27 consumers. */
-  function sampleStrategy29() {
-    if (strategy29Failure !== null || strategy29Summary === null) return;
-    try {
-      const pending = strategy29Summary.sample(Date.now());
-      if (pending) void pending.catch(failStrategy29);
-    } catch (error) { failStrategy29(error); }
-  }
-  function onStrategy29Preferences() {
-    if (strategy29Failure !== null) return;
-    try {
-      initializeStrategy29();
-      sampleStrategy29();
-    } catch (error) { failStrategy29(error); }
-  }
-  page.addEventListener(STRATEGY29_PREFERENCES_EVENT, onStrategy29Preferences);
-  function onSummaryVisibility() {
-    if (strategy29Failure !== null || strategy29Summary === null) return;
-    if (pageDocument.hidden) strategy29Summary.pause();
-    else sampleStrategy29();
-  }
-  function pauseSummary() { if (strategy29Failure === null && strategy29Summary !== null) strategy29Summary.pause(); }
-  pageDocument.addEventListener('visibilitychange', onSummaryVisibility);
-  page.addEventListener('pagehide', pauseSummary);
-  page.addEventListener('pageshow', onSummaryVisibility);
-  Object.defineProperty(page, '__TM_SIGNAL_CLIENT_DEBUG__', {
-    value: Object.freeze({ get strategy29() { return strategy29Summary === null
-      ? { state: strategy29Failure === null ? 'waiting_for_companion' : 'initialization_failed', moduleFailure: strategy29Failure }
-      : { ...strategy29Summary.diagnostics, moduleFailure: strategy29Failure }; } }),
-  });
+  const gatewayBridge = installSignalGatewayBridge(page, { getValue: GM_getValue, gmXmlHttpRequest: GM_xmlhttpRequest });
 
   function stopActive(resetReason) {
     if (!active) return;
@@ -330,7 +275,6 @@ const promptUser = globalThis.prompt.bind(globalThis);
   }
 
   function synchronizeContext() {
-    sampleStrategy29();
     const nextLocale = resolveUiLocaleFromPathname(page.location.pathname);
     if (nextLocale !== uiLocale) {
       uiLocale = nextLocale;
@@ -416,9 +360,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
 
   function restart() {
     stopActive('route_changed');
-    if (strategy29Failure === null && strategy29Summary !== null) {
-      try { strategy29Summary.restart(); } catch (error) { failStrategy29(error); }
-    }
+    gatewayBridge.settingsChanged();
     synchronizeContext();
   }
 
@@ -461,11 +403,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
   page.addEventListener('beforeunload', () => {
     page.clearInterval(contextTimer);
     removeRouteListener();
-    page.removeEventListener(STRATEGY29_PREFERENCES_EVENT, onStrategy29Preferences);
-    pageDocument.removeEventListener('visibilitychange', onSummaryVisibility);
-    page.removeEventListener('pagehide', pauseSummary);
-    page.removeEventListener('pageshow', onSummaryVisibility);
-    if (strategy29Summary !== null) strategy29Summary.dispose();
+    gatewayBridge.dispose();
     stopActive('route_changed');
   }, { once: true });
   synchronizeContext();

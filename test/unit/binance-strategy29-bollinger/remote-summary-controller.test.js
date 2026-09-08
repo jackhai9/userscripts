@@ -2,18 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  STRATEGY29_REMOTE_ENABLED_KEY,
   createStrategy29RemoteSummary,
 } from '../../../src/binance-strategy29-bollinger/remote-summary.js';
 import { formatLocalizedText } from '../../../src/binance-strategy29-bollinger/ui-copy.js';
 import { Strategy29GatewayTransportError } from '../../../src/binance-strategy29-bollinger/core/remote-summary-client.js';
 
-function fixture({ enabled = true, authSecret = 'synthetic-secret', poll } = {}) {
+function fixture({ available = true, authSecret = 'synthetic-secret', poll } = {}) {
   const values = new Map([
-    [STRATEGY29_REMOTE_ENABLED_KEY, enabled],
     ['strategy29GatewayAuthSecret', authSecret],
     ['strategy29GatewayOrigin', 'http://127.0.0.1:8729'],
   ]);
+  const gatewayState = { available, configured: authSecret.length > 0, settingsRevision: 0 };
   const menus = [];
   const panels = [];
   const prompts = [];
@@ -33,7 +32,7 @@ function fixture({ enabled = true, authSecret = 'synthetic-secret', poll } = {})
       menus[id] = { label, callback };
       return id;
     },
-    getGatewaySettings: () => ({ authSecret: values.get('strategy29GatewayAuthSecret'), gatewayOrigin: values.get('strategy29GatewayOrigin') }),
+    getGatewayState: () => gatewayState,
     createPanel: (_document, canonicalSymbol, options) => {
       const calls = [];
       const panel = {
@@ -61,16 +60,19 @@ function fixture({ enabled = true, authSecret = 'synthetic-secret', poll } = {})
       return client;
     },
   });
-  return { view, values, menus, prompts, panels, clients, summary };
+  return { view, values, gatewayState, menus, prompts, panels, clients, summary };
 }
 
-test('disabled remote summary remains discoverable without requesting data or reading credentials', async () => {
-  const f = fixture({ enabled: false });
+test('waits without a panel until the shared gateway becomes available', async () => {
+  const f = fixture({ available: false });
   assert.equal(f.summary.sample(0), undefined);
-  assert.equal(f.panels.length, 1);
+  assert.equal(f.panels.length, 0);
   assert.equal(f.clients.length, 0);
-  assert.equal(f.menus.length, 1);
-  assert.equal(f.summary.diagnostics.enabled, false);
+  assert.equal(f.summary.diagnostics.state, 'waiting_for_gateway');
+  f.gatewayState.available = true;
+  await f.summary.sample(1);
+  assert.equal(f.clients.length, 1);
+  assert.equal(f.summary.diagnostics.state, 'connected');
 });
 
 test('pause preserves the current client and panel and permits one resumed request', async () => {
@@ -104,9 +106,9 @@ test('pause preserves the current client and panel and permits one resumed reque
 test('remote module owns no gateway configuration menu and uses host settings', async () => {
   const f = fixture();
   await f.summary.sample(0);
-  assert.deepEqual(f.menus.map(menu => menu.label), ['Toggle Strategy 29 cross-timeframe summary']);
-  assert.equal(f.clients[0].options.authSecret, 'synthetic-secret');
-  assert.equal(f.clients[0].options.gatewayOrigin, 'http://127.0.0.1:8729');
+  assert.deepEqual(f.menus.map(menu => menu.label), []);
+  assert.equal(Object.hasOwn(f.clients[0].options, 'authSecret'), false);
+  assert.equal(Object.hasOwn(f.clients[0].options, 'gatewayOrigin'), false);
 });
 
 test('polls the current route symbol independently of the visible chart interval', async () => {
@@ -158,15 +160,14 @@ test('missing secret creates a visible configuration state without constructing 
   assert.deepEqual(f.panels[0].calls[0], ['connection', 'configuration_required', 'Gateway secret is not configured']);
 });
 
-test('invalid stored origin stops one visible remote context without per-second reconstruction', async () => {
+test('settings revision retires the prior client and reconstructs the active route', async () => {
   const f = fixture();
-  f.values.set('strategy29GatewayOrigin', 'https://127.0.0.1:8729');
   await f.summary.sample(0);
-  await f.summary.sample(10_000);
-  assert.equal(f.panels.length, 1);
-  assert.equal(f.clients.length, 0);
-  assert.equal(f.summary.diagnostics.state, 'stopped');
-  assert.match(f.panels[0].calls[0][2], /loopback origin/);
+  f.gatewayState.settingsRevision += 1;
+  await f.summary.sample(1);
+  assert.equal(f.clients.length, 2);
+  assert.deepEqual(f.panels[0].calls.at(-1), ['destroy']);
+  assert.equal(f.summary.diagnostics.gatewayRevision, 1);
 });
 
 test('unsupported futures route is classified once without a retry/log loop', async () => {
@@ -195,8 +196,8 @@ test('locale switches preserve the pending request, client cursor and panel whil
   assert.equal(f.panels[0].locale, 'zh-CN');
   assert.equal(f.summary.diagnostics.cursor, 41);
   assert.equal(requestSignal.aborted, false);
-  assert.equal(f.menus.length, 1);
-  assert.deepEqual(f.menus.map(menu => menu.label), ['切换 Strategy 29 跨周期汇总']);
+  assert.equal(f.menus.length, 0);
+  assert.deepEqual(f.menus.map(menu => menu.label), []);
   complete({ state: 'connected', pages: 1, hasMore: false });
   await pending;
   assert.deepEqual(f.panels[0].calls.at(-1), ['connection', 'connected', '已连接']);
@@ -205,8 +206,7 @@ test('locale switches preserve the pending request, client cursor and panel whil
   assert.equal(f.panels[0].locale, 'en');
   assert.equal(f.summary.diagnostics.cursor, 41);
   assert.equal(f.clients.length, 1);
-  assert.equal(f.menus.length, 1);
-  assert.equal(f.menus[0].label, 'Toggle Strategy 29 cross-timeframe summary');
+  assert.equal(f.menus.length, 0);
   f.summary.dispose();
 });
 
@@ -219,7 +219,7 @@ test('no-auth locale change updates the existing panel and localized prompts wit
   assert.equal(f.panels[0].locale, 'zh-CN');
   assert.equal(f.clients.length, 0);
   assert.equal(f.summary.diagnostics.state, 'configuration_required');
-  assert.deepEqual(f.menus.map(menu => menu.label), ['切换 Strategy 29 跨周期汇总']);
+  assert.deepEqual(f.menus.map(menu => menu.label), []);
   f.summary.dispose();
 });
 

@@ -3,15 +3,15 @@
 ## Scope and Installation
 
 The standalone `binance-strategy29-bollinger.user.js` owns the local
-Bollinger/SMA60 observer. The CorsairQuant signal client, delivered through the
-existing Strategy27 installation, owns the read-only Strategy29 server summary.
+Bollinger/SMA60 observer and its read-only server summary. The existing Strategy27
+installation supplies only shared authenticated transport.
 Source is `src/binance-strategy29-bollinger/`. The local observer reads only
 already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.4.0 with orderbook 2.7.199 or later, or use it alone.
-Install CorsairQuant signal client 0.5.0 for the remote summary.
+Install Strategy29 0.5.0 with orderbook 2.7.199 or later, or use it alone.
+Install CorsairQuant signal client 0.6.0 for the remote summary.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
@@ -64,32 +64,33 @@ The summary follows the existing pathname locale contract: `/zh-CN/` uses Chines
 while English and other routes use English. Strategy29 imports the existing pure
 orderbook locale helpers without modifying orderbook or shared runtime behavior.
 Headers, connection and selection states, signal names, processing labels,
-notification totals, empty states, menus and prompts have bilingual copy. Technical
+notification totals and empty states have bilingual copy. Technical
 identifiers and arbitrary server diagnostic details remain verbatim, with localized
 labels. Chart arrows contain no textual labels.
 
 A same-symbol locale change rerenders retained status, events and connection text
-without retiring requests, rebuilding the client or resetting its cursor. Existing
-Tampermonkey menu IDs are updated using the documented `GM_registerMenuCommand`
-options contract (Tampermonkey 5.0 or later); no extra grant is required.
+without retiring requests, rebuilding the client or resetting its cursor. Gateway
+configuration menus belong to the shared provider in the Strategy27 installation.
 
 Drag the header with the primary mouse button. Header buttons do not start a drag.
 Mouse release or window blur saves only `{left, top}` under the private userscript
 key `strategy29SummaryPanelPosition`; route changes and page reloads restore it.
 The panel clamps its position after viewport, content, collapse and language changes.
-Destroying the panel removes its document/window drag listeners. Invalid persisted
+The title bar captures the primary pointer so dragging continues across the chart
+iframe. Pointer release, cancellation, lost capture and window blur finish once;
+destroying the panel releases capture and removes its listeners. Invalid persisted
 coordinates fail explicitly. No credentials cross the page boundary.
 
-## Optional Cross-Timeframe Server Summary
+## Automatic Cross-Timeframe Server Summary
 
-The remote summary is owned by the CorsairQuant signal client. Its single
-gateway URL and secret configuration serves both Strategy27 and Strategy29,
-using the existing `http://127.0.0.1:18765` local forward. The Strategy29 module
-has one enable/disable menu and no separate gateway configuration. An inactive
-module still displays a discoverable panel without making requests. The
-secret is never stored in the page, URL, panel DOM, or debug diagnostics.
+Strategy29 owns the summary panel, requests, lifecycle and private panel position.
+There is no summary enable/disable menu: the summary starts automatically when
+the shared gateway provider is available. Gateway origin and secret remain in
+the existing Strategy27 installation's private storage. Strategy29 receives only
+allowlisted public observation responses through the shared page capability;
+it has no credential prompt or privileged network grant.
 
-When enabled, the panel follows only the current Binance route symbol but shows
+The panel follows only the current Binance route symbol but shows
 every timeframe watched for that symbol by the server. It therefore continues to
 show 1m, 1h, and other server states and recent signals regardless of the chart
 interval currently open. It labels delivery counts as global because those
@@ -126,23 +127,20 @@ retain a complete prior-success group. Expired selection can originate from fres
 or stale facts. Clock rollback does not invalidate otherwise coherent metadata.
 
 Authentication failure affects only the remote summary, not local chart detection.
-The unified client preserves the Strategy27 installation namespace, update URL and
-private gateway keys. Independent automatic updates require a readiness handshake:
-the host waits for the local-only companion before creating a remote panel. A
-legacy companion retains its panel and polling until refresh with both scripts
-updated. The new local-only runtime has a new singleton version and refuses to
-reuse a legacy remote-owning runtime. If the host has not updated, the companion
-shows a localized update/reload notice while local chart detection continues.
-The notice disappears when the host acknowledges ownership. Existing private
-host preferences win on subsequent reloads as well as initial migration.
+The shared provider preserves the Strategy27 installation namespace, update URL
+and private gateway keys. Update both existing scripts and reload. Both load
+orders are supported. Without the current provider, Strategy29 displays a localized
+update/reload notice while local chart detection continues. Previous host-owned
+summary releases do not receive the retired readiness handshake, so they cannot
+start a second panel beside the current Strategy29 runtime. Runtime version 4
+refuses to reuse the legacy singleton.
 
-Update the existing installation in place. Strategy29's
-standalone entry is local-only and publishes only a versioned preference record
-containing enabled state and panel coordinates. The host validates its exact keys,
-copies missing preferences once into its own private storage and preserves existing
-host choices. This public record cannot supply gateway credentials, origins or
-event state. Both script load orders are supported; update both scripts before
-reloading. The host never installs or replaces the local detector singleton.
+The public transport accepts only exact fixed status/event routes and validated
+query fields. Requests carry no caller-selected origin, headers or body. The
+provider owns authentication, redirect rejection, bounded response size, a
+10-second deadline and cancellation. A settings revision retires old responses
+before they can advance Strategy29's cursor. Unicode letter/number base symbols
+retain their exact canonical identity, including symbols such as `牛来/USDT:USDT`.
 
 The unified gateway reports `module_disabled` when the server module is intentionally
 off, `gateway_unavailable` when an enabled fixed backend cannot be reached, and

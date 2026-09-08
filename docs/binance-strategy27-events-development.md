@@ -11,22 +11,18 @@ V10 live projection. The VPS remains the only market-data and event-analysis
 authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
-Version 0.5.0 uses the existing installation as the CorsairQuant signal client.
-Strategy29 remote ownership starts only after the local-only Strategy29 companion
-publishes a valid page-scoped readiness record. Without it, the host reports
-`waiting_for_companion` and leaves any legacy Strategy29 remote owner untouched.
-This handshake is separate from one-time preference migration, so later reloads
-continue to use the host's saved choices. Update both existing installations and
-reload to complete a staged upgrade.
-The historical installed script name is retained to preserve update identity.
-Its private gateway URL and secret are shared by the Strategy27 consumers and
-the independently controlled Strategy29 remote summary. The installation namespace
-and update URLs remain unchanged; update the existing installation in place.
-The retained `strategy27GatewayOrigin` and `strategy27GatewayAuthSecret` storage
-keys are the single credential source, avoiding a second setup during migration.
-The standalone Strategy29 script continues to own its local detector and has no
-gateway request or configuration permissions. New remote modules must receive
-the host's private settings adapter rather than creating another credential store.
+Version 0.6.0 retains this installation's private gateway configuration and
+provides a shared read-only transport. Strategy29 owns its own summary panel,
+lifecycle and panel position. The existing `strategy27GatewayOrigin` and
+`strategy27GatewayAuthSecret` storage keys remain the single credential source;
+no second setup or credential transfer is required. Installation identity and
+update URLs remain unchanged.
+
+The page-visible `jh-userscripts.signal-gateway` capability exposes only fixed
+Strategy29 status and event reads. It is intentionally a public-data capability:
+page code can request the allowed observation data, but cannot obtain the secret,
+select another origin, set request headers or send a write. Future strategy
+routes require an explicit allowlist extension and contract review.
 
 The script reads an authenticated, loopback-only long-poll endpoint through an
 SSH local forward. It draws transient entities only when the Binance route,
@@ -47,17 +43,14 @@ symbol.
 
 The secret prompt is captured from the Tampermonkey sandbox before page code can
 replace the page prompt. No credential is passed through page globals, events,
-localStorage or diagnostics. Strategy29's only public migration record contains
-enabled state and panel coordinates, validates an exact schema and is copied once
-without overwriting destination preferences. Its summary follows the route symbol
-on any chart interval and remains visible while locally disabled. The host's
-existing context timer samples it; visibility and pagehide abort pending summary
-requests without resetting the retained cursor. A summary failure is contained at
-the module boundary and does not stop the independent Strategy27 consumers.
+localStorage or diagnostics. Strategy29 owns its default-on summary on every
+chart interval. Its independent lifecycle handles visibility, cursor recovery and
+panel persistence. The shared provider bounds requests to four in flight and a
+10-second deadline, rejects redirects and restricts response size. Reconfiguring
+the gateway invalidates pending reads before consumers resume.
 
 Use the existing forward for `/v1/strategy29/status` and `/v1/strategy29/events`.
-The unified gateway's disabled module state is intentional and does not require
-another secret. Server monitoring and notification activation remain separate.
+Server monitoring and dedicated notification delivery remain separate controls.
 
 The macOS operator machine keeps this forward under a `launchd` user agent so
 the SSH process is restarted after sleep, network changes, or a broken
@@ -169,7 +162,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.5.1 with identical metadata headers.
+generated install artifact are version 0.6.0 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout

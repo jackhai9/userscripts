@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { installStrategy29 } from '../../../src/binance-strategy29-bollinger/runtime.js';
-import { STRATEGY29_REMOTE_ENABLED_KEY } from '../../../src/binance-strategy29-bollinger/remote-summary.js';
 
 const gatewayStatus = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const gatewayEvents = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
@@ -43,7 +42,6 @@ test('standalone injection is single-instance and pauses/resumes/disposes its on
 test('remote transport failure never stops the local observer timer', async () => {
   const f = fixture();
   const values = new Map([
-    [STRATEGY29_REMOTE_ENABLED_KEY, true],
     ['strategy29GatewayAuthSecret', 'synthetic-secret'],
     ['strategy29GatewayOrigin', 'http://127.0.0.1:8729'],
   ]);
@@ -52,7 +50,7 @@ test('remote transport failure never stops the local observer timer', async () =
     getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
     setValue: (key, value) => values.set(key, value),
     registerMenuCommand() {},
-    getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
+    getGatewayState() { return { available: true, configured: true, settingsRevision: 0 }; },
   });
   await new Promise(resolve => f.view.setTimeout(resolve, 0));
   assert.equal(runtime.diagnostics.runtimeFailure, null);
@@ -72,7 +70,6 @@ for (const [name, remoteResponse, expectedState] of [
   test(`${name} remains a remote-only state while the local timer continues`, async () => {
     const f = fixture();
     const values = new Map([
-      [STRATEGY29_REMOTE_ENABLED_KEY, true],
       ['strategy29GatewayAuthSecret', 'synthetic-secret'],
       ['strategy29GatewayOrigin', 'http://127.0.0.1:8729'],
     ]);
@@ -81,7 +78,7 @@ for (const [name, remoteResponse, expectedState] of [
       getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
       setValue: (key, value) => values.set(key, value),
       registerMenuCommand() {},
-      getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
+      getGatewayState() { return { available: true, configured: true, settingsRevision: 0 }; },
     });
     await new Promise(resolve => f.view.setTimeout(resolve, 0));
     assert.equal(runtime.diagnostics.runtimeFailure, null);
@@ -95,7 +92,6 @@ for (const [name, remoteResponse, expectedState] of [
 test('hiding the page aborts the remote request and resumes with one shared runtime timer', async () => {
   const f = fixture();
   const values = new Map([
-    [STRATEGY29_REMOTE_ENABLED_KEY, true],
     ['strategy29GatewayAuthSecret', 'synthetic-secret'],
     ['strategy29GatewayOrigin', 'http://127.0.0.1:8729'],
   ]);
@@ -107,7 +103,7 @@ test('hiding the page aborts the remote request and resumes with one shared runt
     getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
     setValue: (key, value) => values.set(key, value),
     registerMenuCommand() {},
-    getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
+    getGatewayState() { return { available: true, configured: true, settingsRevision: 0 }; },
   });
   assert.equal(runtime.diagnostics.remoteSummary.inFlight, true);
   f.hide(true);
@@ -125,15 +121,14 @@ test('hiding the page aborts the remote request and resumes with one shared runt
 test('actual remote client retains rows and cursor across visibility and bootstraps a new route', async () => {
   const f = fixture();
   const values = new Map([
-    [STRATEGY29_REMOTE_ENABLED_KEY, true],
     ['strategy29GatewayAuthSecret', 'synthetic-secret'],
   ]);
   const urls = [];
   const first = { ...gatewayEvents.events[0], symbol: 'BTR/USDT:USDT', sequence: 900 };
   const second = { ...gatewayEvents.events[1], symbol: 'BTR/USDT:USDT', sequence: 901 };
   const runtime = installStrategy29(f.view, {
-    request: async ({ url }) => {
-      const query = new URL(url);
+    request: async ({ path: url }) => {
+      const query = new URL(url, 'https://gateway.invalid');
       let body = gatewayStatus;
       if (query.pathname.endsWith('/events')) {
         urls.push(query);
@@ -145,7 +140,7 @@ test('actual remote client retains rows and cursor across visibility and bootstr
     },
     getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
     setValue: (key, value) => values.set(key, value),
-    registerMenuCommand() {}, getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
+    registerMenuCommand() {}, getGatewayState() { return { available: true, configured: true, settingsRevision: 0 }; },
   });
   const settle = () => new Promise(resolve => f.view.setTimeout(resolve, 0));
   await settle();
@@ -174,13 +169,12 @@ for (const failure of ['embedded conflict', 'interval subscription failure']) {
   test(`permanent ${failure} retires the populated remote panel and request`, async () => {
     const f = fixture();
     const values = new Map([
-      [STRATEGY29_REMOTE_ENABLED_KEY, true],
       ['strategy29GatewayAuthSecret', 'synthetic-secret'],
     ]);
     let requests = 0, aborts = 0;
     let releaseLate;
     const runtime = installStrategy29(f.view, {
-      request: ({ url, signal }) => {
+      request: ({ path: url, signal }) => {
         requests += 1;
         if (requests > 2) return new Promise(resolve => {
           releaseLate = resolve;
@@ -195,7 +189,7 @@ for (const failure of ['embedded conflict', 'interval subscription failure']) {
       },
       getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
       setValue: (key, value) => values.set(key, value),
-      registerMenuCommand() {}, getGatewaySettings() { return { authSecret: 'synthetic-secret', gatewayOrigin: 'http://127.0.0.1:18765' }; },
+      registerMenuCommand() {}, getGatewayState() { return { available: true, configured: true, settingsRevision: 0 }; },
     });
     const settle = () => new Promise(resolve => f.view.setTimeout(resolve, 0));
     try {

@@ -1,3 +1,4 @@
+import { isCanonicalUsdtSymbol } from '../../shared/canonical-symbol.js';
 import {
   STRATEGY29_SPEC_VERSION,
   validateStrategy29EventsResponse,
@@ -12,30 +13,6 @@ export class Strategy29GatewayTransportError extends Error {
   }
 }
 
-function gatewayAbortError() {
-  return new DOMException('Strategy29 gateway request aborted', 'AbortError');
-}
-
-export function normalizeStrategy29GatewayOrigin(value) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new TypeError('Strategy29 gateway must be an explicit loopback origin');
-  }
-  if (
-    url.protocol !== 'http:'
-    || url.hostname !== '127.0.0.1'
-    || url.port === ''
-    || url.username !== ''
-    || url.password !== ''
-    || url.pathname !== '/'
-    || url.search !== ''
-    || url.hash !== ''
-  ) throw new TypeError('Strategy29 gateway must be an explicit loopback origin');
-  return url.origin;
-}
-
 function parseJsonResponse(response, label) {
   if (!response || !Number.isInteger(response.status) || typeof response.responseText !== 'string') {
     throw new Strategy29GatewayTransportError(`${label} returned an invalid transport response`);
@@ -47,10 +24,9 @@ function parseJsonResponse(response, label) {
   }
 }
 
-function assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset }) {
+function assertConfiguration({ request, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset }) {
   if (typeof request !== 'function') throw new TypeError('request must be a function');
-  if (typeof authSecret !== 'string' || authSecret.length === 0) throw new TypeError('authSecret must be non-empty');
-  if (typeof canonicalSymbol !== 'string' || !/^[A-Z0-9]+\/USDT:USDT$/.test(canonicalSymbol)) {
+  if (!isCanonicalUsdtSymbol(canonicalSymbol)) {
     throw new TypeError('canonicalSymbol must use canonical symbol format');
   }
   if (!Number.isInteger(maxPagesPerPoll) || maxPagesPerPoll < 1 || maxPagesPerPoll > 10) {
@@ -61,41 +37,38 @@ function assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPer
   }
 }
 
-function buildEventsUrl(origin, canonicalSymbol, cursor) {
-  const url = new URL('/v1/strategy29/events', origin);
+function buildEventsPath(canonicalSymbol, cursor) {
+  const url = new URL('/v1/strategy29/events', 'https://gateway.invalid');
   url.searchParams.set('symbol', canonicalSymbol);
   if (cursor === null) {
     url.searchParams.set('mode', 'latest');
     url.searchParams.set('limit', '20');
   } else url.searchParams.set('cursor', String(cursor));
-  return url.href;
+  return url.pathname + url.search;
 }
 
 /** Bounded snapshot consumer. Filtered pages advance the global cursor even when events is empty. */
 export function createStrategy29SummaryClient({
   request,
-  gatewayOrigin,
-  authSecret,
   canonicalSymbol,
   maxPagesPerPoll = 2,
   onStatus,
   onEvents,
   onCursorReset,
 }) {
-  const origin = normalizeStrategy29GatewayOrigin(gatewayOrigin);
-  assertConfiguration({ request, authSecret, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset });
+  assertConfiguration({ request, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset });
   let cursor = null;
 
-  async function perform(url, signal) {
+  async function perform(path, signal) {
     if (!signal || typeof signal.aborted !== 'boolean' || typeof signal.addEventListener !== 'function') {
       throw new TypeError('poll requires an AbortSignal');
     }
     if (signal.aborted) throw signal.reason;
-    return request({ url, authSecret, signal });
+    return request({ path, signal });
   }
 
   async function poll(signal) {
-    const statusResponse = await perform(`${origin}/v1/strategy29/status`, signal);
+    const statusResponse = await perform('/v1/strategy29/status', signal);
     // Aborted host requests can still resolve; they must not mutate a resumed client.
     if (signal.aborted) throw signal.reason;
     const statusBody = parseJsonResponse(statusResponse, 'Strategy29 status');
@@ -117,7 +90,7 @@ export function createStrategy29SummaryClient({
     let hasMore = false;
     while (pages < maxPagesPerPoll) {
       const requestedCursor = cursor;
-      const eventsResponse = await perform(buildEventsUrl(origin, canonicalSymbol, cursor), signal);
+      const eventsResponse = await perform(buildEventsPath(canonicalSymbol, cursor), signal);
       if (signal.aborted) throw signal.reason;
       const eventsBody = parseJsonResponse(eventsResponse, 'Strategy29 events');
       pages += 1;
@@ -166,43 +139,5 @@ export function createStrategy29SummaryClient({
   return Object.freeze({
     poll,
     get diagnostics() { return Object.freeze({ cursor }); },
-  });
-}
-
-/** Userscript-sandbox transport. Abort is part of route/visibility/dispose ownership. */
-export function createStrategy29GmJsonRequest(gmXmlHttpRequest, timeoutMs = 10_000) {
-  if (typeof gmXmlHttpRequest !== 'function') throw new TypeError('GM_xmlhttpRequest must be a function');
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new TypeError('timeoutMs must be a positive integer');
-  return ({ url, authSecret, signal }) => new Promise((resolve, reject) => {
-    let settled = false;
-    function finish(callback, value) {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener('abort', onAbort);
-      callback(value);
-    }
-    let request;
-    function onAbort() {
-      request.abort();
-      finish(reject, signal.reason ?? gatewayAbortError());
-    }
-    try {
-      request = gmXmlHttpRequest({
-        method: 'GET',
-        url,
-        headers: { Authorization: `Bearer ${authSecret}` },
-        timeout: timeoutMs,
-        onload: response => finish(resolve, response),
-        onerror: () => finish(reject, new Strategy29GatewayTransportError('Strategy29 gateway transport failure')),
-        ontimeout: () => finish(reject, new Strategy29GatewayTransportError('Strategy29 gateway transport timeout')),
-        onabort: () => finish(reject, signal.reason ?? gatewayAbortError()),
-      });
-    } catch {
-      finish(reject, new Strategy29GatewayTransportError('Strategy29 gateway transport initialization failed'));
-      return;
-    }
-    if (settled) return;
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) onAbort();
   });
 }
