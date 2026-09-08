@@ -14,6 +14,18 @@ import {
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('unified gateway module errors require exact identity and state fields', () => {
+  const disabled = { schema_version: 1, error: 'module_disabled', strategy_id: '29', status: 'disabled' };
+  const unavailable = { schema_version: 1, error: 'gateway_unavailable', strategy_id: '29' };
+  assert.equal(validateStrategy29GatewayError(disabled, 503), disabled);
+  assert.equal(validateStrategy29GatewayError(unavailable, 503), unavailable);
+  for (const body of [
+    { ...disabled, strategy_id: '27' }, { ...disabled, status: 'running' },
+    { ...unavailable, status: 'disabled' }, { ...disabled, extra: 1 },
+    { schema_version: 1, error: 'module_disabled' },
+  ]) assert.throws(() => validateStrategy29GatewayError(body, 503), TypeError);
+});
+
 const METADATA_KEYS = ['generation', 'refreshed_at_ms', 'last_successful_refreshed_at_ms', 'last_success_age_seconds', 'last_refresh_error_at_ms', 'selection_expires_at_ms'];
 const SUCCESS_KEYS = ['last_successful_refreshed_at_ms', 'last_success_age_seconds', 'selection_expires_at_ms'];
 

@@ -21,17 +21,14 @@ test('Strategy29 has an independent observation-only install identity', async ()
   const metadata = parseUserscriptMetadata(text);
   assert.equal(contract.name, '【自写】Binance Strategy 29 布林带信号');
   assert.equal(contract.namespace, 'binance.strategy29.bollinger');
-  assert.equal(contract.version, '0.3.0');
+  assert.equal(contract.version, '0.4.0');
   assert.equal(contract.runAt, 'document-start');
   assert.equal(contract.updateURL, 'https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy29-bollinger.user.js');
   assert.equal(contract.downloadURL, contract.updateURL);
-  assert.deepEqual(metadata.get('connect'), ['127.0.0.1']);
+  assert.equal(metadata.get('connect'), undefined);
   assert.deepEqual(metadata.get('grant'), [
     'unsafeWindow',
-    'GM_xmlhttpRequest',
     'GM_getValue',
-    'GM_setValue',
-    'GM_registerMenuCommand',
   ]);
   for (const forbidden of ['new WebSocket', 'wss://', 'fetch(', 'place-order', 'apiKey', 'apiSecret', 'synthetic-secret', 'detectBollingerSignals']) {
     if (forbidden === 'detectBollingerSignals') {
@@ -63,7 +60,7 @@ test('release contract identifies the generated Strategy 27 annotation artifact'
 
   assert.equal(contract.name, '【自写】Binance Strategy 27 事件标注');
   assert.equal(contract.namespace, 'binance.strategy27.events');
-  assert.equal(contract.version, '0.4.6');
+  assert.equal(contract.version, '0.5.0');
   assert.equal(contract.runAt, 'document-idle');
   assert.equal(contract.updateURL, contract.downloadURL);
   assert.deepEqual(contract.matches, [

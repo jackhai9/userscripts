@@ -52,17 +52,17 @@ test('Bollinger chart alert failures distinguish snapshot races from contract fa
 });
 
 test('Strategy29 sandbox metadata is exact and coordinates through unsafeWindow', () => {
-  assert.equal(readUserscriptVersion(entrySource), '0.3.0');
+  assert.equal(readUserscriptVersion(entrySource), '0.4.0');
   assert.deepEqual(
     [...entrySource.matchAll(/^\/\/ @grant\s+(\S+)\s*$/gm)].map(match => match[1]),
-    ['unsafeWindow', 'GM_xmlhttpRequest', 'GM_getValue', 'GM_setValue', 'GM_registerMenuCommand'],
+    ['unsafeWindow', 'GM_getValue'],
   );
   assert.deepEqual(
     [...entrySource.matchAll(/^\/\/ @connect\s+(\S+)\s*$/gm)].map(match => match[1]),
-    ['127.0.0.1'],
+    [],
   );
-  assert.match(entrySource, /installStrategy29\(unsafeWindow,/);
-  assert.match(entrySource, /globalThis\.prompt\.bind\(globalThis\)/);
+  assert.match(entrySource, /installStrategy29\(unsafeWindow\)/);
+  assert.doesNotMatch(entrySource, /prompt|GM_xmlhttpRequest/);
   assert.doesNotMatch(remoteSource, /view\.prompt/);
   assert.doesNotMatch(entrySource, /@grant\s+none/);
 });

@@ -15,10 +15,11 @@ async function until(predicate) {
   }
 }
 
-async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN' } = {}) {
+async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN', migrationRecord } = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"><iframe></iframe></div>');
   dom.reconfigure({ url: `https://www.binance.com/${locale}/futures/BTCUSDT` });
   const page = dom.window;
+  if (migrationRecord !== undefined) Object.defineProperty(page, Symbol.for('jh-userscripts.strategy29-preferences-migration'), { value: migrationRecord });
   const shapes = new Map([['user-owned', {}]]);
   let resolution = '1S';
   let shapeSequence = 0;
@@ -48,12 +49,14 @@ async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN' } 
   const menus = new Map();
   const menuIds = new Map();
   const requests = [];
+  const prompts = [];
   let now = 7000;
   t.mock.method(Date, 'now', () => now);
   t.mock.method(page, 'setInterval', (callback, delay) => { assert.equal(delay, 1000); timers.set(1, callback); return 1; });
   t.mock.method(page, 'clearInterval', (id) => timers.delete(id));
   const globals = {
     unsafeWindow: page,
+    prompt: (...args) => { prompts.push(args[0]); return null; },
     GM_getValue: (key, initial) => key === 'strategy27GatewayAuthSecret' ? 'synthetic-test-value' : initial,
     GM_setValue: () => { throw new Error('Unexpected settings write'); },
     GM_registerMenuCommand: (name, callback, options = {}) => {
@@ -103,7 +106,7 @@ async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN' } 
     await until(() => pending('compound').length === 1);
   }
   return {
-    page, chart, shapes, requests, pending, respond, candidate, timers, menus,
+    page, chart, shapes, requests, pending, respond, candidate, timers, menus, prompts,
     reset: () => respond('compound', { schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     ordinaryBootstrap: () => respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     rows: () => page.document.querySelectorAll('[data-role="compound-row"]').length,
@@ -669,12 +672,24 @@ for (const generated of [false, true]) {
 }
 
 for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} rejects malformed preference migration without stopping Strategy27`, async (t) => {
+    const h = await harness(t, { generated, migrationRecord: { version: 1, enabled: true, position: null, secret: 'synthetic-rejected-value' } });
+    assert.equal(h.page.__TM_SIGNAL_CLIENT_DEBUG__.strategy29.state, 'initialization_failed');
+    assert.match(h.page.__TM_SIGNAL_CLIENT_DEBUG__.strategy29.moduleFailure, /migration record is invalid/);
+    assert.equal(h.pending('ordinary').length, 1);
+    assert.equal(h.pending('compound').length, 1);
+    await h.ordinaryBootstrap();
+    await until(() => h.pending('ordinary').length === 1);
+    assert.equal(h.pending('ordinary').length, 1);
+    assert.equal(h.page.document.querySelectorAll('#jh-strategy29-summary-panel').length, 0);
+  });
+
   test(`${generated ? 'generated' : 'source'} locale switch updates stopped status and prompts without reconnecting`, async (t) => {
     const h = await harness(t, { generated, locale: 'en' });
-    const prompts = [];
-    t.mock.method(h.page, 'prompt', (text) => { prompts.push(text); return null; });
-    h.menus.get('Set Strategy 27 gateway secret')();
-    h.menus.get('Set Strategy 27 local gateway URL')();
+    const prompts = h.prompts;
+    t.mock.method(h.page, 'prompt', () => { throw new Error('Page prompt must not receive private input'); });
+    h.menus.get('Set CorsairQuant gateway secret')();
+    h.menus.get('Set CorsairQuant local gateway URL')();
     assert.equal(prompts.length, 2);
     assert.doesNotMatch(prompts.join(' '), /\p{Script=Han}/u);
     await h.respond('ordinary', 'invalid JSON');
@@ -686,9 +701,9 @@ for (const generated of [false, true]) {
     assert.equal(h.requests.length, count);
     assert.match(status.textContent, /已停止，历史记录已保留/);
     assert.equal(h.page.document.querySelector('[data-role="ordinary-connection-status"]').textContent, '事件数据：已停止');
-    h.menus.get('设置 Strategy 27 网关密钥')();
-    h.menus.get('设置 Strategy 27 本机网关地址')();
-    assert.match(prompts[2], /输入本机/);
+    h.menus.get('设置 CorsairQuant 网关密钥')();
+    h.menus.get('设置 CorsairQuant 本机网关地址')();
+    assert.match(prompts[2], /输入 CorsairQuant/);
     assert.match(prompts[3], /输入 SSH/);
     assert.equal(h.menus.size, 4);
   });

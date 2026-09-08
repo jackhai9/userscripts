@@ -3,6 +3,11 @@ import { localizedText, formatLocalizedText, resolveUiLocaleFromPathname } from 
 export { formatLocalizedText, resolveUiLocaleFromPathname };
 const pair = localizedText;
 export const SUMMARY_COPY = Object.freeze({
+  upgradeClient: pair('Strategy 29 本地信号已加载。跨周期汇总需要更新或安装 Strategy 27 信号客户端，并刷新页面。', 'Strategy 29 local signals are loaded. Update or install the Strategy 27 signal client and reload for the cross-timeframe summary.'),
+  disabled: pair('跨周期汇总未启用，可在 CorsairQuant 信号客户端菜单中开启。', 'Cross-timeframe summary is disabled. Enable it in the CorsairQuant signal client menu.'),
+  moduleDisabled: pair('服务端尚未启用 Strategy 29 监控汇总', 'Strategy 29 monitoring summary is not enabled on the server'),
+  gatewayUnavailable: pair('Strategy 29 后端暂不可用，等待恢复', 'Strategy 29 backend is unavailable; waiting for recovery'),
+  noLiveStatus: pair('当前监控状态不可用；下方仅保留历史信号。', 'Current monitoring status is unavailable; only retained signals are shown below.'),
   title: pair('Strategy 29 汇总', 'Strategy 29 Summary'),
   drag: pair('拖动面板', 'Drag panel'),
   collapse: pair('收起', 'Collapse'),
@@ -44,11 +49,6 @@ export const SUMMARY_COPY = Object.freeze({
   disconnected: pair('网关连接失败，将在下次定时检查时重试', 'Gateway connection failed; next scheduled poll will retry'),
   stopped: detail => pair(`远程汇总已停止。技术详情：${detail}`, `Remote summary stopped: ${detail}`),
   menuToggle: pair('切换 Strategy 29 跨周期汇总', 'Toggle Strategy 29 cross-timeframe summary'),
-  menuSecret: pair('设置 Strategy 29 网关密钥', 'Set Strategy 29 gateway secret'),
-  menuOrigin: pair('设置 Strategy 29 网关地址', 'Set Strategy 29 gateway origin'),
-  promptSecret: pair('请输入本地 Strategy 29 网关密钥，仅保存在此用户脚本的私有存储中。', 'Enter the local Strategy 29 gateway secret. It is stored only in this userscript storage.'),
-  promptOrigin: pair('请输入本机网关地址（http://127.0.0.1:<port>）', 'Enter the loopback gateway origin (http://127.0.0.1:<port>)'),
-  emptySecret: pair('Strategy 29 网关密钥不能为空', 'Strategy 29 gateway secret cannot be empty'),
   localStopped: detail => pair(`Strategy 29 已停止。技术详情：${detail}`, `Strategy 29 stopped: ${detail}`),
   conflict: pair('Strategy 29 已停止：请将订单簿脚本更新至 2.7.199 或更高版本，或禁用内嵌布林带观察器的旧版本，然后刷新页面。', 'Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.'),
 });

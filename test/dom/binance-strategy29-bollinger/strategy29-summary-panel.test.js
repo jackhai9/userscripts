@@ -13,6 +13,28 @@ function createStrategy29SummaryPanel(document, symbol, options = {}) {
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+for (const state of ['module_disabled', 'gateway_unavailable', 'unavailable']) {
+  test(`${state} removes current readiness while preserving historical signals across locale changes`, () => {
+    const dom = new JSDOM('<body></body>');
+    const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
+    panel.renderStatus(status);
+    panel.addEvents(events.events, events.observed_at_ms);
+    assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 2);
+    panel.setConnection(state, { zhCN: '暂不可用', en: 'Unavailable' });
+    assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 0);
+    assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
+    assert.doesNotMatch(dom.window.document.querySelector('[data-role=selection]').textContent, /live units ready/);
+    panel.setLocale('zh-CN');
+    assert.match(dom.window.document.querySelector('[data-role=selection]').textContent, /当前监控状态不可用/);
+    assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 0);
+    panel.renderStatus(status);
+    assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 2);
+    assert.equal(panel.size, 2);
+    panel.destroy();
+    dom.window.close();
+  });
+}
+
 test('distinguishes stored processing success from current live readiness', () => {
   const dom = new JSDOM('<body></body>');
   const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');

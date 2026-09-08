@@ -35,11 +35,11 @@
 
 | 脚本 | 适用场景 | 说明 | 源码真源 | 安装 |
 |---|---|---|---|---|
-| 【自写】Binance Strategy 29 布林带信号 | Binance Futures | 标注原生图表已加载 K 线，并可选显示经认证的服务端跨周期摘要；可单独运行或与订单簿 2.7.199+ 共存 | 本仓库 | [安装][install-binance-strategy29-bollinger] |
+| 【自写】Binance Strategy 29 布林带信号 | Binance Futures | Annotate native loaded candles; remote summaries belong to the CorsairQuant signal client | 本仓库 | [安装][install-binance-strategy29-bollinger] |
 | 【自写】Binance 订单簿单击下单 | Binance Futures | 单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
 | 【自写】Binance 合约交易数据面板 | Binance Futures | 在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号 | 本仓库 | [`点击安装`][install-binance-trading-data] |
 | 【自写】Binance CoinMarketCap 数据面板 | Binance Futures | 在 Binance 合约页面显示当前币种的 CoinMarketCap 估值、供应量和流动性数据 | 本仓库 | [`点击安装`][install-binance-coinmarketcap-data] |
-| 【自写】Binance Strategy 27 事件标注 | Binance Futures | Draw VPS-computed order-flow observations and exploratory compound candidates on the matching one-second chart | 本仓库 | [`点击安装`][install-binance-strategy27-events] |
+| 【自写】Binance Strategy 27 事件标注（CorsairQuant 信号客户端） | Binance Futures | Configure one gateway for Strategy27 event annotations and Strategy29 cross-timeframe summaries | 本仓库 | [`点击安装`][install-binance-strategy27-events] |
 | 【自写】定时刷新指定页面 | Any page | 指定页面按设定时间自动刷新 | 本仓库 | [`点击安装`][install-auto-refresh] |
 | 【自写】CoinMarketCap 估值口径命名 | CoinMarketCap | 在中文币种页面左上角统计区标注并高亮流通市值和 FDV / 总估值 | 本仓库 | [`点击安装`][install-coinmarketcap-valuation-helper] |
 | 【改写】m3u8-downloader | Video pages | m3u8 下载增强脚本，仅在白名单视频站启用 | 本仓库 | [`点击安装`][install-m3u8] |
@@ -59,7 +59,7 @@
 - 使用浮动面板展示当前值和多空信号。
 - 适合在交易页面内快速判断市场结构，不需要频繁切换数据网站。
 
-### Binance Strategy 27 事件标注
+### Binance CorsairQuant 信号客户端
 
 - 只通过 SSH 本地转发读取带认证的本机网关。
 - 不在 Chrome 中新增 Binance 行情 WebSocket，也不使用 Binance API Key。

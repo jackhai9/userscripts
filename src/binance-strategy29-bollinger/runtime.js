@@ -3,11 +3,12 @@ import { isChartMutationBlocked } from '../shared/chart-mutation-owners.js';
 import { isFuturesTradingPathname, parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 import { ensureSpaRouteChangePatched, installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 import { createStrategy29RemoteSummary } from './remote-summary.js';
+import { SIGNAL_HOST_READY, SIGNAL_HOST_READY_EVENT } from '../shared/strategy29-preferences-migration.js';
 
 import { SUMMARY_COPY as COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 
 const INSTANCE = Symbol.for('jh-userscripts.strategy29-bollinger');
-const RUNTIME_VERSION = 2;
+const RUNTIME_VERSION = 3;
 const CONFLICT = COPY.conflict;
 
 /** This is a migration refusal, not compatibility with the old independently owned save wrapper. */
@@ -31,6 +32,23 @@ export function installStrategy29(view, remoteAdapters = null) {
     ? null
     : createStrategy29RemoteSummary({ view, ...remoteAdapters });
   const noticeId = 'jh-strategy29-bollinger-status';
+  const upgradeNoticeId = 'jh-strategy29-client-upgrade';
+  function showUpgradeNotice() {
+    if (remoteSummary !== null || disposed || view[SIGNAL_HOST_READY] === true || !isFuturesTradingPathname(view.location.pathname)) {
+      document.getElementById(upgradeNoticeId)?.remove();
+      return;
+    }
+    if (!document.body) return;
+    let notice = document.getElementById(upgradeNoticeId);
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.id = upgradeNoticeId;
+      notice.setAttribute('role', 'status');
+      notice.style.cssText = 'position:fixed;left:16px;top:16px;z-index:10000;max-width:420px;padding:10px;background:#332b16;color:#ffcf67;font:13px sans-serif;pointer-events:none';
+      document.body.append(notice);
+    }
+    notice.textContent = formatLocalizedText(COPY.upgradeClient, resolveUiLocaleFromPathname(view.location.pathname));
+  }
   function showFailure() {
     if (!failed || !document.body) return;
     let notice = document.getElementById(noticeId);
@@ -65,6 +83,7 @@ export function installStrategy29(view, remoteAdapters = null) {
   }
   function sample() {
     if (disposed || document.hidden) return;
+    showUpgradeNotice();
     if (failed) { showFailure(); return; }
     if (hasEmbeddedBollinger(view)) { fail(CONFLICT); return; }
     ensureSpaRouteChangePatched(view);
@@ -99,9 +118,12 @@ export function installStrategy29(view, remoteAdapters = null) {
       removeRouteListener();
       document.removeEventListener('visibilitychange', onVisibility);
       document.removeEventListener('DOMContentLoaded', showFailure);
+      document.removeEventListener('DOMContentLoaded', showUpgradeNotice);
+      view.removeEventListener(SIGNAL_HOST_READY_EVENT, showUpgradeNotice);
       view.removeEventListener('pagehide', onPageHide);
       view.removeEventListener('pageshow', onPageShow);
       document.getElementById(noticeId)?.remove();
+      document.getElementById(upgradeNoticeId)?.remove();
     },
   });
   Object.defineProperty(view, INSTANCE, { value: Object.freeze({ version: RUNTIME_VERSION, runtime }) });
@@ -109,6 +131,8 @@ export function installStrategy29(view, remoteAdapters = null) {
   removeRouteListener = installSpaRouteChangeListener(view, sample);
   document.addEventListener('visibilitychange', onVisibility);
   document.addEventListener('DOMContentLoaded', showFailure, { once: true });
+  document.addEventListener('DOMContentLoaded', showUpgradeNotice, { once: true });
+  view.addEventListener(SIGNAL_HOST_READY_EVENT, showUpgradeNotice);
   view.addEventListener('pagehide', onPageHide);
   view.addEventListener('pageshow', onPageShow);
   resume();

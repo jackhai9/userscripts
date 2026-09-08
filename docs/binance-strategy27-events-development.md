@@ -1,4 +1,4 @@
-# Binance Strategy 27 Event Annotations
+# CorsairQuant Signal Client and Strategy27 Event Annotations
 
 This document owns the Strategy 27 gateway, chart-rendering, and entity
 contracts. Generic Codex/tool timeout and connection policy belongs to the global
@@ -11,6 +11,23 @@ V10 live projection. The VPS remains the only market-data and event-analysis
 authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
+Version 0.5.0 uses the existing installation as the CorsairQuant signal client.
+Strategy29 remote ownership starts only after the local-only Strategy29 companion
+publishes a valid page-scoped readiness record. Without it, the host reports
+`waiting_for_companion` and leaves any legacy Strategy29 remote owner untouched.
+This handshake is separate from one-time preference migration, so later reloads
+continue to use the host's saved choices. Update both existing installations and
+reload to complete a staged upgrade.
+The historical installed script name is retained to preserve update identity.
+Its private gateway URL and secret are shared by the Strategy27 consumers and
+the independently controlled Strategy29 remote summary. The installation namespace
+and update URLs remain unchanged; update the existing installation in place.
+The retained `strategy27GatewayOrigin` and `strategy27GatewayAuthSecret` storage
+keys are the single credential source, avoiding a second setup during migration.
+The standalone Strategy29 script continues to own its local detector and has no
+gateway request or configuration permissions. New remote modules must receive
+the host's private settings adapter rather than creating another credential store.
+
 The script reads an authenticated, loopback-only long-poll endpoint through an
 SSH local forward. It draws transient entities only when the Binance route,
 TradingView symbol, and `1S` chart interval all match the requested Strategy 27
@@ -21,12 +38,26 @@ symbol.
 1. Keep an SSH local forward open from `127.0.0.1:<local-port>` to the VPS
    Strategy 27 gateway on `127.0.0.1:8765`.
 2. Install `scripts/binance-strategy27-events.user.js` in Tampermonkey.
-3. Use the userscript menu to set the loopback gateway origin. The default is
+3. Use the CorsairQuant userscript menu to set the loopback gateway origin. The default is
    `http://127.0.0.1:18765`.
-4. Use the userscript menu to set the gateway installation secret. Tampermonkey
+4. Use the CorsairQuant userscript menu to set the gateway installation secret. Tampermonkey
    stores it in this script's private value storage; it is never embedded in
    source, URL parameters, chart text, console messages, or status text.
 5. Open the matching Binance futures route and select the one-second chart.
+
+The secret prompt is captured from the Tampermonkey sandbox before page code can
+replace the page prompt. No credential is passed through page globals, events,
+localStorage or diagnostics. Strategy29's only public migration record contains
+enabled state and panel coordinates, validates an exact schema and is copied once
+without overwriting destination preferences. Its summary follows the route symbol
+on any chart interval and remains visible while locally disabled. The host's
+existing context timer samples it; visibility and pagehide abort pending summary
+requests without resetting the retained cursor. A summary failure is contained at
+the module boundary and does not stop the independent Strategy27 consumers.
+
+Use the existing forward for `/v1/strategy29/status` and `/v1/strategy29/events`.
+The unified gateway's disabled module state is intentional and does not require
+another secret. Server monitoring and notification activation remain separate.
 
 The macOS operator machine keeps this forward under a `launchd` user agent so
 the SSH process is restarted after sleep, network changes, or a broken
@@ -138,7 +169,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.4.6 with identical metadata headers.
+generated install artifact are version 0.5.0 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout

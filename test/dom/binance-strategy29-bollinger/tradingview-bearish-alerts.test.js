@@ -687,6 +687,27 @@ test('on-demand diagnostics distinguish active, awaiting-data and torn-down stat
   harness.monitor.stop();
 });
 
+test('initial one-second alignment failure retains requested and native times after cleanup', async () => {
+  const fixture = createChartDom({ resolution: '1S', shiftSeconds: -60 });
+  const harness = createMonitorHarness(fixture);
+  fixture.chart.exportData = async () => exportResult([{ 0: 120, 1: 10, 2: 12, 3: 9, 4: 11 }]);
+  const message = 'TradingView Bollinger alert time alignment failed: expected 120, received 60';
+  await assert.rejects(harness.tick(), { message });
+  await harness.tick();
+  assert.equal(harness.monitor.diagnostics.failed, true);
+  assert.equal(harness.monitor.diagnostics.layerSize, 0);
+  assert.equal(fixture.shapes.size, 0);
+  assert.deepEqual(harness.monitor.diagnostics.lastLocalFailure, {
+    thrownType: 'object', classificationFailed: false, name: 'Error', message,
+    unreadableFields: [], stage: 'render', routeSymbol: 'BTRUSDT', resolution: '1S',
+    cachedSignalCount: null, layerSizeBeforeCleanup: 0,
+    sessionRevision: 0, contextIntervalRevision: 0,
+  });
+  harness.monitor.stop();
+  assert.equal(harness.monitor.diagnostics.lastLocalFailure.message, message);
+  fixture.dom.window.close();
+});
+
 for (const stage of ['export', 'render']) {
   test(`retains the last local ${stage} failure after clearing the layer and stopping`, async () => {
     const fixture = createChartDom();
@@ -1598,7 +1619,7 @@ test('removes a shifted marker and fails the alignment contract', async () => {
       [{ id: 'setup:warning', type: 'warning', time: 120, markerPrice: 10 }],
       { isCurrent: () => true },
     ),
-    /time alignment failed/,
+    /time alignment failed: expected 120, received 60/,
   );
   assert.equal(shapes.size, 0);
   assert.deepEqual(removed, ['shape-1']);

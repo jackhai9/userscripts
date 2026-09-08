@@ -244,6 +244,16 @@ export function validateStrategy29EventsResponse(value, httpStatus) {
 }
 
 export function validateStrategy29GatewayError(value, httpStatus) {
+  if (httpStatus === 503 && (value.error === 'module_disabled' || value.error === 'gateway_unavailable')) {
+    assertExactKeys(value, value.error === 'module_disabled'
+      ? ['schema_version', 'error', 'strategy_id', 'status']
+      : ['schema_version', 'error', 'strategy_id'], 'gateway error');
+    assertSchema(value.schema_version, 'gateway error.schema_version');
+    if (value.strategy_id !== '29' || (value.error === 'module_disabled' && value.status !== 'disabled')) {
+      throw new TypeError('Strategy29 gateway module identity is invalid');
+    }
+    return value;
+  }
   if (httpStatus === 409) {
     assertExactKeys(value, ['schema_version', 'error', 'oldest_cursor'], 'gateway error');
     assertSchema(value.schema_version, 'gateway error.schema_version');
