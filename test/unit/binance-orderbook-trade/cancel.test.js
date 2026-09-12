@@ -7,11 +7,13 @@ import {
   isCurrentSymbolOpenOrdersFilterReady,
   isCurrentSymbolOpenOrdersClearCandidate,
   isCurrentSymbolOpenOrdersDefinitivelyClear,
+  isOpenOrderRowCurrentSymbol,
   isOpenOrdersScopeConfirmedForSymbolText,
   isOpenOrdersScopeLimitedToSymbolText,
   isOpenOrdersTabText,
   normalizeText,
   parseOpenOrdersTabCount,
+  parseOpenOrderContractSymbol,
   readVisibleOpenOrderSymbolsText,
   resolveCancelSymbolButtonPresentation,
   shouldContinueOpenOrdersClearObservation,
@@ -93,6 +95,71 @@ test('parses symbol when Binance joins time text and contract text', () => {
     openOrdersCount: 5,
     cancelAllAvailable: true,
   }), true);
+});
+
+for (const symbol of ['龙虾USDT', '币安人生USDC', '4USDT', 'WUSDT', '1INCHUSDT', '1000PEPEUSDT', '1000000龙虾USDT', 'A_BTCUSDT']) {
+  test(`keeps the complete ${symbol} contract in order evidence`, () => {
+    for (const label of ['永续', 'Perp']) {
+      assert.deepEqual(readVisibleOpenOrderSymbolsText(`${symbol}${label}`), [symbol]);
+      assert.deepEqual(readVisibleOpenOrderSymbolsText(`2026-09-12 10:27${symbol}${label} Limit`), [symbol]);
+      assert.deepEqual(readVisibleOpenOrderSymbolsText(`2026-09-12 10:27:51${symbol}${label} Limit`), [symbol]);
+    }
+    assert.equal(isOpenOrdersScopeLimitedToSymbolText(`${symbol}永续`, symbol), true);
+    assert.equal(isCurrentSymbolOpenOrdersFilterReady({
+      scopeText: `${symbol}永续`, symbol, filterChecked: true, cancelAllAvailable: true,
+    }), true);
+    assert.equal(isCurrentSymbolOpenOrdersClearCandidate({
+      scopeText: `${symbol}永续`, symbol, openOrdersCount: 1,
+    }), false);
+  });
+}
+
+test('other Unicode and numeric-prefix contracts cannot become current-symbol evidence', () => {
+  for (const other of ['龙虾USDT', '龙虾BTCUSDT', 'A_BTCUSDT', '27BTCUSDT', '4USDT']) {
+    const scopeText = `BTCUSDT 永续 ${other} 永续`;
+    assert.deepEqual(readVisibleOpenOrderSymbolsText(scopeText), ['BTCUSDT', other]);
+    assert.equal(isOpenOrdersScopeLimitedToSymbolText(scopeText, 'BTCUSDT'), false);
+    assert.equal(isOpenOrdersScopeConfirmedForSymbolText(scopeText, 'BTCUSDT', true), false);
+    assert.equal(isCurrentSymbolOpenOrdersFilterReady({
+      scopeText, symbol: 'BTCUSDT', filterChecked: true, cancelAllAvailable: true,
+    }), false);
+    assert.equal(isCurrentSymbolOpenOrdersClearCandidate({
+      scopeText, symbol: 'BTCUSDT', openOrdersCount: 0,
+    }), false);
+    assert.equal(hasCurrentSymbolOpenOrdersEvidence({
+      scopeText: `${other}永续`, symbol: 'BTCUSDT', symbolFilterOk: true, cancelAllAvailable: true,
+    }), false);
+  }
+  assert.equal(isOpenOrdersScopeLimitedToSymbolText('龙虾USDT永续', '虾USDT'), false);
+  assert.equal(isOpenOrdersScopeLimitedToSymbolText('超级龙虾USDT永续', '龙虾USDT'), false);
+});
+
+test('bare contracts are evidence only on their own complete lines', () => {
+  assert.deepEqual(readVisibleOpenOrderSymbolsText('\n龙虾USDT\nBTCUSDT永续\n4USDT\n'), ['龙虾USDT', 'BTCUSDT', '4USDT']);
+  assert.deepEqual(readVisibleOpenOrderSymbolsText('Account 龙虾USDT total'), []);
+  assert.equal(isOpenOrdersScopeLimitedToSymbolText('\n龙虾USDT\nBTCUSDT永续\n', 'BTCUSDT'), false);
+  assert.equal(isCurrentSymbolOpenOrdersClearCandidate({
+    scopeText: '\n龙虾USDT\n', symbol: '龙虾USDT', openOrdersCount: 1,
+  }), false);
+});
+
+test('order symbol cells match the complete contract and only supported labels', () => {
+  for (const symbol of ['龙虾USDT', '币安人生USDC', '4USDT', 'WUSDT', '1INCHUSDT', '1000PEPEUSDT', 'A_BTCUSDT']) {
+    for (const text of [symbol, `${symbol}永续`, `${symbol} Perp`, ` ${symbol}\n永续 `]) {
+      assert.equal(parseOpenOrderContractSymbol(text), symbol);
+      assert.equal(isOpenOrderRowCurrentSymbol(text, symbol), true);
+    }
+  }
+  for (const [text, symbol] of [
+    ['龙虾USDT永续', '虾USDT'], ['超级龙虾USDT永续', '龙虾USDT'],
+    ['龙虾BTCUSDT永续', 'BTCUSDT'], ['A_BTCUSDT永续', 'BTCUSDT'],
+    ['27BTCUSDT永续', 'BTCUSDT'], ['BTCUSDT 永续 龙虾USDT 永续', 'BTCUSDT'],
+    ['BTCUSDT永续限价', 'BTCUSDT'], ['', ''],
+  ]) {
+    assert.equal(isOpenOrderRowCurrentSymbol(text, symbol), false, `${text} / ${symbol}`);
+  }
+  assert.equal(parseOpenOrderContractSymbol('BTCUSDT?'), null);
+  assert.equal(parseOpenOrderContractSymbol('USDT'), null);
 });
 
 test('visible open-order symbols include USDC perpetual contracts', () => {

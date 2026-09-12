@@ -91,3 +91,24 @@ test('rejects duplicate starts', () => {
   session.start();
   assert.throws(() => session.start(), /already started/);
 });
+
+for (const symbol of ['龙虾USDT', '币安人生USDT', '4USDT']) {
+  test(`subscribes to ${symbol} and preserves exact symbol ownership`, () => {
+    const source = new FakeNativeDepthSource();
+    const profiles = [];
+    const statuses = [];
+    const session = createDepthProfileSession({
+      symbol, source, onProfile: (profile) => profiles.push(profile), onStatus: (status) => statuses.push(status),
+    });
+    session.start();
+    assert.equal(source.subscriptions.length, 1);
+    assert.equal(source.subscriptions[0].symbol, symbol);
+    assert.deepEqual(statuses, [{ symbol, status: 'connecting', detail: '' }]);
+    const profile = { symbol, bids: [{ price: 1, cumulative: 2 }], asks: [{ price: 2, cumulative: 3 }] };
+    source.profile(profile);
+    assert.deepEqual(profiles, [profile]);
+    assert.throws(() => source.profile({ ...profile, symbol: `其他${symbol}` }), /symbol mismatch/);
+    session.stop();
+    assert.equal(source.subscriptions.length, 0);
+  });
+}

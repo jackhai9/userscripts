@@ -43,7 +43,7 @@ export function renderBinanceFuturesFixture(scenario) {
     #account-tabs { margin-bottom: 12px; }
     #OPEN_ORDERS { min-height: 160px; padding: 10px; }
     [role="checkbox"] { display: inline-block; min-width: 150px; min-height: 28px; padding: 4px 8px; border: 1px solid #d8dce1; }
-    .open-order-row { display: grid; grid-template-columns: repeat(10, minmax(60px, 1fr)); min-height: 28px; margin-top: 6px; }
+    .open-order-row { display: grid; grid-template-columns: repeat(12, minmax(60px, 1fr)); min-height: 28px; margin-top: 6px; }
     .cursor-pointer { display: inline-block; min-width: 60px; min-height: 28px; margin-top: 8px; padding: 4px 8px; border: 1px solid #d8dce1; }
     .bn-modal-root { position: fixed; inset: 0; z-index: 1000000; background: #0003; display: grid; place-items: center; }
     [role="dialog"] { width: 340px; min-height: 150px; padding: 20px; background: #fff; }
@@ -340,9 +340,11 @@ export function renderBinanceFuturesFixture(scenario) {
         const orders = visibleOrders();
         if (!orders.length) return '<div data-empty-orders>暂无当前委托。</div>';
         return orders.map((item) => '<div class="open-order-row" data-order-id="' + item.id + '">' +
+          '<span>2026-09-12 10:27:51</span>' +
           '<span>' + item.symbol + ' 永续</span> <span>限价</span> <span>' + item.side + '</span> ' +
           '<span>' + item.price + '</span> <span>' + item.quantity + '</span> ' +
           '<span>0</span> <span>只做Maker</span> <span>--</span> <span>--</span> <span>--</span>' +
+          '<span><svg aria-label="撤销挂单" width="16" height="16" viewBox="0 0 16 16"><path d="M4 4L12 12M4 12L12 4" stroke="currentColor"/></svg></span>' +
           '</div>').join('');
       }
 

@@ -138,3 +138,21 @@ test('preserves every active price level accumulated from the native depth strea
   assert.equal(profile.bids.at(-1).cumulative, 1001);
   assert.equal(profile.asks.at(-1).cumulative, 1001);
 });
+
+for (const symbol of ['龙虾USDT', '币安人生USDT', '4USDT', '1INCHUSDT', '1000龙虾USDT']) {
+  test(`synchronizes ${symbol} without changing quantity or sequence semantics`, () => {
+    const book = createDepthProfileBook(symbol);
+    assert.equal(pushDepthProfileUpdate(book, update({ s: symbol })), false);
+    assert.equal(applyDepthProfileSnapshot(book, snapshot()), true);
+    const profile = buildDepthProfile(book);
+    assert.equal(profile.symbol, symbol);
+    assert.deepEqual(profile.bids.map(({ price, cumulative }) => ({ price, cumulative })), [
+      { price: 100, cumulative: 2 }, { price: 99, cumulative: 5 },
+    ]);
+    assert.deepEqual(profile.asks.map(({ price, cumulative }) => ({ price, cumulative })), [
+      { price: 101, cumulative: 4 }, { price: 102, cumulative: 9 },
+    ]);
+    assert.throws(() => pushDepthProfileUpdate(book, update({ s: `其他${symbol}` })), /symbol mismatch/);
+    assert.throws(() => pushDepthProfileUpdate(book, update({ s: symbol, U: 105, u: 106, pu: 104 })), DepthProfileSequenceError);
+  });
+}

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { installBinanceNativeDepthSource } from '../../../src/binance-orderbook-trade/core/binance-native-depth-source.js';
+import { createDepthProfileSession } from '../../../src/binance-orderbook-trade/core/depth-profile-session.js';
+import { parseFuturesTradingSymbolFromPathname } from '../../../src/shared/binance-futures-route.js';
 
 class FakeResponse {
   constructor(payload, { ok = true, status = 200 } = {}) {
@@ -312,3 +314,37 @@ test('recovers when Binance performs its next native snapshot synchronization', 
   assert.equal(statuses.at(-1).status, 'ready');
   source.restore();
 });
+
+for (const symbol of ['龙虾USDT', '币安人生USDT', '4USDT', '1INCHUSDT', '1000龙虾USDT']) {
+  test(`connects the encoded ${symbol} route to native snapshot, stream, and session`, async () => {
+    const { globalObject, source, fetchCalls } = createHarness();
+    const route = new URL(`https://www.binance.com/zh-CN/futures/${symbol}`);
+    const profiles = [];
+    const statuses = [];
+    const session = createDepthProfileSession({
+      symbol: parseFuturesTradingSymbolFromPathname(route.pathname), source,
+      onProfile: (profile) => profiles.push(profile), onStatus: (status) => statuses.push(status),
+    });
+    session.start();
+    const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+    const params = new URLSearchParams({ symbol, limit: '1000' });
+    const response = globalObject.fetch(`/fapi/v1/rpiDepth?${params}`);
+    socket.message({ stream: `${symbol.toLowerCase()}@rpiDepth@500ms`, data: update({ s: symbol }) });
+    await response;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(profiles.length, 1);
+    assert.equal(profiles[0].symbol, symbol);
+    assert.equal(profiles[0].bids[0].price, 100);
+    assert.equal(profiles[0].bids[0].cumulative, 2);
+    assert.equal(profiles[0].asks[0].price, 101);
+    assert.equal(profiles[0].asks[0].cumulative, 4);
+    assert.equal(statuses.at(-1).status, 'ready');
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(FakeNativeSocket.instances.length, 1);
+    session.stop();
+    socket.message({ stream: `${symbol.toLowerCase()}@rpiDepth@500ms`, data: update({ s: symbol, U: 103, u: 104, pu: 102 }) });
+    assert.equal(profiles.length, 1);
+    source.restore();
+  });
+}

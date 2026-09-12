@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.204
+// @version      2.7.205
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -22,6 +22,7 @@ import {
   isCurrentSymbolOpenOrdersFilterReady,
   isCurrentSymbolOpenOrdersClearCandidate,
   isCurrentSymbolOpenOrdersDefinitivelyClear,
+  isOpenOrderRowCurrentSymbol,
   isOpenOrdersScopeConfirmedForSymbolText,
   isOpenOrdersScopeLimitedToSymbolText,
   normalizeText,
@@ -239,6 +240,7 @@ import {
 import {
   findOpenOrderRowElements,
   getOpenOrderRowCells,
+  readOpenOrdersScopeText as readOpenOrdersScopeTextDom,
 } from './dom/open-order-rows.js';
 import {
   assertSameBinanceChartOrdersTarget,
@@ -4350,17 +4352,27 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return null;
   }
 
+  function readOpenOrdersScopeText(root) {
+    return readOpenOrdersScopeTextDom(root, {
+      isVisibleElement,
+      isRowCancelIcon: (icon) => matchesBinancePageText(
+        icon.getAttribute('aria-label'),
+        BINANCE_PAGE_TEXT.accountOrders.rowCancel,
+      ),
+    });
+  }
+
   function readVisibleOpenOrderSymbols(root) {
-    return readVisibleOpenOrderSymbolsText(root?.textContent || '');
+    return readVisibleOpenOrderSymbolsText(readOpenOrdersScopeText(root));
   }
 
   function isOpenOrdersScopeLimitedToSymbol(root, symbol) {
-    return isOpenOrdersScopeLimitedToSymbolText(root?.textContent || '', symbol);
+    return isOpenOrdersScopeLimitedToSymbolText(readOpenOrdersScopeText(root), symbol);
   }
 
   function hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton) {
     return hasCurrentSymbolOpenOrdersEvidence({
-      scopeText: root?.textContent || '',
+      scopeText: readOpenOrdersScopeText(root),
       symbol,
       symbolFilterOk,
       cancelAllAvailable: Boolean(cancelAllButton),
@@ -4376,7 +4388,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
       const filterChecked = getCheckboxCheckedState(findHideOtherSymbolCheckbox(currentRoot));
       if (isFilteredCurrentSymbolOpenOrdersEmpty({
-        scopeText: currentRoot?.textContent || '',
+        scopeText: readOpenOrdersScopeText(currentRoot),
         symbol,
         filterChecked,
         cancelAllAvailable: Boolean(cancelAllButton),
@@ -4390,7 +4402,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         filterChecked === true &&
         isOpenOrdersScopeConfirmedForSymbol(currentRoot, symbol) &&
         isCurrentSymbolOpenOrdersDefinitivelyClear({
-          scopeText: currentRoot?.textContent || '',
+          scopeText: readOpenOrdersScopeText(currentRoot),
           symbol,
           openOrdersCount: getOpenOrdersTabCount(),
         })
@@ -4415,7 +4427,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   function isOpenOrdersScopeConfirmedForSymbol(root, symbol) {
     const checkbox = findHideOtherSymbolCheckbox(root);
     return isOpenOrdersScopeConfirmedForSymbolText(
-      root?.textContent || '',
+      readOpenOrdersScopeText(root),
       symbol,
       getCheckboxCheckedState(checkbox),
     );
@@ -4448,7 +4460,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         } else {
           lastStatus = 'not_cleared';
           const openOrdersCount = getOpenOrdersTabCount();
-          const scopeText = currentRoot.textContent || '';
+          const scopeText = readOpenOrdersScopeText(currentRoot);
           clearCandidate = isCurrentSymbolOpenOrdersClearCandidate({
             scopeText,
             symbol,
@@ -4597,11 +4609,6 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       ));
   }
 
-  function isOpenOrderRowCurrentSymbol(symbolText, symbol) {
-    const tokens = String(symbolText || '').toUpperCase().match(/[A-Z0-9_]+/g) || [];
-    return tokens.includes(String(symbol || '').toUpperCase());
-  }
-
   function isOpenOrderRowForPlan(sideText, plan) {
     if (!plan) return true;
     if (plan.spec?.mode === 'OPEN' && plan.spec.side === 'LONG') {
@@ -4633,7 +4640,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     const checkbox = findHideOtherSymbolCheckbox(currentRoot);
     const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
     if (isFilteredCurrentSymbolOpenOrdersEmpty({
-      scopeText: currentRoot.textContent || '',
+      scopeText: readOpenOrdersScopeText(currentRoot),
       symbol,
       filterChecked: getCheckboxCheckedState(checkbox),
       cancelAllAvailable: Boolean(cancelAllButton),
@@ -5146,7 +5153,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       const currentCheckbox = findHideOtherSymbolCheckbox(currentRoot);
       const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
       return isCurrentSymbolOpenOrdersFilterReady({
-        scopeText: currentRoot?.textContent || '',
+        scopeText: readOpenOrdersScopeText(currentRoot),
         symbol,
         filterChecked: getCheckboxCheckedState(currentCheckbox),
         cancelAllAvailable: Boolean(cancelAllButton),

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.204
+// @version      2.7.205
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -283,9 +283,23 @@
     );
   }
 
+  // src/shared/binance-symbol.js
+  var BINANCE_SYMBOL_CHARACTERS = "\\p{L}\\p{N}_";
+  var SYMBOL_PATTERN = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]+$`, "u");
+  function isBinanceSymbol(value) {
+    if (typeof value !== "string" || value !== value.toUpperCase()) return false;
+    const match = value.match(SYMBOL_PATTERN);
+    return Boolean(match && match[0] === value);
+  }
+
   // src/binance-orderbook-trade/core/cancel-orders.js
   var PERPETUAL_LABEL_PATTERN = buildBinanceTextAlternation(
     BINANCE_PAGE_TEXT.accountOrders.perpetual
+  );
+  var ORDER_CONTRACT_PATTERN = `[${BINANCE_SYMBOL_CHARACTERS}]+(?:USDT|USDC)`;
+  var ORDER_SYMBOL_CELL_PATTERN = new RegExp(
+    `^(${ORDER_CONTRACT_PATTERN})(?:\\s*(?:${PERPETUAL_LABEL_PATTERN}))?$`,
+    "iu"
   );
   function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -296,48 +310,24 @@
   function parseOpenOrdersTabCount(text) {
     return parseBinanceTabCount(text, BINANCE_PAGE_TEXT.accountOrders.openOrdersTab);
   }
-  function escapeRegExp(value) {
-    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  function parseOpenOrderContractSymbol(text) {
+    const normalized = normalizeText(text);
+    const match = normalized.match(ORDER_SYMBOL_CELL_PATTERN);
+    return match && match[0] === normalized ? match[1].toUpperCase() : null;
   }
-  function normalizeContractCandidate(candidate, separator) {
-    const normalized = String(candidate || "").toUpperCase();
-    if (separator === ":") {
-      const timeJoinedMatch = /^\d{1,2}([A-Z][A-Z0-9]*(?:USDT|USDC))$/.exec(normalized);
-      if (timeJoinedMatch) return timeJoinedMatch[1];
-    }
-    return normalized;
-  }
-  function isTimestampJoinedCandidate(candidate, symbol) {
-    const normalizedCandidate = String(candidate || "").toUpperCase();
-    const normalizedSymbol = String(symbol || "").toUpperCase();
-    if (!normalizedCandidate || !normalizedSymbol || !normalizedCandidate.endsWith(normalizedSymbol)) {
-      return false;
-    }
-    const prefix = normalizedCandidate.slice(0, -normalizedSymbol.length);
-    return /^\d{1,2}$/.test(prefix);
-  }
-  function hasVisibleContractText(text, symbol) {
-    const normalizedSymbol = String(symbol || "").toUpperCase();
-    if (!normalizedSymbol) return false;
-    const symbolPattern = escapeRegExp(normalizedSymbol);
-    return new RegExp(
-      `(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`,
-      "i"
-    ).test(String(text || ""));
+  function isOpenOrderRowCurrentSymbol(symbolText, symbol) {
+    return parseOpenOrderContractSymbol(symbolText) === String(symbol || "").toUpperCase();
   }
   function readVisibleOpenOrderSymbolsText(text) {
     const normalized = String(text || "").toUpperCase();
     const symbols = /* @__PURE__ */ new Set();
     const pattern = new RegExp(
-      `([A-Z0-9]{2,30}(?:USDT|USDC))\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`,
-      "gi"
+      `(?:^|[^${BINANCE_SYMBOL_CHARACTERS}])(?:\\d{1,2}:\\d{2}(?::\\d{2})?)?(${ORDER_CONTRACT_PATTERN})\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)|^[\\t ]*(${ORDER_CONTRACT_PATTERN})[\\t ]*$`,
+      "gimu"
     );
     let match = pattern.exec(normalized);
     while (match) {
-      const separator = normalized[match.index - 1] || "";
-      if (!/[A-Z0-9]/.test(separator)) {
-        symbols.add(normalizeContractCandidate(match[1], separator));
-      }
+      symbols.add(match[1] ?? match[2]);
       match = pattern.exec(normalized);
     }
     return Array.from(symbols);
@@ -346,7 +336,7 @@
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const visibleSymbols = readVisibleOpenOrderSymbolsText(text);
-    return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol || hasVisibleContractText(text, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol));
+    return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol);
   }
   function isOpenOrdersScopeConfirmedForSymbolText(text, symbol, filterChecked) {
     if (filterChecked !== true) return false;
@@ -432,7 +422,7 @@
     const normalizedSymbol = String(symbol || "").toUpperCase();
     if (!normalizedSymbol) return false;
     const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
-    if (visibleSymbols.some((visibleSymbol) => visibleSymbol === normalizedSymbol || hasVisibleContractText(scopeText, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol))) return true;
+    if (visibleSymbols.includes(normalizedSymbol)) return true;
     if (visibleSymbols.length > 0) return false;
     return Boolean(symbolFilterOk && cancelAllAvailable);
   }
@@ -1985,7 +1975,7 @@
 
   // src/shared/binance-futures-route.js
   var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([^/]+)\/?$/;
-  var TRADING_SYMBOL_RE = /^[\p{L}\p{N}_]{3,}$/u;
+  var TRADING_SYMBOL_RE = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]{3,}$`, "u");
   function parseFuturesTradingSymbolFromPathname(pathname) {
     const normalized = String(pathname || "").split(/[?#]/, 1)[0];
     const match = normalized.match(FUTURES_TRADING_PATH_RE);
@@ -2315,6 +2305,7 @@
   }
 
   // src/binance-orderbook-trade/dom/trade-form.js
+  var AVAILABLE_BALANCE_PATTERN = new RegExp(`^([\\d,]+(?:\\.\\d+)?)\\s+([${BINANCE_SYMBOL_CHARACTERS}]+)$`, "u");
   function buttonTextMatches(button, labels) {
     return includesBinancePageText(button?.textContent, labels);
   }
@@ -2347,7 +2338,7 @@
     const candidates = Array.from(root.querySelectorAll("span")).filter((label) => isVisibleElement(label) && matchesBinancePageText(label.textContent, BINANCE_PAGE_TEXT.availableBalance)).map((label) => {
       const valueNodes = Array.from(label.parentElement?.children || []).filter((node) => node !== label && isVisibleElement(node));
       if (valueNodes.length !== 1) return null;
-      const match = /^([\d,]+(?:\.\d+)?)\s+([A-Z0-9]+)$/.exec(
+      const match = AVAILABLE_BALANCE_PATTERN.exec(
         String(valueNodes[0].textContent || "").replace(/\s+/g, " ").trim()
       );
       return match ? { amount: match[1].replace(/,/g, ""), asset: match[2] } : null;
@@ -3662,7 +3653,7 @@
   };
   var MAX_BUFFERED_UPDATES = 500;
   function assertSymbol(value) {
-    if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) {
+    if (!isBinanceSymbol(value)) {
       throw new Error("Invalid depth profile symbol");
     }
     return value;
@@ -3848,13 +3839,13 @@
   // src/binance-orderbook-trade/core/binance-native-depth-source.js
   var NATIVE_RPI_DEPTH_PATH = "/fapi/v1/rpiDepth";
   var NATIVE_RPI_DEPTH_LIMIT = "1000";
-  var NATIVE_RPI_STREAM_PATTERN = /^([a-z0-9_]+)@rpiDepth@500ms$/;
+  var NATIVE_RPI_STREAM_PATTERN = new RegExp(`^([${BINANCE_SYMBOL_CHARACTERS}]+)@rpiDepth@500ms$`, "u");
   function assertFunction(value, field) {
     if (typeof value !== "function") throw new Error(`Invalid native depth ${field}`);
     return value;
   }
   function assertSymbol2(value) {
-    if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) {
+    if (!isBinanceSymbol(value)) {
       throw new Error("Invalid native depth symbol");
     }
     return value;
@@ -3976,7 +3967,7 @@
         try {
           envelope = JSON.parse(event.data);
           const match = NATIVE_RPI_STREAM_PATTERN.exec(envelope?.stream);
-          if (!match || !envelope.data || typeof envelope.data !== "object") {
+          if (!match || match[0] !== envelope.stream || match[1] !== match[1].toLowerCase() || !envelope.data || typeof envelope.data !== "object") {
             throw new Error("Invalid Binance native RPI depth message");
           }
           const symbol = assertSymbol2(match[1].toUpperCase());
@@ -4080,7 +4071,7 @@
     return value;
   }
   function assertSymbol3(value) {
-    if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) {
+    if (!isBinanceSymbol(value)) {
       throw new Error("Invalid depth profile session symbol");
     }
     return value;
@@ -4631,6 +4622,28 @@
   function getOpenOrderRowCells(row, { isVisibleElement }) {
     const cells = getVisibleDirectChildren(row, isVisibleElement);
     return cells.length >= MIN_OPEN_ORDER_COLUMNS ? cells : [];
+  }
+  function readOpenOrdersScopeText(root, options) {
+    if (!root) return "";
+    const symbolCells = new Set(findOpenOrderRowElements(root, options).map((row) => {
+      const cell = getOpenOrderRowCells(row, options)[1];
+      if (!cell || !parseOpenOrderContractSymbol(cell.textContent)) {
+        throw new Error("Invalid visible open-order symbol");
+      }
+      return cell;
+    }));
+    const parts = [];
+    function appendText(node) {
+      if (symbolCells.has(node)) {
+        parts.push("\n", normalizeText(node.textContent), "\n");
+      } else if (node.nodeType === 3) {
+        parts.push(node.textContent);
+      } else {
+        for (const child of node.childNodes) appendText(child);
+      }
+    }
+    appendText(root);
+    return parts.join("");
   }
 
   // src/binance-orderbook-trade/dom/chart-orders.js
@@ -8466,15 +8479,24 @@
       if (ariaChecked === "false") return false;
       return null;
     }
+    function readOpenOrdersScopeText2(root) {
+      return readOpenOrdersScopeText(root, {
+        isVisibleElement,
+        isRowCancelIcon: (icon) => matchesBinancePageText(
+          icon.getAttribute("aria-label"),
+          BINANCE_PAGE_TEXT.accountOrders.rowCancel
+        )
+      });
+    }
     function readVisibleOpenOrderSymbols(root) {
-      return readVisibleOpenOrderSymbolsText(root?.textContent || "");
+      return readVisibleOpenOrderSymbolsText(readOpenOrdersScopeText2(root));
     }
     function isOpenOrdersScopeLimitedToSymbol(root, symbol) {
-      return isOpenOrdersScopeLimitedToSymbolText(root?.textContent || "", symbol);
+      return isOpenOrdersScopeLimitedToSymbolText(readOpenOrdersScopeText2(root), symbol);
     }
     function hasCurrentSymbolOpenOrders(root, symbol, symbolFilterOk, cancelAllButton) {
       return hasCurrentSymbolOpenOrdersEvidence({
-        scopeText: root?.textContent || "",
+        scopeText: readOpenOrdersScopeText2(root),
         symbol,
         symbolFilterOk,
         cancelAllAvailable: Boolean(cancelAllButton)
@@ -8489,7 +8511,7 @@
         const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
         const filterChecked = getCheckboxCheckedState(findHideOtherSymbolCheckbox(currentRoot));
         if (isFilteredCurrentSymbolOpenOrdersEmpty({
-          scopeText: currentRoot?.textContent || "",
+          scopeText: readOpenOrdersScopeText2(currentRoot),
           symbol,
           filterChecked,
           cancelAllAvailable: Boolean(cancelAllButton)
@@ -8500,7 +8522,7 @@
           return { hasOrders: true, cancelAllButton };
         }
         if (filterChecked === true && isOpenOrdersScopeConfirmedForSymbol(currentRoot, symbol) && isCurrentSymbolOpenOrdersDefinitivelyClear({
-          scopeText: currentRoot?.textContent || "",
+          scopeText: readOpenOrdersScopeText2(currentRoot),
           symbol,
           openOrdersCount: getOpenOrdersTabCount()
         })) {
@@ -8522,7 +8544,7 @@
     function isOpenOrdersScopeConfirmedForSymbol(root, symbol) {
       const checkbox = findHideOtherSymbolCheckbox(root);
       return isOpenOrdersScopeConfirmedForSymbolText(
-        root?.textContent || "",
+        readOpenOrdersScopeText2(root),
         symbol,
         getCheckboxCheckedState(checkbox)
       );
@@ -8553,7 +8575,7 @@
           } else {
             lastStatus = "not_cleared";
             const openOrdersCount = getOpenOrdersTabCount();
-            const scopeText = currentRoot.textContent || "";
+            const scopeText = readOpenOrdersScopeText2(currentRoot);
             clearCandidate = isCurrentSymbolOpenOrdersClearCandidate({
               scopeText,
               symbol,
@@ -8676,10 +8698,6 @@
         };
       }).filter((row) => isOpenOrderRowCurrentSymbol(row.symbolText, symbol) && isOpenOrderRowForPlan(row.sideText, plan) && row.price && isPositiveDecimalString(row.price) && row.qty && isPositiveDecimalString(row.qty) && row.cancelButton);
     }
-    function isOpenOrderRowCurrentSymbol(symbolText, symbol) {
-      const tokens = String(symbolText || "").toUpperCase().match(/[A-Z0-9_]+/g) || [];
-      return tokens.includes(String(symbol || "").toUpperCase());
-    }
     function isOpenOrderRowForPlan(sideText, plan) {
       if (!plan) return true;
       if (plan.spec?.mode === "OPEN" && plan.spec.side === "LONG") {
@@ -8708,7 +8726,7 @@
       const checkbox = findHideOtherSymbolCheckbox(currentRoot);
       const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
       if (isFilteredCurrentSymbolOpenOrdersEmpty({
-        scopeText: currentRoot.textContent || "",
+        scopeText: readOpenOrdersScopeText2(currentRoot),
         symbol,
         filterChecked: getCheckboxCheckedState(checkbox),
         cancelAllAvailable: Boolean(cancelAllButton)
@@ -9131,7 +9149,7 @@
         const currentCheckbox = findHideOtherSymbolCheckbox(currentRoot);
         const cancelAllButton = findCurrentSymbolCancelAllButton(currentRoot);
         return isCurrentSymbolOpenOrdersFilterReady({
-          scopeText: currentRoot?.textContent || "",
+          scopeText: readOpenOrdersScopeText2(currentRoot),
           symbol,
           filterChecked: getCheckboxCheckedState(currentCheckbox),
           cancelAllAvailable: Boolean(cancelAllButton)
