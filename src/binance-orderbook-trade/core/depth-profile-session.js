@@ -1,10 +1,12 @@
+import { isBinanceSymbol } from '../../shared/binance-symbol.js';
+
 function assertFunction(value, field) {
   if (typeof value !== 'function') throw new Error(`Invalid depth profile ${field}`);
   return value;
 }
 
 function assertSymbol(value) {
-  if (typeof value !== 'string' || !/^[A-Z0-9_]+$/.test(value)) {
+  if (!isBinanceSymbol(value)) {
     throw new Error('Invalid depth profile session symbol');
   }
   return value;

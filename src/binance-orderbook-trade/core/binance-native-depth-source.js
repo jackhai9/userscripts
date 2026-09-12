@@ -5,10 +5,11 @@ import {
   DepthProfileSequenceError,
   pushDepthProfileUpdate,
 } from './depth-profile-book.js';
+import { BINANCE_SYMBOL_CHARACTERS, isBinanceSymbol } from '../../shared/binance-symbol.js';
 
 const NATIVE_RPI_DEPTH_PATH = '/fapi/v1/rpiDepth';
 const NATIVE_RPI_DEPTH_LIMIT = '1000';
-const NATIVE_RPI_STREAM_PATTERN = /^([a-z0-9_]+)@rpiDepth@500ms$/;
+const NATIVE_RPI_STREAM_PATTERN = new RegExp(`^([${BINANCE_SYMBOL_CHARACTERS}]+)@rpiDepth@500ms$`, 'u');
 
 function assertFunction(value, field) {
   if (typeof value !== 'function') throw new Error(`Invalid native depth ${field}`);
@@ -16,7 +17,7 @@ function assertFunction(value, field) {
 }
 
 function assertSymbol(value) {
-  if (typeof value !== 'string' || !/^[A-Z0-9_]+$/.test(value)) {
+  if (!isBinanceSymbol(value)) {
     throw new Error('Invalid native depth symbol');
   }
   return value;
@@ -156,7 +157,10 @@ export function installBinanceNativeDepthSource(globalObject) {
       try {
         envelope = JSON.parse(event.data);
         const match = NATIVE_RPI_STREAM_PATTERN.exec(envelope?.stream);
-        if (!match || !envelope.data || typeof envelope.data !== 'object') {
+        if (
+          !match || match[0] !== envelope.stream || match[1] !== match[1].toLowerCase()
+          || !envelope.data || typeof envelope.data !== 'object'
+        ) {
           throw new Error('Invalid Binance native RPI depth message');
         }
         const symbol = assertSymbol(match[1].toUpperCase());

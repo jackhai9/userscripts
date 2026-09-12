@@ -1,5 +1,7 @@
+import { BINANCE_SYMBOL_CHARACTERS } from './binance-symbol.js';
+
 const FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([^/]+)\/?$/;
-const TRADING_SYMBOL_RE = /^[\p{L}\p{N}_]{3,}$/u;
+const TRADING_SYMBOL_RE = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]{3,}$`, 'u');
 
 export function parseFuturesTradingSymbolFromPathname(pathname) {
   const normalized = String(pathname || '').split(/[?#]/, 1)[0];

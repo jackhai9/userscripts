@@ -36,6 +36,11 @@ they are not automatically executed by the test runner.
   `scripts/*.user.js` file and checked directly.
 - Route and symbol identity come from the documented pathname/route contract.
   Do not infer a symbol from a page title, stale DOM, or a neighboring panel.
+- Binance identifiers share the Unicode letter/number/underscore character
+  contract in `src/shared/binance-symbol.js`. Include Chinese, one-character,
+  numeric-only, and numeric-prefixed assets when validating route, depth, order
+  scope, and available-balance parsing. Canonical gateway symbols retain the
+  separate exact server contract in `src/shared/canonical-symbol.js`.
 - Async work must carry the symbol, route, and lifecycle identity that started
   it. A route change, symbol change, hidden/closed panel, or page teardown
   invalidates work before its result can render or update shared state.
@@ -72,6 +77,8 @@ base asset to one deterministic CoinMarketCap asset. Missing or ambiguous
 mapping results remain visible failures; the panel must not select an arbitrary
 same-symbol asset. API and page-snapshot data are labeled by their actual source
 and timestamp, and a failed refresh must not overwrite a newer symbol's panel.
+The existing `1000` and `1000000` multiplier mapping recognizes Unicode letters
+as the start of an asset name; numeric-only names such as `4` retain their digits.
 
 Route changes, hidden documents, panel close, and panel removal invalidate the
 refresh epoch and clean up timers and DOM listeners. A route watcher may remain

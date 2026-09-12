@@ -101,6 +101,15 @@ test('rejects missing, malformed, or ambiguous available-balance contracts', () 
   );
 });
 
+test('available-balance asset identifiers retain Unicode and single-digit names', () => {
+  for (const asset of ['龙虾', '币安人生', '4', '1INCH', '1000PEPE', 'A_B']) {
+    const dom = loadFixtureDom(`<section><div><span>可用</span><span>1,234.50 ${asset}</span></div></section>`);
+    assert.deepEqual(readTradeAvailableBalance(dom.window.document.querySelector('section'), {
+      isVisibleElement: () => true,
+    }), { amount: '1234.50', asset });
+  }
+});
+
 test('panel spacer is restored before native trade mode after a rerender moves it', () => {
   const dom = loadFixtureDom(fixture);
   const { document } = dom.window;

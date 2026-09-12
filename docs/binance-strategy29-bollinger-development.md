@@ -10,7 +10,7 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.2 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.5.3 with orderbook 2.7.199 or later, or use it alone.
 Install CorsairQuant signal client 0.6.1 for the remote summary.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer

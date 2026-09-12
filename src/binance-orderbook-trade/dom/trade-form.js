@@ -3,6 +3,9 @@ import {
   includesBinancePageText,
   matchesBinancePageText,
 } from '../contracts/binance-page-text.js';
+import { BINANCE_SYMBOL_CHARACTERS } from '../../shared/binance-symbol.js';
+
+const AVAILABLE_BALANCE_PATTERN = new RegExp(`^([\\d,]+(?:\\.\\d+)?)\\s+([${BINANCE_SYMBOL_CHARACTERS}]+)$`, 'u');
 
 function buttonTextMatches(button, labels) {
   return includesBinancePageText(button?.textContent, labels);
@@ -46,7 +49,7 @@ export function readTradeAvailableBalance(root, { isVisibleElement }) {
       const valueNodes = Array.from(label.parentElement?.children || [])
         .filter((node) => node !== label && isVisibleElement(node));
       if (valueNodes.length !== 1) return null;
-      const match = /^([\d,]+(?:\.\d+)?)\s+([A-Z0-9]+)$/.exec(
+      const match = AVAILABLE_BALANCE_PATTERN.exec(
         String(valueNodes[0].textContent || '').replace(/\s+/g, ' ').trim(),
       );
       return match ? { amount: match[1].replace(/,/g, ''), asset: match[2] } : null;

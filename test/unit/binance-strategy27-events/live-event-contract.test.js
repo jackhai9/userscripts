@@ -460,7 +460,7 @@ test('bounds retained lifecycle events and reports exact count and age evictions
 
 
 test('canonical Unicode symbols round-trip without normalizing invalid wire input', () => {
-  for (const base of ['币安人生', '龙虾', '1000PEPE']) {
+  for (const base of ['币安人生', '龙虾', '4', 'W', '1INCH', '1000PEPE']) {
     assert.equal(routeSymbolToCanonical(base + 'USDT'), base + '/USDT:USDT');
     assert.equal(canonicalSymbolToRoute(base + '/USDT:USDT'), base + 'USDT');
   }

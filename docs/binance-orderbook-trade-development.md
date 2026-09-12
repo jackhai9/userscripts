@@ -130,6 +130,24 @@ The userscript installs `core/binance-native-depth-source.js` at `document-start
 
 The session must stop and invalidate old work on symbol change, non-trading routes, hidden documents, and `pagehide`. The overlay canvas uses `pointer-events: none`; only its compact collapse control may receive pointer input. Do not connect this visualization book to ladder pricing or any trading decision.
 
+## Symbol Identity
+
+`src/shared/binance-symbol.js` owns the Binance identifier character contract:
+Unicode letters, numbers, and underscores. Wire symbols remain uppercase and
+must match completely; whitespace, separators, or a trailing newline are invalid.
+The route retains its three-code-point minimum and percent decoding. The depth
+book, session, snapshot, and lowercase native stream use that same character set.
+Chinese names, one-character assets such as `4USDT` and `WUSDT`, and numeric
+prefixes such as `1INCHUSDT` and `1000PEPEUSDT` keep their full identities.
+
+Open-order scope reads preserve symbol-cell boundaries before scanning text.
+Every identified visible row must contain a complete contract, optionally followed
+by the known `永续` or `Perp` label; an unidentified row aborts the read instead of
+being removed from the evidence. Bare contracts are accepted only as complete
+lines. Timestamp parsing is local to an adjacent `HH:mm[:ss]`, never a reason to
+equate different numeric-prefixed contracts. Row matching compares the complete
+contract, so `龙虾BTCUSDT` cannot match `BTCUSDT` or `龙虾USDT`.
+
 ## UI Localization
 
 The userscript UI supports exactly `zh-CN` and English. Resolve the locale from the first Binance pathname segment: `/zh-CN/...` uses Chinese, while `/en/...`, other locales, and locale-less futures paths use English. A Binance SPA language switch must rebuild only the userscript panel; it must not abort a ladder, cancel, single-order, or account-rebalance task, and it must not reset the active symbol-mode-precision profile.

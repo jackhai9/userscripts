@@ -1,3 +1,5 @@
+import { isBinanceSymbol } from '../../shared/binance-symbol.js';
+
 export class DepthProfileSequenceError extends Error {
   constructor(message) {
     super(message);
@@ -8,7 +10,7 @@ export class DepthProfileSequenceError extends Error {
 const MAX_BUFFERED_UPDATES = 500;
 
 function assertSymbol(value) {
-  if (typeof value !== 'string' || !/^[A-Z0-9_]+$/.test(value)) {
+  if (!isBinanceSymbol(value)) {
     throw new Error('Invalid depth profile symbol');
   }
   return value;

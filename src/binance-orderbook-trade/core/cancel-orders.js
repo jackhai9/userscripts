@@ -6,9 +6,15 @@ import {
   startsWithBinancePageText,
 } from '../contracts/binance-page-text.js';
 import { PANEL_COPY } from '../contracts/panel-copy.js';
+import { BINANCE_SYMBOL_CHARACTERS } from '../../shared/binance-symbol.js';
 
 const PERPETUAL_LABEL_PATTERN = buildBinanceTextAlternation(
   BINANCE_PAGE_TEXT.accountOrders.perpetual,
+);
+const ORDER_CONTRACT_PATTERN = `[${BINANCE_SYMBOL_CHARACTERS}]+(?:USDT|USDC)`;
+const ORDER_SYMBOL_CELL_PATTERN = new RegExp(
+  `^(${ORDER_CONTRACT_PATTERN})(?:\\s*(?:${PERPETUAL_LABEL_PATTERN}))?$`,
+  'iu',
 );
 
 export function normalizeText(value) {
@@ -23,53 +29,32 @@ export function parseOpenOrdersTabCount(text) {
   return parseBinanceTabCount(text, BINANCE_PAGE_TEXT.accountOrders.openOrdersTab);
 }
 
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function parseOpenOrderContractSymbol(text) {
+  const normalized = normalizeText(text);
+  const match = normalized.match(ORDER_SYMBOL_CELL_PATTERN);
+  return match && match[0] === normalized ? match[1].toUpperCase() : null;
 }
 
-function normalizeContractCandidate(candidate, separator) {
-  const normalized = String(candidate || '').toUpperCase();
-  if (separator === ':') {
-    const timeJoinedMatch = /^\d{1,2}([A-Z][A-Z0-9]*(?:USDT|USDC))$/.exec(normalized);
-    if (timeJoinedMatch) return timeJoinedMatch[1];
-  }
-  return normalized;
-}
-
-function isTimestampJoinedCandidate(candidate, symbol) {
-  const normalizedCandidate = String(candidate || '').toUpperCase();
-  const normalizedSymbol = String(symbol || '').toUpperCase();
-  if (!normalizedCandidate || !normalizedSymbol || !normalizedCandidate.endsWith(normalizedSymbol)) {
-    return false;
-  }
-  const prefix = normalizedCandidate.slice(0, -normalizedSymbol.length);
-  return /^\d{1,2}$/.test(prefix);
-}
-
-function hasVisibleContractText(text, symbol) {
-  const normalizedSymbol = String(symbol || '').toUpperCase();
-  if (!normalizedSymbol) return false;
-  const symbolPattern = escapeRegExp(normalizedSymbol);
-  return new RegExp(
-    `(?:^|[^A-Z0-9]|\\d{1,2}:\\d{2})${symbolPattern}\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`,
-    'i',
-  )
-    .test(String(text || ''));
+export function isOpenOrderRowCurrentSymbol(symbolText, symbol) {
+  return parseOpenOrderContractSymbol(symbolText) === String(symbol || '').toUpperCase();
 }
 
 export function readVisibleOpenOrderSymbolsText(text) {
   const normalized = String(text || '').toUpperCase();
   const symbols = new Set();
+  /**
+   * Strip time only at this contract's own HH:mm[:ss] boundary. Numeric asset
+   * prefixes are identity, and a bare contract is evidence only on its own line.
+   */
   const pattern = new RegExp(
-    `([A-Z0-9]{2,30}(?:USDT|USDC))\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`,
-    'gi',
+    `(?:^|[^${BINANCE_SYMBOL_CHARACTERS}])(?:\\d{1,2}:\\d{2}(?::\\d{2})?)?`
+      + `(${ORDER_CONTRACT_PATTERN})\\s*(?:${PERPETUAL_LABEL_PATTERN})(?=\\s|$)`
+      + `|^[\\t ]*(${ORDER_CONTRACT_PATTERN})[\\t ]*$`,
+    'gimu',
   );
   let match = pattern.exec(normalized);
   while (match) {
-    const separator = normalized[match.index - 1] || '';
-    if (!/[A-Z0-9]/.test(separator)) {
-      symbols.add(normalizeContractCandidate(match[1], separator));
-    }
+    symbols.add(match[1] ?? match[2]);
     match = pattern.exec(normalized);
   }
   return Array.from(symbols);
@@ -79,10 +64,7 @@ export function isOpenOrdersScopeLimitedToSymbolText(text, symbol) {
   const normalizedSymbol = String(symbol || '').toUpperCase();
   if (!normalizedSymbol) return false;
   const visibleSymbols = readVisibleOpenOrderSymbolsText(text);
-  return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => (
-    visibleSymbol === normalizedSymbol ||
-    (hasVisibleContractText(text, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol))
-  ));
+  return visibleSymbols.length > 0 && visibleSymbols.every((visibleSymbol) => visibleSymbol === normalizedSymbol);
 }
 
 export function isOpenOrdersScopeConfirmedForSymbolText(text, symbol, filterChecked) {
@@ -204,10 +186,7 @@ export function hasCurrentSymbolOpenOrdersEvidence({
   if (!normalizedSymbol) return false;
 
   const visibleSymbols = readVisibleOpenOrderSymbolsText(scopeText);
-  if (visibleSymbols.some((visibleSymbol) => (
-    visibleSymbol === normalizedSymbol ||
-    (hasVisibleContractText(scopeText, normalizedSymbol) && isTimestampJoinedCandidate(visibleSymbol, normalizedSymbol))
-  ))) return true;
+  if (visibleSymbols.includes(normalizedSymbol)) return true;
   if (visibleSymbols.length > 0) return false;
 
   return Boolean(symbolFilterOk && cancelAllAvailable);

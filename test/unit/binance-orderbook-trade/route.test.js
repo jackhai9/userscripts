@@ -25,7 +25,7 @@ test('identifies only futures trading page paths', () => {
 
 
 test('parses Unicode futures symbols from actual URL pathnames', () => {
-  for (const symbol of ['币安人生USDT', '龙虾USDT']) {
+  for (const symbol of ['币安人生USDT', '龙虾USDT', '4USDT', 'WUSDT', '1INCHUSDT', '1000PEPEUSDT']) {
     assert.equal(parseFuturesTradingSymbolFromPathname('/zh-CN/futures/' + symbol), symbol);
     assert.equal(parseFuturesTradingSymbolFromPathname(new URL('https://www.binance.com/zh-CN/futures/' + symbol).pathname), symbol);
   }

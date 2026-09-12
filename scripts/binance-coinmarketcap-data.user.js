@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.1.16
+// @version      0.1.17
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -19,9 +19,13 @@
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 (() => {
+  // src/shared/binance-symbol.js
+  var BINANCE_SYMBOL_CHARACTERS = "\\p{L}\\p{N}_";
+  var SYMBOL_PATTERN = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]+$`, "u");
+
   // src/shared/binance-futures-route.js
   var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([^/]+)\/?$/;
-  var TRADING_SYMBOL_RE = /^[\p{L}\p{N}_]{3,}$/u;
+  var TRADING_SYMBOL_RE = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]{3,}$`, "u");
   function parseFuturesTradingSymbolFromPathname(pathname) {
     const normalized = String(pathname || "").split(/[?#]/, 1)[0];
     const match = normalized.match(FUTURES_TRADING_PATH_RE);
@@ -139,7 +143,7 @@
     }
     function cmcSymbolFromBaseAsset(baseAsset) {
       if (!baseAsset) return null;
-      return baseAsset.replace(/^(1000000|1000)(?=[A-Z])/, "");
+      return baseAsset.replace(/^(1000000|1000)(?=\p{L})/u, "");
     }
     function normalizeCmcAsset(rawAsset, fallbackBaseAsset) {
       if (!rawAsset || typeof rawAsset !== "object") return null;
