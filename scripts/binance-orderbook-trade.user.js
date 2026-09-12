@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.203
+// @version      2.7.204
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -207,12 +207,15 @@
       allPositionsClosed: localizedText("已全部平仓", "All positions closed"),
       waitingTradeMode: localizedText("等待开仓/平仓状态", "Waiting for trade mode"),
       waitingPricePrecision: localizedText("等待价格精度", "Waiting for precision"),
+      waitingPrecisionOptions: localizedText("等待精度档位", "Waiting for options"),
+      loadingPrecisionOptions: localizedText("读取精度档位", "Loading options"),
       minimumQuantityLoading: localizedText("最小量读取中", "Loading minimum qty"),
       positiveIntegerMultiplier: localizedText("请输入正整数倍数", "Enter a positive integer"),
       noClosablePosition: localizedText("暂无可平仓位", "No position to close")
     }),
     status: freezeCopy({
       precisionUpdated: localizedText("精度推荐已更新", "Precision recommendation updated"),
+      precisionOptionsUnavailable: localizedText("档位读取失败，请刷新", "Options unavailable. Refresh."),
       precisionInsufficient: localizedText(
         "近期价格变化不足，请稍后重试",
         "Recent price movement is insufficient. Try again later."
@@ -2242,6 +2245,73 @@
       findCurrentSymbolCancelAllButton
     }));
     return scopes.length === 1 ? scopes[0] : null;
+  }
+
+  // src/binance-orderbook-trade/dom/orderbook-precision.js
+  var OrderbookPrecisionDomError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "OrderbookPrecisionDomError";
+    }
+  };
+  function findPrecisionSelect(triggerElement) {
+    if (!triggerElement?.isConnected) return null;
+    const root = triggerElement.closest(".orderbook-tickSize");
+    if (!root?.closest("#futuresOrderbook")) return null;
+    const select = triggerElement.closest(".bn-select");
+    if (!select || select.closest(".orderbook-tickSize") !== root || select.querySelector(".bn-select-trigger .tick-content") !== triggerElement) {
+      throw new OrderbookPrecisionDomError("Native precision trigger structure has changed");
+    }
+    return { root, select };
+  }
+  function readDropdownListboxId(fiber, root) {
+    const ids = [];
+    let owner = fiber;
+    while (owner && owner.stateNode !== root) {
+      const overlay = owner.memoizedProps?.overlay;
+      if (overlay !== void 0) {
+        const id = overlay?.props?.id;
+        if (typeof id !== "string" || !id.startsWith("bn-select-")) {
+          throw new OrderbookPrecisionDomError("Native precision listbox identity is invalid");
+        }
+        ids.push(id);
+      }
+      owner = owner.return;
+    }
+    if (!owner || ids.length !== 1) {
+      throw new OrderbookPrecisionDomError("Native precision listbox ownership is missing or ambiguous");
+    }
+    return ids[0];
+  }
+  function getPrecisionListboxId(select, root) {
+    const keys = Object.getOwnPropertyNames(select).filter((key) => key.startsWith("__reactFiber$"));
+    if (keys.length !== 1) {
+      throw new OrderbookPrecisionDomError("Native precision React ownership is unavailable");
+    }
+    const fiber = select[keys[0]];
+    const id = readDropdownListboxId(fiber, root);
+    if (fiber.alternate && readDropdownListboxId(fiber.alternate, root) !== id) {
+      throw new OrderbookPrecisionDomError("Native precision listbox identity changed between renders");
+    }
+    return id;
+  }
+  function isNativeOrderbookPrecisionMenuOpen(triggerElement) {
+    const target = findPrecisionSelect(triggerElement);
+    return target !== null && target.select.classList.contains("active");
+  }
+  function findNativeOrderbookPrecisionOverlay(triggerElement, isVisibleElement) {
+    const target = findPrecisionSelect(triggerElement);
+    if (!target || !target.select.classList.contains("active")) return null;
+    const { root, select } = target;
+    const listbox = root.ownerDocument.getElementById(getPrecisionListboxId(select, root));
+    if (!listbox) return null;
+    const overlay = listbox.parentElement;
+    const bubble = overlay?.closest(".bn-select-bubble");
+    if (!listbox.matches('.bn-select-overlay-options[role="listbox"]') || !overlay?.matches(".bn-select-overlay") || !bubble) {
+      throw new OrderbookPrecisionDomError("Native precision listbox structure has changed");
+    }
+    if (!bubble.classList.contains("active") || !isVisibleElement(bubble) || !isVisibleElement(overlay) || !isVisibleElement(listbox)) return null;
+    return overlay;
   }
 
   // src/binance-orderbook-trade/dom/trade-form.js
@@ -6207,9 +6277,15 @@
     function handleOrderbookPrecisionChange() {
       const precision = readCurrentOrderbookPrecisionValue();
       const symbol = getCurrentSymbol();
+      if (precision !== lastObservedOrderbookPrecision) {
+        lastObservedOrderbookPrecision = precision;
+        stopMultiplierEdit();
+        ladderPanelBodySignature = "";
+        scheduleRenderPanel();
+      }
       const nativeOptions = readVisibleOrderbookPrecisionOptionValues();
       const previousNativeOptions = orderbookPrecisionState.symbol === symbol ? orderbookPrecisionState.nativeOptions : [];
-      const nativeOptionsChanged = nativeOptions.length > 0 && JSON.stringify(nativeOptions) !== JSON.stringify(previousNativeOptions);
+      const nativeOptionsChanged = isCurrentObservedSymbol(symbol) && nativeOptions.includes(precision) && JSON.stringify(nativeOptions) !== JSON.stringify(previousNativeOptions);
       if (nativeOptionsChanged) {
         orderbookPrecisionState = {
           ...orderbookPrecisionState,
@@ -6217,14 +6293,17 @@
           nativeOptions,
           nativeOptionsStatus: null
         };
+        scheduleRenderPanel();
       }
-      if (precision === lastObservedOrderbookPrecision) {
-        if (nativeOptionsChanged) scheduleRenderPanel();
-        return;
-      }
-      lastObservedOrderbookPrecision = precision;
-      stopMultiplierEdit();
-      ladderPanelBodySignature = "";
+    }
+    function recordOrderbookPrecisionDomFailure(symbol, error) {
+      if (!isCurrentObservedSymbol(symbol)) return;
+      orderbookPrecisionState = {
+        ...orderbookPrecisionState,
+        symbol,
+        nativeOptions: [],
+        nativeOptionsStatus: error.message
+      };
       scheduleRenderPanel();
     }
     function stopOrderbookPrecisionObserver() {
@@ -6248,7 +6327,13 @@
       orderbookPrecisionObserverRoot = root;
       lastObservedOrderbookPrecision = readCurrentOrderbookPrecisionValue();
       orderbookPrecisionObserver = new MutationObserver(() => {
-        handleOrderbookPrecisionChange();
+        const symbol = getCurrentSymbol();
+        try {
+          handleOrderbookPrecisionChange();
+        } catch (error) {
+          if (!(error instanceof OrderbookPrecisionDomError)) throw error;
+          recordOrderbookPrecisionDomFailure(symbol, error);
+        }
       });
       orderbookPrecisionObserver.observe(root, {
         subtree: true,
@@ -6258,20 +6343,17 @@
     }
     function readOrderbookPrecisionOptionValue(node) {
       if (!node) return null;
-      const item = node.matches?.(".ob-ticksize-item") ? node : node.closest?.(".ob-ticksize-item");
+      const item = node.matches?.('.bn-select-option[role="option"]') ? node : node.closest?.('.bn-select-option[role="option"]');
       const textNode = item?.querySelector("span") || node;
       return normalizeDecimalString(textNode?.textContent || "");
     }
     function getVisibleOrderbookPrecisionOverlay(triggerElement = findOrderbookPrecisionTrigger()?.element) {
-      const tickSize = triggerElement?.closest?.(".orderbook-tickSize");
-      if (!tickSize || !tickSize.closest("#futuresOrderbook")) return null;
-      const overlays = Array.from(tickSize.querySelectorAll(".ob-ticksize-overlay")).filter((overlay) => isVisibleElement(overlay));
-      return overlays.length === 1 ? overlays[0] : null;
+      return findNativeOrderbookPrecisionOverlay(triggerElement, isVisibleElement);
     }
     function getVisibleOrderbookPrecisionOptionNodes(triggerElement = findOrderbookPrecisionTrigger()?.element) {
       const overlay = getVisibleOrderbookPrecisionOverlay(triggerElement);
       if (!overlay) return [];
-      return Array.from(overlay.querySelectorAll(".ob-ticksize-item")).filter((node) => node.closest(".ob-ticksize-overlay") === overlay).filter((node) => isVisibleElement(node)).filter((node) => isOrderbookPrecisionNumericText(readOrderbookPrecisionOptionValue(node)));
+      return Array.from(overlay.querySelectorAll('.bn-select-option[role="option"]')).filter((node) => node.closest(".bn-select-overlay") === overlay).filter((node) => isVisibleElement(node)).filter((node) => isOrderbookPrecisionNumericText(readOrderbookPrecisionOptionValue(node)));
     }
     function readVisibleOrderbookPrecisionOptionValues(triggerElement = findOrderbookPrecisionTrigger()?.element) {
       const values = /* @__PURE__ */ new Set();
@@ -6285,26 +6367,6 @@
       const normalized = normalizeDecimalString(value);
       if (!normalized) return null;
       return getVisibleOrderbookPrecisionOptionNodes(triggerElement).find((node) => readOrderbookPrecisionOptionValue(node) === normalized) || null;
-    }
-    function dispatchOrderbookPrecisionOpenEvent(target, type) {
-      const EventCtor = type.startsWith("pointer") && typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
-      return target.dispatchEvent(new EventCtor(type, {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        button: 0,
-        buttons: type === "pointerup" || type === "mouseup" || type === "click" ? 0 : 1,
-        pointerId: 1,
-        pointerType: "mouse",
-        isPrimary: true
-      }));
-    }
-    function dispatchOrderbookPrecisionToggleSequence(target) {
-      dispatchOrderbookPrecisionOpenEvent(target, "pointerdown");
-      dispatchOrderbookPrecisionOpenEvent(target, "mousedown");
-      dispatchOrderbookPrecisionOpenEvent(target, "pointerup");
-      dispatchOrderbookPrecisionOpenEvent(target, "mouseup");
-      dispatchOrderbookPrecisionOpenEvent(target, "click");
     }
     async function waitForVisibleOrderbookPrecisionOptions(triggerElement, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
       const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
@@ -6331,30 +6393,25 @@
       if (!await openOrderbookPrecisionOptions(triggerElement)) return [];
       return getVisibleOrderbookPrecisionOptionNodes(triggerElement);
     }
-    async function waitForOrderbookPrecisionOptionsClosed(triggerElement, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
+    async function waitForOrderbookPrecisionMenuState(triggerElement, open, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
       const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
       while (!document.hidden && isFuturesTradingPage()) {
-        if (!getVisibleOrderbookPrecisionOverlay(triggerElement)) return true;
+        if (isNativeOrderbookPrecisionMenuOpen(triggerElement) === open) return true;
         if (Date.now() >= deadline) return false;
         await delay(50);
       }
-      return !getVisibleOrderbookPrecisionOverlay(triggerElement);
+      return isNativeOrderbookPrecisionMenuOpen(triggerElement) === open;
     }
-    async function closeOrderbookPrecisionOptions(triggerElement, currentPrecision, waitForLateOpen = false) {
-      if (waitForLateOpen && !getVisibleOrderbookPrecisionOverlay(triggerElement)) {
-        await waitForVisibleOrderbookPrecisionOptions(triggerElement, ORDERBOOK_PRECISION_OPTION_WAIT_MS);
+    async function closeOrderbookPrecisionOptions(triggerElement, waitForLateOpen = false) {
+      if (!triggerElement?.isConnected) return true;
+      if (waitForLateOpen && !isNativeOrderbookPrecisionMenuOpen(triggerElement)) {
+        await waitForOrderbookPrecisionMenuState(triggerElement, true);
       }
-      if (!getVisibleOrderbookPrecisionOverlay(triggerElement)) return true;
-      const currentOption = findVisibleOrderbookPrecisionOption(currentPrecision, triggerElement);
-      if (currentOption) {
-        if (!clickDomTarget(currentOption)) return false;
-        return waitForOrderbookPrecisionOptionsClosed(triggerElement);
-      }
-      const tickSize = triggerElement?.closest?.(".orderbook-tickSize");
-      const toggleTarget = tickSize?.querySelector?.(".tick-content") || triggerElement;
-      if (!toggleTarget || !isVisibleElement(toggleTarget)) return false;
-      dispatchOrderbookPrecisionToggleSequence(toggleTarget);
-      return waitForOrderbookPrecisionOptionsClosed(triggerElement);
+      if (!isNativeOrderbookPrecisionMenuOpen(triggerElement)) return true;
+      if (findOrderbookPrecisionTrigger()?.element !== triggerElement) return false;
+      const toggleTarget = triggerElement.closest(".bn-select-trigger");
+      if (!toggleTarget || !isVisibleElement(toggleTarget) || !clickDomTarget(toggleTarget)) return false;
+      return waitForOrderbookPrecisionMenuState(triggerElement, false);
     }
     async function waitForOrderbookPrecisionValue(options, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
       const { symbol, startPrecision, targetPrecision } = options;
@@ -6382,7 +6439,10 @@
       ));
       return `<button type="button" data-orderbook-precision-value="${value}"${disabledAttrs} aria-pressed="${selected}" aria-label="${ariaLabel}" title="${title}" style="position:relative;box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:30px;white-space:nowrap;overflow:hidden;cursor:pointer;${activeStyle}">${recommendationMarker}${formatOrderbookPrecisionShortcutLabel(value)}</button>`;
     }
-    function renderOrderbookPrecisionShortcutSlots(options, current, recommendation, disabled) {
+    function renderOrderbookPrecisionShortcutSlots(options, current, recommendation, disabled, emptyLabel) {
+      if (!options.length) {
+        return [`<span data-orderbook-precision-status="true" role="status" style="grid-column:span 4;min-width:0;color:${MUTED_TEXT_COLOR};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${emptyLabel}</span>`];
+      }
       const slots = options.map((value) => renderOrderbookPrecisionShortcut(value, current, recommendation, disabled));
       while (slots.length < ORDERBOOK_PRECISION_SHORTCUT_LIMIT) {
         slots.push('<span aria-hidden="true" style="height:32px;visibility:hidden;"></span>');
@@ -6457,11 +6517,12 @@
       );
       if (!nativeOptions.length) queueOrderbookPrecisionOptionsLoad(symbol);
       const canRefresh = !controlsBusy;
+      const emptyPrecisionLabel = ui(selectionBusy ? PANEL_COPY.state.loadingPrecisionOptions : orderbookPrecisionState.nativeOptionsStatus ? PANEL_COPY.status.precisionOptionsUnavailable : PANEL_COPY.state.waitingPrecisionOptions);
       const recommendationHtml = [
         '<div style="margin-top:10px;">',
         `<div style="display:grid;grid-template-columns:${activeUiLocale === "en" ? "52px" : "36px"} repeat(4,minmax(0,1fr)) 32px;align-items:center;gap:4px;height:32px;overflow:hidden;">`,
         `<span title="${ui(PANEL_COPY.tooltip.pricePrecision)}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${ui(PANEL_COPY.field.pricePrecision)}</span>`,
-        ...renderOrderbookPrecisionShortcutSlots(shortcutOptions, current, recommendation, controlsBusy),
+        ...renderOrderbookPrecisionShortcutSlots(shortcutOptions, current, recommendation, controlsBusy, emptyPrecisionLabel),
         renderOrderbookPrecisionRefreshButton(symbol, !canRefresh),
         "</div>",
         "</div>"
@@ -6484,6 +6545,7 @@
         const remainingMs = Math.max(0, deadline - Date.now());
         const trigger = await waitForOrderbookPrecisionBootstrapReady(symbol, remainingMs);
         if (!trigger?.element) return { status: "订单簿尚未就绪" };
+        const tickSize = trigger.element.closest(".orderbook-tickSize");
         const startPrecision = trigger.value;
         lastPrecision = startPrecision;
         const optionsInitiallyVisible = getVisibleOrderbookPrecisionOptionNodes(trigger.element).length > 0;
@@ -6497,12 +6559,12 @@
           if (trigger.element.isConnected && currentTrigger?.element === trigger.element && currentTrigger.value === startPrecision && options.length > 0 && values.includes(startPrecision)) snapshot = { precision: startPrecision, values };
         } finally {
           if (!optionsInitiallyVisible) {
-            const cleanupPrecision = isCurrentObservedSymbol(symbol) ? readCurrentOrderbookPrecisionValue() : startPrecision;
-            closed = await closeOrderbookPrecisionOptions(trigger.element, cleanupPrecision, true);
+            closed = await closeOrderbookPrecisionOptions(trigger.element, true);
           }
         }
         if (!closed) return { status: "无法关闭价格精度下拉" };
-        if (snapshot) return snapshot;
+        const settledTrigger = findOrderbookPrecisionTrigger();
+        if (snapshot && isCurrentObservedSymbol(symbol) && trigger.element.isConnected && tickSize?.isConnected && settledTrigger?.element === trigger.element && settledTrigger.element.closest(".orderbook-tickSize") === tickSize && settledTrigger.value === startPrecision) return snapshot;
         if (Date.now() >= deadline) break;
         await delay(ORDERBOOK_PRECISION_READY_POLL_MS);
       }
@@ -6587,11 +6649,16 @@
     }
     async function runOrderbookPrecisionSelectionTask(operation) {
       if (orderbookPrecisionSelectionTask) return orderbookPrecisionSelectionTask;
+      const symbol = getCurrentSymbol();
       const task = operation();
       orderbookPrecisionSelectionTask = task;
       scheduleRenderPanel();
       try {
         return await task;
+      } catch (error) {
+        if (!(error instanceof OrderbookPrecisionDomError)) throw error;
+        recordOrderbookPrecisionDomFailure(symbol, error);
+        return false;
       } finally {
         if (orderbookPrecisionSelectionTask === task) orderbookPrecisionSelectionTask = null;
         scheduleRenderPanel();

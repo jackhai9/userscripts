@@ -92,12 +92,15 @@ export const PANEL_COPY = Object.freeze({
     allPositionsClosed: localizedText('已全部平仓', 'All positions closed'),
     waitingTradeMode: localizedText('等待开仓/平仓状态', 'Waiting for trade mode'),
     waitingPricePrecision: localizedText('等待价格精度', 'Waiting for precision'),
+    waitingPrecisionOptions: localizedText('等待精度档位', 'Waiting for options'),
+    loadingPrecisionOptions: localizedText('读取精度档位', 'Loading options'),
     minimumQuantityLoading: localizedText('最小量读取中', 'Loading minimum qty'),
     positiveIntegerMultiplier: localizedText('请输入正整数倍数', 'Enter a positive integer'),
     noClosablePosition: localizedText('暂无可平仓位', 'No position to close'),
   }),
   status: freezeCopy({
     precisionUpdated: localizedText('精度推荐已更新', 'Precision recommendation updated'),
+    precisionOptionsUnavailable: localizedText('档位读取失败，请刷新', 'Options unavailable. Refresh.'),
     precisionInsufficient: localizedText(
       '近期价格变化不足，请稍后重试',
       'Recent price movement is insufficient. Try again later.',

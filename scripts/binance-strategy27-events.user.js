@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.6.0
+// @version      0.6.1
 // @author       jackhai9
 // @description  Display Strategy 27 events and provide the shared private CorsairQuant gateway connection
 // @match        https://www.binance.com/*/futures/*
@@ -876,12 +876,15 @@
       allPositionsClosed: localizedText("已全部平仓", "All positions closed"),
       waitingTradeMode: localizedText("等待开仓/平仓状态", "Waiting for trade mode"),
       waitingPricePrecision: localizedText("等待价格精度", "Waiting for precision"),
+      waitingPrecisionOptions: localizedText("等待精度档位", "Waiting for options"),
+      loadingPrecisionOptions: localizedText("读取精度档位", "Loading options"),
       minimumQuantityLoading: localizedText("最小量读取中", "Loading minimum qty"),
       positiveIntegerMultiplier: localizedText("请输入正整数倍数", "Enter a positive integer"),
       noClosablePosition: localizedText("暂无可平仓位", "No position to close")
     }),
     status: freezeCopy({
       precisionUpdated: localizedText("精度推荐已更新", "Precision recommendation updated"),
+      precisionOptionsUnavailable: localizedText("档位读取失败，请刷新", "Options unavailable. Refresh."),
       precisionInsufficient: localizedText(
         "近期价格变化不足，请稍后重试",
         "Recent price movement is insufficient. Try again later."

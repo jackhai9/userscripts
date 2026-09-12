@@ -43,15 +43,58 @@ test('multiplier controls show local press feedback without changing operation s
   const increment = panel.locator('#jh-binance-close-qty-multiplier-inc');
 
   await expect(input).toHaveValue('1');
-  await increment.click();
-  await expect(increment).toHaveAttribute('data-jh-press-feedback', 'true');
-  await expect(increment).toHaveCSS('background-color', 'rgb(245, 245, 245)');
-  await increment.click();
-  await expect(input).toHaveValue('3');
-  await expect(status).toHaveText(statusBefore);
-  await expect(increment).not.toHaveAttribute('data-jh-press-feedback', 'true', {
-    timeout: 1_000,
+  await increment.evaluate((button) => {
+    const events = [];
+    // The 140 ms feedback can end before Playwright's click round trip returns.
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        events.push({
+          feedback: button.getAttribute(mutation.attributeName),
+          backgroundColor: getComputedStyle(button).backgroundColor,
+          sameButton: document.getElementById(button.id) === button,
+          connected: button.isConnected,
+          multiplier: document.getElementById('jh-binance-close-qty-multiplier-input').value,
+          status: document.getElementById('jh-binance-ladder-status').textContent,
+        });
+      }
+    });
+    observer.observe(button, {
+      attributes: true,
+      attributeFilter: ['data-jh-press-feedback'],
+    });
+    window.__MULTIPLIER_FEEDBACK_PROBE__ = { events, observer };
   });
+  try {
+    await increment.click();
+    await expect.poll(() => page.evaluate(() => window.__MULTIPLIER_FEEDBACK_PROBE__.events), {
+      timeout: 1_000,
+    }).toEqual([
+      {
+        feedback: 'true',
+        backgroundColor: 'rgb(245, 245, 245)',
+        sameButton: true,
+        connected: true,
+        multiplier: '2',
+        status: statusBefore,
+      },
+      {
+        feedback: null,
+        backgroundColor: 'rgb(255, 255, 255)',
+        sameButton: true,
+        connected: true,
+        multiplier: '2',
+        status: statusBefore,
+      },
+    ]);
+    await expect(input).toHaveValue('2');
+    await expect(status).toHaveText(statusBefore);
+    await expect(increment).not.toHaveAttribute('data-jh-press-feedback', 'true');
+  } finally {
+    await page.evaluate(() => {
+      window.__MULTIPLIER_FEEDBACK_PROBE__.observer.disconnect();
+      delete window.__MULTIPLIER_FEEDBACK_PROBE__;
+    });
+  }
   expect(errors).toEqual([]);
 });
 
@@ -139,7 +182,7 @@ test('a precision shortcut selects the exact native orderbook option once', asyn
   await target.click();
   await expect(target).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#futuresOrderbook .tick-content')).toHaveText('0.01');
-  await expect(page.locator('.ob-ticksize-overlay')).toHaveCount(0);
+  await expect(page.locator('.bn-select-bubble')).toHaveCount(0);
   await expect(status).toHaveText(statusBefore);
   const probe = await finishInteractionProbe(page);
   assertResponsiveInteraction(expect, probe);

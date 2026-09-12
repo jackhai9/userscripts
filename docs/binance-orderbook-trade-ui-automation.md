@@ -98,7 +98,7 @@ present the behavior as proven.
 
 The orderbook precision control is a fragile closed-dropdown path. The current
 semantic contract is documented in the development manual; browser validation
-must exercise the closed control, dispatch the verified pointer/mouse sequence,
+must exercise the closed control, dispatch the verified native trigger click,
 wait for the control-owned visible option list, select the exact native option,
 and verify the displayed precision changed. Do not use a generic page-wide option
 selector or treat an already-open dropdown as proof that the script's Apply or

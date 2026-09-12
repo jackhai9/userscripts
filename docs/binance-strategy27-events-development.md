@@ -11,7 +11,7 @@ V10 live projection. The VPS remains the only market-data and event-analysis
 authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
-Version 0.6.0 retains this installation's private gateway configuration and
+Version 0.6.1 retains this installation's private gateway configuration and
 provides a shared read-only transport. Strategy29 owns its own summary panel,
 lifecycle and panel position. The existing `strategy27GatewayOrigin` and
 `strategy27GatewayAuthSecret` storage keys remain the single credential source;
@@ -165,7 +165,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.6.0 with identical metadata headers.
+generated install artifact are version 0.6.1 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout

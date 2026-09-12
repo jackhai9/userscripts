@@ -29,8 +29,8 @@ export function renderBinanceFuturesFixture(scenario) {
     .orderbook-tickSize, .row-content, .tradew-tradelist { min-height: 24px; }
     .orderbook-tickSize { position: relative; width: 120px; }
     .bn-tooltips-ele { display: inline-block; min-width: 70px; min-height: 24px; }
-    .ob-ticksize-overlay { position: absolute; top: 24px; left: 0; z-index: 20; width: 120px; padding: 4px; background: #fff; border: 1px solid #d8dce1; }
-    .ob-ticksize-item { display: block; min-height: 28px; padding: 4px; }
+    .bn-select-bubble { position: fixed; z-index: 20; width: 120px; padding: 4px; background: #fff; border: 1px solid #d8dce1; }
+    .bn-select-option { display: block; min-height: 28px; padding: 4px; }
     .row-content { display: flex; gap: 16px; }
     .emit-price { display: inline-block; min-width: 70px; min-height: 20px; }
     .chart-widget-root { width: 700px; height: 300px; margin-top: 20px; border: 1px solid #d8dce1; }
@@ -55,7 +55,7 @@ export function renderBinanceFuturesFixture(scenario) {
   <div id="fixture-layout">
     <main id="fixture-main">
       <section id="futuresOrderbook">
-        <div class="orderbook-tickSize"><div class="bn-tooltips-ele"><span class="tick-content">0.1</span></div></div>
+        <div class="orderbook-tickSize"><div class="bn-tooltips-wrap bn-tooltips-web bn-select bn-select__auto"><div class="bn-tooltips-ele bn-select-trigger"><span class="tick-content">0.1</span></div></div></div>
         <div class="row-content"><span class="ask-light emit-price">81.2</span></div>
         <div class="row-content"><span class="ask-light emit-price">81.1</span></div>
         <div class="row-content"><span class="ask-light emit-price">81.05</span></div>
@@ -237,29 +237,101 @@ export function renderBinanceFuturesFixture(scenario) {
         });
       }
 
-      function renderPrecisionOverlay() {
-        const tickSize = document.querySelector('#futuresOrderbook .orderbook-tickSize');
-        const existing = tickSize.querySelector('.ob-ticksize-overlay');
-        if (existing) {
-          existing.remove();
-          record('precision-overlay-closed');
+      let precisionControlSequence = 0;
+      let precisionControl;
+
+      /**
+       * The native Select keeps its portal ID in Dropdown.overlay on both owner
+       * branches; its custom field does not expose an aria-controls shortcut.
+       */
+      function bindPrecisionControl(root) {
+        const select = root.querySelector('.bn-select');
+        const trigger = select.querySelector('.bn-select-trigger');
+        const listboxId = 'bn-select-fixture-precision-' + (++precisionControlSequence);
+        const ownerBranch = () => ({
+          stateNode: select,
+          return: {
+            memoizedProps: { overlay: { props: { id: listboxId } } },
+            return: { stateNode: root, return: null },
+          },
+        });
+        const fiber = ownerBranch();
+        fiber.alternate = ownerBranch();
+        select.__reactFiber$fixture = fiber;
+        const control = {
+          root,
+          select,
+          listboxId,
+          symbol: scenario.currentSymbol,
+          options: [...scenario.host.precisionOptions],
+          bubble: null,
+        };
+        trigger.addEventListener('click', () => renderPrecisionOverlay(control));
+        return control;
+      }
+
+      function closePrecisionOverlay(control) {
+        control.bubble.remove();
+        control.bubble = null;
+        control.select.classList.remove('active');
+        record('precision-overlay-closed', { symbol: control.symbol, listboxId: control.listboxId });
+      }
+
+      function renderPrecisionOverlay(control) {
+        if (control.select.classList.contains('active')) {
+          closePrecisionOverlay(control);
           return;
         }
-        const overlay = document.createElement('div');
-        overlay.className = 'ob-ticksize-overlay';
-        overlay.innerHTML = scenario.host.precisionOptions.map((value) => (
-          '<div class="ob-ticksize-item" data-precision-value="' + value + '"><span>' + value + '</span></div>'
-        )).join('');
-        tickSize.append(overlay);
-        record('precision-overlay-opened');
-        overlay.querySelectorAll('[data-precision-value]').forEach((option) => {
+        const bubble = document.createElement('div');
+        bubble.className = 'bn-bubble bn-tooltips active bn-select-bubble';
+        const rect = control.select.getBoundingClientRect();
+        bubble.style.top = rect.bottom + 'px';
+        bubble.style.left = rect.left + 'px';
+        bubble.innerHTML = '<div class="bn-bubble-content"><div class="bn-select-overlay">' +
+          '<div class="bn-select-overlay-options" role="listbox" id="' + control.listboxId + '">' +
+          control.options.map((value) => (
+            '<div class="bn-select-option" role="option" aria-selected="' + selected(value, state.orderbookPrecision) +
+            '" data-precision-value="' + value + '"><span>' + value + '</span></div>'
+          )).join('') + '</div></div></div>';
+        control.bubble = bubble;
+        document.body.append(bubble);
+        control.select.classList.add('active');
+        record('precision-overlay-opened', { symbol: control.symbol, listboxId: control.listboxId });
+        bubble.querySelectorAll('[data-precision-value]').forEach((option) => {
           option.addEventListener('click', () => {
             state.orderbookPrecision = option.dataset.precisionValue;
-            tickSize.querySelector('.tick-content').textContent = state.orderbookPrecision;
-            record('precision-selected', { value: state.orderbookPrecision });
-            overlay.remove();
+            control.root.querySelector('.tick-content').textContent = state.orderbookPrecision;
+            record('precision-selected', {
+              value: state.orderbookPrecision,
+              symbol: control.symbol,
+              listboxId: control.listboxId,
+            });
+            closePrecisionOverlay(control);
           });
         });
+      }
+
+      function replacePrecisionControl({ scope, symbol, value, options }) {
+        if (!['select', 'root'].includes(scope)) throw new Error('Unsupported precision replacement scope');
+        if (!options.includes(value)) throw new Error('Replacement precision must be a native option');
+        const previousControl = precisionControl;
+        if (previousControl.bubble) closePrecisionOverlay(previousControl);
+        scenario.host.precisionOptions = [...options];
+        state.orderbookPrecision = value;
+        const root = scope === 'root' ? previousControl.root.cloneNode(true) : previousControl.root;
+        if (scope === 'select') {
+          previousControl.select.replaceWith(previousControl.select.cloneNode(true));
+        } else {
+          previousControl.root.replaceWith(root);
+        }
+        root.querySelector('.tick-content').textContent = value;
+        if (scenario.currentSymbol !== symbol) {
+          scenario.currentSymbol = symbol;
+          history.pushState({}, '', '/zh-CN/futures/' + symbol);
+        }
+        precisionControl = bindPrecisionControl(root);
+        record('precision-control-replaced', { scope, symbol, listboxId: precisionControl.listboxId });
+        return { previousListboxId: previousControl.listboxId, listboxId: precisionControl.listboxId };
       }
 
       localStorage.setItem('jh_binance_orderbook_precision_samples_v3:' + scenario.currentSymbol, '["81.0","81.01","81.02","81.03","81.04","81.05"]');
@@ -477,6 +549,7 @@ export function renderBinanceFuturesFixture(scenario) {
       renderChartOrdersPopover();
 
       window.__BINANCE_FIXTURE__ = {
+        replacePrecisionControl,
         snapshot: () => JSON.parse(JSON.stringify({
           positions: state.positions,
           orders: state.orders,
@@ -493,7 +566,7 @@ export function renderBinanceFuturesFixture(scenario) {
       };
       document.querySelector('.tick-content').textContent = state.orderbookPrecision;
       document.querySelector('.quick-controls button:nth-child(2)').textContent = state.leverage + 'x';
-      document.querySelector('.bn-tooltips-ele').addEventListener('click', renderPrecisionOverlay);
+      precisionControl = bindPrecisionControl(document.querySelector('#futuresOrderbook .orderbook-tickSize'));
       renderTradeMode();
       renderAccountWidget();
       window.fetch('/bapi/fixture-bootstrap', {

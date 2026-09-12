@@ -536,7 +536,7 @@ test('dynamic panel text keeps fixed single-line slots', () => {
   assert.doesNotMatch(source, /buttonBaseStyle = `width:68px;height:24px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcut'), /height:32px[^`]*font-size:12px;line-height:30px/);
   assert.match(readFunctionBody('renderOrderbookPrecisionShortcutSlots'), /while \(slots\.length < ORDERBOOK_PRECISION_SHORTCUT_LIMIT\)/);
-  assert.doesNotMatch(source, /data-orderbook-precision-status/);
+  assert.match(source, /data-orderbook-precision-status/);
 
   const ladderBody = readFunctionBody('refreshLadderPanel');
   const actionButtonBody = readFunctionBody('ladderActionButton');
@@ -1477,12 +1477,12 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(refreshBody, /margin-top:10px;/);
   assert.match(refreshBody, /PANEL_COPY\.field\.pricePrecision/);
   assert.match(refreshBody, /PANEL_COPY\.tooltip\.pricePrecision/);
-  assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy\)/);
+  assert.match(refreshBody, /renderOrderbookPrecisionShortcutSlots\(shortcutOptions, current, recommendation, controlsBusy, emptyPrecisionLabel\)/);
   assert.match(refreshBody, /activeUiLocale === 'en' \? '52px' : '36px'/);
   assert.match(refreshBody, /repeat\(4,minmax\(0,1fr\)\) 32px/);
   assert.match(refreshBody, /renderOrderbookPrecisionRefreshButton\(symbol, !canRefresh\)/);
   assert.match(refreshButtonBody, /data-orderbook-precision-refresh="true"[^`]*\$\{feedback\.icon\}/);
-  assert.doesNotMatch(refreshBody, /data-orderbook-precision-status/);
+  assert.match(refreshBody, /PANEL_COPY\.status\.precisionOptionsUnavailable/);
 
   assert.equal((source.match(/PANEL_COPY\.field\.interval, PANEL_COPY\.tooltip\.interval, LADDER_STEP_OPTIONS/g) || []).length, 2);
   assert.doesNotMatch(source, /data-ladder-step-action|function ladderStepRow/);
@@ -1501,12 +1501,14 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(stableLoadBody, /findOrderbookPrecisionTrigger\(\)/);
   assert.match(stableLoadBody, /currentTrigger\?\.element === trigger\.element/);
   assert.match(stableLoadBody, /values\.includes\(startPrecision\)/);
-  assert.match(stableLoadBody, /finally\s*\{[\s\S]*if \(!optionsInitiallyVisible\)[\s\S]*closeOrderbookPrecisionOptions\(trigger\.element, cleanupPrecision, true\)/);
+  assert.match(stableLoadBody, /finally\s*\{[\s\S]*if \(!optionsInitiallyVisible\)[\s\S]*closeOrderbookPrecisionOptions\(trigger\.element, true\)/);
+  assert.match(stableLoadBody, /settledTrigger\?\.element === trigger\.element/);
   assert.match(stableLoadBody, /await delay\(ORDERBOOK_PRECISION_READY_POLL_MS\)/);
 
   const closeOptionsBody = readFunctionBody('closeOrderbookPrecisionOptions');
-  assert.match(closeOptionsBody, /findVisibleOrderbookPrecisionOption\(currentPrecision, triggerElement\)/);
-  assert.match(closeOptionsBody, /dispatchOrderbookPrecisionToggleSequence\(toggleTarget\)/);
+  assert.doesNotMatch(closeOptionsBody, /findVisibleOrderbookPrecisionOption|currentOption/);
+  assert.match(closeOptionsBody, /findOrderbookPrecisionTrigger\(\)\?\.element !== triggerElement/);
+  assert.match(closeOptionsBody, /triggerElement\.closest\('\.bn-select-trigger'\)/);
 
   const selectBody = readFunctionBody('runSelectOrderbookPrecision');
   assert.match(selectBody, /getOrderbookPrecisionShortcutOptions\([\s\S]*ORDERBOOK_PRECISION_SHORTCUT_LIMIT/);
@@ -1543,15 +1545,8 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(openOptionsBody, /return waitForVisibleOrderbookPrecisionOptions\(triggerElement\)/);
   assert.doesNotMatch(openOptionsBody, /candidates|for \(const target|dispatchOrderbookPrecisionToggleSequence/);
 
-  const openEventBody = readFunctionBody('dispatchOrderbookPrecisionOpenEvent');
-  assert.match(openEventBody, /PointerEvent/);
-  assert.match(openEventBody, /MouseEvent/);
-  const toggleSequenceBody = readFunctionBody('dispatchOrderbookPrecisionToggleSequence');
-  assert.match(toggleSequenceBody, /pointerdown/);
-  assert.match(toggleSequenceBody, /mousedown/);
-  assert.match(toggleSequenceBody, /pointerup/);
-  assert.match(toggleSequenceBody, /mouseup/);
-  assert.match(toggleSequenceBody, /click/);
+  assert.doesNotMatch(source, /function dispatchOrderbookPrecisionToggleSequence/);
+  assert.match(closeOptionsBody, /clickDomTarget\(toggleTarget\)/);
 
   const waitOptionsBody = readFunctionBody('waitForVisibleOrderbookPrecisionOptions');
   assert.match(waitOptionsBody, /getVisibleOrderbookPrecisionOptionNodes\(triggerElement\)\.length/);
@@ -1563,9 +1558,8 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.match(bootstrapReadyBody, /getOrderbookPrices\('ASK', 1\)/);
   assert.match(bootstrapReadyBody, /isCurrentObservedSymbol\(symbol\)/);
 
-  assert.match(closeOptionsBody, /waitForVisibleOrderbookPrecisionOptions\(triggerElement, ORDERBOOK_PRECISION_OPTION_WAIT_MS\)/);
-  assert.match(closeOptionsBody, /findVisibleOrderbookPrecisionOption\(currentPrecision, triggerElement\)/);
-  assert.match(closeOptionsBody, /waitForOrderbookPrecisionOptionsClosed\(triggerElement\)/);
+  assert.match(closeOptionsBody, /waitForOrderbookPrecisionMenuState\(triggerElement, true\)/);
+  assert.match(closeOptionsBody, /waitForOrderbookPrecisionMenuState\(triggerElement, false\)/);
 
   const queueOptionsBody = readFunctionBody('queueOrderbookPrecisionOptionsLoad');
   assert.match(source, /function queueOrderbookPrecisionOptionsLoad\(symbol, force = false\)/);
@@ -1585,20 +1579,18 @@ test('orderbook precision recommendation marks one shortcut without applying it 
   assert.doesNotMatch(triggerBody, /querySelectorAll/);
 
   const optionsBody = readFunctionBody('getVisibleOrderbookPrecisionOptionNodes');
-  assert.match(optionsBody, /\.ob-ticksize-item/);
+  assert.match(optionsBody, /\.bn-select-option/);
   assert.match(optionsBody, /readOrderbookPrecisionOptionValue\(node\)/);
   assert.match(optionsBody, /getVisibleOrderbookPrecisionOverlay\(triggerElement\)/);
-  assert.match(optionsBody, /node\.closest\('\.ob-ticksize-overlay'\) === overlay/);
+  assert.match(optionsBody, /node\.closest\('\.bn-select-overlay'\) === overlay/);
   assert.doesNotMatch(optionsBody, /document\.querySelectorAll/);
   assert.doesNotMatch(optionsBody, /ORDERBOOK_PRECISION_CANDIDATE_OPTIONS/);
 
   const overlayBody = readFunctionBody('getVisibleOrderbookPrecisionOverlay');
-  assert.match(overlayBody, /tickSize\.querySelectorAll\('\.ob-ticksize-overlay'\)/);
-  assert.match(overlayBody, /overlays\.length === 1/);
-  assert.match(overlayBody, /tickSize\.closest\('#futuresOrderbook'\)/);
+  assert.match(overlayBody, /findNativeOrderbookPrecisionOverlay\(triggerElement, isVisibleElement\)/);
 
   const optionValueBody = readFunctionBody('readOrderbookPrecisionOptionValue');
-  assert.match(optionValueBody, /\.ob-ticksize-item/);
+  assert.match(optionValueBody, /\.bn-select-option/);
   assert.match(optionValueBody, /querySelector\('span'\)/);
 
   const findOptionBody = readFunctionBody('findVisibleOrderbookPrecisionOption');
