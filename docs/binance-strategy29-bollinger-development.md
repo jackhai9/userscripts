@@ -238,8 +238,12 @@ Native asynchronous shape creation can automatically enable the interval active 
 
 ## Verification
 
-Run `npm run test:binance-strategy29-bollinger`, `npm test`, both affected
-single-script builds, `npm run check:binance-userscripts` and `npm run test:ui`.
+During implementation and commit/push preparation, run the affected Strategy29
+checks with `npm run test:binance-strategy29-bollinger`, rebuild affected artifacts,
+and run `npm run check:binance-userscripts`. For cross-script coordination changes,
+include both affected single-script builds and the relevant `npm run test:ui`
+scenarios. Full-suite release validation and reuse of passing local results are
+defined in `skills/userscript-release/SKILL.md`.
 The cross-script browser fixture loads the actual generated artifacts in both
 orders. The sandbox entry test proves that Strategy29 installs its singleton on
 the page `unsafeWindow`. Remote contract/controller tests cover strict symbol
