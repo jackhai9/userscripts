@@ -40,16 +40,21 @@ This repo has worked without a local `127.0.0.1:7890` listener as long as npm ca
 
 ## Commands
 
-Run the full validation set after any `binance-orderbook-trade` source change:
+For `binance-orderbook-trade` implementation and commit/push preparation, run the
+affected checks. The script-level commands are:
 
 ```bash
-npm test
+npm run test:binance-orderbook-trade
 npm run build:binance-orderbook-trade
 npm run check:binance-orderbook-trade
 git diff --check
 ```
 
 The build command rewrites `scripts/binance-orderbook-trade.user.js` from `src/binance-orderbook-trade/index.user.js`.
+
+Include affected shared-contract and integration checks when the change crosses
+script boundaries. Full-suite release validation and reuse of passing local
+results are defined in `skills/userscript-release/SKILL.md`.
 
 ## Layout
 
@@ -326,6 +331,6 @@ If a path was not manually tested, state that in the final summary.
 
 Remote release, commit, PR, and publish sequencing is owned by
 `skills/userscript-release/SKILL.md`. Keep this manual focused on the orderbook
-source and business contracts; use the release skill when the current request
-explicitly includes a release. Browser/Tampermonkey post-release validation is
+source and business contracts; use the release skill for the stage authorized in
+the current conversation. Browser/Tampermonkey post-release validation is
 owned by `docs/binance-orderbook-trade-ui-automation.md`.

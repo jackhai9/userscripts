@@ -25,9 +25,11 @@ commands are recorded in `docs/userscript-performance-review.md`.
 | Auto refresh | `scripts/auto_refresh.user.js` | same file | `node --test test/unit/auto-refresh.test.js`, `node --check scripts/auto_refresh.user.js` | this document |
 | CoinMarketCap valuation helper | `scripts/coinmarketcap-valuation-helper.user.js` | same file | `node --check scripts/coinmarketcap-valuation-helper.user.js` | this document |
 
-Run the full `npm test` suite before a release. A focused check can establish
-that one layer passed; it does not replace a required build, generated-artifact
-comparison, or live validation step.
+Use the affected checks during implementation and commit/push preparation.
+`skills/userscript-release/SKILL.md` owns the full-suite release gate and reuse of
+passing local results for unchanged inputs. A focused check establishes only its
+tested layer; it does not replace an affected build, generated-artifact comparison,
+or required live validation step.
 The default suite runs all `test/unit/**/*.test.js` and `test/dom/**/*.test.js`
 files. Scripts under `test/manual/` are explicit manual probes and previews;
 they are not automatically executed by the test runner.

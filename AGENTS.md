@@ -60,9 +60,10 @@
   | src/m3u8-downloader/** | npm run build:m3u8-downloader |
 
 - Publish, ship, or merge to main only through a GitHub PR when the current
-  request explicitly asks for that action; never direct-push main. This file does
-  not authorize commits, pushes, Tampermonkey synchronization, browser mutation,
-  or financial actions.
+  conversation explicitly authorizes that action, target, and scope; never
+  direct-push main. Authorization for one stage does not authorize later stages.
+  This file does not authorize commits, pushes, Tampermonkey synchronization,
+  browser mutation, or financial actions.
 - Binance quantity and trading rules use the current symbol and mode. Before
   changing page automation, collect current DOM/accessibility/source evidence and
   prove the smallest page-context interaction when it is directly testable.
@@ -77,8 +78,9 @@
 
 ## Validation
 
-- Run the relevant tests, build, syntax/check commands, and git diff --check for
-  every behavior change. The release skill contains the complete script matrix.
+- Run the affected tests, build, syntax/check commands, and git diff --check for
+  behavior changes. The release skill owns stage-specific validation and reuse
+  of passing local checks for unchanged inputs.
 - Unmigrated userscript changes require node --check on each changed file.
 - Changes touching Binance trading, DOM automation, page/data scheduling, or exchange
   rules require the affected manual path and an explicit tested/untested report.

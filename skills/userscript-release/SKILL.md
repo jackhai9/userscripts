@@ -1,6 +1,6 @@
 ---
 name: userscript-release
-description: Prepare and validate userscript releases across migrated and hand-maintained scripts.
+description: Prepare userscript commits and releases with validation scoped to the requested stage.
 ---
 
 # userscript-release
@@ -14,7 +14,7 @@ remote repository, Tampermonkey, a browser page, or a trading account.
 1. Read the repository `AGENTS.md`, inspect `git status --short --branch`, and identify
    the changed source files and generated artifacts. Do not include unrelated user
    changes.
-2. Read the detailed manual for the affected workflow:
+2. Read the relevant sections of the manual for the affected workflow:
    - orderbook source, architecture, or build: `docs/binance-orderbook-trade-development.md`;
    - orderbook browser, Tampermonkey, CDP, or live validation: `docs/binance-orderbook-trade-ui-automation.md`;
    - Strategy 27 annotations: `docs/binance-strategy27-events-development.md`;
@@ -38,24 +38,36 @@ Never hand-edit a generated artifact for feature work. Keep generated output
 readable, non-compressed, non-obfuscated, and preserve its `@updateURL` and
 `@downloadURL`.
 
-4. Run the relevant checks:
-   - orderbook: `npm test`, `npm run check:binance-orderbook-trade`;
-   - migrated Binance userscripts: `npm test`, `npm run check:binance-userscripts`;
+4. During implementation or commit/push preparation, run checks for the affected
+   contracts:
+   - orderbook: `npm run test:binance-orderbook-trade`,
+     `npm run check:binance-orderbook-trade`;
+   - trading-data and CoinMarketCap-data:
+     `node --test test/unit/binance-data-panel-*.test.js`,
+     `npm run check:binance-userscripts`;
    - Strategy 27: `npm run test:binance-strategy27-events`;
    - Strategy 29: `npm run test:binance-strategy29-bollinger`;
    - m3u8: `node --test test/unit/m3u8-downloader-course-export.test.js`,
      `npm run check:m3u8-downloader`;
    - unmigrated scripts: `node --check <file>`.
-   Always run `git diff --check`. Before publishing, run the full `npm test` suite
-   and every affected build/check command.
+   Include affected consumers' unit, DOM, and integration checks for shared code
+   or cross-script contract changes. Run `git diff --check` on changed files.
+   Before publishing, require one passing full `npm test` suite and all affected
+   build/check results for the release inputs. Reuse documented passing local
+   results from this task only when relevant source, artifacts, tests, dependencies,
+   configuration, and runtime are unchanged. Repeat affected checks after relevant
+   edits, failures, or unresolved concerns. This reuse does not replace fresh
+   remote PR head, required-check, and mergeability reads before merging.
 5. Inspect the generated metadata and confirm that the generated `@version` matches
    the source. Verify that `README.md` still points to the generated install entry.
-6. Only when the current user request explicitly asks for a remote release, use the
-   GitHub PR workflow:
+6. Perform only Git actions explicitly authorized in the current conversation for
+   the same action, target, and scope. Commit/push authorization does not authorize
+   a later merge or deployment. For an authorized remote release, use the GitHub
+   PR workflow:
    - push the feature branch;
    - create a PR with `gh pr create`;
    - wait for required checks or report which checks are unavailable;
-   - merge with `gh pr merge`;
+   - merge with `gh pr merge` when authorized and required checks pass;
    - never locally merge into `main` and direct-push `main`.
 7. If browser validation is requested after the release, follow the L3/L4 procedure
    in `docs/binance-orderbook-trade-ui-automation.md`. Synchronize only the existing
