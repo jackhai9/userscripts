@@ -41,6 +41,7 @@ function harness(t, steps, { render, reconcile, createError, removeError, clearE
   const calls = [];
   let layerCreates = 0;
   let layerClears = 0;
+  let layerSuspensions = 0;
   let generation = 0;
   let pending = null;
   let clock = 7000;
@@ -76,10 +77,15 @@ function harness(t, steps, { render, reconcile, createError, removeError, clearE
           return true;
         },
         remove(id) {
-          if (removeError) throw removeError;
           if (pending?.id === id) pending.cancelled = true;
           removed.push(id);
+          if (removeError) throw removeError;
           shapes.delete(id);
+        },
+        suspend() {
+          layerSuspensions += 1;
+          generation += 1;
+          if (pending) pending.cancelled = true;
         },
         clear() {
           layerClears += 1;
@@ -106,6 +112,7 @@ function harness(t, steps, { render, reconcile, createError, removeError, clearE
     setCurrent: (value) => { current = value; },
     get layerCreates() { return layerCreates; },
     get layerClears() { return layerClears; },
+    get layerSuspensions() { return layerSuspensions; },
   };
 }
 
@@ -138,6 +145,23 @@ test('unsupported gateways never construct a chart layer and leave ordinary data
   assert.equal(h.statusKind(), 'inactive');
 });
 
+test('a compound endpoint removed after delivery freezes history without further repairs', async (t) => {
+  let repairs = 0;
+  const h = harness(t, [bootstrap(), batch([envelope()]), { status: 404, responseText: '<html>route removed</html>' }], {
+    reconcile: () => { repairs += 1; },
+  });
+  await h.run();
+  await h.controller.reconcile();
+  assert.equal(repairs, 0);
+  assert.equal(h.panel.compoundSize, 1);
+  assert.equal(h.shapes.size, 1);
+  assert.equal(h.status(), '网关尚未启用复合候选');
+  assert.equal(h.calls.length, 3);
+  h.controller.clear();
+  assert.equal(h.panel.compoundSize, 0);
+  assert.equal(h.shapes.size, 0);
+});
+
 test('same-decision panel ordering uses publication time without extending chart retention time', async (t) => {
   const high = { ...envelope(fixtures[0], 2), observed_at_ms: 7010 };
   const low = { ...envelope(fixtures[1], 3), observed_at_ms: 7020 };
@@ -149,20 +173,23 @@ test('same-decision panel ordering uses publication time without extending chart
   assert.deepEqual(h.renders.map((item) => item.decisionAtMs), [7000, 7000]);
 });
 
-test('503 clears compound state and recovers with a new cursor without clearing ordinary data', async (t) => {
-  const h = harness(t, [bootstrap(), batch([envelope()]), response({ schema_version: 1, status: 'error', error_code: 'compound_unavailable' }, 503),
-    ({ panel, shapes, calls }) => {
-      assert.equal(panel.size, 1);
-      assert.equal(panel.compoundSize, 0);
-      assert.equal(shapes.size, 0);
-      assert.equal(calls.at(-1).searchParams.has('cursor'), false);
-      return bootstrap('5-0', 'b'.repeat(32));
-    }, batch([envelope(fixtures[1], 2, 'b'.repeat(32))], '5-0', '6-0')]);
-  h.run();
-  await h.parked;
-  assert.equal(h.panel.compoundSize, 1);
-  assert.deepEqual([...h.shapes.keys()], [fixtures[1].candidate_id]);
-  assert.equal(h.status(), '复合候选数据：已连接。接口连通不代表该币种仍在监控中。');
+test('validated 503 recovery merges a new snapshot without deleting compound or ordinary history', async (t) => {
+  for (const errorCode of ['compound_unavailable', 'redis_unavailable']) {
+    let recovering;
+    const h = harness(t, [bootstrap(), batch([envelope()]), response({ schema_version: 1, status: 'error', error_code: errorCode }, 503),
+      ({ panel, shapes, calls }) => {
+        recovering = { ordinary: panel.size, compound: panel.compoundSize, ids: [...shapes.keys()], hasCursor: calls.at(-1).searchParams.has('cursor') };
+        return bootstrap('5-0', 'b'.repeat(32));
+      }, batch([envelope(fixtures[0], 2, 'b'.repeat(32)), envelope(fixtures[1], 3, 'b'.repeat(32))], '5-0', '6-0')]);
+    h.run();
+    await h.parked;
+    assert.deepEqual(recovering, { ordinary: 1, compound: 1, ids: [fixtures[0].candidate_id], hasCursor: false });
+    assert.equal(h.panel.compoundSize, 2);
+    assert.deepEqual([...h.shapes.keys()], fixtures.map((candidate) => candidate.candidate_id));
+    assert.equal(h.renders.length, 2);
+    assert.equal(h.layerClears, 0);
+    assert.equal(h.status(), '复合候选数据：已连接。接口连通不代表该币种仍在监控中。');
+  }
 });
 
 test('network reconnect retains compound history and original cursor', async (t) => {
@@ -179,12 +206,15 @@ test('network reconnect retains compound history and original cursor', async (t)
   assert.equal(h.panel.size, 1);
 });
 
-test('stream reset clears compound view but preserves the newly accepted epoch sequence', async (t) => {
+test('stream reset retains both candidates and sequence failure freezes their verified history', async (t) => {
   const h = harness(t, [bootstrap(), batch([envelope(), state(1, 'b'.repeat(32)), envelope(fixtures[1], 2, 'b'.repeat(32))]),
     batch([envelope(fixtures[0], 2, 'b'.repeat(32))], '2-0', '3-0')]);
   await h.run();
   assert.equal(h.renders.length, 2);
-  assert.equal(h.panel.compoundSize, 0);
+  assert.equal(h.panel.compoundSize, 2);
+  assert.deepEqual([...h.shapes.keys()], fixtures.map((candidate) => candidate.candidate_id));
+  assert.equal(h.layerClears, 0);
+  assert.equal(h.layerSuspensions, 1);
   assert.equal(h.panel.size, 1);
   assert.match(h.status(), /sequence regression/);
   assert.equal(h.statusKind(), 'error');
@@ -252,19 +282,20 @@ test('manual clear during lifecycle hash validation suppresses late display and 
   assert.equal(h.calls.length, 4);
 });
 
-test('stale cursor reset removes old compound history and accepts the new stream', async (t) => {
+test('stale cursor reset preserves history absent from the new bootstrap and accepts the new stream', async (t) => {
+  let recovering;
   const h = harness(t, [bootstrap(), batch([envelope()]),
     response({ schema_version: 1, status: 'reset', reason: 'stale_cursor', requested_cursor: '2-0', next_cursor: '7-0', messages: [] }, 409),
     ({ panel, shapes }) => {
-      assert.equal(panel.compoundSize, 0);
-      assert.equal(shapes.size, 0);
-      assert.equal(panel.size, 1);
+      recovering = { compound: panel.compoundSize, shapes: shapes.size, ordinary: panel.size };
       return bootstrap('7-0', 'b'.repeat(32));
     }, batch([envelope(fixtures[1], 2, 'b'.repeat(32))], '7-0', '8-0')]);
   h.run();
   await h.parked;
-  assert.deepEqual([...h.shapes.keys()], [fixtures[1].candidate_id]);
-  assert.equal(h.panel.compoundSize, 1);
+  assert.deepEqual(recovering, { compound: 1, shapes: 1, ordinary: 1 });
+  assert.deepEqual([...h.shapes.keys()], fixtures.map((candidate) => candidate.candidate_id));
+  assert.equal(h.panel.compoundSize, 2);
+  assert.equal(h.layerClears, 0);
   assert.equal(h.statusKind(), 'normal');
 });
 
@@ -318,7 +349,9 @@ test('timer-driven prune failures stop only the optional job and do not escape t
   await done;
   assert.equal(h.panel.size, 1);
   assert.equal(h.panel.compoundSize, 0);
-  assert.equal(h.shapes.size, 0);
+  assert.equal(h.shapes.size, 1, 'a failed native removal has an unknown outcome and is not retried');
+  assert.deepEqual(h.removed, [fixtures[0].candidate_id]);
+  assert.equal(h.layerClears, 0);
   assert.equal(h.statusKind(), 'error');
   assert.match(h.status(), /fixture removal failure/);
 });
@@ -349,15 +382,20 @@ test('manual clear and stop contain native cleanup failures without retrying rem
   }
 });
 
-test('terminal protocol failure preserves both the original and cleanup errors', async (t) => {
+test('terminal protocol failure retains history and explicit cleanup preserves both errors', async (t) => {
   const h = harness(t, [bootstrap(), batch([envelope()]), { status: 200, responseText: 'invalid JSON' }], {
     clearError: new Error('fixture native cleanup failure'),
   });
   await assert.doesNotReject(h.run());
-  assert.equal(h.layerClears, 1);
+  assert.equal(h.layerClears, 0);
   assert.equal(h.panel.size, 1);
-  assert.equal(h.panel.compoundSize, 0);
+  assert.equal(h.panel.compoundSize, 1);
+  assert.equal(h.shapes.size, 1);
   assert.equal(h.statusKind(), 'error');
+  assert.match(h.status(), /JSON/);
+  h.controller.clear();
+  assert.equal(h.layerClears, 1);
+  assert.equal(h.panel.compoundSize, 0);
   assert.match(h.status(), /JSON/);
   assert.match(h.status(), /fixture native cleanup failure/);
 });
@@ -382,7 +420,7 @@ test('late drawing failure after context retirement remains inspectable without 
   assert.equal(h.panel.size, 1);
 });
 
-test('timer repair failures stop only the compound job and retain ordinary history', async (t) => {
+test('timer repair failures stop only the compound job and retain both histories', async (t) => {
   const h = harness(t, [bootstrap(), batch([envelope()])], {
     reconcile: async () => { throw new Error('fixture native repair failure'); },
   });
@@ -390,9 +428,62 @@ test('timer repair failures stop only the compound job and retain ordinary histo
   await h.parked;
   await h.controller.reconcile();
   assert.equal(h.panel.size, 1);
-  assert.equal(h.panel.compoundSize, 0);
-  assert.equal(h.shapes.size, 0);
+  assert.equal(h.panel.compoundSize, 1);
+  assert.equal(h.shapes.size, 1);
+  assert.equal(h.layerClears, 0);
+  assert.equal(h.layerSuspensions, 1);
   assert.equal(h.statusKind(), 'error');
   assert.match(h.status(), /fixture native repair failure/);
   assert.match(h.controller.lastError.message, /fixture native repair failure/);
+});
+
+test('manual clear stays effective across unavailable, bootstrap replay and another epoch', async (t) => {
+  const epoch = 'b'.repeat(32);
+  const snapshot = JSON.parse(bootstrap('5-0', epoch).responseText);
+  snapshot.records = [envelope(fixtures[0], 2, epoch)];
+  snapshot.last_sequence = 2;
+  const h = harness(t, [bootstrap(), batch([envelope()]), ({ controller }) => {
+    controller.clear();
+    return response({ schema_version: 1, status: 'error', error_code: 'redis_unavailable' }, 503);
+  }, response(snapshot), batch([state(1, 'c'.repeat(32)), envelope(fixtures[0], 2, 'c'.repeat(32)), envelope(fixtures[1], 3, 'c'.repeat(32))], '5-0', '6-0')]);
+  h.run();
+  await h.parked;
+  assert.deepEqual(h.renders.map((render) => render.id), fixtures.map((candidate) => candidate.candidate_id));
+  assert.deepEqual([...h.shapes.keys()], [fixtures[1].candidate_id]);
+  assert.equal(h.panel.compoundSize, 1);
+  assert.equal(h.layerClears, 1);
+});
+
+test('retained history remains clearable and expires after terminal failure', async (t) => {
+  for (const action of ['clear', 'prune', 'stop']) {
+    const h = harness(t, [bootstrap(), batch([envelope()]), { status: 200, responseText: 'invalid JSON' }], { maxAgeMs: 1000 });
+    await h.run();
+    assert.equal(h.panel.compoundSize, 1);
+    assert.equal(h.shapes.size, 1);
+    assert.equal(h.statusKind(), 'error');
+    if (action === 'prune') h.setClock(8001);
+    h.controller[action]('route_changed');
+    assert.equal(h.panel.compoundSize, 0, action);
+    assert.equal(h.shapes.size, 0, action);
+    assert.equal(h.panel.size, 1, action);
+    assert.match(h.status(), /JSON/);
+    assert.equal(h.calls.length, 3);
+  }
+});
+
+test('age cleanup attempts every expired candidate once when a native removal fails', async (t) => {
+  const h = harness(t, [bootstrap(), batch([envelope(fixtures[0], 2), envelope(fixtures[1], 3)])], {
+    maxAgeMs: 1000, removeError: new Error('fixture removal failure'),
+  });
+  const done = h.run();
+  await h.parked;
+  h.setClock(8001);
+  h.controller.prune();
+  await done;
+  assert.deepEqual(h.removed, fixtures.map((candidate) => candidate.candidate_id));
+  assert.equal(h.panel.compoundSize, 0);
+  h.controller.prune();
+  assert.equal(h.removed.length, 2);
+  assert.equal(h.layerClears, 0);
+  assert.match(h.status(), /fixture removal failure/);
 });

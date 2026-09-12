@@ -31,6 +31,7 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
   const records = new Map();
   let pending = null;
   let reconciliation = null;
+  let suspended = false;
 
   function dispose(recordsToRemove) {
     const errors = [];
@@ -72,7 +73,7 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
   /** Retain slots and surviving parts; concurrent callers share one repair. */
   function restoreCandidate(id, record, liveIds) {
     if (record.restoring) return record.restoring;
-    const current = () => records.get(id) === record && isChartCurrent();
+    const current = () => !suspended && records.get(id) === record && isChartCurrent();
     if (!current()) return Promise.resolve(false);
     if (record.ids.every((entityId) => liveIds.has(entityId))) return Promise.resolve(true);
     record.restoring = (async () => {
@@ -95,11 +96,12 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
   }
 
   function reconcile() {
+    if (suspended) return Promise.resolve();
     if (reconciliation) return reconciliation;
     reconciliation = (async () => {
       let liveIds = readLiveShapeIds(chart);
       for (const [id, record] of [...records]) {
-        if (records.get(id) !== record || !isChartCurrent()) continue;
+        if (suspended || records.get(id) !== record || !isChartCurrent()) continue;
         if (!record.restoring && record.ids.every((entityId) => liveIds.has(entityId))) continue;
         await restoreCandidate(id, record, liveIds);
         liveIds = readLiveShapeIds(chart);
@@ -131,6 +133,7 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
   }
 
   async function renderCandidate(id, annotation, decisionAtMs) {
+    if (suspended) return false;
     const existing = records.get(id);
     if (existing) return restoreCandidate(id, existing, readLiveShapeIds(chart));
     if (pending !== null) throw new Error('Compound chart rendering must be serial');
@@ -162,11 +165,11 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
       for (const [drawingPoint, drawing] of drawings) {
         const entityId = await createDrawing(drawingPoint, drawing);
         operation.ids.push(entityId);
-        if (drawing.shape === 'text') updateLabel(entityId, drawing, annotation.markerShape);
         if (operation.controller.signal.aborted || !isChartCurrent()) {
           dispose([operation]);
           return false;
         }
+        if (drawing.shape === 'text') updateLabel(entityId, drawing, annotation.markerShape);
       }
       records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, markerShape: annotation.markerShape, drawings, restoring: null });
       return true;
@@ -204,5 +207,14 @@ export function createTradingViewCompoundLayer(target, { maxCandidates, candleWa
     }
   }
 
-  return Object.freeze({ setLocale, renderCandidate, reconcile, remove, clear, get size() { return records.size; } });
+  /** Freeze verified pairs while cancelling unfinished presentation and repair. */
+  function suspend() {
+    suspended = true;
+    if (pending) {
+      pending.controller.abort();
+      dispose([pending]);
+    }
+  }
+
+  return Object.freeze({ setLocale, renderCandidate, reconcile, remove, clear, suspend, get size() { return records.size; } });
 }

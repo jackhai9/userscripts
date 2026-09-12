@@ -8,7 +8,9 @@ import { CompoundCandidateLifecycle } from './compound-candidate-lifecycle.js';
  * The lifecycle accepts immutable records before asynchronous drawing. A view
  * generation separately invalidates pending presentation on manual clear or
  * eviction without erasing sequence/replay bookkeeping. The chart layer must
- * cancel pending owned entities on remove/clear, including late create results.
+ * cancel pending owned entities on remove/clear/suspend, including late creates.
+ * Polling failure suspends presentation; context retirement alone ends ownership
+ * of the bounded history and its existing timer-driven age cleanup.
  */
 export function createCompoundCandidateController({
   request, gatewayBaseUrl, authSecret, canonicalSymbol, panel, createLayer,
@@ -28,17 +30,19 @@ export function createCompoundCandidateController({
     return CONNECTION_STATUS;
   }
   function renderStatus() {
-    if (lastError) panel.setCompoundStatus(t('复合候选已停止：', 'Compound candidates stopped: ') + lastError.message, 'error');
+    if (lastError) panel.setCompoundStatus(t('复合候选已停止，历史记录已保留。请使用重新连接菜单恢复：', 'Compound candidates stopped; history retained. Use the reconnect menu to resume: ') + lastError.message, 'error');
     else panel.setCompoundStatus(...connectionStatus()[connectionState]);
   }
   const lifecycle = new CompoundCandidateLifecycle(canonicalSymbol, { maxCandidates, maxAgeMs });
   const abortController = new AbortController();
   let layer = null;
   let started = false;
+  let stopped = false;
   let viewGeneration = 0;
   let pendingCandidateId = null;
   let lastError = null;
-  const current = () => !abortController.signal.aborted && isCurrent();
+  const ownsContext = () => !stopped && isCurrent();
+  const current = () => !abortController.signal.aborted && ownsContext();
 
   function clearView() {
     viewGeneration += 1;
@@ -54,24 +58,43 @@ export function createCompoundCandidateController({
   }
 
   function remove(ids) {
+    const errors = [];
     for (const id of ids) {
       if (id === pendingCandidateId) viewGeneration += 1;
-      layer?.remove(id);
+      // Prune has already retired every ID; attempt each cleanup once even if
+      // one native removal fails, then stop this job with the complete evidence.
+      try {
+        layer?.remove(id);
+      } catch (error) {
+        errors.push(error);
+      }
       panel.removeCompound(id);
     }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, errors.map((error) => error.message).join('; '));
   }
 
   function prune(observedAtMs = nowMs()) {
-    if (current()) remove(lifecycle.prune(observedAtMs));
+    if (ownsContext()) remove(lifecycle.prune(observedAtMs));
   }
 
-  function failJob(error, { clear = true } = {}) {
-    lastError = error;
-    if (!current()) return;
+  function suspendView() {
+    viewGeneration += 1;
+    pendingCandidateId = null;
+    layer?.suspend();
+  }
+
+  function failJob(error) {
+    lastError = lastError === null || lastError === error ? error
+      : new AggregateError([lastError, error], `${lastError.message}; ${error.message}`);
+    if (!ownsContext()) return;
     abortController.abort();
-    lifecycle.reset('stopped');
-    const cleanupError = clear ? clearView() : null;
-    if (cleanupError) lastError = new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
+    lifecycle.resetProtocol('stopped');
+    try {
+      suspendView();
+    } catch (cleanupError) {
+      lastError = new AggregateError([lastError, cleanupError], `${lastError.message}; ${cleanupError.message}`);
+    }
     renderStatus();
   }
 
@@ -80,9 +103,11 @@ export function createCompoundCandidateController({
     const status = connectionStatus()[state];
     if (!status) throw new Error(`Unknown compound connection state: ${state}`);
     if (state === 'unavailable' || state === 'unsupported') {
-      lifecycle.reset('unavailable');
-      const error = clearView();
-      if (error) { failJob(error, { clear: false }); return; }
+      lifecycle.resetProtocol('unavailable');
+    }
+    if (state === 'unsupported') {
+      abortController.abort();
+      suspendView();
     }
     connectionState = state;
     renderStatus();
@@ -90,10 +115,9 @@ export function createCompoundCandidateController({
 
   async function onResponse(response) {
     if (!current()) return;
+    prune();
     if (response.status === 'reset') {
-      lifecycle.reset(response.reason);
-      const error = clearView();
-      if (error) failJob(error, { clear: false });
+      lifecycle.resetProtocol(response.reason);
       return;
     }
     let messages = response.messages;
@@ -102,8 +126,6 @@ export function createCompoundCandidateController({
       : nowMs();
     if (response.status === 'bootstrap') {
       lifecycle.beginBootstrap(response.runtime_epoch);
-      const error = clearView();
-      if (error) { failJob(error, { clear: false }); return; }
       messages = [...response.records].sort((left, right) => left.sequence - right.sequence);
     }
     for (const message of messages) {
@@ -113,9 +135,7 @@ export function createCompoundCandidateController({
       if (!current()) return;
       remove(action.removedCandidateIds);
       if (action.type === 'stream_reset') {
-        // apply() already accepted the epoch and sequence. Only clear the view.
-        const error = clearView();
-        if (error) { failJob(error, { clear: false }); return; }
+        // Only protocol identity changed; retained candidates remain immutable.
         continue;
       }
       if (action.type !== 'candidate' || applicationGeneration !== viewGeneration) continue;
@@ -173,9 +193,9 @@ export function createCompoundCandidateController({
       })();
     },
     clear() {
-      if (!current()) return;
+      if (!ownsContext()) return;
       const error = clearView();
-      if (error) failJob(error, { clear: false });
+      if (error) failJob(error);
     },
     prune() {
       // The shared context timer is a second entry into this optional job.
@@ -195,13 +215,14 @@ export function createCompoundCandidateController({
       }
     },
     stop(reason) {
-      if (abortController.signal.aborted) return;
+      if (stopped) return;
+      stopped = true;
       abortController.abort();
       lifecycle.reset(reason);
       const error = clearView();
       if (error) {
-        lastError = error;
-        renderStatus();
+        lastError = lastError === null ? error : new AggregateError([lastError, error], `${lastError.message}; ${error.message}`);
+        if (isCurrent()) renderStatus();
       }
     },
     // A late drawing rejection remains inspectable without touching a retired panel.

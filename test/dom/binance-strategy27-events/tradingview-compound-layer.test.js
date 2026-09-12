@@ -226,6 +226,51 @@ test('a repeated candidate restores externally removed entities', async () => {
   assert.equal(f.shapes.size, 3);
 });
 
+test('suspension preserves completed pairs and cancels a pending candle wait', async () => {
+  const f = fixture();
+  const layer = createTradingViewCompoundLayer({ chart: f.chart }, { maxCandidates: 80, candleWaitMs: 3000 });
+  await layer.renderCandidate('verified', annotation(), 11000);
+  const pending = layer.renderCandidate('waiting', annotation({ markerTime: 11 }), 12000);
+  assert.equal(f.listeners.size, 1);
+  layer.suspend();
+  assert.equal(await pending, false);
+  assert.equal(f.listeners.size, 0);
+  assert.deepEqual([...f.shapes.keys()], ['user-owned', 'owned-1', 'owned-2']);
+  assert.equal(layer.size, 1);
+  f.shapes.delete('owned-1');
+  await layer.reconcile();
+  assert.equal(await layer.renderCandidate('new', annotation(), 11000), false);
+  assert.equal(f.created.length, 2);
+  layer.clear();
+  assert.deepEqual([...f.shapes.keys()], ['user-owned']);
+});
+
+for (const phase of ['icon', 'label', 'repair']) {
+  test(`suspension removes late ${phase} entities without removing verified history`, async () => {
+    const entered = deferred();
+    const release = deferred();
+    const blockedCreate = phase === 'label' ? 4 : 3;
+    const f = fixture({ beforeCreate: async (count) => {
+      if (count === blockedCreate) { entered.resolve(); await release.promise; }
+    } });
+    const layer = f.layer();
+    await layer.renderCandidate('verified', annotation(), 11000);
+    if (phase === 'repair') f.shapes.delete('owned-1');
+    const pending = phase === 'repair' ? layer.reconcile() : layer.renderCandidate('pending', annotation(), 11000);
+    await entered.promise;
+    layer.suspend();
+    release.resolve();
+    await pending;
+    assert.deepEqual([...f.shapes.keys()], phase === 'repair' ? ['user-owned', 'owned-2'] : ['user-owned', 'owned-1', 'owned-2']);
+    assert.deepEqual(f.removed, phase === 'label' ? ['owned-3', 'owned-4'] : ['owned-3']);
+    assert.equal(layer.size, 1);
+    await layer.reconcile();
+    assert.equal(f.created.length, blockedCreate);
+    layer.clear();
+    assert.deepEqual([...f.shapes.keys()], ['user-owned']);
+  });
+}
+
 test('compound timer and replay share a single repair and discard late parts after invalidation', async () => {
   for (const action of ['retain', 'clear', 'remove', 'interval', 'symbol']) {
     const entered = deferred();

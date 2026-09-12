@@ -21,11 +21,12 @@ function compareOrder(a, b) {
   return a.time - b.time || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);
 }
 
-/** Bounded immutable observations, independent of ordinary event lifecycles.
+/** Bounded immutable observations, independent of transport epochs.
  *
  * Retention follows decision time rather than delivery/replay time. A monotonic
  * eviction boundary prevents old replay from resurrecting markers without an
- * unbounded tombstone map. Full payload hashes are validated even after eviction.
+ * unbounded tombstone map. Protocol recovery preserves both records and that
+ * boundary. Full payload hashes are validated even after eviction.
  */
 export class CompoundCandidateLifecycle {
   #records = new Map();
@@ -44,17 +45,22 @@ export class CompoundCandidateLifecycle {
   }
 
   reset(reason) {
-    check(['initial_cursor', 'stale_cursor', 'route_changed', 'interval_changed', 'unavailable', 'stopped'].includes(reason), 'reset reason is invalid');
-    this.#generation += 1;
+    this.resetProtocol(reason);
     this.#records.clear();
     this.#evictionBoundary = null;
+  }
+
+  /** Invalidate in-flight validation without retiring verified observations. */
+  resetProtocol(reason) {
+    check(['initial_cursor', 'stale_cursor', 'route_changed', 'interval_changed', 'unavailable', 'stopped'].includes(reason), 'reset reason is invalid');
+    this.#generation += 1;
     this.runtimeEpoch = null;
     this.lastSequence = null;
   }
 
   beginBootstrap(runtimeEpoch) {
     check(typeof runtimeEpoch === 'string' && /^[a-f0-9]{32}$/.test(runtimeEpoch), 'bootstrap epoch is invalid');
-    this.reset('initial_cursor');
+    this.resetProtocol('initial_cursor');
     this.runtimeEpoch = runtimeEpoch;
     this.lastSequence = 0;
   }
@@ -105,10 +111,7 @@ export class CompoundCandidateLifecycle {
       this.runtimeEpoch = envelope.runtime_epoch;
       this.lastSequence = envelope.sequence;
       if (isState) {
-        const removedCandidateIds = [...this.#records.keys()];
-        this.#records.clear();
-        this.#evictionBoundary = null;
-        return { type: 'stream_reset', removedCandidateIds };
+        return { type: 'stream_reset', removedCandidateIds: this.prune(nowMs) };
       }
       const removedCandidateIds = this.prune(nowMs);
       if (envelope.message_kind === 'heartbeat') return { type: 'heartbeat', removedCandidateIds };
