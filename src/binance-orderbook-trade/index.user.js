@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.203
+// @version      2.7.204
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -161,6 +161,11 @@ import {
   parseAccountPositionTabCount,
   waitForAccountOrdersMutationState,
 } from './dom/account-orders.js';
+import {
+  OrderbookPrecisionDomError,
+  findNativeOrderbookPrecisionOverlay,
+  isNativeOrderbookPrecisionMenuOpen,
+} from './dom/orderbook-precision.js';
 import {
   calculateFloatingPanelLayout,
   collectTradeButtonsFromScopes,
@@ -1763,11 +1768,18 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
   function handleOrderbookPrecisionChange() {
     const precision = readCurrentOrderbookPrecisionValue();
     const symbol = getCurrentSymbol();
+    if (precision !== lastObservedOrderbookPrecision) {
+      lastObservedOrderbookPrecision = precision;
+      stopMultiplierEdit();
+      ladderPanelBodySignature = '';
+      scheduleRenderPanel();
+    }
     const nativeOptions = readVisibleOrderbookPrecisionOptionValues();
     const previousNativeOptions = orderbookPrecisionState.symbol === symbol
       ? orderbookPrecisionState.nativeOptions
       : [];
-    const nativeOptionsChanged = nativeOptions.length > 0
+    const nativeOptionsChanged = isCurrentObservedSymbol(symbol)
+      && nativeOptions.includes(precision)
       && JSON.stringify(nativeOptions) !== JSON.stringify(previousNativeOptions);
     if (nativeOptionsChanged) {
       orderbookPrecisionState = {
@@ -1776,14 +1788,18 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         nativeOptions,
         nativeOptionsStatus: null,
       };
+      scheduleRenderPanel();
     }
-    if (precision === lastObservedOrderbookPrecision) {
-      if (nativeOptionsChanged) scheduleRenderPanel();
-      return;
-    }
-    lastObservedOrderbookPrecision = precision;
-    stopMultiplierEdit();
-    ladderPanelBodySignature = '';
+  }
+
+  function recordOrderbookPrecisionDomFailure(symbol, error) {
+    if (!isCurrentObservedSymbol(symbol)) return;
+    orderbookPrecisionState = {
+      ...orderbookPrecisionState,
+      symbol,
+      nativeOptions: [],
+      nativeOptionsStatus: error.message,
+    };
     scheduleRenderPanel();
   }
 
@@ -1810,7 +1826,13 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     orderbookPrecisionObserverRoot = root;
     lastObservedOrderbookPrecision = readCurrentOrderbookPrecisionValue();
     orderbookPrecisionObserver = new MutationObserver(() => {
-      handleOrderbookPrecisionChange();
+      const symbol = getCurrentSymbol();
+      try {
+        handleOrderbookPrecisionChange();
+      } catch (error) {
+        if (!(error instanceof OrderbookPrecisionDomError)) throw error;
+        recordOrderbookPrecisionDomFailure(symbol, error);
+      }
     });
     orderbookPrecisionObserver.observe(root, {
       subtree: true,
@@ -1821,27 +1843,22 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   function readOrderbookPrecisionOptionValue(node) {
     if (!node) return null;
-    const item = node.matches?.('.ob-ticksize-item')
+    const item = node.matches?.('.bn-select-option[role="option"]')
       ? node
-      : node.closest?.('.ob-ticksize-item');
+      : node.closest?.('.bn-select-option[role="option"]');
     const textNode = item?.querySelector('span') || node;
     return normalizeDecimalString(textNode?.textContent || '');
   }
 
   function getVisibleOrderbookPrecisionOverlay(triggerElement = findOrderbookPrecisionTrigger()?.element) {
-    const tickSize = triggerElement?.closest?.('.orderbook-tickSize');
-    if (!tickSize || !tickSize.closest('#futuresOrderbook')) return null;
-    // Other numeric menus can be open simultaneously; only the overlay owned by this tick-size control is valid.
-    const overlays = Array.from(tickSize.querySelectorAll('.ob-ticksize-overlay'))
-      .filter((overlay) => isVisibleElement(overlay));
-    return overlays.length === 1 ? overlays[0] : null;
+    return findNativeOrderbookPrecisionOverlay(triggerElement, isVisibleElement);
   }
 
   function getVisibleOrderbookPrecisionOptionNodes(triggerElement = findOrderbookPrecisionTrigger()?.element) {
     const overlay = getVisibleOrderbookPrecisionOverlay(triggerElement);
     if (!overlay) return [];
-    return Array.from(overlay.querySelectorAll('.ob-ticksize-item'))
-      .filter((node) => node.closest('.ob-ticksize-overlay') === overlay)
+    return Array.from(overlay.querySelectorAll('.bn-select-option[role="option"]'))
+      .filter((node) => node.closest('.bn-select-overlay') === overlay)
       .filter((node) => isVisibleElement(node))
       .filter((node) => isOrderbookPrecisionNumericText(readOrderbookPrecisionOptionValue(node)));
   }
@@ -1860,30 +1877,6 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     if (!normalized) return null;
     return getVisibleOrderbookPrecisionOptionNodes(triggerElement)
       .find((node) => readOrderbookPrecisionOptionValue(node) === normalized) || null;
-  }
-
-  function dispatchOrderbookPrecisionOpenEvent(target, type) {
-    const EventCtor = type.startsWith('pointer') && typeof PointerEvent === 'function'
-      ? PointerEvent
-      : MouseEvent;
-    return target.dispatchEvent(new EventCtor(type, {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      button: 0,
-      buttons: type === 'pointerup' || type === 'mouseup' || type === 'click' ? 0 : 1,
-      pointerId: 1,
-      pointerType: 'mouse',
-      isPrimary: true,
-    }));
-  }
-
-  function dispatchOrderbookPrecisionToggleSequence(target) {
-    dispatchOrderbookPrecisionOpenEvent(target, 'pointerdown');
-    dispatchOrderbookPrecisionOpenEvent(target, 'mousedown');
-    dispatchOrderbookPrecisionOpenEvent(target, 'pointerup');
-    dispatchOrderbookPrecisionOpenEvent(target, 'mouseup');
-    dispatchOrderbookPrecisionOpenEvent(target, 'click');
   }
 
   async function waitForVisibleOrderbookPrecisionOptions(triggerElement, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
@@ -1919,33 +1912,27 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return getVisibleOrderbookPrecisionOptionNodes(triggerElement);
   }
 
-  async function waitForOrderbookPrecisionOptionsClosed(triggerElement, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
+  async function waitForOrderbookPrecisionMenuState(triggerElement, open, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
     const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
     while (!document.hidden && isFuturesTradingPage()) {
-      if (!getVisibleOrderbookPrecisionOverlay(triggerElement)) return true;
+      if (isNativeOrderbookPrecisionMenuOpen(triggerElement) === open) return true;
       if (Date.now() >= deadline) return false;
       await delay(50);
     }
-    return !getVisibleOrderbookPrecisionOverlay(triggerElement);
+    return isNativeOrderbookPrecisionMenuOpen(triggerElement) === open;
   }
 
-  async function closeOrderbookPrecisionOptions(triggerElement, currentPrecision, waitForLateOpen = false) {
-    if (waitForLateOpen && !getVisibleOrderbookPrecisionOverlay(triggerElement)) {
-      await waitForVisibleOrderbookPrecisionOptions(triggerElement, ORDERBOOK_PRECISION_OPTION_WAIT_MS);
+  async function closeOrderbookPrecisionOptions(triggerElement, waitForLateOpen = false) {
+    if (!triggerElement?.isConnected) return true;
+    if (waitForLateOpen && !isNativeOrderbookPrecisionMenuOpen(triggerElement)) {
+      await waitForOrderbookPrecisionMenuState(triggerElement, true);
     }
-    if (!getVisibleOrderbookPrecisionOverlay(triggerElement)) return true;
-    const currentOption = findVisibleOrderbookPrecisionOption(currentPrecision, triggerElement);
-    if (currentOption) {
-      if (!clickDomTarget(currentOption)) return false;
-      return waitForOrderbookPrecisionOptionsClosed(triggerElement);
-    }
-    // Binance can expose the new symbol's displayed precision before replacing the old menu items.
-    // Toggling the linked trigger closes that transitional menu without selecting an unrelated value.
-    const tickSize = triggerElement?.closest?.('.orderbook-tickSize');
-    const toggleTarget = tickSize?.querySelector?.('.tick-content') || triggerElement;
-    if (!toggleTarget || !isVisibleElement(toggleTarget)) return false;
-    dispatchOrderbookPrecisionToggleSequence(toggleTarget);
-    return waitForOrderbookPrecisionOptionsClosed(triggerElement);
+    if (!isNativeOrderbookPrecisionMenuOpen(triggerElement)) return true;
+    if (findOrderbookPrecisionTrigger()?.element !== triggerElement) return false;
+    // Closing the captured trigger must not invoke a native option's onSelect handler.
+    const toggleTarget = triggerElement.closest('.bn-select-trigger');
+    if (!toggleTarget || !isVisibleElement(toggleTarget) || !clickDomTarget(toggleTarget)) return false;
+    return waitForOrderbookPrecisionMenuState(triggerElement, false);
   }
 
   async function waitForOrderbookPrecisionValue(options, timeoutMs = ORDERBOOK_PRECISION_OPTION_WAIT_MS) {
@@ -1988,7 +1975,10 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     return `<button type="button" data-orderbook-precision-value="${value}"${disabledAttrs} aria-pressed="${selected}" aria-label="${ariaLabel}" title="${title}" style="position:relative;box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:30px;white-space:nowrap;overflow:hidden;cursor:pointer;${activeStyle}">${recommendationMarker}${formatOrderbookPrecisionShortcutLabel(value)}</button>`;
   }
 
-  function renderOrderbookPrecisionShortcutSlots(options, current, recommendation, disabled) {
+  function renderOrderbookPrecisionShortcutSlots(options, current, recommendation, disabled, emptyLabel) {
+    if (!options.length) {
+      return [`<span data-orderbook-precision-status="true" role="status" style="grid-column:span 4;min-width:0;color:${MUTED_TEXT_COLOR};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${emptyLabel}</span>`];
+    }
     const slots = options.map((value) => (
       renderOrderbookPrecisionShortcut(value, current, recommendation, disabled)
     ));
@@ -2086,11 +2076,16 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     );
     if (!nativeOptions.length) queueOrderbookPrecisionOptionsLoad(symbol);
     const canRefresh = !controlsBusy;
+    const emptyPrecisionLabel = ui(selectionBusy
+      ? PANEL_COPY.state.loadingPrecisionOptions
+      : orderbookPrecisionState.nativeOptionsStatus
+        ? PANEL_COPY.status.precisionOptionsUnavailable
+        : PANEL_COPY.state.waitingPrecisionOptions);
     const recommendationHtml = [
       '<div style="margin-top:10px;">',
       `<div style="display:grid;grid-template-columns:${activeUiLocale === 'en' ? '52px' : '36px'} repeat(4,minmax(0,1fr)) 32px;align-items:center;gap:4px;height:32px;overflow:hidden;">`,
       `<span title="${ui(PANEL_COPY.tooltip.pricePrecision)}" style="color:${MUTED_TEXT_COLOR};font-size:13px;white-space:nowrap;cursor:help;">${ui(PANEL_COPY.field.pricePrecision)}</span>`,
-      ...renderOrderbookPrecisionShortcutSlots(shortcutOptions, current, recommendation, controlsBusy),
+      ...renderOrderbookPrecisionShortcutSlots(shortcutOptions, current, recommendation, controlsBusy, emptyPrecisionLabel),
       renderOrderbookPrecisionRefreshButton(symbol, !canRefresh),
       '</div>',
       '</div>',
@@ -2120,6 +2115,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
       const remainingMs = Math.max(0, deadline - Date.now());
       const trigger = await waitForOrderbookPrecisionBootstrapReady(symbol, remainingMs);
       if (!trigger?.element) return { status: '订单簿尚未就绪' };
+      const tickSize = trigger.element.closest('.orderbook-tickSize');
       const startPrecision = trigger.value;
       lastPrecision = startPrecision;
       const optionsInitiallyVisible = getVisibleOrderbookPrecisionOptionNodes(trigger.element).length > 0;
@@ -2139,14 +2135,20 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         ) snapshot = { precision: startPrecision, values };
       } finally {
         if (!optionsInitiallyVisible) {
-          const cleanupPrecision = isCurrentObservedSymbol(symbol)
-            ? readCurrentOrderbookPrecisionValue()
-            : startPrecision;
-          closed = await closeOrderbookPrecisionOptions(trigger.element, cleanupPrecision, true);
+          closed = await closeOrderbookPrecisionOptions(trigger.element, true);
         }
       }
       if (!closed) return { status: '无法关闭价格精度下拉' };
-      if (snapshot) return snapshot;
+      const settledTrigger = findOrderbookPrecisionTrigger();
+      if (
+        snapshot
+        && isCurrentObservedSymbol(symbol)
+        && trigger.element.isConnected
+        && tickSize?.isConnected
+        && settledTrigger?.element === trigger.element
+        && settledTrigger.element.closest('.orderbook-tickSize') === tickSize
+        && settledTrigger.value === startPrecision
+      ) return snapshot;
       if (Date.now() >= deadline) break;
       await delay(ORDERBOOK_PRECISION_READY_POLL_MS);
     }
@@ -2237,11 +2239,16 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   async function runOrderbookPrecisionSelectionTask(operation) {
     if (orderbookPrecisionSelectionTask) return orderbookPrecisionSelectionTask;
+    const symbol = getCurrentSymbol();
     const task = operation();
     orderbookPrecisionSelectionTask = task;
     scheduleRenderPanel();
     try {
       return await task;
+    } catch (error) {
+      if (!(error instanceof OrderbookPrecisionDomError)) throw error;
+      recordOrderbookPrecisionDomFailure(symbol, error);
+      return false;
     } finally {
       if (orderbookPrecisionSelectionTask === task) orderbookPrecisionSelectionTask = null;
       scheduleRenderPanel();
