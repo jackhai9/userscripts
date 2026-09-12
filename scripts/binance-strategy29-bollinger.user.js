@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.3
+// @version      0.5.4
 // @author       jackhai9
 // @description  Native Bollinger/SMA60 markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -2257,9 +2257,8 @@
     function assertLive() {
       if (destroyed) throw new Error("Strategy 29 summary panel is destroyed");
     }
-    function renderEvents() {
+    function renderEvents(ordered) {
       events.replaceChildren();
-      const ordered = [...eventRecords.values()].sort(newestSignalFirst);
       for (const event of ordered) {
         const row = element(document, "div", {
           role: "remote-event",
@@ -2282,7 +2281,7 @@
       collapse.textContent = text(collapsed ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
       position.clamp();
     });
-    renderEvents();
+    renderEvents([]);
     const api = Object.freeze({
       setLocale(nextLocale) {
         assertLive();
@@ -2300,7 +2299,7 @@
         eventsFreshness.textContent = text(lastEventsAt === null ? SUMMARY_COPY.noEventsCheck : SUMMARY_COPY.eventsAt(formatClock(lastEventsAt)));
         if (lastStatus !== null) api.renderStatus(lastStatus);
         else clearCurrentStatus();
-        renderEvents();
+        renderEvents([...eventRecords.values()].sort(newestSignalFirst));
         position.clamp();
       },
       setConnection(state, message) {
@@ -2360,20 +2359,22 @@
       },
       addEvents(incoming, observedAtMs = null) {
         assertLive();
-        for (const event of incoming) eventRecords.set(event.event_id, event);
-        const ordered = [...eventRecords.values()].sort(newestSignalFirst);
-        while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
+        if (incoming.length > 0) {
+          for (const event of incoming) eventRecords.set(event.event_id, event);
+          const ordered = [...eventRecords.values()].sort(newestSignalFirst);
+          while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
+          renderEvents(ordered);
+        }
         if (observedAtMs !== null) {
           lastEventsAt = observedAtMs;
           eventsFreshness.textContent = text(SUMMARY_COPY.eventsAt(formatClock(observedAtMs)));
         }
-        renderEvents();
         position.clamp();
       },
       clearEvents() {
         assertLive();
         eventRecords.clear();
-        renderEvents();
+        renderEvents([]);
         position.clamp();
       },
       destroy() {

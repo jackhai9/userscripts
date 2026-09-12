@@ -135,6 +135,20 @@ test('real entrypoint starts independent clients and manual clear preserves comp
   assert.equal(h.pending('ordinary').length, 1);
 });
 
+test('each context tick discovers the chart root once without restarting healthy clients', async (t) => {
+  const h = await harness(t);
+  let chartRootQueries = 0;
+  const query = h.page.document.querySelectorAll.bind(h.page.document);
+  t.mock.method(h.page.document, 'querySelectorAll', selector => {
+    if (selector === '.chart-widget-root') chartRootQueries += 1;
+    return query(selector);
+  });
+  for (let index = 0; index < 10; index += 1) h.tick();
+  assert.equal(chartRootQueries, 10);
+  assert.equal(h.pending('ordinary').length, 1);
+  assert.equal(h.pending('compound').length, 1);
+});
+
 test('ordinary failure does not stop compound; the existing timer expires candidates and interval changes abort both', async (t) => {
   const h = await harness(t);
   await h.respond('ordinary', 'invalid JSON');

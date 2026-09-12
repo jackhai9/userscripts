@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.1.15
+// @version      1.1.16
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -472,7 +472,11 @@ import {
       '<div id="', PANEL_ID, '-body" style="display:', collapsed ? 'none' : 'block', ';">',
         '<div id="', PANEL_ID, '-rows" style="padding:8px 12px;"></div>',
         '<div id="', PANEL_ID, '-composite" style="padding:8px 12px;border-top:1px solid ', C.border, ';"></div>',
-        '<div id="', PANEL_ID, '-footer" style="padding:6px 12px;color:', C.sub, ';font-size:12px;border-top:1px solid ', C.border, ';"></div>',
+        '<div id="', PANEL_ID, '-footer" style="padding:6px 12px;color:', C.sub, ';font-size:12px;border-top:1px solid ', C.border, ';">',
+          '<div style="display:flex;justify-content:space-between;">',
+            '<span data-role="updated-at"></span><span data-role="elapsed"></span>',
+          '</div>',
+        '</div>',
       '</div>',
     ].join('');
 
@@ -580,9 +584,13 @@ import {
     const mm = String(d.getMinutes()).padStart(2, '0');
     const ss = String(d.getSeconds()).padStart(2, '0');
     const ago = Math.floor((Date.now() - lastUpdateTs) / 1000);
-    el.innerHTML = '<div style="display:flex;justify-content:space-between;">' +
-      '<span>更新于 ' + hh + ':' + mm + ':' + ss + '</span>' +
-      '<span>' + ago + '秒前</span></div>';
+    const updatedText = '更新于 ' + hh + ':' + mm + ':' + ss;
+    const elapsedText = ago + '秒前';
+    const updated = el.querySelector('[data-role="updated-at"]');
+    const elapsed = el.querySelector('[data-role="elapsed"]');
+    // The second timer changes text only; retained elements avoid reparsing the footer on every tick.
+    if (updated.textContent !== updatedText) updated.textContent = updatedText;
+    if (elapsed.textContent !== elapsedText) elapsed.textContent = elapsedText;
   }
 
   /* ========== 拖拽 ========== */

@@ -3,7 +3,7 @@
 // @namespace    coinmarketcap.valuation.helper
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.8
+// @version      0.2.9
 // @author       jackhai9
 // @description  在 CoinMarketCap 中文币种页面左上角统计区标注并高亮流通市值和FDV/总估值
 // @match        https://coinmarketcap.com/zh/currencies/*
@@ -78,10 +78,11 @@
   }
 
   function getDirectText(element) {
-    return Array.from(element.childNodes)
-      .filter((node) => node.nodeType === Node.TEXT_NODE)
-      .map((node) => node.textContent || '')
-      .join('');
+    let text = '';
+    for (const node of element.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE) text += node.textContent || '';
+    }
+    return text;
   }
 
   function replaceDirectText(element, replacement) {
@@ -133,11 +134,12 @@
         const candidates = [scope, ...scope.querySelectorAll(TEXT_SELECTOR)];
         for (const element of candidates) {
           if (element === explainer || explainer.contains(element)) continue;
-          if (normalizeText(getDirectText(element)) === metric.replacement) {
+          const directText = normalizeText(getDirectText(element));
+          if (directText === metric.replacement) {
             highlightMetricCard(element);
             break;
           }
-          if (!metric.labels.includes(normalizeText(getDirectText(element)))) continue;
+          if (!metric.labels.includes(directText)) continue;
 
           replaceDirectText(element, metric.replacement);
           highlightMetricCard(element);
@@ -149,12 +151,12 @@
 
   function renameLabelsByText() {
     for (const element of document.querySelectorAll(TEXT_SELECTOR)) {
+      // Quote updates affect the whole page; only matching labels need layout or ancestor text.
+      const replacement = findReplacement(normalizeText(getDirectText(element)));
+      if (!replacement) continue;
       if (!isVisible(element)) continue;
       if (!isInTopLeftStatsArea(element)) continue;
       if (!hasMetricValueNearby(element)) continue;
-
-      const replacement = findReplacement(normalizeText(getDirectText(element)));
-      if (!replacement) continue;
 
       replaceDirectText(element, replacement);
       highlightMetricCard(element);
@@ -180,7 +182,16 @@
   safeRenameLabels();
 
   if (document.body) {
-    const observer = new MutationObserver(safeRenameLabels);
+    let renameQueued = false;
+    const observer = new MutationObserver(() => {
+      if (renameQueued) return;
+      renameQueued = true;
+      // Several independent quote updates can arrive before the next paint.
+      window.requestAnimationFrame(() => {
+        renameQueued = false;
+        safeRenameLabels();
+      });
+    });
     observer.observe(document.body, {
       childList: true,
       characterData: true,

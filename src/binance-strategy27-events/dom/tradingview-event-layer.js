@@ -38,8 +38,8 @@ export function pinMarkerChartContext(chart) {
   return () => chart.symbol() === symbol && chart.resolution() === resolution;
 }
 
-export function findStrategy27ChartTarget(document, expectedRouteSymbol) {
-  const chartRoot = findStrategy27ChartRoot(document);
+/** Resolve the frame from the root validated by this synchronous context sample. */
+export function findStrategy27ChartTarget(chartRoot, expectedRouteSymbol) {
   if (!chartRoot) return null;
   const frames = Array.from(chartRoot.querySelectorAll('iframe')).filter(hasVisibleBox);
   if (!frames.length) return null;

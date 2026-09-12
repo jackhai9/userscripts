@@ -3,7 +3,7 @@
 // @namespace    https://github.com/jackhai9/userscripts
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.10.37
+// @version      0.10.38
 // @description  m3u8 下载增强脚本，仅在白名单视频站启用，避免误伤交易页等重前端应用
 // @author       jackhai9
 // @include      https://18jav.tv/*
@@ -1053,47 +1053,54 @@
           }
           root.querySelectorAll("video").forEach(scanVideo);
         }
-        function nodeMayContainMedia(node) {
-          if (!node || node.nodeType !== 1) {
-            return false;
-          }
-          if (node.matches && node.matches("video, source")) {
-            return true;
-          }
-          return !!(node.querySelector && node.querySelector("video, source"));
-        }
         function startMediaScan() {
           let pendingScan = false;
-          const scheduleScan = () => {
+          let fullScan = false;
+          const pendingVideos = /* @__PURE__ */ new Set();
+          const queueMediaElement = (element) => {
+            const video = element.closest("video");
+            if (video && document.contains(video)) pendingVideos.add(video);
+          };
+          const queueAddedMedia = (node) => {
+            if (node.nodeType !== 1) return;
+            if (node.matches("video, source")) queueMediaElement(node);
+            node.querySelectorAll("video, source").forEach(queueMediaElement);
+          };
+          const scheduleScan = (scanAll = false) => {
+            if (scanAll) fullScan = true;
             if (pendingScan) {
               return;
             }
             pendingScan = true;
             requestAnimationFrame(() => {
               pendingScan = false;
-              scanMedia(document);
+              const videos = [...pendingVideos];
+              pendingVideos.clear();
+              if (fullScan) {
+                fullScan = false;
+                scanMedia(document);
+              } else {
+                videos.filter((video) => document.contains(video)).forEach(scanVideo);
+              }
             });
           };
           scanMedia(document);
-          document.addEventListener("DOMContentLoaded", scheduleScan, { once: true });
-          window.addEventListener("load", scheduleScan, { once: true });
+          document.addEventListener("DOMContentLoaded", () => scheduleScan(true), { once: true });
+          window.addEventListener("load", () => scheduleScan(true), { once: true });
           const observeTarget = document.documentElement || document;
           new MutationObserver((mutations) => {
             for (const mutation of mutations) {
-              if (mutation.type === "attributes" && nodeMayContainMedia(mutation.target)) {
-                scheduleScan();
-                return;
+              if (mutation.type === "attributes" && mutation.target.matches("video, source")) {
+                queueMediaElement(mutation.target);
               }
-              if (mutation.type !== "childList") {
-                continue;
-              }
-              for (const node of mutation.addedNodes) {
-                if (nodeMayContainMedia(node)) {
-                  scheduleScan();
-                  return;
-                }
+              if (mutation.type === "childList") {
+                mutation.addedNodes.forEach(queueAddedMedia);
               }
             }
+            for (const video of pendingVideos) {
+              if (!document.contains(video)) pendingVideos.delete(video);
+            }
+            if (pendingVideos.size > 0) scheduleScan();
           }).observe(observeTarget, {
             childList: true,
             subtree: true,

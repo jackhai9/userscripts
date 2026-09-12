@@ -4,8 +4,13 @@ import test from 'node:test';
 import { loadFixtureDom } from '../../helpers/dom.js';
 import {
   createTradingViewEventLayer,
-  findStrategy27ChartTarget,
+  findStrategy27ChartRoot,
+  findStrategy27ChartTarget as resolveStrategy27ChartTarget,
 } from '../../../src/binance-strategy27-events/dom/tradingview-event-layer.js';
+
+function findStrategy27ChartTarget(document, symbol) {
+  return resolveStrategy27ChartTarget(findStrategy27ChartRoot(document), symbol);
+}
 
 function createChartDom({
   resolution = '1S',
