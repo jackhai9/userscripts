@@ -8,6 +8,9 @@ by `docs/binance-strategy27-events-development.md`; Brooks/m3u8 behavior is owne
 by `docs/brooks-media-sync-workflow.md`. Release and remote-publish mutations
 are owned by `skills/userscript-release/SKILL.md`.
 
+The eight-script performance audit, operation-count baselines, and reproduction
+commands are recorded in `docs/userscript-performance-review.md`.
+
 ## Script Matrix
 
 | Script | Editable source | Artifact | Focused checks | Detailed guide |
@@ -62,6 +65,9 @@ time, and keeps the business loop stopped while the document is hidden, the
 panel is closed, or the route is not a trading page. A route watcher may remain
 alive while the panel is paused so a later SPA transition can restart the
 business loop.
+
+The one-second age display retains its footer elements and updates only changed
+text. It does not recreate the timestamp row or alter the data-fetch schedule.
 
 Each period fetch records which endpoint produced fresh data and which endpoint
 used a cached value or has no value. Fresh and cached indicators remain distinct

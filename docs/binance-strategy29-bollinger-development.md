@@ -10,7 +10,7 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.3 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.5.4 with orderbook 2.7.199 or later, or use it alone.
 Install CorsairQuant signal client 0.6.1 for the remote summary.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
@@ -166,6 +166,9 @@ latest snapshot. Rows are displayed and bounded by descending signal close time,
 with descending durable sequence breaking ties. The snapshot response remains
 sequence-ascending so the global increment contract is unchanged. Historical
 backfills cannot evict newer signal times merely by being inserted later.
+An empty increment advances the event-check timestamp without sorting retained
+records or replacing their DOM rows. Nonempty increments sort once for retention
+and rendering; locale changes still rebuild the translated rows.
 This requires the server's explicit latest
 query contract; a server rejecting it stops the remote context visibly.
 Publish the V3 observer API contract before the client, then verify installed

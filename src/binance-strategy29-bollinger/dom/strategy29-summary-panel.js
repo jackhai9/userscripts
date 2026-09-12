@@ -133,9 +133,8 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   function assertLive() {
     if (destroyed) throw new Error('Strategy 29 summary panel is destroyed');
   }
-  function renderEvents() {
+  function renderEvents(ordered) {
     events.replaceChildren();
-    const ordered = [...eventRecords.values()].sort(newestSignalFirst);
     for (const event of ordered) {
       const row = element(document, 'div', {
         role: 'remote-event',
@@ -159,7 +158,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     collapse.textContent = text(collapsed ? COPY.expand : COPY.collapse);
     position.clamp();
   });
-  renderEvents();
+  renderEvents([]);
 
   const api = Object.freeze({
     setLocale(nextLocale) {
@@ -178,7 +177,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
       eventsFreshness.textContent = text(lastEventsAt === null ? COPY.noEventsCheck : COPY.eventsAt(formatClock(lastEventsAt)));
       if (lastStatus !== null) api.renderStatus(lastStatus);
       else clearCurrentStatus();
-      renderEvents();
+      renderEvents([...eventRecords.values()].sort(newestSignalFirst));
       position.clamp();
     },
     setConnection(state, message) {
@@ -245,20 +244,23 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     },
     addEvents(incoming, observedAtMs = null) {
       assertLive();
-      for (const event of incoming) eventRecords.set(event.event_id, event);
-      const ordered = [...eventRecords.values()].sort(newestSignalFirst);
-      while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
+      if (incoming.length > 0) {
+        for (const event of incoming) eventRecords.set(event.event_id, event);
+        const ordered = [...eventRecords.values()].sort(newestSignalFirst);
+        while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
+        renderEvents(ordered);
+      }
+      // Empty increments still advance freshness, but contain no changes to retained rows.
       if (observedAtMs !== null) {
         lastEventsAt = observedAtMs;
         eventsFreshness.textContent = text(COPY.eventsAt(formatClock(observedAtMs)));
       }
-      renderEvents();
       position.clamp();
     },
     clearEvents() {
       assertLive();
       eventRecords.clear();
-      renderEvents();
+      renderEvents([]);
       position.clamp();
     },
     destroy() {

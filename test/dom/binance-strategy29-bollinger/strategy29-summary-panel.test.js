@@ -13,6 +13,34 @@ function createStrategy29SummaryPanel(document, symbol, options = {}) {
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('empty increments retain event DOM identities while advancing freshness', () => {
+  const dom = new JSDOM('<body></body>');
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
+  const incoming = Array.from({ length: 20 }, (_, index) => ({
+    ...events.events[0], event_id: `performance-${index}`, sequence: index + 1,
+    bar_close_ms: events.events[0].bar_close_ms + index * 60_000,
+  }));
+  panel.addEvents(incoming, events.observed_at_ms);
+  const container = dom.window.document.querySelector('[data-role=events]');
+  const rows = [...container.children];
+  const freshness = dom.window.document.querySelector('[data-role=events-freshness]');
+  const before = freshness.textContent;
+  const observer = new dom.window.MutationObserver(() => {});
+  observer.observe(container, { childList: true, subtree: true, characterData: true });
+  for (let index = 1; index <= 10; index += 1) panel.addEvents([], events.observed_at_ms + index * 5_000);
+  assert.equal(container.children.length, rows.length);
+  rows.forEach((row, index) => assert.equal(container.children[index], row));
+  assert.equal(observer.takeRecords().length, 0);
+  assert.notEqual(freshness.textContent, before);
+  assert.equal(panel.size, 20);
+  panel.setLocale('zh-CN');
+  assert.notEqual(container.firstChild, rows[0]);
+  assert.match(freshness.textContent, /UTC\+08/);
+  observer.disconnect();
+  panel.destroy();
+  dom.window.close();
+});
+
 for (const state of ['module_disabled', 'gateway_unavailable', 'unavailable']) {
   test(`${state} removes current readiness while preserving historical signals across locale changes`, () => {
     const dom = new JSDOM('<body></body>');
