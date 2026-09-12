@@ -11,7 +11,7 @@ V10 live projection. The VPS remains the only market-data and event-analysis
 authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
-Version 0.6.1 retains this installation's private gateway configuration and
+Version 0.6.2 retains this installation's private gateway configuration and
 provides a shared read-only transport. Strategy29 owns its own summary panel,
 lifecycle and panel position. The existing `strategy27GatewayOrigin` and
 `strategy27GatewayAuthSecret` storage keys remain the single credential source;
@@ -148,8 +148,8 @@ message arrives. Compound candidates restore only missing parts of their
 icon/label pair, preserving the original slot and surviving entity IDs. Each
 record shares one in-flight repair across timer and message callbacks. Cleanup
 skips IDs proven absent, while native removal failures still stop the owning job.
-Manual clear, context changes and display retention eviction invalidate ordinary
-repair ownership; compound resets also invalidate their own repair ownership;
+Manual clear, context changes and display retention eviction invalidate owned
+repairs; terminal job failures suspend new presentation and repair;
 late-created entities are removed instead of resurrecting retired records.
 Reconciliation does not refresh retention timestamps. Drawings remain transient
 and use `disableSave: true`, but a full page reload requests a bounded display
@@ -165,7 +165,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, native chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.6.1 with identical metadata headers.
+generated install artifact are version 0.6.2 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
@@ -176,8 +176,9 @@ Do not treat source unit tests or the panel fixture as deployment evidence.
 
 - The compound client has a separate cursor for
   `/v1/strategy27/compound-candidates`. Non-JSON HTTP 404 disables only that
-  client until restart. Validated HTTP 503 `compound_unavailable` and
-  `redis_unavailable` clear only compound state and retry after two seconds.
+  client until restart while retaining verified history. Validated HTTP 503
+  `compound_unavailable` and `redis_unavailable` reset compound protocol state,
+  preserve verified history, and retry bootstrap after two seconds.
   Typed request transport failures retain the cursor. Other contract failures
   are not retried. Cancellation is checked after request and async validation
   boundaries so a stopped context cannot publish a late status.
@@ -200,8 +201,11 @@ Do not treat source unit tests or the panel fixture as deployment evidence.
   from the original decision time. Exact replay does not refresh that age or
   create another marker. Heartbeats do not clear history. Epoch changes require
   `stream_state`; symbol filtering permits increasing sequence gaps, not
-  regressions. Capacity eviction follows decision time and candidate ID with a
-  monotonic cutoff so old replay cannot resurrect evicted observations.
+  regressions. Protocol resets and bootstrap preserve accepted immutable candidate
+  IDs, including records suppressed by manual clear. Replayed candidates do not
+  redraw or republish them. Capacity eviction follows decision time and candidate
+  ID with a monotonic cutoff that survives protocol resets, so old replay cannot
+  resurrect evicted observations. Full context retirement clears this ownership.
 - Base rule identity is `(family, direction, profile_id)`. Reinforcement also
   includes `parent_candidate_id` in its displayed lineage identity. Each
   occurrence has its own candidate ID; different rules or parents at the same
@@ -213,8 +217,9 @@ Do not treat source unit tests or the panel fixture as deployment evidence.
 - The compound controller owns its request cancellation and terminal error
   boundary. It constructs its chart layer only on the first accepted candidate,
   so a missing compound chart capability cannot fail ordinary startup. A stream
-  state clears compound views without erasing the newly accepted epoch/sequence;
-  a gateway reset or explicit unavailability resets both lifecycle and view.
+  state accepts the new epoch/sequence without clearing verified candidates.
+  Gateway resets, unavailability and bootstrap also preserve their native entity
+  IDs, slots and panel history, including candidates absent from a newer snapshot.
   Manual clear preserves replay bookkeeping but invalidates pending presentation.
   Age eviction also invalidates a pending draw, and a second age check runs after
   drawing before publication to the panel. The existing context timer calls
@@ -222,11 +227,16 @@ Do not treat source unit tests or the panel fixture as deployment evidence.
   second timer. Route/interval changes and disappearance
   of the visible chart stop both clients before destroying the shared panel.
   The clear menu clears both views without restarting either client.
-- Native cleanup attempts every owned entity once and aggregates failures.
-  Cleanup failure stops only the compound job, clears its panel records and
-  reports the original and cleanup errors without interrupting ordinary
-  shutdown. An asynchronous drawing failure after context retirement is retained
-  as the controller's `lastError`, without writing into a retired panel.
+- Terminal protocol/render/repair failures stop only the compound job and freeze
+  verified pairs and panel records with an explicit error and reconnect guidance.
+  Pending candle waits and late creates/repairs lose presentation ownership;
+  incomplete pairs are removed, while surviving verified entities remain.
+  The existing context timer continues decision-time age pruning after failure,
+  and manual clear and context retirement remain effective. Native cleanup
+  attempts every retired entity once and aggregates failures without retrying an
+  unknown removal. Cleanup errors do not interrupt ordinary shutdown or discard
+  unrelated retained history. An asynchronous drawing failure after context
+  retirement is retained as `lastError`, without writing into a retired panel.
 - Each candidate owns a 36-pixel native icon arrow and a short text label:
   dark red down/`候选高` above the candle, dark green up/`候选低` below it.
   Annotation direction remains `arrow_down`/`arrow_up`; native drawing options

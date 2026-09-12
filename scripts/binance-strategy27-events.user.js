@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.6.1
+// @version      0.6.2
 // @author       jackhai9
 // @description  Display Strategy 27 events and provide the shared private CorsairQuant gateway connection
 // @match        https://www.binance.com/*/futures/*
@@ -2445,16 +2445,20 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       this.reset("initial_cursor");
     }
     reset(reason) {
-      check2(["initial_cursor", "stale_cursor", "route_changed", "interval_changed", "unavailable", "stopped"].includes(reason), "reset reason is invalid");
-      __privateSet(this, _generation, __privateGet(this, _generation) + 1);
+      this.resetProtocol(reason);
       __privateGet(this, _records).clear();
       __privateSet(this, _evictionBoundary, null);
+    }
+    /** Invalidate in-flight validation without retiring verified observations. */
+    resetProtocol(reason) {
+      check2(["initial_cursor", "stale_cursor", "route_changed", "interval_changed", "unavailable", "stopped"].includes(reason), "reset reason is invalid");
+      __privateSet(this, _generation, __privateGet(this, _generation) + 1);
       this.runtimeEpoch = null;
       this.lastSequence = null;
     }
     beginBootstrap(runtimeEpoch) {
       check2(typeof runtimeEpoch === "string" && /^[a-f0-9]{32}$/.test(runtimeEpoch), "bootstrap epoch is invalid");
-      this.reset("initial_cursor");
+      this.resetProtocol("initial_cursor");
       this.runtimeEpoch = runtimeEpoch;
       this.lastSequence = 0;
     }
@@ -2494,10 +2498,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         this.runtimeEpoch = envelope.runtime_epoch;
         this.lastSequence = envelope.sequence;
         if (isState) {
-          const removedCandidateIds2 = [...__privateGet(this, _records).keys()];
-          __privateGet(this, _records).clear();
-          __privateSet(this, _evictionBoundary, null);
-          return { type: "stream_reset", removedCandidateIds: removedCandidateIds2 };
+          return { type: "stream_reset", removedCandidateIds: this.prune(nowMs) };
         }
         const removedCandidateIds = this.prune(nowMs);
         if (envelope.message_kind === "heartbeat") return { type: "heartbeat", removedCandidateIds };
@@ -2569,17 +2570,19 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       return CONNECTION_STATUS;
     }
     function renderStatus() {
-      if (lastError) panel.setCompoundStatus(t("复合候选已停止：", "Compound candidates stopped: ") + lastError.message, "error");
+      if (lastError) panel.setCompoundStatus(t("复合候选已停止，历史记录已保留。请使用重新连接菜单恢复：", "Compound candidates stopped; history retained. Use the reconnect menu to resume: ") + lastError.message, "error");
       else panel.setCompoundStatus(...connectionStatus()[connectionState]);
     }
     const lifecycle = new CompoundCandidateLifecycle(canonicalSymbol, { maxCandidates, maxAgeMs });
     const abortController = new AbortController();
     let layer = null;
     let started = false;
+    let stopped = false;
     let viewGeneration = 0;
     let pendingCandidateId = null;
     let lastError = null;
-    const current = () => !abortController.signal.aborted && isCurrent();
+    const ownsContext = () => !stopped && isCurrent();
+    const current = () => !abortController.signal.aborted && ownsContext();
     function clearView() {
       viewGeneration += 1;
       pendingCandidateId = null;
@@ -2593,22 +2596,37 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       return cleanupError;
     }
     function remove(ids) {
+      const errors = [];
       for (const id of ids) {
         if (id === pendingCandidateId) viewGeneration += 1;
-        layer?.remove(id);
+        try {
+          layer?.remove(id);
+        } catch (error) {
+          errors.push(error);
+        }
         panel.removeCompound(id);
       }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
     }
     function prune(observedAtMs = nowMs()) {
-      if (current()) remove(lifecycle.prune(observedAtMs));
+      if (ownsContext()) remove(lifecycle.prune(observedAtMs));
     }
-    function failJob(error, { clear = true } = {}) {
-      lastError = error;
-      if (!current()) return;
+    function suspendView() {
+      viewGeneration += 1;
+      pendingCandidateId = null;
+      layer?.suspend();
+    }
+    function failJob(error) {
+      lastError = lastError === null || lastError === error ? error : new AggregateError([lastError, error], `${lastError.message}; ${error.message}`);
+      if (!ownsContext()) return;
       abortController.abort();
-      lifecycle.reset("stopped");
-      const cleanupError = clear ? clearView() : null;
-      if (cleanupError) lastError = new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
+      lifecycle.resetProtocol("stopped");
+      try {
+        suspendView();
+      } catch (cleanupError) {
+        lastError = new AggregateError([lastError, cleanupError], `${lastError.message}; ${cleanupError.message}`);
+      }
       renderStatus();
     }
     function onConnectionStateChange(state) {
@@ -2616,33 +2634,26 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       const status = connectionStatus()[state];
       if (!status) throw new Error(`Unknown compound connection state: ${state}`);
       if (state === "unavailable" || state === "unsupported") {
-        lifecycle.reset("unavailable");
-        const error = clearView();
-        if (error) {
-          failJob(error, { clear: false });
-          return;
-        }
+        lifecycle.resetProtocol("unavailable");
+      }
+      if (state === "unsupported") {
+        abortController.abort();
+        suspendView();
       }
       connectionState = state;
       renderStatus();
     }
     async function onResponse(response) {
       if (!current()) return;
+      prune();
       if (response.status === "reset") {
-        lifecycle.reset(response.reason);
-        const error = clearView();
-        if (error) failJob(error, { clear: false });
+        lifecycle.resetProtocol(response.reason);
         return;
       }
       let messages = response.messages;
       const applicationNowMs = response.status === "bootstrap" ? response.bootstrap_observed_at_ms : nowMs();
       if (response.status === "bootstrap") {
         lifecycle.beginBootstrap(response.runtime_epoch);
-        const error = clearView();
-        if (error) {
-          failJob(error, { clear: false });
-          return;
-        }
         messages = [...response.records].sort((left, right) => left.sequence - right.sequence);
       }
       for (const message of messages) {
@@ -2652,11 +2663,6 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         if (!current()) return;
         remove(action.removedCandidateIds);
         if (action.type === "stream_reset") {
-          const error = clearView();
-          if (error) {
-            failJob(error, { clear: false });
-            return;
-          }
           continue;
         }
         if (action.type !== "candidate" || applicationGeneration !== viewGeneration) continue;
@@ -2716,9 +2722,9 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         })();
       },
       clear() {
-        if (!current()) return;
+        if (!ownsContext()) return;
         const error = clearView();
-        if (error) failJob(error, { clear: false });
+        if (error) failJob(error);
       },
       prune() {
         try {
@@ -2736,13 +2742,14 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         }
       },
       stop(reason) {
-        if (abortController.signal.aborted) return;
+        if (stopped) return;
+        stopped = true;
         abortController.abort();
         lifecycle.reset(reason);
         const error = clearView();
         if (error) {
-          lastError = error;
-          renderStatus();
+          lastError = lastError === null ? error : new AggregateError([lastError, error], `${lastError.message}; ${error.message}`);
+          if (isCurrent()) renderStatus();
         }
       },
       // A late drawing rejection remains inspectable without touching a retired panel.
@@ -2777,6 +2784,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     const records = /* @__PURE__ */ new Map();
     let pending = null;
     let reconciliation = null;
+    let suspended = false;
     function dispose(recordsToRemove) {
       const errors = [];
       const liveIds = readLiveShapeIds(chart);
@@ -2811,7 +2819,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     }
     function restoreCandidate(id, record, liveIds) {
       if (record.restoring) return record.restoring;
-      const current = () => records.get(id) === record && isChartCurrent();
+      const current = () => !suspended && records.get(id) === record && isChartCurrent();
       if (!current()) return Promise.resolve(false);
       if (record.ids.every((entityId) => liveIds.has(entityId))) return Promise.resolve(true);
       record.restoring = (async () => {
@@ -2835,11 +2843,12 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       return record.restoring;
     }
     function reconcile() {
+      if (suspended) return Promise.resolve();
       if (reconciliation) return reconciliation;
       reconciliation = (async () => {
         let liveIds = readLiveShapeIds(chart);
         for (const [id, record] of [...records]) {
-          if (records.get(id) !== record || !isChartCurrent()) continue;
+          if (suspended || records.get(id) !== record || !isChartCurrent()) continue;
           if (!record.restoring && record.ids.every((entityId) => liveIds.has(entityId))) continue;
           await restoreCandidate(id, record, liveIds);
           liveIds = readLiveShapeIds(chart);
@@ -2870,6 +2879,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       dispose(removals);
     }
     async function renderCandidate(id, annotation, decisionAtMs) {
+      if (suspended) return false;
       const existing = records.get(id);
       if (existing) return restoreCandidate(id, existing, readLiveShapeIds(chart));
       if (pending !== null) throw new Error("Compound chart rendering must be serial");
@@ -2902,11 +2912,11 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         for (const [drawingPoint, drawing] of drawings) {
           const entityId = await createDrawing(drawingPoint, drawing);
           operation.ids.push(entityId);
-          if (drawing.shape === "text") updateLabel(entityId, drawing, annotation.markerShape);
           if (operation.controller.signal.aborted || !isChartCurrent()) {
             dispose([operation]);
             return false;
           }
+          if (drawing.shape === "text") updateLabel(entityId, drawing, annotation.markerShape);
         }
         records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, markerShape: annotation.markerShape, drawings, restoring: null });
         return true;
@@ -2940,7 +2950,14 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         if (liveIds.has(record.ids[1])) updateLabel(record.ids[1], drawing, record.markerShape);
       }
     }
-    return Object.freeze({ setLocale, renderCandidate, reconcile, remove, clear, get size() {
+    function suspend() {
+      suspended = true;
+      if (pending) {
+        pending.controller.abort();
+        dispose([pending]);
+      }
+    }
+    return Object.freeze({ setLocale, renderCandidate, reconcile, remove, clear, suspend, get size() {
       return records.size;
     } });
   }

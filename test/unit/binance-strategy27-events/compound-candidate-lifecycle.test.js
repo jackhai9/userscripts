@@ -45,7 +45,7 @@ test('independent high/low records coexist at one second and exact replay is imm
   assert.equal(state.lastSequence, 8);
 });
 
-test('heartbeat retains history, epoch reset clears it, and sequence jumps are valid', async () => {
+test('heartbeat and epoch reset retain immutable candidates while sequence validation stays strict', async () => {
   const state = lifecycle();
   assert.equal((await state.apply(control(1, 'stream_state'), 7000)).type, 'stream_reset');
   await state.apply(envelope(), 7000);
@@ -55,9 +55,54 @@ test('heartbeat retains history, epoch reset clears it, and sequence jumps are v
   await assert.rejects(state.apply(control(8, 'stream_state'), 7000), /Unexpected stream_state/);
   await assert.rejects(state.apply(envelope(fixtures[0], 1, 'b'.repeat(32)), 7000), /epoch changed without stream_state/);
   const reset = await state.apply(control(1, 'stream_state', 'b'.repeat(32)), 7000);
+  assert.deepEqual(reset.removedCandidateIds, []);
+  assert.equal(state.size, 1);
+  assert.equal(state.runtimeEpoch, 'b'.repeat(32));
+  assert.equal(state.lastSequence, 1);
+  assert.equal((await state.apply(envelope(fixtures[0], 2, 'b'.repeat(32)), 7000)).type, 'replay');
+  assert.equal(state.size, 1);
+});
+
+test('protocol resets and bootstrap preserve retained candidates and the eviction cutoff', async () => {
+  for (const reason of ['initial_cursor', 'stale_cursor', 'unavailable']) {
+    const state = lifecycle(2);
+    const candidates = await Promise.all([shiftedCandidate(0), shiftedCandidate(1), shiftedCandidate(2)]);
+    for (const [index, candidate] of candidates.entries()) await state.apply(envelope(candidate, index + 2), 9000);
+    state.resetProtocol(reason);
+    assert.equal(state.runtimeEpoch, null);
+    assert.equal(state.lastSequence, null);
+    assert.equal(state.size, 2);
+    const epoch = 'b'.repeat(32);
+    state.beginBootstrap(epoch);
+    assert.equal((await state.apply(envelope(candidates[0], 2, epoch), 9000)).type, 'expired');
+    assert.equal((await state.apply(envelope(candidates[1], 3, epoch), 9000)).type, 'replay');
+    state.finishBootstrap(5);
+    assert.equal(state.lastSequence, 5);
+    assert.equal(state.size, 2);
+    await state.apply(control(1, 'stream_state', 'c'.repeat(32)), 9000);
+    assert.equal((await state.apply(envelope(candidates[0], 2, 'c'.repeat(32)), 9000)).type, 'expired');
+    assert.deepEqual(state.prune(7209001), candidates.slice(1).map((candidate) => candidate.candidate_id));
+  }
+});
+
+test('stream reset prunes expired candidates without extending their decision-time retention', async () => {
+  const state = lifecycle(80, 1000);
+  await state.apply(envelope(), 7000);
+  const reset = await state.apply(control(1, 'stream_state', 'b'.repeat(32)), 8001);
   assert.deepEqual(reset.removedCandidateIds, [fixtures[0].candidate_id]);
   assert.equal(state.size, 0);
-  assert.equal(state.runtimeEpoch, 'b'.repeat(32));
+  assert.equal((await state.apply(envelope(fixtures[0], 2, 'b'.repeat(32)), 8001)).type, 'expired');
+});
+
+test('context retirement clears protocol and candidate retention', async () => {
+  for (const reason of ['route_changed', 'interval_changed', 'stopped']) {
+    const state = lifecycle();
+    await state.apply(envelope(), 7000);
+    state.reset(reason);
+    assert.equal(state.runtimeEpoch, null);
+    assert.equal(state.lastSequence, null);
+    assert.equal(state.size, 0);
+  }
 });
 
 test('age is based on the original decision, not replay or heartbeat delivery', async () => {
@@ -111,6 +156,17 @@ test('a reset during async validation invalidates the in-flight application', as
   const action = await applying;
   assert.equal(action.type, 'candidate');
   assert.equal(action.candidate.seed.buy_notional, fixtures[0].seed.buy_notional);
+});
+
+test('a protocol reset cancels async validation without deleting previously accepted candidates', async () => {
+  const state = lifecycle();
+  await state.apply(envelope(fixtures[1]), 7000);
+  const pending = state.apply(envelope(fixtures[0], 3), 7000);
+  state.resetProtocol('unavailable');
+  assert.equal((await pending).type, 'cancelled');
+  assert.equal(state.size, 1);
+  state.beginBootstrap('b'.repeat(32));
+  assert.equal((await state.apply(envelope(fixtures[1], 2, 'b'.repeat(32)), 7000)).type, 'replay');
 });
 
 test('wrong-symbol data cannot mutate stream state', async () => {

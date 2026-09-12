@@ -291,20 +291,108 @@ function ordinaryOutcomeMessage() {
   };
 }
 
-function compoundMessage() {
+function compoundMessage(payload = fixtures[0], sequence = 2, epoch = 'a'.repeat(32)) {
   return {
     schema_version: 1,
     projection_kind: 'compound_candidate',
-    runtime_epoch: 'a'.repeat(32),
-    sequence: 2,
+    runtime_epoch: epoch,
+    sequence,
     message_kind: 'candidate',
-    symbol: fixtures[0].symbol,
+    symbol: payload.symbol,
     observed_at_ms: 7000,
-    payload: fixtures[0],
+    payload,
   };
 }
 
 for (const generated of [false, true]) {
+  test(`${generated ? 'generated' : 'source'} compound recovery retains exact paired entities across epochs, stale cursors and 503`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.ordinaryBootstrap();
+    await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
+    await until(() => h.pending('ordinary').length === 1);
+    await h.reset();
+    await h.respond('compound', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [compoundMessage(fixtures[0], 2), compoundMessage(fixtures[1], 3)] });
+    await until(() => h.pending('compound').length === 1);
+    const ids = [...h.shapes.keys()];
+    const points = ids.slice(1).map((id) => h.shapes.get(id).getPoints());
+    assert.equal(ids.length, 6);
+    assert.equal(h.rows(), 2);
+    const epoch = 'b'.repeat(32);
+    await h.respond('compound', { schema_version: 1, status: 'ok', requested_cursor: '2-0', next_cursor: '3-0', messages: [
+      { ...compoundMessage(fixtures[0], 1, epoch), message_kind: 'stream_state', symbol: null, payload: { state: 'ready', reason: 'transport_recovered' } },
+      compoundMessage(fixtures[0], 2, epoch), compoundMessage(fixtures[1], 3, epoch),
+    ] });
+    await until(() => h.pending('compound').length === 1);
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.equal(h.rows(), 2);
+    await h.respond('compound', { schema_version: 1, status: 'reset', reason: 'stale_cursor', requested_cursor: '3-0', next_cursor: '5-0', messages: [] }, 409);
+    await until(() => h.pending('compound').length === 1);
+    assert.equal(new URL(h.pending('compound')[0].options.url).pathname, '/v1/strategy27/compound-candidates/bootstrap');
+    assert.deepEqual([...h.shapes.keys()], ids);
+    await h.respond('compound', { schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: '5-0', runtime_epoch: 'c'.repeat(32), last_sequence: 4, bootstrap_observed_at_ms: 7000, records: [compoundMessage(fixtures[0], 3, 'c'.repeat(32))] });
+    await until(() => h.pending('compound').length === 1);
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.equal(h.rows(), 2, 'the candidate absent from the new snapshot remains visible');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await h.respond('compound', { schema_version: 1, status: 'error', error_code: 'redis_unavailable' }, 503);
+    await until(() => h.page.document.querySelector('[data-role="compound-status"]').dataset.state === 'inactive');
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.equal(h.pending('compound').length, 0);
+    t.mock.timers.tick(2000);
+    await until(() => h.pending('compound').length === 1);
+    assert.equal(new URL(h.pending('compound')[0].options.url).pathname, '/v1/strategy27/compound-candidates/bootstrap');
+    await h.respond('compound', { schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: '8-0', runtime_epoch: 'd'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] });
+    await until(() => h.pending('compound').length === 1);
+    assert.deepEqual([...h.shapes.keys()], ids);
+    assert.deepEqual(ids.slice(1).map((id) => h.shapes.get(id).getPoints()), points);
+    assert.equal(h.rows(), 2);
+    assert.equal(h.pending('ordinary').length, 1);
+    h.setNow(7207001);
+    h.tick();
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+    assert.equal(h.rows(), 0);
+  });
+
+  test(`${generated ? 'generated' : 'source'} compound repair failure freezes surviving pairs until clear or context retirement`, async (t) => {
+    const h = await harness(t, { generated });
+    await h.reset();
+    await h.respond('compound', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [compoundMessage(fixtures[0], 2), compoundMessage(fixtures[1], 3)] });
+    await until(() => h.pending('compound').length === 1);
+    const ids = [...h.shapes.keys()];
+    assert.equal(ids.length, 5);
+    h.shapes.delete(ids[1]);
+    const create = h.chart.createShape;
+    h.chart.createShape = (point, options) => create({ ...point, time: point.time - 1 }, options);
+    h.tick();
+    await until(() => h.page.document.querySelector('[data-role="compound-status"]').dataset.state === 'error');
+    const surviving = [ids[0], ...ids.slice(2)];
+    assert.deepEqual([...h.shapes.keys()], surviving);
+    assert.equal(h.rows(), 2);
+    assert.equal(h.pending('compound').length, 0);
+    assert.equal(h.pending('ordinary').length, 1);
+    assert.match(h.page.document.querySelector('[data-role="compound-status"]').textContent, /历史记录已保留.*time alignment failed/);
+    h.tick();
+    await new Promise(setImmediate);
+    assert.deepEqual([...h.shapes.keys()], surviving);
+    h.clear();
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+    assert.equal(h.rows(), 0);
+    assert.match(h.page.document.querySelector('[data-role="compound-status"]').textContent, /time alignment failed/);
+    h.chart.createShape = create;
+    h.restart();
+    await h.reset();
+    await h.candidate();
+    assert.equal(h.rows(), 1);
+    assert.equal(h.shapes.size, 3);
+    await h.respond('compound', 'invalid JSON');
+    await until(() => h.page.document.querySelector('[data-role="compound-status"]').dataset.state === 'error');
+    h.setResolution('1');
+    h.tick();
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+    assert.equal(h.rows(), 0);
+    assert.equal(h.pending('compound').length, 0);
+  });
+
   test(`${generated ? 'generated' : 'source'} refresh bootstrap rebuilds ordinary and compound markers before live polling`, async (t) => {
     const h = await harness(t, { generated });
     const ordinary = ordinaryMessage();
