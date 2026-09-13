@@ -169,7 +169,7 @@ generated install artifact are version 0.6.5 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired entities, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
-must precede browser publication; release status is tracked in
+must precede browser publication. Initial compound publication history is recorded in
 [CorsairQuant PR 324](https://github.com/jackhai9/CorsairQuant/pull/324) and
 [userscripts PR 267](https://github.com/jackhai9/userscripts/pull/267).
 Do not treat source unit tests or the panel fixture as deployment evidence.
