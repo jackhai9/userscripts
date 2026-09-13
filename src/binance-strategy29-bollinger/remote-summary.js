@@ -64,7 +64,7 @@ export function createStrategy29RemoteSummary({
 
   function startContext(routeSymbol, gatewayState, canonicalSymbol) {
     const panel = createPanel(view.document, canonicalSymbol, {
-      maxEvents: 20, locale,
+      locale,
       loadPosition: () => getValue(STRATEGY29_PANEL_POSITION_KEY, null),
       savePosition: position => setValue(STRATEGY29_PANEL_POSITION_KEY, position),
     });

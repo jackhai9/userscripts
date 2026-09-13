@@ -1,6 +1,9 @@
 import { isCanonicalUsdtSymbol } from '../../shared/canonical-symbol.js';
 import {
   STRATEGY29_API_SPEC_VERSION,
+  STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME,
+  STRATEGY29_TIMEFRAMES,
+  compareStrategy29Timeframes,
   validateStrategy29EventsResponse,
   validateStrategy29GatewayError,
   validateStrategy29StatusResponse,
@@ -41,8 +44,8 @@ function buildEventsPath(canonicalSymbol, cursor) {
   const url = new URL('/v1/strategy29/events', 'https://gateway.invalid');
   url.searchParams.set('symbol', canonicalSymbol);
   if (cursor === null) {
-    url.searchParams.set('mode', 'latest');
-    url.searchParams.set('limit', '20');
+    url.searchParams.set('mode', 'latest_per_timeframe');
+    url.searchParams.set('limit', String(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME));
   } else url.searchParams.set('cursor', String(cursor));
   return url.pathname + url.search;
 }
@@ -58,6 +61,7 @@ export function createStrategy29SummaryClient({
 }) {
   assertConfiguration({ request, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset });
   let cursor = null;
+  let configuredTimeframesKey = null;
 
   async function perform(path, signal) {
     if (!signal || typeof signal.aborted !== 'boolean' || typeof signal.addEventListener !== 'function') {
@@ -85,6 +89,16 @@ export function createStrategy29SummaryClient({
     if (status.spec_version !== STRATEGY29_API_SPEC_VERSION) {
       return { state: 'incompatible', pages: 0, hasMore: false };
     }
+    // Missing selection facts retain history. Only a known configuration change
+    // invalidates the snapshot; ordinary selection generations do not.
+    if (status.universe.configured_timeframes.length > 0) {
+      const nextKey = [...status.universe.configured_timeframes].sort(compareStrategy29Timeframes).join(',');
+      if (nextKey !== configuredTimeframesKey && cursor !== null) {
+        cursor = null;
+        onCursorReset(null);
+      }
+      configuredTimeframesKey = nextKey;
+    }
 
     let pages = 0;
     let hasMore = false;
@@ -110,8 +124,8 @@ export function createStrategy29SummaryClient({
         throw new Error(`Strategy29 events request failed with HTTP ${eventsResponse.status}`);
       }
       const page = validateStrategy29EventsResponse(eventsBody, 200);
-      if (requestedCursor === null && (page.has_more || page.events.length > 20)) {
-        throw new TypeError('Strategy29 latest snapshot must be complete and bounded to 20 events');
+      if (requestedCursor === null && (page.has_more || page.events.length > STRATEGY29_TIMEFRAMES.length * STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME)) {
+        throw new TypeError('Strategy29 latest snapshot must be complete and bounded by timeframe');
       }
       if (requestedCursor !== null && page.next_cursor < requestedCursor) {
         throw new TypeError('Strategy29 event cursor moved backwards');
@@ -120,7 +134,15 @@ export function createStrategy29SummaryClient({
         throw new TypeError('Strategy29 event cursor did not advance while has_more is true');
       }
       let previousSequence = requestedCursor;
+      const snapshotCounts = new Map();
       for (const event of page.events) {
+        // Status and events are separate requests and may straddle a restart.
+        // Bound by the protocol's supported intervals, not the earlier status.
+        if (requestedCursor === null) {
+          const count = (snapshotCounts.get(event.timeframe) ?? 0) + 1;
+          if (count > STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME) throw new TypeError('Strategy29 latest snapshot must be complete and bounded to 3 events per timeframe');
+          snapshotCounts.set(event.timeframe, count);
+        }
         if (event.symbol !== canonicalSymbol) throw new TypeError('Strategy29 event symbol does not match the requested symbol');
         if (previousSequence !== null && event.sequence <= previousSequence) {
           throw new TypeError('Strategy29 event sequences must advance strictly');

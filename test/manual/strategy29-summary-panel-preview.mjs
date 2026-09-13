@@ -8,6 +8,24 @@ import { build } from 'esbuild';
 // Render the actual panel module with synthetic gateway data and no live connections.
 const status = JSON.parse(await readFile(new URL('../fixtures/strategy29-gateway-status.json', import.meta.url), 'utf8'));
 const events = JSON.parse(await readFile(new URL('../fixtures/strategy29-gateway-events.json', import.meta.url), 'utf8'));
+const intervals = [['1m', 1], ['5m', 5], ['15m', 15], ['1h', 60], ['4h', 240], ['1d', 1440]];
+const timeframes = intervals.map(([timeframe]) => timeframe);
+status.universe = { ...status.universe, selected_markets: ['BTC/USDT:USDT'], configured_timeframes: timeframes,
+  selected_unit_count: 6, ready_unit_count: 6, pending_unit_count: 0 };
+status.units = timeframes.map(timeframe => ({ ...status.units[0], timeframe }));
+const templates = events.events;
+let sequence = 0;
+events.events = intervals.flatMap(([timeframe, minutes]) => {
+  const intervalMs = minutes * 60_000;
+  const lastCloseMs = Math.floor(events.observed_at_ms / intervalMs) * intervalMs;
+  const count = timeframe === '1m' ? 30 : 3;
+  return Array.from({ length: count }, (_, index) => {
+    sequence += 1;
+    const closeMs = lastCloseMs - (count - index - 1) * intervalMs;
+    return { ...templates[index % templates.length], sequence, event_id: sequence.toString(16).padStart(64, '0'),
+      timeframe, bar_close_ms: closeMs, bar_open_ms: closeMs - intervalMs, detected_at_ms: closeMs + 500 };
+  });
+});
 const bundle = await build({
   stdin: {
     contents: "export { createStrategy29SummaryPanel } from './src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js';",
@@ -36,7 +54,7 @@ try {
   await page.evaluate(async ({ sourceUrl, status, events }) => {
     const { createStrategy29SummaryPanel } = await import(sourceUrl);
     const panel = createStrategy29SummaryPanel(document, 'BTC/USDT:USDT', {
-      maxEvents: 8, locale: 'en', loadPosition: () => null, savePosition: value => { window.fixturePosition = value; },
+      locale: 'en', loadPosition: () => null, savePosition: value => { window.fixturePosition = value; },
     });
     panel.setConnection('connected', { zhCN: '已连接', en: 'Connected' });
     panel.renderStatus(status);
@@ -45,8 +63,14 @@ try {
   }, { sourceUrl, status, events });
   const panel = page.locator('#jh-strategy29-summary-panel');
   await panel.waitFor({ state: 'visible' });
-  assert.equal(await panel.locator('[data-role="unit"]').count(), 2);
-  assert.equal(await panel.locator('[data-role="remote-event"]').count(), 2);
+  assert.equal(await panel.locator('[data-role="unit"]').count(), 6);
+  assert.equal(await panel.locator('[data-role="remote-event"]').count(), 18);
+  assert.deepEqual(await panel.locator('[data-role="remote-event"] strong').allTextContents().then(values =>
+    Object.fromEntries(timeframes.map(timeframe => [timeframe, values.filter(value => value === timeframe).length]))),
+  Object.fromEntries(timeframes.map(timeframe => [timeframe, 3])));
+  assert.equal(await panel.locator('[data-role="diagnostics"]').evaluate(node => node.open), false);
+  assert.equal(await panel.locator('[data-role="spec"]').isVisible(), false);
+  assert.equal(await panel.locator('[data-role="notices"]').isVisible(), false);
   assert.match(await panel.locator('[data-role="delivery"]').textContent(), /Global delivery/);
   assert.match(await panel.locator('[data-role="events-freshness"]').textContent(), /Events checked/);
   await panel.screenshot({ path: join(output, 'connected.png') });
@@ -61,6 +85,13 @@ try {
   assert.match(await panel.textContent(), /看跌预警/);
   assert.match(await panel.locator('[data-role="connection"]').textContent(), /已连接/);
   await panel.screenshot({ path: join(output, 'chinese.png') });
+  await panel.locator('[data-role="diagnostics"] summary').click();
+  assert.equal(await panel.locator('[data-role="spec"]').isVisible(), true);
+  assert.deepEqual(await panel.locator('[data-role="unit"] strong').allTextContents(), timeframes);
+  await panel.locator('[data-role="body"]').evaluate(node => { node.scrollTop = node.scrollHeight; });
+  await panel.screenshot({ path: join(output, 'chinese-diagnostics.png') });
+  await panel.locator('[data-role="diagnostics"] summary').click();
+  await panel.locator('[data-role="body"]').evaluate(node => { node.scrollTop = 0; });
   const beforeDrag = await panel.boundingBox();
   const header = await panel.locator('header').boundingBox();
   await page.mouse.move(header.x + 24, header.y + 14);
@@ -82,7 +113,17 @@ try {
   await panel.screenshot({ path: join(output, 'chinese-narrow.png') });
   await page.evaluate(() => window.fixturePanel.setLocale('en'));
   assert.match(await panel.textContent(), /Bearish warning/);
-  assert.equal(await panel.locator('[data-role="remote-event"]').count(), 2);
+  assert.equal(await panel.locator('[data-role="remote-event"]').count(), 18);
+  await page.evaluate(snapshot => {
+    window.fixturePanel.setLocale('zh-CN');
+    window.fixturePanel.renderStatus({ ...snapshot, units: snapshot.units.map(unit => unit.timeframe === '1h'
+      ? { ...unit, status: 'data_gap', reason: 'closed_bar_gap' } : unit) });
+  }, status);
+  assert.match(await panel.locator('[data-role="notices"]').textContent(), /1h/);
+  assert.equal(await panel.locator('[data-role="notices"]').isVisible(), true);
+  assert.doesNotMatch(await panel.locator('[data-role="notices"]').textContent(), /closed_bar_gap/);
+  assert.equal(await panel.locator('[data-role="diagnostics"]').evaluate(node => node.open), false);
+  await panel.screenshot({ path: join(output, 'chinese-data-gap.png') });
   await page.evaluate(() => {
     window.fixturePanel.setLocale('zh-CN');
     window.fixturePanel.setConnection('module_disabled', { zhCN: '服务端尚未启用 Strategy 29 监控汇总', en: 'Strategy 29 monitoring summary is not enabled on the server' });
@@ -90,7 +131,7 @@ try {
   assert.match(await panel.locator('[data-role="connection"]').textContent(), /服务端尚未启用/);
   await panel.screenshot({ path: join(output, 'chinese-module-disabled.png') });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ output, checked: ['two-timeframe-status', 'two-events', 'global-delivery-label', 'separate-freshness', 'collapse', 'viewport', 'Chinese-English-retained-state', 'header-drag-position-storage', 'narrow-viewport'], pageErrors: errors }));
+  console.log(JSON.stringify({ output, checked: ['six-timeframe-quotas', '18-retained-events', 'collapsed-diagnostics', 'duration-sorted-processing', 'visible-data-gap', 'global-delivery-label', 'separate-freshness', 'collapse', 'viewport', 'Chinese-English-retained-state', 'header-drag-position-storage', 'narrow-viewport'], pageErrors: errors }));
 } finally {
   await browser.close();
 }

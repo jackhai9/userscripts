@@ -147,7 +147,7 @@ test('projects only validated identity when status belongs to an incompatible sp
 });
 
 test('validates exact status fields while preserving visible spec mismatch', () => {
-  assert.equal(STRATEGY29_API_SPEC_VERSION, '29_2_spec_v3');
+  assert.equal(STRATEGY29_API_SPEC_VERSION, '29_2_spec_v4');
   assert.equal(validateStrategy29StatusResponse(status, 200), status);
   const mismatch = structuredClone(status);
   mismatch.spec_version = 'other_spec';
@@ -219,12 +219,12 @@ test('validates Strategy29 error bodies using error rather than error_code', () 
 });
 
 
-test('v3 API envelopes retain v2 event identities and reject mixed layers', () => {
+test('v4 API envelopes retain v2 event identities and reject mixed layers', () => {
   assert.equal(validateStrategy29EventsResponse(events, 200), events);
-  assert.equal(events.spec_version, '29_2_spec_v3');
+  assert.equal(events.spec_version, '29_2_spec_v4');
   assert.deepEqual([...new Set(events.events.map(event => event.spec_version))], ['29_2_spec_v2']);
   const wrongRow = structuredClone(events);
-  wrongRow.events[0].spec_version = '29_2_spec_v3';
+  wrongRow.events[0].spec_version = '29_2_spec_v4';
   assert.throws(() => validateStrategy29EventsResponse(wrongRow, 200), /spec_version/);
   assert.throws(() => validateStrategy29EventsResponse({ ...events, spec_version: '29_2_spec_v2' }, 200), /spec_version/);
   const oldStatus = { ...status, spec_version: '29_2_spec_v2' };

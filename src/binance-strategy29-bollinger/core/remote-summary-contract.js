@@ -1,11 +1,20 @@
 import { isCanonicalUsdtSymbol, usdtRouteToCanonical, canonicalUsdtToRoute } from '../../shared/canonical-symbol.js';
 
 export const STRATEGY29_SCHEMA_VERSION = 1;
-export const STRATEGY29_API_SPEC_VERSION = '29_2_spec_v3';
+export const STRATEGY29_API_SPEC_VERSION = '29_2_spec_v4';
 export const STRATEGY29_EVENT_SPEC_VERSION = '29_2_spec_v2';
 export const STRATEGY29_REFERENCE_SHA256 = 'eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d';
 
-const TIMEFRAMES = new Set(['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w']);
+export const STRATEGY29_TIMEFRAMES = Object.freeze(['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w']);
+export const STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME = 3;
+const TIMEFRAMES = new Set(STRATEGY29_TIMEFRAMES);
+
+export function compareStrategy29Timeframes(left, right) {
+  const leftIndex = STRATEGY29_TIMEFRAMES.indexOf(left);
+  const rightIndex = STRATEGY29_TIMEFRAMES.indexOf(right);
+  if (leftIndex < 0 || rightIndex < 0) throw new TypeError('Strategy29 timeframe is invalid');
+  return leftIndex - rightIndex;
+}
 const UNIT_STATUSES = new Set(['warming', 'ready', 'stale', 'insufficient_history', 'data_gap', 'failed']);
 const DIRECTIONS = new Set(['bearish', 'bullish']);
 const SIGNAL_TYPES = new Set(['warning', 'confirmed', 'reversal']);

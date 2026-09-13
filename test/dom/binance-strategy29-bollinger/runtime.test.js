@@ -145,7 +145,8 @@ test('actual remote client retains rows and cursor across visibility and bootstr
   const settle = () => new Promise(resolve => f.view.setTimeout(resolve, 0));
   await settle();
   const panel = f.view.document.getElementById('jh-strategy29-summary-panel');
-  assert.equal(urls[0].searchParams.get('mode'), 'latest');
+  assert.equal(urls[0].searchParams.get('mode'), 'latest_per_timeframe');
+  assert.equal(urls[0].searchParams.get('limit'), '3');
   assert.equal(panel.querySelectorAll('[data-role=remote-event]').length, 1);
   f.hide(true);
   assert.equal(runtime.diagnostics.remoteSummary.cursor, 900);
@@ -157,7 +158,8 @@ test('actual remote client retains rows and cursor across visibility and bootstr
   assert.deepEqual([...panel.querySelectorAll('[data-role=remote-event]')].map(row => row.dataset.eventId), [second.event_id, first.event_id]);
   f.view.history.pushState({}, '', '/en/futures/ETHUSDT');
   await settle();
-  assert.equal(urls[2].searchParams.get('mode'), 'latest');
+  assert.equal(urls[2].searchParams.get('mode'), 'latest_per_timeframe');
+  assert.equal(urls[2].searchParams.get('limit'), '3');
   assert.equal(urls[2].searchParams.has('cursor'), false);
   assert.equal(panel.isConnected, false);
   assert.equal(f.view.document.querySelectorAll('[data-role=remote-event]').length, 0);

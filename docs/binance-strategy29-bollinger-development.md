@@ -13,8 +13,8 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.4 with orderbook 2.7.199 or later, or use it alone.
-Install CorsairQuant signal client 0.6.1 for the remote summary.
+Install Strategy29 0.5.5 with orderbook 2.7.199 or later, or use it alone.
+Install CorsairQuant signal client 0.6.5 for the remote summary.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
@@ -102,7 +102,21 @@ Server status freshness and signal times remain separate from local chart state.
 Panel timestamps explicitly use `UTC+08` rather than inheriting the browser's
 ambient timezone.
 
-Observer API compatibility is `29_2_spec_v3`; durable event records retain
+The main view shows the current symbol, connection, monitoring selection,
+configured intervals, event-check time and recent signals. Each configured
+interval retains up to three signals, then all retained rows share the same
+descending close-time and sequence ordering. With six configured intervals the
+maximum is 18 rows. An interval with no retained events is named separately;
+the panel never fills its quota with another interval or synthetic signals.
+The default-collapsed Diagnostics section contains specification compatibility,
+the local detector fingerprint, selection details, stored processing progress
+and global delivery totals. Processing rows sort by interval duration, from
+minutes through days and weeks. Actionable connection, compatibility, selection
+and processing failures remain visible in the main view; raw processing reasons
+remain in Diagnostics. Delivery totals describe the server-wide notification
+outbox and do not establish whether notifications are enabled.
+
+Observer API compatibility is `29_2_spec_v4`; durable event records retain
 `29_2_spec_v2` and are validated independently; the chart detector retains the frozen
 V1 reference and unchanged hash. The server independently ranks an activity-score
 universe and applies its configured intervals. Each status poll replaces current
@@ -160,21 +174,34 @@ off, `gateway_unavailable` when an enabled fixed backend cannot be reached, and
 these separately. Installing the unified client does not activate server monitoring.
 
 The browser polls status first and then consumes at most two event pages per
-scheduled poll. A new route requests `mode=latest&limit=20` for its canonical
-symbol: the server selects the most recent signal close times and a global increment
-cursor from one SQLite snapshot. It does not scan retained global history to
-fill the panel. Subsequent increments can contain no matching events while still
-advancing that cursor. `cursor_expired` clears only remote rows and requests a new
-latest snapshot. Rows are displayed and bounded by descending signal close time,
-with descending durable sequence breaking ties. The snapshot response remains
-sequence-ascending so the global increment contract is unchanged. Historical
-backfills cannot evict newer signal times merely by being inserted later.
+scheduled poll. A new route requests `mode=latest_per_timeframe&limit=3` for its
+canonical symbol. The server reads its configured intervals, the three newest
+retained events for each interval, and a global increment cursor from one SQLite
+snapshot. Current market membership does not filter retained event history.
+Subsequent increments can contain no matching events while still advancing that
+cursor. `cursor_expired` clears only remote rows and requests another per-interval
+snapshot. Rows are retained independently for each interval by descending signal
+close time, with descending durable sequence breaking ties, and then displayed
+in that same combined order. The snapshot response remains sequence-ascending so
+the global increment contract is unchanged. Historical backfills cannot evict
+newer signal times merely by being inserted later.
+
+The client remembers the last nonempty set of configured intervals. A change to
+that set clears remote rows and resets the cursor before requesting a new
+snapshot; order-only changes and selection generations do not reset it. An empty
+configuration during unavailable selection preserves the last known set and
+history. If initialization consumed events before any configuration was known,
+the first nonempty set also resynchronizes. A failed resynchronization leaves the
+cursor unset. Status and events are separate requests that can straddle a server
+restart, so snapshot validation uses the protocol's 13 supported intervals and a
+39-row maximum, not the preceding status response's interval count. Each interval
+is still capped at three and the snapshot must have `has_more: false`.
 An empty increment advances the event-check timestamp without sorting retained
 records or replacing their DOM rows. Nonempty increments sort once for retention
 and rendering; locale changes still rebuild the translated rows.
-This requires the server's explicit latest
+This requires the server's explicit per-interval snapshot
 query contract; a server rejecting it stops the remote context visibly.
-Publish the V3 observer API contract before the client, then verify installed
+Publish the V4 observer API contract before the client, then verify installed
 source identity and reload before remote acceptance. Publication of either
 component does not enable the observer, gateway, or notifications.
 
@@ -198,7 +225,7 @@ The status validator first checks the shared schema/spec/time identity envelope.
 A different spec exposes only those three fields; no incompatible unit, selection
 or delivery payload is interpreted. The panel clears current health rows, displays
 the mismatch and preserves retained events; event consumption is blocked. Matching
-V3 API responses still require every exact field and a coherent refresh state/reason
+V4 API responses require every exact field and a coherent refresh state/reason
 combination. An unknown schema envelope remains a contract error. The local reference hash is displayed and exposed
 for audit, but the current server status schema does not carry a hash, so the UI
 does not claim hash-level remote parity.

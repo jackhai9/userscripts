@@ -9,6 +9,12 @@ import {
 
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
+const withoutSelection = { ...status, units: [], universe: {
+  ...status.universe, generation: null, refresh_status: 'fail_closed', reason: 'missing_current_universe_facts',
+  selected_markets: [], configured_timeframes: [], selected_unit_count: 0, ready_unit_count: 0, pending_unit_count: 0,
+  refreshed_at_ms: null, last_successful_refreshed_at_ms: null, last_success_age_seconds: null,
+  last_refresh_error_at_ms: null, selection_expires_at_ms: null,
+} };
 
 function response(body, httpStatus = 200) {
   return { status: httpStatus, responseText: JSON.stringify(body) };
@@ -43,8 +49,8 @@ test('bootstraps recent events once then follows the global high-water cursor', 
   ]);
   await fixture.client.poll(new AbortController().signal);
   const firstUrl = new URL(fixture.requests[1].path, 'https://gateway.invalid');
-  assert.equal(firstUrl.searchParams.get('mode'), 'latest');
-  assert.equal(firstUrl.searchParams.get('limit'), '20');
+  assert.equal(firstUrl.searchParams.get('mode'), 'latest_per_timeframe');
+  assert.equal(firstUrl.searchParams.get('limit'), '3');
   assert.equal(firstUrl.searchParams.has('cursor'), false);
   assert.deepEqual(fixture.received.map(event => event.sequence), [41, 42]);
   await fixture.client.poll(new AbortController().signal);
@@ -52,6 +58,49 @@ test('bootstraps recent events once then follows the global high-water cursor', 
   assert.equal(nextUrl.searchParams.get('cursor'), '100000');
   assert.equal(nextUrl.searchParams.has('mode'), false);
   assert.equal(fixture.client.diagnostics.cursor, 100_200);
+});
+
+test('only known timeframe-set changes resynchronize snapshots, including initialization after missing facts', async () => {
+  const reordered = { ...status, universe: { ...status.universe, generation: 2, configured_timeframes: [...status.universe.configured_timeframes].reverse() } };
+  const changed = { ...status, universe: { ...status.universe, configured_timeframes: ['1d'] } };
+  for (const { states, modes, resets } of [
+    { states: [status, reordered, withoutSelection, status], modes: ['latest_per_timeframe', null, null, null], resets: [] },
+    { states: [status, withoutSelection, changed], modes: ['latest_per_timeframe', null, 'latest_per_timeframe'], resets: [null] },
+    { states: [withoutSelection, status], modes: ['latest_per_timeframe', 'latest_per_timeframe'], resets: [null] },
+  ]) {
+    const fixture = clientFixture(states.flatMap((snapshot, index) => [response(snapshot), response({ ...events, events: [], next_cursor: 100 + index })]));
+    for (const snapshot of states) await fixture.client.poll(new AbortController().signal);
+    assert.deepEqual(fixture.requests.filter((_, index) => index % 2 === 1).map(request => new URL(request.path, 'https://gateway.invalid').searchParams.get('mode')), modes);
+    assert.deepEqual(fixture.resets, resets);
+    assert.equal(fixture.client.diagnostics.cursor, 99 + states.length);
+  }
+});
+
+test('failed configuration resynchronization keeps the cursor empty until a new snapshot succeeds', async () => {
+  const changed = { ...status, universe: { ...status.universe, configured_timeframes: ['1d'] } };
+  const fixture = clientFixture([
+    response(status), response({ ...events, events: [], next_cursor: 100 }),
+    response(changed), response({ schema_version: 1, error: 'gateway_unavailable', strategy_id: '29' }, 503),
+    response(changed), response({ ...events, events: [], next_cursor: 200 }),
+  ]);
+  await fixture.client.poll(new AbortController().signal);
+  assert.equal((await fixture.client.poll(new AbortController().signal)).state, 'gateway_unavailable');
+  assert.equal(fixture.client.diagnostics.cursor, null);
+  await fixture.client.poll(new AbortController().signal);
+  assert.equal(new URL(fixture.requests[5].path, 'https://gateway.invalid').searchParams.get('mode'), 'latest_per_timeframe');
+  assert.deepEqual(fixture.resets, [null]);
+  assert.equal(fixture.client.diagnostics.cursor, 200);
+});
+
+test('snapshot quota validation is independent of the preceding status configuration', async () => {
+  const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w'];
+  const all = timeframes.flatMap((timeframe, group) => Array.from({ length: 3 }, (_, index) => ({
+    ...events.events[0], timeframe, sequence: group * 3 + index + 1, event_id: String(group * 3 + index + 1).padStart(64, '0'),
+  })));
+  const fixture = clientFixture([response(status), response({ ...events, events: all })]);
+  await fixture.client.poll(new AbortController().signal);
+  assert.equal(fixture.received.length, 39);
+  assert.equal(fixture.client.diagnostics.cursor, events.next_cursor);
 });
 
 test('a cancelled response cannot advance a resumed client cursor or publish events', async () => {
@@ -75,7 +124,7 @@ test('a cancelled response cannot advance a resumed client cursor or publish eve
 test('rejects incomplete or oversized latest snapshots', async () => {
   for (const latest of [
     { ...events, has_more: true },
-    { ...events, has_more: false, events: Array(21).fill(events.events[0]) },
+    { ...events, has_more: false, events: Array.from({ length: 4 }, (_, index) => ({ ...events.events[0], event_id: String(index + 1).padStart(64, '0'), sequence: index + 1 })) },
   ]) {
     const fixture = clientFixture([response(status), response(latest)]);
     await assert.rejects(fixture.client.poll(new AbortController().signal), /complete and bounded/);
@@ -125,7 +174,7 @@ test('409 replaces retained history with a recent snapshot without clearing loca
   const result = await fixture.client.poll(new AbortController().signal);
   assert.deepEqual(result, { state: 'connected', pages: 2, hasMore: false });
   assert.deepEqual(fixture.resets, [40]);
-  assert.match(fixture.requests[4].path, /mode=latest/);
+  assert.equal(new URL(fixture.requests[4].path, 'https://gateway.invalid').searchParams.get('mode'), 'latest_per_timeframe');
   assert.doesNotMatch(fixture.requests[4].path, /cursor=/);
 });
 
@@ -198,6 +247,27 @@ test('exposes remote/local spec mismatch before requesting event history', async
   );
   assert.equal(fixture.requests.length, 1);
   assert.equal(fixture.snapshots[0].spec_version, 'other_spec');
+});
+
+test('a v3 backend is incompatible before requesting the per-timeframe snapshot', async () => {
+  const fixture = clientFixture([
+    response({ ...status, spec_version: '29_2_spec_v3' }), response(events),
+  ]);
+  assert.deepEqual(await fixture.client.poll(new AbortController().signal), {
+    state: 'incompatible', pages: 0, hasMore: false,
+  });
+  assert.deepEqual(fixture.requests.map(request => request.path), ['/v1/strategy29/status']);
+  assert.deepEqual(fixture.received, []);
+  assert.equal(fixture.client.diagnostics.cursor, null);
+});
+
+test('a rollback between status and events cannot publish a v3 snapshot or advance its cursor', async () => {
+  const fixture = clientFixture([
+    response(status), response({ ...events, spec_version: '29_2_spec_v3' }),
+  ]);
+  await assert.rejects(fixture.client.poll(new AbortController().signal), /events.spec_version/);
+  assert.deepEqual(fixture.received, []);
+  assert.equal(fixture.client.diagnostics.cursor, null);
 });
 
 

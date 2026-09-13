@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.4
+// @version      0.5.5
 // @author       jackhai9
 // @description  Native Bollinger/SMA60 markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -1406,10 +1406,18 @@
 
   // src/binance-strategy29-bollinger/core/remote-summary-contract.js
   var STRATEGY29_SCHEMA_VERSION = 1;
-  var STRATEGY29_API_SPEC_VERSION = "29_2_spec_v3";
+  var STRATEGY29_API_SPEC_VERSION = "29_2_spec_v4";
   var STRATEGY29_EVENT_SPEC_VERSION = "29_2_spec_v2";
   var STRATEGY29_REFERENCE_SHA256 = "eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d";
-  var TIMEFRAMES = /* @__PURE__ */ new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]);
+  var STRATEGY29_TIMEFRAMES = Object.freeze(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]);
+  var STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME = 3;
+  var TIMEFRAMES = new Set(STRATEGY29_TIMEFRAMES);
+  function compareStrategy29Timeframes(left, right) {
+    const leftIndex = STRATEGY29_TIMEFRAMES.indexOf(left);
+    const rightIndex = STRATEGY29_TIMEFRAMES.indexOf(right);
+    if (leftIndex < 0 || rightIndex < 0) throw new TypeError("Strategy29 timeframe is invalid");
+    return leftIndex - rightIndex;
+  }
   var UNIT_STATUSES = /* @__PURE__ */ new Set(["warming", "ready", "stale", "insufficient_history", "data_gap", "failed"]);
   var DIRECTIONS = /* @__PURE__ */ new Set(["bearish", "bullish"]);
   var SIGNAL_TYPES = /* @__PURE__ */ new Set(["warning", "confirmed", "reversal"]);
@@ -1723,8 +1731,8 @@
     const url = new URL("/v1/strategy29/events", "https://gateway.invalid");
     url.searchParams.set("symbol", canonicalSymbol);
     if (cursor === null) {
-      url.searchParams.set("mode", "latest");
-      url.searchParams.set("limit", "20");
+      url.searchParams.set("mode", "latest_per_timeframe");
+      url.searchParams.set("limit", String(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME));
     } else url.searchParams.set("cursor", String(cursor));
     return url.pathname + url.search;
   }
@@ -1738,6 +1746,7 @@
   }) {
     assertConfiguration({ request, canonicalSymbol, maxPagesPerPoll, onStatus, onEvents, onCursorReset });
     let cursor = null;
+    let configuredTimeframesKey = null;
     async function perform(path, signal) {
       if (!signal || typeof signal.aborted !== "boolean" || typeof signal.addEventListener !== "function") {
         throw new TypeError("poll requires an AbortSignal");
@@ -1761,6 +1770,14 @@
       onStatus(status);
       if (status.spec_version !== STRATEGY29_API_SPEC_VERSION) {
         return { state: "incompatible", pages: 0, hasMore: false };
+      }
+      if (status.universe.configured_timeframes.length > 0) {
+        const nextKey = [...status.universe.configured_timeframes].sort(compareStrategy29Timeframes).join(",");
+        if (nextKey !== configuredTimeframesKey && cursor !== null) {
+          cursor = null;
+          onCursorReset(null);
+        }
+        configuredTimeframesKey = nextKey;
       }
       let pages = 0;
       let hasMore = false;
@@ -1786,8 +1803,8 @@
           throw new Error(`Strategy29 events request failed with HTTP ${eventsResponse.status}`);
         }
         const page = validateStrategy29EventsResponse(eventsBody, 200);
-        if (requestedCursor === null && (page.has_more || page.events.length > 20)) {
-          throw new TypeError("Strategy29 latest snapshot must be complete and bounded to 20 events");
+        if (requestedCursor === null && (page.has_more || page.events.length > STRATEGY29_TIMEFRAMES.length * STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME)) {
+          throw new TypeError("Strategy29 latest snapshot must be complete and bounded by timeframe");
         }
         if (requestedCursor !== null && page.next_cursor < requestedCursor) {
           throw new TypeError("Strategy29 event cursor moved backwards");
@@ -1796,7 +1813,13 @@
           throw new TypeError("Strategy29 event cursor did not advance while has_more is true");
         }
         let previousSequence = requestedCursor;
+        const snapshotCounts = /* @__PURE__ */ new Map();
         for (const event of page.events) {
+          if (requestedCursor === null) {
+            const count = (snapshotCounts.get(event.timeframe) ?? 0) + 1;
+            if (count > STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME) throw new TypeError("Strategy29 latest snapshot must be complete and bounded to 3 events per timeframe");
+            snapshotCounts.set(event.timeframe, count);
+          }
           if (event.symbol !== canonicalSymbol) throw new TypeError("Strategy29 event symbol does not match the requested symbol");
           if (previousSequence !== null && event.sequence <= previousSequence) {
             throw new TypeError("Strategy29 event sequences must advance strictly");
@@ -1973,14 +1996,22 @@
     expand: pair("展开", "Expand"),
     waiting: pair("等待中", "Waiting"),
     observerSpec: (value) => pair(`观察器规格 ${value}`, `Observer spec ${value}`),
-    reference: (value) => pair(`本地参考版本 ${value}`, `Local reference ${value}`),
+    reference: (value) => pair(`本地检测代码指纹 ${value}`, `Local detector fingerprint ${value}`),
+    diagnostics: pair("诊断详情", "Diagnostics"),
+    selected: pair("当前币种已纳入监测", "Symbol is selected for monitoring"),
+    updateRequired: pair("服务端与客户端不兼容，请更新信号客户端和 Strategy 29 脚本。", "Server and client are incompatible. Update the signal client and Strategy 29 script."),
+    historicalOnly: pair("当前无法确认实时监测状态；下方为保留的历史信号。", "Live monitoring cannot currently be confirmed; retained signals below are historical."),
+    globalPending: (count) => pair(`服务端有 ${count} 个监测单元尚未就绪`, `${count} server monitoring units are not ready`),
+    missingSignals: (value) => pair(`当前保留范围内暂无信号：${value}`, `No retained signals: ${value}`),
+    waitingSignals: pair("等待最近信号", "Waiting for recent signals"),
+    perTimeframe: (count) => pair(`每周期最多 ${count} 条 · 按收盘时间排序`, `Up to ${count} per timeframe · Ordered by signal close`),
     noStatus: pair("尚未收到状态", "Status not received"),
     noEventsCheck: pair("尚未检查事件", "Events not checked"),
     processing: pair("最近处理状态", "Last processing status"),
     processingHint: pair("已保存的处理状态不代表当前实时数据已就绪。", "Stored processing status does not confirm current live readiness."),
     waitingDelivery: pair("全局通知 — 等待中", "Global delivery — waiting"),
     recent: pair("最近跨周期信号", "Recent cross-timeframe signals"),
-    noEvents: pair("暂无最近信号", "No recent signals"),
+    noEvents: pair("当前保留范围内暂无信号", "No signals in retained history"),
     close: (value) => pair(`收盘 ${value}`, `Close ${value}`),
     matched: (value) => pair(`规格版本一致 · ${value}`, `Spec version matched · ${value}`),
     mismatch: (local, server) => pair(`规格不一致 · 本地 ${local} · 服务端 ${server}`, `Spec mismatch · local ${local} · server ${server}`),
@@ -2165,10 +2196,9 @@
     const part = (name) => parts.find((item) => item.type === name)?.value;
     return `${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")} UTC+08`;
   }
-  function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEvents = 20, locale = resolveUiLocaleFromPathname(document.location.pathname), loadPosition, savePosition } = {}) {
+  function createStrategy29SummaryPanel(document, canonicalSymbol, { locale = resolveUiLocaleFromPathname(document.location.pathname), loadPosition, savePosition } = {}) {
     if (!document?.body) throw new Error("Strategy 29 summary panel requires document.body");
     if (typeof canonicalSymbol !== "string" || canonicalSymbol.length === 0) throw new Error("Strategy 29 panel symbol is invalid");
-    if (!Number.isInteger(maxEvents) || maxEvents < 1 || maxEvents > 100) throw new Error("Strategy 29 panel maxEvents is invalid");
     const text = (value) => formatLocalizedText(value, locale);
     text(SUMMARY_COPY.waiting);
     if (typeof loadPosition !== "function" || typeof savePosition !== "function") throw new TypeError("Strategy 29 panel position adapters are required");
@@ -2220,8 +2250,12 @@
     const statusFreshness = element(document, "div", { text: text(SUMMARY_COPY.noStatus), role: "status-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
     const eventsFreshness = element(document, "div", { text: text(SUMMARY_COPY.noEventsCheck), role: "events-freshness", styles: { color: "#848E9C", fontSize: "11px" } });
     const selection = element(document, "div", { role: "selection", styles: { color: "#EAECEF", fontSize: "11px" } });
+    const timeframeSummary = element(document, "div", { role: "timeframes", styles: { color: "#848E9C", fontSize: "11px" } });
+    const notices = element(document, "div", { role: "notices", styles: { color: "#F0B90B", fontSize: "11px", whiteSpace: "pre-line" } });
+    notices.setAttribute("aria-live", "polite");
+    const selectionDetails = element(document, "div", { role: "selection-details", styles: { color: "#848E9C", fontSize: "11px" } });
     const selectionRefresh = element(document, "div", { role: "selection-refresh", styles: { color: "#848E9C", fontSize: "11px" } });
-    overview.append(connection, spec, reference, statusFreshness, selection, selectionRefresh, eventsFreshness);
+    overview.append(connection, selection, timeframeSummary, eventsFreshness, notices);
     const unitsTitle = element(document, "div", { text: text(SUMMARY_COPY.processing), styles: { padding: "7px 10px 4px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontWeight: "600" } });
     const processingHint = element(document, "div", {
       text: text(SUMMARY_COPY.processingHint),
@@ -2231,12 +2265,23 @@
     const units = element(document, "div", { role: "units", styles: { display: "grid", gap: "3px", padding: "0 7px 8px" } });
     const delivery = element(document, "div", { text: text(SUMMARY_COPY.waitingDelivery), role: "delivery", styles: { padding: "7px 10px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontSize: "11px" } });
     const eventsTitle = element(document, "div", { text: text(SUMMARY_COPY.recent), styles: { padding: "7px 10px 4px", borderTop: "1px solid rgba(132,142,156,.18)", color: "#848E9C", fontWeight: "600" } });
+    const eventsHint = element(document, "div", { text: text(SUMMARY_COPY.perTimeframe(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME)), styles: { padding: "0 10px 5px", color: "#848E9C", fontSize: "11px" } });
     const events = element(document, "div", { role: "events", styles: { display: "grid", gap: "3px", padding: "0 7px 8px" } });
-    body.append(overview, unitsTitle, units, delivery, eventsTitle, events);
+    const missingSignals = element(document, "div", { role: "missing-signals", styles: { padding: "0 10px 8px", color: "#848E9C", fontSize: "11px" } });
+    const diagnostics = element(document, "details", { role: "diagnostics", styles: { borderTop: "1px solid rgba(132,142,156,.18)" } });
+    const diagnosticsTitle = element(document, "summary", { text: text(SUMMARY_COPY.diagnostics), styles: { padding: "8px 10px", color: "#848E9C", cursor: "pointer" } });
+    const diagnosticOverview = element(document, "div", { styles: { display: "grid", gap: "4px", padding: "0 10px 8px" } });
+    diagnosticOverview.append(spec, reference, statusFreshness, selectionDetails, selectionRefresh);
+    diagnostics.append(diagnosticsTitle, diagnosticOverview, unitsTitle, units, delivery);
+    body.append(overview, eventsTitle, eventsHint, events, missingSignals, diagnostics);
     panel.append(header, body);
     document.body.appendChild(panel);
     const position = installPanelPosition(document, panel, header, { initialPosition: stored, savePosition });
     const eventRecords = /* @__PURE__ */ new Map();
+    let configuredTimeframes = null;
+    let statusMessages = [];
+    let connectionState = null;
+    let statusUnreliable = true;
     let lastStatus = null;
     function clearCurrentStatus() {
       lastStatus = null;
@@ -2247,15 +2292,35 @@
       selection.dataset.state = "unavailable";
       selection.style.color = "#848E9C";
       selection.textContent = text(SUMMARY_COPY.noLiveStatus);
+      selectionDetails.textContent = "";
       selectionRefresh.textContent = "";
+      statusMessages = [];
+      statusUnreliable = true;
       units.replaceChildren();
       delivery.textContent = text(SUMMARY_COPY.waitingDelivery);
+      renderNotices();
     }
     let lastEventsAt = null;
     let connectionCopy = SUMMARY_COPY.waiting;
     let destroyed = false;
     function assertLive() {
       if (destroyed) throw new Error("Strategy 29 summary panel is destroyed");
+    }
+    function renderNotices() {
+      const messages = [...statusMessages];
+      if (eventRecords.size > 0 && (statusUnreliable || ["disabled", "module_disabled", "gateway_unavailable", "unavailable", "disconnected", "stopped", "incompatible"].includes(connectionState))) {
+        messages.unshift(text(SUMMARY_COPY.historicalOnly));
+      }
+      const message = messages.join("\n");
+      if (notices.textContent !== message) notices.textContent = message;
+      notices.hidden = messages.length === 0;
+    }
+    function renderMissingSignals() {
+      const present = new Set([...eventRecords.values()].map((event) => event.timeframe));
+      const missing = lastEventsAt === null || configuredTimeframes === null ? [] : configuredTimeframes.filter((timeframe) => !present.has(timeframe));
+      const message = missing.length === 0 ? "" : text(SUMMARY_COPY.missingSignals(missing.join(", ")));
+      if (missingSignals.textContent !== message) missingSignals.textContent = message;
+      missingSignals.hidden = missing.length === 0;
     }
     function renderEvents(ordered) {
       events.replaceChildren();
@@ -2273,13 +2338,18 @@
         row.appendChild(element(document, "span", { text: text(SUMMARY_COPY.close(formatClock(event.bar_close_ms))), styles: { color: "#848E9C", fontSize: "10px", textAlign: "right" } }));
         events.appendChild(row);
       }
-      if (ordered.length === 0) events.appendChild(element(document, "span", { text: text(SUMMARY_COPY.noEvents), styles: { color: "#848E9C", padding: "4px" } }));
+      if (ordered.length === 0) events.appendChild(element(document, "span", { text: text(lastEventsAt === null ? SUMMARY_COPY.waitingSignals : SUMMARY_COPY.noEvents), styles: { color: "#848E9C", padding: "4px" } }));
+      renderMissingSignals();
+      renderNotices();
     }
     collapse.addEventListener("click", () => {
       const collapsed = body.style.display !== "none";
       body.style.display = collapsed ? "none" : "block";
       collapse.textContent = text(collapsed ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
       position.clamp();
+    });
+    diagnostics.addEventListener("toggle", () => {
+      if (!destroyed) position.clamp();
     });
     renderEvents([]);
     const api = Object.freeze({
@@ -2293,9 +2363,12 @@
         collapse.textContent = text(body.style.display === "none" ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
         connection.textContent = text(connectionCopy);
         reference.textContent = text(SUMMARY_COPY.reference(STRATEGY29_REFERENCE_SHA256));
+        diagnosticsTitle.textContent = text(SUMMARY_COPY.diagnostics);
         unitsTitle.firstChild.textContent = text(SUMMARY_COPY.processing);
         processingHint.textContent = text(SUMMARY_COPY.processingHint);
         eventsTitle.textContent = text(SUMMARY_COPY.recent);
+        eventsHint.textContent = text(SUMMARY_COPY.perTimeframe(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME));
+        timeframeSummary.textContent = configuredTimeframes === null ? "" : text(SUMMARY_COPY.intervals(configuredTimeframes.join(", ")));
         eventsFreshness.textContent = text(lastEventsAt === null ? SUMMARY_COPY.noEventsCheck : SUMMARY_COPY.eventsAt(formatClock(lastEventsAt)));
         if (lastStatus !== null) api.renderStatus(lastStatus);
         else clearCurrentStatus();
@@ -2305,11 +2378,13 @@
       setConnection(state, message) {
         assertLive();
         if (!(state in STATE_COLORS)) throw new Error("Strategy 29 panel connection state is invalid");
+        connectionState = state;
         connection.dataset.state = state;
         connection.style.color = STATE_COLORS[state];
         connectionCopy = message;
         connection.textContent = text(message);
         if (["disabled", "module_disabled", "gateway_unavailable", "unavailable"].includes(state)) clearCurrentStatus();
+        renderNotices();
         position.clamp();
       },
       renderStatus(snapshot) {
@@ -2321,25 +2396,50 @@
         spec.textContent = matched ? text(SUMMARY_COPY.matched(STRATEGY29_API_SPEC_VERSION)) : text(SUMMARY_COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version));
         statusFreshness.textContent = text(SUMMARY_COPY.statusAt(formatClock(snapshot.observed_at_ms)));
         if (!matched) {
+          statusUnreliable = true;
+          statusMessages = [text(SUMMARY_COPY.updateRequired)];
           selection.dataset.state = "incompatible";
           selection.style.color = "#F6465D";
           selection.textContent = text(SUMMARY_COPY.incompatibleSelection);
+          selectionDetails.textContent = "";
           selectionRefresh.textContent = "";
           units.replaceChildren();
           delivery.textContent = text(SUMMARY_COPY.incompatibleDelivery);
+          renderNotices();
           position.clamp();
           return;
         }
         const universe = snapshot.universe;
         const unavailable = universe.refresh_status === "fail_closed";
+        const selected = universe.selected_markets.includes(canonicalSymbol);
+        statusUnreliable = unavailable || !selected;
+        statusMessages = [];
+        if (universe.configured_timeframes.length > 0) {
+          const next = [...universe.configured_timeframes].sort(compareStrategy29Timeframes);
+          if (configuredTimeframes === null || next.join(",") !== configuredTimeframes.join(",")) {
+            configuredTimeframes = next;
+            let removed = false;
+            for (const [id, event] of eventRecords) {
+              if (!next.includes(event.timeframe)) {
+                eventRecords.delete(id);
+                removed = true;
+              }
+            }
+            if (removed) renderEvents([...eventRecords.values()].sort(newestSignalFirst));
+          }
+        }
+        timeframeSummary.textContent = configuredTimeframes === null ? "" : text(SUMMARY_COPY.intervals(configuredTimeframes.join(", ")));
         selection.dataset.state = universe.refresh_status;
         selection.style.color = unavailable ? "#F6465D" : universe.refresh_status === "fresh" ? "#0ECB81" : "#F0B90B";
-        selection.textContent = [text(SELECTION_REASONS[universe.reason]), text(SUMMARY_COPY.generation(universe.generation ?? text(SUMMARY_COPY.pending))), text(SUMMARY_COPY.markets(universe.selected_markets.length)), text(SUMMARY_COPY.ready(universe.ready_unit_count, universe.selected_unit_count)), text(SUMMARY_COPY.intervals(universe.configured_timeframes.join(", ") || text(SUMMARY_COPY.pending)))].join(" · ");
+        selection.textContent = text(unavailable ? SELECTION_REASONS[universe.reason] : selected ? SUMMARY_COPY.selected : SUMMARY_COPY.notSelected);
+        selectionDetails.textContent = [text(SELECTION_REASONS[universe.reason]), text(SUMMARY_COPY.generation(universe.generation ?? text(SUMMARY_COPY.pending))), text(SUMMARY_COPY.markets(universe.selected_markets.length)), text(SUMMARY_COPY.ready(universe.ready_unit_count, universe.selected_unit_count))].join(" · ");
         selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null ? text(SUMMARY_COPY.noSuccess) : text(SUMMARY_COPY.lastSuccess(formatClock(universe.last_successful_refreshed_at_ms), universe.last_success_age_seconds.toFixed(1)));
         units.replaceChildren();
-        const selected = universe.selected_markets.includes(canonicalSymbol);
-        const matching = unavailable || !selected ? [] : snapshot.units.filter((unit) => unit.symbol === canonicalSymbol && universe.configured_timeframes.includes(unit.timeframe));
+        const matching = unavailable || !selected ? [] : snapshot.units.filter((unit) => unit.symbol === canonicalSymbol && universe.configured_timeframes.includes(unit.timeframe)).sort((left, right) => compareStrategy29Timeframes(left.timeframe, right.timeframe));
+        if (!unavailable && universe.refresh_status !== "fresh") statusMessages.push(text(SELECTION_REASONS[universe.reason]));
+        if (!unavailable && universe.pending_unit_count > 0) statusMessages.push(text(SUMMARY_COPY.globalPending(universe.pending_unit_count)));
         for (const unit of matching) {
+          if (unit.status !== "ready") statusMessages.push(`${unit.timeframe} · ${text(STATUS_LABELS[unit.status])}`);
           const row = element(document, "div", {
             role: "unit",
             styles: { display: "grid", gridTemplateColumns: "36px 78px minmax(0,1fr)", gap: "6px", padding: "4px 6px", borderRadius: "5px", background: "rgba(132,142,156,.08)" }
@@ -2353,27 +2453,45 @@
           text: text(unavailable ? SUMMARY_COPY.unavailableSelection : selected ? SUMMARY_COPY.awaitingUnits : SUMMARY_COPY.notSelected),
           styles: { color: "#F0B90B", padding: "4px" }
         }));
+        if (!unavailable && selected && matching.length === 0) statusMessages.push(text(SUMMARY_COPY.awaitingUnits));
         const counts = snapshot.delivery_counts;
         delivery.textContent = text(SUMMARY_COPY.delivery(counts));
+        renderMissingSignals();
+        renderNotices();
         position.clamp();
       },
       addEvents(incoming, observedAtMs = null) {
         assertLive();
+        const firstCheck = lastEventsAt === null && observedAtMs !== null;
+        if (observedAtMs !== null) lastEventsAt = observedAtMs;
         if (incoming.length > 0) {
-          for (const event of incoming) eventRecords.set(event.event_id, event);
+          for (const event of incoming) {
+            if (configuredTimeframes === null || configuredTimeframes.includes(event.timeframe)) eventRecords.set(event.event_id, event);
+          }
           const ordered = [...eventRecords.values()].sort(newestSignalFirst);
-          while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
-          renderEvents(ordered);
+          const counts = /* @__PURE__ */ new Map();
+          const retained = ordered.filter((event) => {
+            const count = (counts.get(event.timeframe) ?? 0) + 1;
+            counts.set(event.timeframe, count);
+            if (count <= STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME) return true;
+            eventRecords.delete(event.event_id);
+            return false;
+          });
+          renderEvents(retained);
+        } else if (firstCheck && eventRecords.size === 0) {
+          renderEvents([]);
         }
         if (observedAtMs !== null) {
-          lastEventsAt = observedAtMs;
           eventsFreshness.textContent = text(SUMMARY_COPY.eventsAt(formatClock(observedAtMs)));
         }
+        renderMissingSignals();
         position.clamp();
       },
       clearEvents() {
         assertLive();
         eventRecords.clear();
+        lastEventsAt = null;
+        eventsFreshness.textContent = text(SUMMARY_COPY.noEventsCheck);
         renderEvents([]);
         position.clamp();
       },
@@ -2443,7 +2561,6 @@
     }
     function startContext(routeSymbol, gatewayState, canonicalSymbol) {
       const panel = createPanel(view.document, canonicalSymbol, {
-        maxEvents: 20,
         locale,
         loadPosition: () => getValue(STRATEGY29_PANEL_POSITION_KEY, null),
         savePosition: (position) => setValue(STRATEGY29_PANEL_POSITION_KEY, position)
