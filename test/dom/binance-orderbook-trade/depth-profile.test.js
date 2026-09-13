@@ -347,10 +347,14 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
   const root = ensureDepthProfileView(document, host, { onToggle: () => {} });
   const calls = [];
   const fillStyles = [];
-  root.querySelector('canvas').getContext = () => ({
+  const canvas = root.querySelector('canvas');
+  canvas.getBoundingClientRect = () => ({ width: 132, height: 240, left: 0, top: 0 });
+  canvas.getContext = () => ({
     beginPath: () => calls.push('beginPath'),
     clearRect: () => calls.push('clearRect'),
     fillRect: (...args) => calls.push(['fillRect', ...args]),
+    fillText: () => {},
+    measureText: (text) => ({ width: text.length * 6 }),
     lineTo: () => calls.push('lineTo'),
     moveTo: (...args) => calls.push(['moveTo', ...args]),
     restore: () => calls.push('restore'),
@@ -364,6 +368,7 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
   const geometry = {
     top: 0,
     height: 240,
+    inverted: false,
     priceToCoordinate: (price) => ({ 100: 180, 100.5: 140, 101: 80 }[price] ?? null),
   };
   assert.equal(renderDepthProfile(root, {
@@ -371,17 +376,18 @@ test('draws bid and ask bars plus the latest-trade divider', () => {
     maxPrice: 102,
     midPrice: 99.5,
     maxCumulative: 5,
-    bids: [{ price: 100, cumulative: 5 }],
-    asks: [{ price: 101, cumulative: 4 }, { price: 105, cumulative: 5 }],
+    bids: [{ price: 100, quantity: 5, cumulative: 5 }],
+    asks: [{ price: 101, quantity: 4, cumulative: 4 }, { price: 105, quantity: 1, cumulative: 5 }],
   }, geometry, 100.5), true);
   assert.equal(root.style.height, '240px');
-  assert.equal(calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').length, 2);
-  assert.deepEqual(fillStyles, [
+  const bars = calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect' && call[4] === 1);
+  assert.equal(bars.length, 2);
+  assert.deepEqual(fillStyles.slice(0, 2), [
     '#f6465d',
     '#0ecb81',
   ]);
   assert.deepEqual(
-    calls.filter((call) => Array.isArray(call) && call[0] === 'fillRect').map((call) => call[2]),
+    bars.map((call) => call[2]),
     [80, 180],
   );
   assert.deepEqual(calls.find((call) => Array.isArray(call) && call[0] === 'moveTo'), ['moveTo', 0, 140.5]);
@@ -399,10 +405,13 @@ test('draws one bar per visible CSS pixel row and scales width to visible depth'
   const root = ensureDepthProfileView(document, host, { onToggle: () => {} });
   const fillRects = [];
   const canvas = root.querySelector('canvas');
+  canvas.getBoundingClientRect = () => ({ width: 132, height: 240, left: 0, top: 0 });
   canvas.getContext = () => ({
     beginPath: () => {},
     clearRect: () => {},
-    fillRect: (...args) => fillRects.push(args),
+    fillRect: (...args) => { if (args[3] === 1) fillRects.push(args); },
+    fillText: () => {},
+    measureText: (text) => ({ width: text.length * 6 }),
     lineTo: () => {},
     moveTo: () => {},
     restore: () => {},
@@ -415,6 +424,7 @@ test('draws one bar per visible CSS pixel row and scales width to visible depth'
   const geometry = {
     top: 0,
     height: 240,
+    inverted: false,
     priceToCoordinate: (price) => ({
       99: 180.4,
       101: 80.2,
@@ -423,11 +433,11 @@ test('draws one bar per visible CSS pixel row and scales width to visible depth'
   };
   renderDepthProfile(root, {
     maxCumulative: 1_000,
-    bids: [{ price: 99, cumulative: 4 }],
+    bids: [{ price: 99, quantity: 4, cumulative: 4 }],
     asks: [
-      { price: 101, cumulative: 3 },
-      { price: 102, cumulative: 8 },
-      { price: 110, cumulative: 1_000 },
+      { price: 101, quantity: 3, cumulative: 3 },
+      { price: 102, quantity: 5, cumulative: 8 },
+      { price: 110, quantity: 992, cumulative: 1_000 },
     ],
   }, geometry, 100);
 
@@ -436,6 +446,155 @@ test('draws one bar per visible CSS pixel row and scales width to visible depth'
   assert.equal(fillRects[0][0], 0);
   assert.equal(fillRects[0][2], canvas.getBoundingClientRect().width);
   assert.equal(fillRects[1][2], canvas.getBoundingClientRect().width / 2);
+});
+
+function createLabelRenderer({ width = 132, height = 240, inverted = false, coordinates } = {}) {
+  const dom = createChartDom();
+  const { document } = dom.window;
+  const { host } = findDepthProfileHost(document);
+  const root = ensureDepthProfileView(document, host, { onToggle: () => {} });
+  const canvas = root.querySelector('canvas');
+  canvas.getBoundingClientRect = () => ({ width, height, left: 0, top: 0 });
+  root.querySelector('[data-depth-profile-toggle]').getBoundingClientRect = () => ({
+    left: width - 28, top: 8, width: 24, height: 24,
+  });
+  const rectangles = [];
+  const labels = [];
+  const context = {
+    beginPath() {},
+    clearRect() { rectangles.length = 0; labels.length = 0; },
+    fillRect(x, y, boxWidth, boxHeight) {
+      rectangles.push({ x, y, width: boxWidth, height: boxHeight, color: this.fillStyle });
+    },
+    fillText(text, x, y) { labels.push({ text, x, y, font: this.font }); },
+    measureText: (text) => ({ width: text.length * 6 }),
+    lineTo() {},
+    moveTo() {},
+    restore() {},
+    save() {},
+    setLineDash() {},
+    setTransform() {},
+    stroke() {},
+  };
+  canvas.getContext = () => context;
+  const geometry = {
+    top: 0,
+    height,
+    rightInset: 88,
+    inverted,
+    priceToCoordinate: (price) => coordinates[price] ?? null,
+  };
+  return {
+    root,
+    labels,
+    rectangles,
+    render: (profile, currentPrice = null) => renderDepthProfile(root, profile, geometry, currentPrice),
+  };
+}
+
+function depthLevels(entries) {
+  let cumulative = 0;
+  return entries.map(([price, quantity]) => {
+    cumulative += quantity;
+    return { price, quantity, cumulative };
+  });
+}
+
+test('labels the complete visible pixel-row quantity, not its last level or offscreen cumulative depth', () => {
+  const view = createLabelRenderer({ coordinates: { 99: 180.4, 101: 80.2, 102: 80.4 } });
+  view.render({
+    maxCumulative: 1_000,
+    bids: depthLevels([[99, 4]]),
+    asks: depthLevels([[101, 3], [102, 5], [110, 992]]),
+  });
+
+  assert.deepEqual(view.labels.map(({ text }) => text), ['101–102 · 8', '99 · 4']);
+  assert.deepEqual(view.rectangles.filter(({ height }) => height === 1), [
+    { x: 0, y: 80, width: 132, height: 1, color: '#f6465d' },
+    { x: 66, y: 180, width: 66, height: 1, color: '#0ecb81' },
+  ]);
+});
+
+test('chooses at most two large quantity steps per side instead of the largest cumulative bars', () => {
+  const view = createLabelRenderer({ coordinates: { 99: 220, 101: 180, 102: 160, 103: 140, 104: 120, 105: 100, 106: 80 } });
+  view.render({
+    bids: depthLevels([[99, 1]]),
+    asks: depthLevels([[101, 300], [102, 5], [103, 200], [104, 4], [105, 100], [106, 3]]),
+  });
+
+  assert.deepEqual(view.labels.map(({ text }) => text), ['101 · 300', '103 · 200']);
+});
+
+test('uses quantity-only text when a complete price band is too wide and keeps every label inside the canvas', () => {
+  const view = createLabelRenderer({ coordinates: { 0.00010001: 80.2, 0.00010002: 80.4, 0.00009: 180 } });
+  view.render({
+    bids: depthLevels([[0.00009, 620_000]]),
+    asks: depthLevels([[0.00010001, 2_400_000], [0.00010002, 1_400_000]]),
+  });
+
+  assert.deepEqual(view.labels.map(({ text }) => text), ['3.8M', '620K']);
+  for (const box of view.rectangles.filter(({ height }) => height === 16)) {
+    assert.ok(box.width <= 88);
+    assert.ok(box.x >= 0 && box.x + box.width <= 132);
+    assert.ok(box.y >= 0 && box.y + box.height <= 240);
+  }
+  assert.deepEqual(view.rectangles.filter(({ height }) => height === 16).map(({ width }) => width), [30, 30]);
+});
+
+test('formats quantities without trailing zeroes, unit-boundary errors, or rounding small nonzero amounts to zero', () => {
+  const view = createLabelRenderer({ coordinates: { 101: 80 } });
+  for (const [quantity, expected] of [[2_400_000, '101 · 2.4M'], [999_950, '101 · 1M'], [0.00002, '101 · 0.00002']]) {
+    view.render({ bids: [], asks: depthLevels([[101, quantity]]) });
+    assert.deepEqual(view.labels.map(({ text }) => text), [expected]);
+  }
+});
+
+test('keeps nearby labels apart and does not cover the current-price divider', () => {
+  const view = createLabelRenderer({ coordinates: { 99: 150, 100: 110, 101: 125, 102: 95, 103: 90 } });
+  view.render({
+    bids: depthLevels([[99, 80]]),
+    asks: depthLevels([[101, 70], [102, 100], [103, 90]]),
+  }, 100);
+
+  assert.deepEqual(view.labels.map(({ text }) => text), ['102 · 100', '99 · 80']);
+  const boxes = view.rectangles.filter(({ height }) => height === 16);
+  assert.ok(boxes.every((box) => box.y + box.height < 110 || box.y > 110));
+  assert.ok(boxes[0].y + boxes[0].height < boxes[1].y);
+});
+
+test('places bid and ask labels on opposite sides of a shared pixel row, including inverted scales', () => {
+  for (const inverted of [false, true]) {
+    const coordinates = inverted ? { 99: 100.2, 101: 100.4 } : { 99: 100.4, 101: 100.2 };
+    const view = createLabelRenderer({ inverted, coordinates });
+    view.render({ bids: depthLevels([[99, 9]]), asks: depthLevels([[101, 10]]) });
+
+    assert.deepEqual(view.labels.map(({ text }) => text), ['101 · 10', '99 · 9']);
+    assert.deepEqual(view.rectangles.filter(({ height }) => height === 16).map(({ y }) => y), inverted ? [102, 82] : [82, 102]);
+  }
+});
+
+test('omits labels that would overlap the collapse button or extend past the vertical canvas boundary', () => {
+  const view = createLabelRenderer({ coordinates: { 99: 220, 101: 38, 102: 10 } });
+  view.render({
+    bids: depthLevels([[99, 1_000]]),
+    asks: depthLevels([[101, 200], [102, 100]]),
+  });
+  assert.deepEqual(view.labels.map(({ text }) => text), ['99 · 1K']);
+
+  const narrow = createLabelRenderer({ width: 20, coordinates: { 101: 80 } });
+  narrow.render({ bids: [], asks: depthLevels([[101, 620_000]]) });
+  assert.deepEqual(narrow.labels, []);
+});
+
+test('repaints changed quantities and removes old labels when the depth canvas clears', () => {
+  const view = createLabelRenderer({ coordinates: { 101: 80 } });
+  view.render({ bids: [], asks: depthLevels([[101, 3_800_000]]) });
+  assert.deepEqual(view.labels.map(({ text }) => text), ['101 · 3.8M']);
+  view.render({ bids: [], asks: depthLevels([[101, 1_500_000]]) });
+  assert.deepEqual(view.labels.map(({ text }) => text), ['101 · 1.5M']);
+  clearDepthProfile(view.root);
+  assert.deepEqual(view.labels, []);
+  assert.deepEqual(view.rectangles, []);
 });
 
 test('updates root geometry without rewriting unchanged styles', () => {

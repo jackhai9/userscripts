@@ -5,6 +5,17 @@ const CHART_ROOT_SELECTOR = '.chart-widget-root';
 const PRICE_AXIS_SELECTOR = '.chart-markup-table.price-axis-container';
 const PRICE_COORDINATE_SEARCH_STEPS = 13;
 const GEOMETRY_TOLERANCE_PX = 1;
+const DEPTH_LABEL_MAX_WIDTH = 88;
+const DEPTH_LABEL_HEIGHT = 16;
+const DEPTH_LABEL_PADDING = 3;
+const DEPTH_LABEL_GAP = 2;
+const DEPTH_LABEL_MIN_STEP = 8;
+const DEPTH_LABELS_PER_SIDE = 2;
+const DEPTH_QUANTITY_FORMAT = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  maximumSignificantDigits: 3,
+  useGrouping: false,
+});
 
 function hasVisibleBox(element) {
   if (!element?.getClientRects().length) return false;
@@ -138,6 +149,8 @@ function installStyle(document) {
   style.id = STYLE_ID;
   style.textContent = `
     #${DEPTH_PROFILE_ID} {
+      --jh-depth-label-background: var(--color-BasicBg, #fff);
+      --jh-depth-label-color: var(--color-SecondaryText, #474d57);
       position: absolute;
       z-index: 3;
       top: 0;
@@ -282,10 +295,18 @@ function bucketVisibleLevels(levels, geometry) {
     if (!Number.isFinite(coordinate)) continue;
     const y = Math.max(0, Math.min(lastRow, Math.round(coordinate)));
     const current = buckets.get(y);
-    // Several exchange prices can map to one chart pixel. The outermost level has the
-    // largest cumulative quantity and preserves the complete depth represented by that row.
-    if (!current || level.cumulative > current.cumulative) {
-      buckets.set(y, { ...level, y });
+    if (!current) {
+      buckets.set(y, { ...level, y, minPrice: level.price, maxPrice: level.price });
+      continue;
+    }
+    // The bar needs the outermost cumulative value, while its label needs every
+    // real quantity in this pixel row, including prices hidden by the outermost one.
+    current.quantity += level.quantity;
+    current.minPrice = Math.min(current.minPrice, level.price);
+    current.maxPrice = Math.max(current.maxPrice, level.price);
+    if (level.cumulative > current.cumulative) {
+      current.price = level.price;
+      current.cumulative = level.cumulative;
     }
   }
   return [...buckets.values()].sort((left, right) => left.y - right.y);
@@ -306,6 +327,92 @@ function getMaxVisibleCumulative(...levelGroups) {
     for (const level of levels) maximum = Math.max(maximum, level.cumulative);
   }
   return maximum;
+}
+
+function depthLabelBoxesOverlap(left, right) {
+  return left.x < right.x + right.width + DEPTH_LABEL_GAP
+    && left.x + left.width + DEPTH_LABEL_GAP > right.x
+    && left.y < right.y + right.height + DEPTH_LABEL_GAP
+    && left.y + left.height + DEPTH_LABEL_GAP > right.y;
+}
+
+function depthLabelObstacles(root, canvasRect) {
+  const controls = [root.querySelector('[data-depth-profile-toggle]')];
+  const status = root.querySelector('.jh-depth-profile-status');
+  if (status.textContent) controls.push(status);
+  return controls.map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .map((rect) => ({
+      x: rect.left - canvasRect.left,
+      y: rect.top - canvasRect.top,
+      width: rect.width,
+      height: rect.height,
+    }));
+}
+
+/**
+ * Labels describe visible price bands, not cumulative depth or changes over time.
+ * Keep their paint inside the existing canvas so hints never widen the overlay or
+ * create DOM mutations that schedule another chart-host synchronization.
+ */
+function drawDepthLabels(root, context, {
+  asks, bids, maxVisibleCumulative, rect, inverted, currentPriceY,
+}) {
+  const candidates = [
+    ...asks.map((level) => ({ ...level, side: 'ask' })),
+    ...bids.map((level) => ({ ...level, side: 'bid' })),
+  ].filter((level) => (
+    level.quantity / maxVisibleCumulative * rect.width >= DEPTH_LABEL_MIN_STEP
+  )).sort((left, right) => right.quantity - left.quantity || left.minPrice - right.minPrice);
+  if (!candidates.length) return;
+
+  const style = root.ownerDocument.defaultView.getComputedStyle(root);
+  const background = style.getPropertyValue('--jh-depth-label-background').trim();
+  const color = style.getPropertyValue('--jh-depth-label-color').trim();
+  const occupied = depthLabelObstacles(root, rect);
+  const counts = { ask: 0, bid: 0 };
+  const maxWidth = Math.min(DEPTH_LABEL_MAX_WIDTH, rect.width - 2);
+  context.save();
+  context.font = `11px ${style.fontFamily}`;
+  context.textAlign = 'left';
+  context.textBaseline = 'middle';
+
+  for (const level of candidates) {
+    if (counts[level.side] === DEPTH_LABELS_PER_SIDE) continue;
+    const quantity = DEPTH_QUANTITY_FORMAT.format(level.quantity);
+    const price = level.minPrice === level.maxPrice
+      ? String(level.minPrice)
+      : `${level.minPrice}–${level.maxPrice}`;
+    let text = `${price} · ${quantity}`;
+    let width = Math.ceil(context.measureText(text).width) + DEPTH_LABEL_PADDING * 2;
+    // A long price band uses the quantity-only layout; never truncate a price or
+    // assign an entire band's quantity to one representative price.
+    if (width > maxWidth) {
+      text = quantity;
+      width = Math.ceil(context.measureText(text).width) + DEPTH_LABEL_PADDING * 2;
+    }
+    if (width > maxWidth) continue;
+    const above = level.side === 'ask' ? !inverted : inverted;
+    const y = above
+      ? level.y - DEPTH_LABEL_HEIGHT - DEPTH_LABEL_GAP
+      : level.y + DEPTH_LABEL_GAP;
+    if (y < 0 || y + DEPTH_LABEL_HEIGHT > rect.height) continue;
+    if (Number.isFinite(currentPriceY)
+      && currentPriceY >= y - DEPTH_LABEL_GAP
+      && currentPriceY <= y + DEPTH_LABEL_HEIGHT + DEPTH_LABEL_GAP) continue;
+    const edge = rect.width * (1 - level.cumulative / maxVisibleCumulative);
+    const x = Math.max(1, Math.min(edge + DEPTH_LABEL_GAP, rect.width - width - 1));
+    const box = { x, y, width, height: DEPTH_LABEL_HEIGHT };
+    if (occupied.some((other) => depthLabelBoxesOverlap(box, other))) continue;
+
+    context.fillStyle = background;
+    context.fillRect(x, y, width, DEPTH_LABEL_HEIGHT);
+    context.fillStyle = color;
+    context.fillText(text, x + DEPTH_LABEL_PADDING, y + DEPTH_LABEL_HEIGHT / 2);
+    occupied.push(box);
+    counts[level.side] += 1;
+  }
+  context.restore();
 }
 
 export function renderDepthProfile(root, profile, geometry, currentPrice) {
@@ -332,16 +439,22 @@ export function renderDepthProfile(root, profile, geometry, currentPrice) {
   }
 
   const currentPriceY = geometry.priceToCoordinate(currentPrice);
-  if (!Number.isFinite(currentPriceY)) return true;
-  context.save();
-  context.strokeStyle = 'rgba(240, 185, 11, .85)';
-  context.lineWidth = 1;
-  context.setLineDash([3, 3]);
-  context.beginPath();
-  context.moveTo(0, currentPriceY + 0.5);
-  context.lineTo(rect.width, currentPriceY + 0.5);
-  context.stroke();
-  context.restore();
+  if (Number.isFinite(currentPriceY)) {
+    context.save();
+    context.strokeStyle = 'rgba(240, 185, 11, .85)';
+    context.lineWidth = 1;
+    context.setLineDash([3, 3]);
+    context.beginPath();
+    context.moveTo(0, currentPriceY + 0.5);
+    context.lineTo(rect.width, currentPriceY + 0.5);
+    context.stroke();
+    context.restore();
+  }
+  if (maxVisibleCumulative > 0) {
+    drawDepthLabels(root, context, {
+      asks, bids, maxVisibleCumulative, rect, inverted: geometry.inverted, currentPriceY,
+    });
+  }
   return true;
 }
 
