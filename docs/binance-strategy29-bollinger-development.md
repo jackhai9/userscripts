@@ -113,7 +113,7 @@ and processing failures remain visible in the main view; raw processing reasons
 remain in Diagnostics. Delivery totals describe the server-wide notification
 outbox and do not establish whether notifications are enabled.
 
-Observer API compatibility is `29_2_spec_v3`; durable event records retain
+Observer API compatibility is `29_2_spec_v4`; durable event records retain
 `29_2_spec_v2` and are validated independently; the chart detector retains the frozen
 V1 reference and unchanged hash. The server independently ranks an activity-score
 universe and applies its configured intervals. Each status poll replaces current
@@ -198,7 +198,7 @@ records or replacing their DOM rows. Nonempty increments sort once for retention
 and rendering; locale changes still rebuild the translated rows.
 This requires the server's explicit per-interval snapshot
 query contract; a server rejecting it stops the remote context visibly.
-Publish the V3 observer API contract before the client, then verify installed
+Publish the V4 observer API contract before the client, then verify installed
 source identity and reload before remote acceptance. Publication of either
 component does not enable the observer, gateway, or notifications.
 
@@ -222,7 +222,7 @@ The status validator first checks the shared schema/spec/time identity envelope.
 A different spec exposes only those three fields; no incompatible unit, selection
 or delivery payload is interpreted. The panel clears current health rows, displays
 the mismatch and preserves retained events; event consumption is blocked. Matching
-V3 API responses still require every exact field and a coherent refresh state/reason
+V4 API responses require every exact field and a coherent refresh state/reason
 combination. An unknown schema envelope remains a contract error. The local reference hash is displayed and exposed
 for audit, but the current server status schema does not carry a hash, so the UI
 does not claim hash-level remote parity.

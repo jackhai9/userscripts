@@ -249,6 +249,27 @@ test('exposes remote/local spec mismatch before requesting event history', async
   assert.equal(fixture.snapshots[0].spec_version, 'other_spec');
 });
 
+test('a v3 backend is incompatible before requesting the per-timeframe snapshot', async () => {
+  const fixture = clientFixture([
+    response({ ...status, spec_version: '29_2_spec_v3' }), response(events),
+  ]);
+  assert.deepEqual(await fixture.client.poll(new AbortController().signal), {
+    state: 'incompatible', pages: 0, hasMore: false,
+  });
+  assert.deepEqual(fixture.requests.map(request => request.path), ['/v1/strategy29/status']);
+  assert.deepEqual(fixture.received, []);
+  assert.equal(fixture.client.diagnostics.cursor, null);
+});
+
+test('a rollback between status and events cannot publish a v3 snapshot or advance its cursor', async () => {
+  const fixture = clientFixture([
+    response(status), response({ ...events, spec_version: '29_2_spec_v3' }),
+  ]);
+  await assert.rejects(fixture.client.poll(new AbortController().signal), /events.spec_version/);
+  assert.deepEqual(fixture.received, []);
+  assert.equal(fixture.client.diagnostics.cursor, null);
+});
+
 
 test('Unicode selected markets and events preserve canonical identity through polling', async () => {
   const unicodeStatus = JSON.parse(JSON.stringify(status).replaceAll('BTC/USDT:USDT', '牛来/USDT:USDT'));

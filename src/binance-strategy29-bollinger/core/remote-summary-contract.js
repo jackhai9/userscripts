@@ -1,7 +1,7 @@
 import { isCanonicalUsdtSymbol, usdtRouteToCanonical, canonicalUsdtToRoute } from '../../shared/canonical-symbol.js';
 
 export const STRATEGY29_SCHEMA_VERSION = 1;
-export const STRATEGY29_API_SPEC_VERSION = '29_2_spec_v3';
+export const STRATEGY29_API_SPEC_VERSION = '29_2_spec_v4';
 export const STRATEGY29_EVENT_SPEC_VERSION = '29_2_spec_v2';
 export const STRATEGY29_REFERENCE_SHA256 = 'eece8cf16e58340910587962f3bfbb19acb72155c09a52b4b6c0570cc979ef8d';
 
