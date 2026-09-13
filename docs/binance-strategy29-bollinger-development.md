@@ -1,5 +1,8 @@
 # Binance Strategy 29 Bollinger Signals
 
+For component diagrams, shared gateway ownership, ports, and operator usage, see
+the [signal gateway architecture guide (Chinese)](signal-gateway-architecture.zh-CN.md).
+
 ## Scope and Installation
 
 The standalone `binance-strategy29-bollinger.user.js` owns the local

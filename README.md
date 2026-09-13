@@ -37,11 +37,11 @@ This repository is the source of truth and distribution point for the scripts. G
 
 | Script | Target | Description | Source of truth | Install |
 | --- | --- | --- | --- | --- |
-| Binance Strategy 29 Bollinger signals | Binance Futures | Annotate native loaded candles; remote summaries belong to the CorsairQuant signal client | This repository | [Install][install-binance-strategy29-bollinger] |
+| Binance Strategy 29 Bollinger signals | Binance Futures | Annotate native loaded candles and show cross-timeframe server summaries through the shared gateway | This repository | [Install][install-binance-strategy29-bollinger] |
 | Binance orderbook one-click order entry | Binance Futures | Click an orderbook price, infer the current open/close tab, fill quantity, and submit an order with a multiplier panel | This repository | [Install][install-binance-orderbook-trade] |
 | Binance Futures data panel | Binance Futures | Overlay open interest, long/short ratios, funding rate, basis, and directional signals | This repository | [Install][install-binance-trading-data] |
 | Binance CoinMarketCap data panel | Binance Futures | Show CoinMarketCap valuation, supply, and liquidity data for the current symbol | This repository | [Install][install-binance-coinmarketcap-data] |
-| Binance CorsairQuant signal client | Binance Futures | Configure one gateway for Strategy27 event annotations and Strategy29 cross-timeframe summaries | This repository | [Install][install-binance-strategy27-events] |
+| Binance CorsairQuant signal client | Binance Futures | Annotate Strategy27 events and provide the shared private gateway connection for Strategy29 | This repository | [Install][install-binance-strategy27-events] |
 | Auto refresh | Any page | Refresh selected pages on a configurable schedule | This repository | [Install][install-auto-refresh] |
 | CoinMarketCap valuation labels | CoinMarketCap | Label and highlight circulating market cap and FDV / total valuation in the Chinese UI | This repository | [Install][install-coinmarketcap-valuation-helper] |
 | m3u8 downloader | Video pages | Enhanced m3u8 detection and export workflow for allowlisted video sites | This repository | [Install][install-m3u8] |
@@ -65,8 +65,11 @@ This repository is the source of truth and distribution point for the scripts. G
 
 - Reads only the authenticated loopback gateway through an SSH local forward.
 - Updates the existing Strategy27 installation in place and retains its private gateway configuration for all remote modules.
+- Strategy29 uses that shared connection and owns its own summary panel.
 - Adds no Binance market-data WebSocket or Binance API key to Chrome.
 - Draws bounded, transient event markers and objective four-force notes on the matching one-second chart.
+
+The gateway supplies signals computed by CorsairQuant to the browser. See the [signal gateway architecture and usage guide (Chinese)](docs/signal-gateway-architecture.zh-CN.md) for component diagrams, ports, request flow, and setup.
 
 ### m3u8 downloader
 
@@ -104,6 +107,7 @@ npm run build:binance-userscripts
 
 ## Documentation
 
+- [Signal gateway architecture and usage (Chinese)](docs/signal-gateway-architecture.zh-CN.md)
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
 - [Binance Strategy 29 Bollinger signals and migration](docs/binance-strategy29-bollinger-development.md)
 - [Binance orderbook UI automation](docs/binance-orderbook-trade-ui-automation.md)

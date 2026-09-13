@@ -4,6 +4,9 @@ This document owns the Strategy 27 gateway, chart-rendering, and entity
 contracts. Generic Codex/tool timeout and connection policy belongs to the global
 rule and shared knowledge runbook.
 
+For component diagrams, shared gateway ownership, ports, and operator usage, see
+the [signal gateway architecture guide (Chinese)](signal-gateway-architecture.zh-CN.md).
+
 ## Purpose
 
 `binance-strategy27-events.user.js` is a rendering client for the Strategy 27
