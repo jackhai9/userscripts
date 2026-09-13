@@ -139,6 +139,23 @@ The userscript installs `core/binance-native-depth-source.js` at `document-start
 
 The session must stop and invalidate old work on symbol change, non-trading routes, hidden documents, and `pagehide`. The overlay canvas uses `pointer-events: none`; only its compact collapse control may receive pointer input. Do not connect this visualization book to ladder pricing or any trading decision.
 
+Compact depth labels are painted inside the existing 132px canvas. Each pixel row
+keeps its largest cumulative quantity for the bar and separately sums all real
+level quantities for its label, retaining the full minimum-to-maximum price band.
+Labels identify band quantities in the native book's units, not cumulative totals
+or changes over time. Candidates must add at least 8 CSS pixels of depth at the
+current visible scale; larger quantities win, with at most two labels per side.
+Both sides share collision checks against other labels, the latest-trade divider,
+the collapse control, and visible status text.
+
+Each label uses 11px text, a 16px height, and its measured width up to 88px. Price
+and compact quantity are shown when they fit; a long price band uses quantity
+alone instead of truncating it or pretending it belongs to a single price.
+Quantities use up to three significant digits and omit repeated asset names.
+Labels stay within the canvas, follow inverted scales, and are omitted when no
+space remains. They repaint and clear with the depth bars without adding DOM
+nodes, listeners, timers, or cross-frame state.
+
 ## Symbol Identity
 
 `src/shared/binance-symbol.js` owns the Binance identifier character contract:
