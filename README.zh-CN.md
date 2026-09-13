@@ -35,11 +35,11 @@
 
 | 脚本 | 适用场景 | 说明 | 源码真源 | 安装 |
 |---|---|---|---|---|
-| 【自写】Binance Strategy 29 布林带信号 | Binance Futures | Annotate native loaded candles; remote summaries belong to the CorsairQuant signal client | 本仓库 | [安装][install-binance-strategy29-bollinger] |
+| 【自写】Binance Strategy 29 布林带信号 | Binance Futures | 标注本地图表信号，并通过共享网关显示服务端跨周期汇总 | 本仓库 | [安装][install-binance-strategy29-bollinger] |
 | 【自写】Binance 订单簿单击下单 | Binance Futures | 单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
 | 【自写】Binance 合约交易数据面板 | Binance Futures | 在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号 | 本仓库 | [`点击安装`][install-binance-trading-data] |
 | 【自写】Binance CoinMarketCap 数据面板 | Binance Futures | 在 Binance 合约页面显示当前币种的 CoinMarketCap 估值、供应量和流动性数据 | 本仓库 | [`点击安装`][install-binance-coinmarketcap-data] |
-| 【自写】Binance Strategy 27 事件标注（CorsairQuant 信号客户端） | Binance Futures | Configure one gateway for Strategy27 event annotations and Strategy29 cross-timeframe summaries | 本仓库 | [`点击安装`][install-binance-strategy27-events] |
+| 【自写】Binance Strategy 27 事件标注（CorsairQuant 信号客户端） | Binance Futures | 标注 Strategy27 事件，保存共享网关配置并为 Strategy29 提供只读连接 | 本仓库 | [`点击安装`][install-binance-strategy27-events] |
 | 【自写】定时刷新指定页面 | Any page | 指定页面按设定时间自动刷新 | 本仓库 | [`点击安装`][install-auto-refresh] |
 | 【自写】CoinMarketCap 估值口径命名 | CoinMarketCap | 在中文币种页面左上角统计区标注并高亮流通市值和 FDV / 总估值 | 本仓库 | [`点击安装`][install-coinmarketcap-valuation-helper] |
 | 【改写】m3u8-downloader | Video pages | m3u8 下载增强脚本，仅在白名单视频站启用 | 本仓库 | [`点击安装`][install-m3u8] |
@@ -62,8 +62,11 @@
 ### Binance CorsairQuant 信号客户端
 
 - 只通过 SSH 本地转发读取带认证的本机网关。
+- 保存一份私有网关配置供 Strategy27 与 Strategy29 共用；Strategy29 管理自己的汇总面板。
 - 不在 Chrome 中新增 Binance 行情 WebSocket，也不使用 Binance API Key。
 - 在匹配币种的一秒图表上绘制数量和保留时间均受限的事件标记及四力客观备注。
+
+网关把 CorsairQuant 服务端算好的信号送到浏览器。组件关系、三个端口的含义、请求流程和配置步骤见 [信号网关架构与使用说明](docs/signal-gateway-architecture.zh-CN.md)。
 
 ### m3u8-downloader
 
@@ -101,10 +104,12 @@ npm run build:binance-userscripts
 
 开发手册：
 
+- [信号网关架构、用途与使用说明](docs/signal-gateway-architecture.zh-CN.md)
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
 - [Binance orderbook UI automation](docs/binance-orderbook-trade-ui-automation.md)
 - [Userscript validation and maintenance](docs/userscript-validation.md)
 - [Binance Strategy 27 event annotations](docs/binance-strategy27-events-development.md)
+- [Binance Strategy 29 Bollinger signals](docs/binance-strategy29-bollinger-development.md)
 - [Brooks media sync workflow](docs/brooks-media-sync-workflow.md)
 
 [install-binance-orderbook-trade]: https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-orderbook-trade.user.js
