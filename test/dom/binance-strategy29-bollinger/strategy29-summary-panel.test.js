@@ -13,6 +13,62 @@ function createStrategy29SummaryPanel(document, symbol, options = {}) {
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('each timeframe retains three signals through dense minute updates and historical backfills', () => {
+  const dom = new JSDOM('<body></body>');
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
+  const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
+  let sequence = 0;
+  const records = timeframes.flatMap((timeframe, group) => Array.from({ length: group === 0 ? 30 : 3 }, (_, index) => ({
+    ...events.events[0], timeframe, event_id: String(++sequence).padStart(64, '0'), sequence,
+    bar_close_ms: events.observed_at_ms - group * 86_400_000 - index * 60_000,
+  })));
+  panel.addEvents(records, events.observed_at_ms);
+  const rows = () => [...dom.window.document.querySelectorAll('[data-role=remote-event]')];
+  assert.equal(panel.size, 18);
+  for (const timeframe of timeframes) assert.equal(rows().filter(row => row.firstChild.textContent === timeframe).length, 3);
+  const otherIds = rows().filter(row => row.firstChild.textContent !== '1m').map(row => row.dataset.eventId);
+  const updates = Array.from({ length: 5 }, (_, index) => ({
+    ...records[0], event_id: String(++sequence).padStart(64, '0'), sequence,
+    bar_close_ms: events.observed_at_ms + (index + 1) * 60_000,
+  }));
+  panel.addEvents(updates, events.observed_at_ms + 300_000);
+  panel.addEvents([{ ...records[10], event_id: 'f'.repeat(64), sequence: ++sequence }]);
+  assert.deepEqual(rows().slice(0, 3).map(row => row.dataset.eventId), updates.slice(-3).reverse().map(event => event.event_id));
+  assert.deepEqual(rows().filter(row => row.firstChild.textContent !== '1m').map(row => row.dataset.eventId), otherIds);
+  panel.setLocale('zh-CN');
+  assert.equal(panel.size, 18);
+  panel.destroy();
+  dom.window.close();
+});
+
+test('diagnostics start collapsed with duration-sorted processing while actionable notices stay outside', () => {
+  const dom = new JSDOM('<body></body>');
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
+  const timeframes = ['15m', '1d', '1h', '1m', '4h', '5m'];
+  panel.renderStatus({ ...status, universe: { ...status.universe, configured_timeframes: timeframes },
+    units: timeframes.map(timeframe => ({ ...status.units[0], timeframe, status: timeframe === '4h' ? 'data_gap' : 'ready', reason: timeframe === '4h' ? 'closed_bar_gap' : 'current' })),
+  });
+  const diagnostics = dom.window.document.querySelector('[data-role=diagnostics]');
+  assert.equal(diagnostics.tagName, 'DETAILS');
+  assert.equal(diagnostics.open, false);
+  for (const role of ['spec', 'reference', 'units', 'delivery', 'selection-details']) {
+    assert.equal(dom.window.document.querySelector(`[data-role=${role}]`).closest('details'), diagnostics);
+  }
+  assert.deepEqual([...diagnostics.querySelectorAll('[data-role=unit]')].map(row => row.firstChild.textContent), ['1m', '5m', '15m', '1h', '4h', '1d']);
+  const notices = dom.window.document.querySelector('[data-role=notices]');
+  assert.equal(notices.closest('details'), null);
+  assert.match(notices.textContent, /4h.*Data gap/);
+  assert.doesNotMatch(notices.textContent, /closed_bar_gap/);
+  assert.match(diagnostics.textContent, /closed_bar_gap/);
+  panel.addEvents(events.events, events.observed_at_ms);
+  panel.setConnection('disconnected', { en: 'Disconnected', zhCN: '连接中断' });
+  assert.match(notices.textContent, /historical/i);
+  panel.renderStatus({ ...status, spec_version: 'incompatible-spec' });
+  assert.match(notices.textContent, /update/i);
+  panel.destroy();
+  dom.window.close();
+});
+
 test('empty increments retain event DOM identities while advancing freshness', () => {
   const dom = new JSDOM('<body></body>');
   const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
@@ -32,7 +88,7 @@ test('empty increments retain event DOM identities while advancing freshness', (
   rows.forEach((row, index) => assert.equal(container.children[index], row));
   assert.equal(observer.takeRecords().length, 0);
   assert.notEqual(freshness.textContent, before);
-  assert.equal(panel.size, 20);
+  assert.equal(panel.size, 3);
   panel.setLocale('zh-CN');
   assert.notEqual(container.firstChild, rows[0]);
   assert.match(freshness.textContent, /UTC\+08/);
@@ -69,7 +125,8 @@ test('distinguishes stored processing success from current live readiness', () =
   panel.renderStatus({ ...status, universe: {
     ...status.universe, ready_unit_count: 0, pending_unit_count: status.universe.selected_unit_count,
   } });
-  assert.match(dom.window.document.querySelector('[data-role=selection]').textContent, /0\/3 live units ready/);
+  assert.match(dom.window.document.querySelector('[data-role=selection-details]').textContent, /0\/3 live units ready/);
+  assert.match(dom.window.document.querySelector('[data-role=notices]').textContent, /3 server monitoring units are not ready/);
   assert.match(dom.window.document.body.textContent, /Last processing status/);
   assert.match(dom.window.document.body.textContent, /Stored processing status does not confirm current live readiness/);
   const processing = dom.window.document.querySelector('[data-role=unit]').children[1];
@@ -81,7 +138,7 @@ test('distinguishes stored processing success from current live readiness', () =
 
 test('distinguishes unavailable selection, unselected symbol and pending unit registration', () => {
   const dom = new JSDOM('<body></body>');
-  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
   panel.addEvents(events.events);
   panel.renderStatus({ ...status, units: [] });
   assert.match(dom.window.document.body.textContent, /Symbol is selected; waiting for unit status/);
@@ -103,17 +160,17 @@ test('distinguishes unavailable selection, unselected symbol and pending unit re
 
 test('replaces dynamic membership while retaining durable signal history', () => {
   const dom = new JSDOM('<body></body>');
-  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
   panel.renderStatus(status);
   panel.addEvents(events.events);
   assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 2);
   panel.renderStatus({ ...status, universe: { ...status.universe, configured_timeframes: ['1h'] } });
   assert.deepEqual([...dom.window.document.querySelectorAll('[data-role=unit]')].map(row => row.firstChild.textContent), ['1h']);
-  assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 1);
   panel.renderStatus({ ...status, universe: { ...status.universe, selected_markets: ['ETH/USDT:USDT'] }, units: [] });
   assert.equal(dom.window.document.querySelectorAll('[data-role=unit]').length, 0);
   assert.match(dom.window.document.body.textContent, /Symbol is not watched/);
-  assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
+  assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 1);
   panel.renderStatus({ ...status, universe: { ...status.universe, configured_timeframes: ['4h'] }, units: [{ ...status.units[0], timeframe: '4h', status: 'warming', reason: 'awaiting_producer_generation' }] });
   const units = dom.window.document.querySelectorAll('[data-role=unit]');
   assert.equal(units.length, 1);
@@ -125,7 +182,7 @@ test('replaces dynamic membership while retaining durable signal history', () =>
 
 test('renders all watched timeframes for the route symbol and labels global delivery totals', () => {
   const dom = new JSDOM('<body></body>');
-  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
   panel.renderStatus(status);
   const text = dom.window.document.body.textContent;
   assert.match(text, /BTC\/USDT:USDT/);
@@ -143,7 +200,7 @@ test('renders all watched timeframes for the route symbol and labels global deli
 
 test('shows multi-timeframe events, deduplicates identities and clears only remote rows', () => {
   const dom = new JSDOM('<body></body>');
-  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
   panel.addEvents(events.events, events.observed_at_ms);
   panel.addEvents([events.events[0]]);
   assert.equal(dom.window.document.querySelectorAll('[data-role=remote-event]').length, 2);
@@ -163,7 +220,7 @@ test('shows multi-timeframe events, deduplicates identities and clears only remo
 
 test('makes server/local spec mismatch visible without rendering it as verified', () => {
   const dom = new JSDOM('<body></body>');
-  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 8 });
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
   panel.renderStatus(status);
   panel.addEvents(events.events, events.observed_at_ms);
   panel.renderStatus({ schema_version: 1, spec_version: 'other_spec', observed_at_ms: status.observed_at_ms });
@@ -180,13 +237,14 @@ test('makes server/local spec mismatch visible without rendering it as verified'
 
 test('retains newest signal close times regardless of insertion or detection order', () => {
   const dom = new JSDOM('<body></body>');
-  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', { maxEvents: 2 });
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
   const first = { ...events.events[0], event_id: 'a'.repeat(64), sequence: 10, detected_at_ms: 3000, bar_close_ms: 3000 };
   const second = { ...events.events[0], event_id: 'b'.repeat(64), sequence: 11, detected_at_ms: 2000, bar_close_ms: 3000 };
-  const third = { ...events.events[0], event_id: 'c'.repeat(64), sequence: 12, detected_at_ms: 4000, bar_close_ms: 1000 };
-  panel.addEvents([first, second]);
-  panel.addEvents([third]);
-  assert.deepEqual([...dom.window.document.querySelectorAll('[data-role=remote-event]')].map(row => row.dataset.eventId), [second.event_id, first.event_id]);
+  const third = { ...events.events[0], event_id: 'c'.repeat(64), sequence: 12, detected_at_ms: 4000, bar_close_ms: 2000 };
+  const fourth = { ...events.events[0], event_id: 'd'.repeat(64), sequence: 13, detected_at_ms: 5000, bar_close_ms: 1000 };
+  panel.addEvents([first, second, third]);
+  panel.addEvents([fourth]);
+  assert.deepEqual([...dom.window.document.querySelectorAll('[data-role=remote-event]')].map(row => row.dataset.eventId), [second.event_id, first.event_id, third.event_id]);
   panel.destroy();
   dom.window.close();
 });

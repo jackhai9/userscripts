@@ -22,7 +22,8 @@ export function validateSignalGatewayPath(path) {
   }
   const cursor = query.get('cursor');
   const latest = keys.length === 3 && keys.every(key => ['symbol', 'mode', 'limit'].includes(key))
-    && query.get('mode') === 'latest' && query.get('limit') === '20';
+    && ((query.get('mode') === 'latest' && query.get('limit') === '20')
+      || (query.get('mode') === 'latest_per_timeframe' && query.get('limit') === '3'));
   const increment = keys.length === 2 && keys.includes('cursor')
     && /^(0|[1-9]\d*)$/.test(cursor) && Number.isSafeInteger(Number(cursor));
   if (!latest && !increment) throw new TypeError('Signal gateway event query is invalid');

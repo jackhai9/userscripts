@@ -21,12 +21,16 @@ function fixture(implementation) {
 
 test('public capability accepts only exact bounded Strategy29 read paths', () => {
   for (const path of ['/v1/strategy29/status', '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest&limit=20',
+    '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest_per_timeframe&limit=3',
     '/v1/strategy29/events?symbol=%E7%89%9B%E6%9D%A5%2FUSDT%3AUSDT&cursor=42']) {
     assert.equal(validateSignalGatewayPath(path), path);
   }
   for (const path of ['https://127.0.0.1:18765/v1/strategy29/status', '//127.0.0.1/v1/strategy29/status',
     '/v1/strategy29/status?x=1', '/v1/strategy29/status#x', '/v1/strategy29/../strategy29/status',
     '/v1/strategy29/status/', '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest&limit=200',
+    '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest_per_timeframe&limit=4',
+    '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest_per_timeframe&limit=3&timeframe=1m',
+    '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest_per_timeframe&limit=3&cursor=0',
     '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&cursor=0&cursor=1',
     '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&cursor=9007199254740992',
     '/v1/strategy29/events?symbol=btc%2FUSDT%3AUSDT&cursor=0',

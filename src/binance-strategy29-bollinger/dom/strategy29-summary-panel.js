@@ -1,4 +1,4 @@
-import { STRATEGY29_REFERENCE_SHA256, STRATEGY29_API_SPEC_VERSION } from '../core/remote-summary-contract.js';
+import { STRATEGY29_REFERENCE_SHA256, STRATEGY29_API_SPEC_VERSION, STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME, compareStrategy29Timeframes } from '../core/remote-summary-contract.js';
 
 import { SUMMARY_COPY as COPY, SELECTION_REASONS, STATUS_LABELS, SIGNAL_LABELS, processingReason, formatLocalizedText, resolveUiLocaleFromPathname } from '../ui-copy.js';
 import { installPanelPosition } from './panel-position.js';
@@ -50,10 +50,9 @@ function formatClock(timestampMs) {
   return `${part('month')}-${part('day')} ${part('hour')}:${part('minute')}:${part('second')} UTC+08`;
 }
 
-export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEvents = 20, locale = resolveUiLocaleFromPathname(document.location.pathname), loadPosition, savePosition } = {}) {
+export function createStrategy29SummaryPanel(document, canonicalSymbol, { locale = resolveUiLocaleFromPathname(document.location.pathname), loadPosition, savePosition } = {}) {
   if (!document?.body) throw new Error('Strategy 29 summary panel requires document.body');
   if (typeof canonicalSymbol !== 'string' || canonicalSymbol.length === 0) throw new Error('Strategy 29 panel symbol is invalid');
-  if (!Number.isInteger(maxEvents) || maxEvents < 1 || maxEvents > 100) throw new Error('Strategy 29 panel maxEvents is invalid');
   const text = value => formatLocalizedText(value, locale);
   text(COPY.waiting);
   if (typeof loadPosition !== 'function' || typeof savePosition !== 'function') throw new TypeError('Strategy 29 panel position adapters are required');
@@ -95,8 +94,12 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   const statusFreshness = element(document, 'div', { text: text(COPY.noStatus), role: 'status-freshness', styles: { color: '#848E9C', fontSize: '11px' } });
   const eventsFreshness = element(document, 'div', { text: text(COPY.noEventsCheck), role: 'events-freshness', styles: { color: '#848E9C', fontSize: '11px' } });
   const selection = element(document, 'div', { role: 'selection', styles: { color: '#EAECEF', fontSize: '11px' } });
+  const timeframeSummary = element(document, 'div', { role: 'timeframes', styles: { color: '#848E9C', fontSize: '11px' } });
+  const notices = element(document, 'div', { role: 'notices', styles: { color: '#F0B90B', fontSize: '11px', whiteSpace: 'pre-line' } });
+  notices.setAttribute('aria-live', 'polite');
+  const selectionDetails = element(document, 'div', { role: 'selection-details', styles: { color: '#848E9C', fontSize: '11px' } });
   const selectionRefresh = element(document, 'div', { role: 'selection-refresh', styles: { color: '#848E9C', fontSize: '11px' } });
-  overview.append(connection, spec, reference, statusFreshness, selection, selectionRefresh, eventsFreshness);
+  overview.append(connection, selection, timeframeSummary, eventsFreshness, notices);
   const unitsTitle = element(document, 'div', { text: text(COPY.processing), styles: { padding: '7px 10px 4px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontWeight: '600' } });
   const processingHint = element(document, 'div', {
     text: text(COPY.processingHint),
@@ -106,13 +109,24 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
   const units = element(document, 'div', { role: 'units', styles: { display: 'grid', gap: '3px', padding: '0 7px 8px' } });
   const delivery = element(document, 'div', { text: text(COPY.waitingDelivery), role: 'delivery', styles: { padding: '7px 10px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontSize: '11px' } });
   const eventsTitle = element(document, 'div', { text: text(COPY.recent), styles: { padding: '7px 10px 4px', borderTop: '1px solid rgba(132,142,156,.18)', color: '#848E9C', fontWeight: '600' } });
+  const eventsHint = element(document, 'div', { text: text(COPY.perTimeframe(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME)), styles: { padding: '0 10px 5px', color: '#848E9C', fontSize: '11px' } });
   const events = element(document, 'div', { role: 'events', styles: { display: 'grid', gap: '3px', padding: '0 7px 8px' } });
-  body.append(overview, unitsTitle, units, delivery, eventsTitle, events);
+  const missingSignals = element(document, 'div', { role: 'missing-signals', styles: { padding: '0 10px 8px', color: '#848E9C', fontSize: '11px' } });
+  const diagnostics = element(document, 'details', { role: 'diagnostics', styles: { borderTop: '1px solid rgba(132,142,156,.18)' } });
+  const diagnosticsTitle = element(document, 'summary', { text: text(COPY.diagnostics), styles: { padding: '8px 10px', color: '#848E9C', cursor: 'pointer' } });
+  const diagnosticOverview = element(document, 'div', { styles: { display: 'grid', gap: '4px', padding: '0 10px 8px' } });
+  diagnosticOverview.append(spec, reference, statusFreshness, selectionDetails, selectionRefresh);
+  diagnostics.append(diagnosticsTitle, diagnosticOverview, unitsTitle, units, delivery);
+  body.append(overview, eventsTitle, eventsHint, events, missingSignals, diagnostics);
   panel.append(header, body);
   document.body.appendChild(panel);
 
   const position = installPanelPosition(document, panel, header, { initialPosition: stored, savePosition });
   const eventRecords = new Map();
+  let configuredTimeframes = null;
+  let statusMessages = [];
+  let connectionState = null;
+  let statusUnreliable = true;
   let lastStatus = null;
   function clearCurrentStatus() {
     lastStatus = null;
@@ -123,15 +137,35 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     selection.dataset.state = 'unavailable';
     selection.style.color = '#848E9C';
     selection.textContent = text(COPY.noLiveStatus);
+    selectionDetails.textContent = '';
     selectionRefresh.textContent = '';
+    statusMessages = [];
+    statusUnreliable = true;
     units.replaceChildren();
     delivery.textContent = text(COPY.waitingDelivery);
+    renderNotices();
   }
   let lastEventsAt = null;
   let connectionCopy = COPY.waiting;
   let destroyed = false;
   function assertLive() {
     if (destroyed) throw new Error('Strategy 29 summary panel is destroyed');
+  }
+  function renderNotices() {
+    const messages = [...statusMessages];
+    if (eventRecords.size > 0 && (statusUnreliable || ['disabled', 'module_disabled', 'gateway_unavailable', 'unavailable', 'disconnected', 'stopped', 'incompatible'].includes(connectionState))) {
+      messages.unshift(text(COPY.historicalOnly));
+    }
+    const message = messages.join('\n');
+    if (notices.textContent !== message) notices.textContent = message;
+    notices.hidden = messages.length === 0;
+  }
+  function renderMissingSignals() {
+    const present = new Set([...eventRecords.values()].map(event => event.timeframe));
+    const missing = lastEventsAt === null || configuredTimeframes === null ? [] : configuredTimeframes.filter(timeframe => !present.has(timeframe));
+    const message = missing.length === 0 ? '' : text(COPY.missingSignals(missing.join(', ')));
+    if (missingSignals.textContent !== message) missingSignals.textContent = message;
+    missingSignals.hidden = missing.length === 0;
   }
   function renderEvents(ordered) {
     events.replaceChildren();
@@ -149,7 +183,9 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
       row.appendChild(element(document, 'span', { text: text(COPY.close(formatClock(event.bar_close_ms))), styles: { color: '#848E9C', fontSize: '10px', textAlign: 'right' } }));
       events.appendChild(row);
     }
-    if (ordered.length === 0) events.appendChild(element(document, 'span', { text: text(COPY.noEvents), styles: { color: '#848E9C', padding: '4px' } }));
+    if (ordered.length === 0) events.appendChild(element(document, 'span', { text: text(lastEventsAt === null ? COPY.waitingSignals : COPY.noEvents), styles: { color: '#848E9C', padding: '4px' } }));
+    renderMissingSignals();
+    renderNotices();
   }
 
   collapse.addEventListener('click', () => {
@@ -158,6 +194,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     collapse.textContent = text(collapsed ? COPY.expand : COPY.collapse);
     position.clamp();
   });
+  diagnostics.addEventListener('toggle', () => { if (!destroyed) position.clamp(); });
   renderEvents([]);
 
   const api = Object.freeze({
@@ -171,9 +208,12 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
       collapse.textContent = text(body.style.display === 'none' ? COPY.expand : COPY.collapse);
       connection.textContent = text(connectionCopy);
       reference.textContent = text(COPY.reference(STRATEGY29_REFERENCE_SHA256));
+      diagnosticsTitle.textContent = text(COPY.diagnostics);
       unitsTitle.firstChild.textContent = text(COPY.processing);
       processingHint.textContent = text(COPY.processingHint);
       eventsTitle.textContent = text(COPY.recent);
+      eventsHint.textContent = text(COPY.perTimeframe(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME));
+      timeframeSummary.textContent = configuredTimeframes === null ? '' : text(COPY.intervals(configuredTimeframes.join(', ')));
       eventsFreshness.textContent = text(lastEventsAt === null ? COPY.noEventsCheck : COPY.eventsAt(formatClock(lastEventsAt)));
       if (lastStatus !== null) api.renderStatus(lastStatus);
       else clearCurrentStatus();
@@ -183,11 +223,13 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
     setConnection(state, message) {
       assertLive();
       if (!(state in STATE_COLORS)) throw new Error('Strategy 29 panel connection state is invalid');
+      connectionState = state;
       connection.dataset.state = state;
       connection.style.color = STATE_COLORS[state];
       connectionCopy = message;
       connection.textContent = text(message);
       if (['disabled', 'module_disabled', 'gateway_unavailable', 'unavailable'].includes(state)) clearCurrentStatus();
+      renderNotices();
       position.clamp();
     },
     renderStatus(snapshot) {
@@ -201,29 +243,52 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
         : text(COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version));
       statusFreshness.textContent = text(COPY.statusAt(formatClock(snapshot.observed_at_ms)));
       if (!matched) {
+        statusUnreliable = true;
+        statusMessages = [text(COPY.updateRequired)];
         selection.dataset.state = 'incompatible';
         selection.style.color = '#F6465D';
         selection.textContent = text(COPY.incompatibleSelection);
+        selectionDetails.textContent = '';
         selectionRefresh.textContent = '';
         units.replaceChildren();
         delivery.textContent = text(COPY.incompatibleDelivery);
+        renderNotices();
         position.clamp();
         return;
       }
       const universe = snapshot.universe;
       const unavailable = universe.refresh_status === 'fail_closed';
+      const selected = universe.selected_markets.includes(canonicalSymbol);
+      statusUnreliable = unavailable || !selected;
+      statusMessages = [];
+      // Missing selection facts do not retire the last known configuration or its history.
+      if (universe.configured_timeframes.length > 0) {
+        const next = [...universe.configured_timeframes].sort(compareStrategy29Timeframes);
+        if (configuredTimeframes === null || next.join(',') !== configuredTimeframes.join(',')) {
+          configuredTimeframes = next;
+          let removed = false;
+          for (const [id, event] of eventRecords) {
+            if (!next.includes(event.timeframe)) { eventRecords.delete(id); removed = true; }
+          }
+          if (removed) renderEvents([...eventRecords.values()].sort(newestSignalFirst));
+        }
+      }
+      timeframeSummary.textContent = configuredTimeframes === null ? '' : text(COPY.intervals(configuredTimeframes.join(', ')));
       selection.dataset.state = universe.refresh_status;
       selection.style.color = unavailable ? '#F6465D' : universe.refresh_status === 'fresh' ? '#0ECB81' : '#F0B90B';
-      selection.textContent = [text(SELECTION_REASONS[universe.reason]), text(COPY.generation(universe.generation ?? text(COPY.pending))), text(COPY.markets(universe.selected_markets.length)), text(COPY.ready(universe.ready_unit_count, universe.selected_unit_count)), text(COPY.intervals(universe.configured_timeframes.join(', ') || text(COPY.pending)))].join(' · ');
+      selection.textContent = text(unavailable ? SELECTION_REASONS[universe.reason] : selected ? COPY.selected : COPY.notSelected);
+      selectionDetails.textContent = [text(SELECTION_REASONS[universe.reason]), text(COPY.generation(universe.generation ?? text(COPY.pending))), text(COPY.markets(universe.selected_markets.length)), text(COPY.ready(universe.ready_unit_count, universe.selected_unit_count))].join(' · ');
       selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null
         ? text(COPY.noSuccess)
         : text(COPY.lastSuccess(formatClock(universe.last_successful_refreshed_at_ms), universe.last_success_age_seconds.toFixed(1)));
       units.replaceChildren();
-      const selected = universe.selected_markets.includes(canonicalSymbol);
       const matching = unavailable || !selected ? [] : snapshot.units.filter(unit => (
         unit.symbol === canonicalSymbol && universe.configured_timeframes.includes(unit.timeframe)
-      ));
+      )).sort((left, right) => compareStrategy29Timeframes(left.timeframe, right.timeframe));
+      if (!unavailable && universe.refresh_status !== 'fresh') statusMessages.push(text(SELECTION_REASONS[universe.reason]));
+      if (!unavailable && universe.pending_unit_count > 0) statusMessages.push(text(COPY.globalPending(universe.pending_unit_count)));
       for (const unit of matching) {
+        if (unit.status !== 'ready') statusMessages.push(`${unit.timeframe} · ${text(STATUS_LABELS[unit.status])}`);
         const row = element(document, 'div', {
           role: 'unit',
           styles: { display: 'grid', gridTemplateColumns: '36px 78px minmax(0,1fr)', gap: '6px', padding: '4px 6px', borderRadius: '5px', background: 'rgba(132,142,156,.08)' },
@@ -238,28 +303,46 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { maxEve
         text: text(unavailable ? COPY.unavailableSelection : selected ? COPY.awaitingUnits : COPY.notSelected),
         styles: { color: '#F0B90B', padding: '4px' },
       }));
+      if (!unavailable && selected && matching.length === 0) statusMessages.push(text(COPY.awaitingUnits));
       const counts = snapshot.delivery_counts;
       delivery.textContent = text(COPY.delivery(counts));
+      renderMissingSignals();
+      renderNotices();
       position.clamp();
     },
     addEvents(incoming, observedAtMs = null) {
       assertLive();
+      const firstCheck = lastEventsAt === null && observedAtMs !== null;
+      if (observedAtMs !== null) lastEventsAt = observedAtMs;
       if (incoming.length > 0) {
-        for (const event of incoming) eventRecords.set(event.event_id, event);
+        for (const event of incoming) {
+          if (configuredTimeframes === null || configuredTimeframes.includes(event.timeframe)) eventRecords.set(event.event_id, event);
+        }
         const ordered = [...eventRecords.values()].sort(newestSignalFirst);
-        while (ordered.length > maxEvents) eventRecords.delete(ordered.pop().event_id);
-        renderEvents(ordered);
+        const counts = new Map();
+        const retained = ordered.filter(event => {
+          const count = (counts.get(event.timeframe) ?? 0) + 1;
+          counts.set(event.timeframe, count);
+          if (count <= STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME) return true;
+          eventRecords.delete(event.event_id);
+          return false;
+        });
+        renderEvents(retained);
+      } else if (firstCheck && eventRecords.size === 0) {
+        renderEvents([]);
       }
       // Empty increments still advance freshness, but contain no changes to retained rows.
       if (observedAtMs !== null) {
-        lastEventsAt = observedAtMs;
         eventsFreshness.textContent = text(COPY.eventsAt(formatClock(observedAtMs)));
       }
+      renderMissingSignals();
       position.clamp();
     },
     clearEvents() {
       assertLive();
       eventRecords.clear();
+      lastEventsAt = null;
+      eventsFreshness.textContent = text(COPY.noEventsCheck);
       renderEvents([]);
       position.clamp();
     },
