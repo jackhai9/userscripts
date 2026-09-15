@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.207
+// @version      2.7.208
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -975,7 +975,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     ['执行中数量输入框已消失', 'Quantity input disappeared during execution'],
     ['当前方向暂无可平数量', 'No closable quantity in this direction'],
     ['查找当前委托', 'Locating Open Orders'],
-    ['未选中待替换挂单', 'No replacement orders were selected'],
+    ['同向可撤挂单总量不足本轮目标，未撤销已有挂单', 'Cancellable same-direction order quantity is below the target for this round; existing orders were not cancelled'],
     ['原挂单未完成替换，已停止重新挂单', 'Previous orders were not fully replaced; replacement stopped'],
     ['撤销待替换挂单前交易对已变化', 'Symbol changed before cancelling replacement orders'],
     ['撤销待替换挂单时交易对已变化', 'Symbol changed while cancelling replacement orders'],
@@ -6021,7 +6021,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
       const rowsToCancel = selectOpenOrderRowsToCancelForPlan(plan, rows);
       if (!rowsToCancel.length) {
-        const message = '未选中待替换挂单';
+        const message = '同向可撤挂单总量不足本轮目标，未撤销已有挂单';
         setPlanStepStatus(message);
         return { ok: false, status: 'rows_not_selected', message };
       }
