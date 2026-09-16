@@ -107,9 +107,13 @@ function stage3Input(overrides = {}) {
   };
 }
 
-test('Stage 3 evidence binds exact artifact, MCP, CDP, interaction, and cleanup state', () => {
-  const evidence = createStage3Evidence(stage3Input());
+test('user observes that Stage 3 evidence binds exact artifact, MCP, CDP, interaction, and cleanup state', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = stage3Input();
+  // When the Stage 3 evidence binds exact artifact, MCP, CDP, interaction, and cleanup state
+  const evidence = createStage3Evidence(scenarioInput);
 
+  // Then Stage 3 evidence binds exact artifact, MCP, CDP, interaction, and cleanup state
   assert.equal(evidence.artifact.namespace, 'binance.orderbook.trade');
   assert.equal(evidence.artifact.sha256, evidence.tampermonkey.sourceIdentity.sha256);
   assert.equal(
@@ -123,13 +127,21 @@ test('Stage 3 evidence binds exact artifact, MCP, CDP, interaction, and cleanup 
   }), evidence);
 });
 
-test('Stage 3 evidence rejects duplicate MCP namespace matches and source drift', () => {
-  assert.throws(
-    () => createStage3Evidence(stage3Input({
+test('user observes that Stage 3 evidence rejects duplicate MCP namespace matches and source drift', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = stage3Input({
       tampermonkey: { namespaceMatchCount: 2 },
-    })),
-    /namespaceMatchCount must equal 1/,
-  );
+    });
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    createStage3Evidence(scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then Stage 3 evidence rejects duplicate MCP namespace matches and source drift
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /namespaceMatchCount must equal 1/);
   assert.throws(
     () => createStage3Evidence(stage3Input({
       tampermonkey: { source: `${source}\n// drift` },
@@ -173,18 +185,26 @@ test('Stage 3 evidence rejects duplicate MCP namespace matches and source drift'
   );
 });
 
-test('Stage 3 evidence rejects stale navigation ordering and non-main-frame scripts', () => {
-  assert.throws(
-    () => createStage3Evidence(stage3Input({
+test('user observes that Stage 3 evidence rejects stale navigation ordering and non-main-frame scripts', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = stage3Input({
       browser: {
         eventOrder: {
           ...stage3Input().browser.eventOrder,
           scriptParsed: 7,
         },
       },
-    })),
-    /domContentLoaded must follow scriptParsed/,
-  );
+    });
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    createStage3Evidence(scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then Stage 3 evidence rejects stale navigation ordering and non-main-frame scripts
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /domContentLoaded must follow scriptParsed/);
   assert.throws(
     () => createStage3Evidence(stage3Input({
       browser: {
@@ -195,13 +215,21 @@ test('Stage 3 evidence rejects stale navigation ordering and non-main-frame scri
   );
 });
 
-test('Stage 3 evidence allows only the non-financial multiplier increment and restore interaction', () => {
-  assert.throws(
-    () => createStage3Evidence(stage3Input({
+test('user observes that Stage 3 evidence allows only the non-financial multiplier increment and restore interaction', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = stage3Input({
       interaction: { name: 'leverage-toggle' },
-    })),
-    /multiplier-increment-restore/,
-  );
+    });
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    createStage3Evidence(scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then Stage 3 evidence allows only the non-financial multiplier increment and restore interaction
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /multiplier-increment-restore/);
   assert.throws(
     () => createStage3Evidence(stage3Input({
       interaction: {
@@ -234,9 +262,9 @@ test('Stage 3 evidence allows only the non-financial multiplier increment and re
   );
 });
 
-test('Stage 3 evidence requires every CDP domain to be cleaned up', () => {
-  assert.throws(
-    () => createStage3Evidence(stage3Input({
+test('user observes that Stage 3 evidence requires every CDP domain to be cleaned up', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = stage3Input({
       cleanup: {
         domains: [
           { name: 'Debugger', status: 'disabled' },
@@ -245,21 +273,38 @@ test('Stage 3 evidence requires every CDP domain to be cleaned up', () => {
           { name: 'Page', status: 'disabled' },
         ],
       },
-    })),
-    /exactly once/,
-  );
+    });
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    createStage3Evidence(scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then Stage 3 evidence requires every CDP domain to be cleaned up
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /exactly once/);
 });
 
-test('Stage 3 evidence rejects retained event capture state', () => {
-  assert.throws(
-    () => createStage3Evidence(stage3Input({
+test('user observes that Stage 3 evidence rejects retained event capture state', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = stage3Input({
       cleanup: { eventCaptureStatus: 'retained' },
-    })),
-    /cursor-discarded/,
-  );
+    });
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    createStage3Evidence(scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then Stage 3 evidence rejects retained event capture state
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /cursor-discarded/);
 });
 
-test('Stage 3 CLI verifies saved MCP and CDP source evidence', async () => {
+test('user observes that Stage 3 CLI verifies saved MCP and CDP source evidence', async () => {
+  // Given the evidence fixture records artifact identity and browser verification
   const directory = await mkdtemp(join(tmpdir(), 'stage3-evidence-'));
   const artifact = join(directory, 'artifact.user.js');
   const readback = join(directory, 'readback.txt');
@@ -273,6 +318,7 @@ test('Stage 3 CLI verifies saved MCP and CDP source evidence', async () => {
     writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`),
   ]);
 
+  // When the evidence validator checks the supplied capture
   const result = await runStage3EvidenceVerification([
     artifact,
     readback,
@@ -280,6 +326,7 @@ test('Stage 3 CLI verifies saved MCP and CDP source evidence', async () => {
     evidencePath,
   ]);
 
+  // Then Stage 3 CLI verifies saved MCP and CDP source evidence
   assert.equal(result.verified, true);
   assert.equal(result.userscriptVersion, '1.2.3');
 });

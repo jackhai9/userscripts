@@ -42,13 +42,16 @@ function clientFixture(responses, overrides = {}) {
   return { client, requests, snapshots, received, resets };
 }
 
-test('bootstraps recent events once then follows the global high-water cursor', async () => {
+test('user bootstraps recent events once then follows the global high-water cursor', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   const fixture = clientFixture([
     response(status), response({ ...events, next_cursor: 100_000, has_more: false }),
     response(status), response({ ...events, events: [], next_cursor: 100_200, has_more: false }),
   ]);
+  // When fixture.client.poll processes the configured inputs
   await fixture.client.poll(new AbortController().signal);
   const firstUrl = new URL(fixture.requests[1].path, 'https://gateway.invalid');
+  // Then user bootstraps recent events once then follows the global high-water cursor
   assert.equal(firstUrl.searchParams.get('mode'), 'latest_per_timeframe');
   assert.equal(firstUrl.searchParams.get('limit'), '3');
   assert.equal(firstUrl.searchParams.has('cursor'), false);
@@ -60,9 +63,12 @@ test('bootstraps recent events once then follows the global high-water cursor', 
   assert.equal(fixture.client.diagnostics.cursor, 100_200);
 });
 
-test('only known timeframe-set changes resynchronize snapshots, including initialization after missing facts', async () => {
+test('user observes that only known timeframe-set changes resynchronize snapshots, including initialization after missing facts', async () => {
+  // Given reordered, unavailable and genuinely changed timeframe configurations
   const reordered = { ...status, universe: { ...status.universe, generation: 2, configured_timeframes: [...status.universe.configured_timeframes].reverse() } };
   const changed = { ...status, universe: { ...status.universe, configured_timeframes: ['1d'] } };
+  const observations = [];
+  // When the real client polls each configuration transition
   for (const { states, modes, resets } of [
     { states: [status, reordered, withoutSelection, status], modes: ['latest_per_timeframe', null, null, null], resets: [] },
     { states: [status, withoutSelection, changed], modes: ['latest_per_timeframe', null, 'latest_per_timeframe'], resets: [null] },
@@ -70,20 +76,27 @@ test('only known timeframe-set changes resynchronize snapshots, including initia
   ]) {
     const fixture = clientFixture(states.flatMap((snapshot, index) => [response(snapshot), response({ ...events, events: [], next_cursor: 100 + index })]));
     for (const snapshot of states) await fixture.client.poll(new AbortController().signal);
+    observations.push({ fixture, modes, resets, count: states.length });
+  }
+  // Then only an actual known timeframe change or first initialization resets the cursor
+  for (const { fixture, modes, resets, count } of observations) {
     assert.deepEqual(fixture.requests.filter((_, index) => index % 2 === 1).map(request => new URL(request.path, 'https://gateway.invalid').searchParams.get('mode')), modes);
     assert.deepEqual(fixture.resets, resets);
-    assert.equal(fixture.client.diagnostics.cursor, 99 + states.length);
+    assert.equal(fixture.client.diagnostics.cursor, 99 + count);
   }
 });
 
-test('failed configuration resynchronization keeps the cursor empty until a new snapshot succeeds', async () => {
+test('user observes that failed configuration resynchronization keeps the cursor empty until a new snapshot succeeds', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   const changed = { ...status, universe: { ...status.universe, configured_timeframes: ['1d'] } };
   const fixture = clientFixture([
     response(status), response({ ...events, events: [], next_cursor: 100 }),
     response(changed), response({ schema_version: 1, error: 'gateway_unavailable', strategy_id: '29' }, 503),
     response(changed), response({ ...events, events: [], next_cursor: 200 }),
   ]);
+  // When fixture.client.poll processes the configured inputs
   await fixture.client.poll(new AbortController().signal);
+  // Then user observes that failed configuration resynchronization keeps the cursor empty until a new snapshot succeeds
   assert.equal((await fixture.client.poll(new AbortController().signal)).state, 'gateway_unavailable');
   assert.equal(fixture.client.diagnostics.cursor, null);
   await fixture.client.poll(new AbortController().signal);
@@ -92,18 +105,22 @@ test('failed configuration resynchronization keeps the cursor empty until a new 
   assert.equal(fixture.client.diagnostics.cursor, 200);
 });
 
-test('snapshot quota validation is independent of the preceding status configuration', async () => {
+test('user observes that snapshot quota validation is independent of the preceding status configuration', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   const timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '1w'];
+  // When timeframes.flatMap processes the configured inputs
   const all = timeframes.flatMap((timeframe, group) => Array.from({ length: 3 }, (_, index) => ({
     ...events.events[0], timeframe, sequence: group * 3 + index + 1, event_id: String(group * 3 + index + 1).padStart(64, '0'),
   })));
   const fixture = clientFixture([response(status), response({ ...events, events: all })]);
   await fixture.client.poll(new AbortController().signal);
+  // Then user observes that snapshot quota validation is independent of the preceding status configuration
   assert.equal(fixture.received.length, 39);
   assert.equal(fixture.client.diagnostics.cursor, events.next_cursor);
 });
 
-test('a cancelled response cannot advance a resumed client cursor or publish events', async () => {
+test('user observes that a cancelled response cannot advance a resumed client cursor or publish events', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   let completeOld;
   const oldResponse = new Promise(resolve => { completeOld = resolve; });
   const fixture = clientFixture([
@@ -111,49 +128,62 @@ test('a cancelled response cannot advance a resumed client cursor or publish eve
     response(status), response({ ...events, next_cursor: 100_000, has_more: false }),
   ]);
   const oldController = new AbortController();
+  // When fixture.client.poll processes the configured inputs
   const oldPoll = fixture.client.poll(oldController.signal);
   await new Promise(resolve => setImmediate(resolve));
   oldController.abort(new DOMException('hidden', 'AbortError'));
   await fixture.client.poll(new AbortController().signal);
   completeOld(response({ ...events, next_cursor: 500, has_more: false }));
+  // Then user observes that a cancelled response cannot advance a resumed client cursor or publish events
   await assert.rejects(oldPoll, error => error.name === 'AbortError');
   assert.equal(fixture.client.diagnostics.cursor, 100_000);
   assert.deepEqual(fixture.received.map(event => event.sequence), [41, 42]);
 });
 
-test('rejects incomplete or oversized latest snapshots', async () => {
-  for (const latest of [
+for (const latest of [
     { ...events, has_more: true },
     { ...events, has_more: false, events: Array.from({ length: 4 }, (_, index) => ({ ...events.events[0], event_id: String(index + 1).padStart(64, '0'), sequence: index + 1 })) },
   ]) {
+  test(`user rejects incomplete or oversized latest snapshots (${latest.has_more ? 'incomplete' : 'oversized'} page)`, async () => {
+    // Given an incomplete or over-limit latest-per-timeframe response
     const fixture = clientFixture([response(status), response(latest)]);
-    await assert.rejects(fixture.client.poll(new AbortController().signal), /complete and bounded/);
+    // When the real client requests its initial snapshot
+    const pending = fixture.client.poll(new AbortController().signal);
+    // Then no incomplete history or cursor is committed
+    await assert.rejects(pending, /complete and bounded/);
     assert.equal(fixture.client.diagnostics.cursor, null);
     assert.deepEqual(fixture.received, []);
-  }
-});
 
-test('a cancelled status response cannot publish status or start another request', async () => {
+  });
+}
+
+test('user observes that a cancelled status response cannot publish status or start another request', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   let complete;
   const fixture = clientFixture([new Promise(resolve => { complete = resolve; })]);
   const controller = new AbortController();
+  // When fixture.client.poll processes the configured inputs
   const poll = fixture.client.poll(controller.signal);
   controller.abort(new DOMException('retired', 'AbortError'));
   complete(response(status));
+  // Then user observes that a cancelled status response cannot publish status or start another request
   await assert.rejects(poll, error => error.name === 'AbortError');
   assert.deepEqual(fixture.snapshots, []);
   assert.equal(fixture.requests.length, 1);
 });
 
-test('polls status then bounded event pages and accepts filtered empty progress', async () => {
+test('user receives status and bounded event pages while accepting filtered cursor progress', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   const first = { ...events, events: [], next_cursor: 20, has_more: true };
   const second = { ...events, next_cursor: 42, has_more: false };
   const fixture = clientFixture([
     response(status), response({ ...events, events: [], next_cursor: 0, has_more: false }),
     response(status), response(first), response(second),
   ]);
+  // When fixture.client.poll processes the configured inputs
   await fixture.client.poll(new AbortController().signal);
   const result = await fixture.client.poll(new AbortController().signal);
+  // Then user receives status and bounded event pages while accepting filtered cursor progress
   assert.deepEqual(result, { state: 'connected', pages: 2, hasMore: false });
   assert.equal(fixture.requests[0].path, '/v1/strategy29/status');
   assert.match(fixture.requests[1].path, /symbol=BTC%2FUSDT%3AUSDT/);
@@ -163,28 +193,34 @@ test('polls status then bounded event pages and accepts filtered empty progress'
   assert.equal(fixture.client.diagnostics.cursor, 42);
 });
 
-test('409 replaces retained history with a recent snapshot without clearing local chart state', async () => {
+test('user observes that 409 replaces retained history with a recent snapshot without clearing local chart state', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   const fixture = clientFixture([
     response(status), response({ ...events, events: [], next_cursor: 0, has_more: false }),
     response(status),
     response({ schema_version: 1, error: 'cursor_expired', oldest_cursor: 40 }, 409),
     response({ ...events, next_cursor: 42, has_more: false }),
   ]);
+  // When fixture.client.poll processes the configured inputs
   await fixture.client.poll(new AbortController().signal);
   const result = await fixture.client.poll(new AbortController().signal);
+  // Then user observes that 409 replaces retained history with a recent snapshot without clearing local chart state
   assert.deepEqual(result, { state: 'connected', pages: 2, hasMore: false });
   assert.deepEqual(fixture.resets, [40]);
   assert.equal(new URL(fixture.requests[4].path, 'https://gateway.invalid').searchParams.get('mode'), 'latest_per_timeframe');
   assert.doesNotMatch(fixture.requests[4].path, /cursor=/);
 });
 
-test('rejects has_more without cursor progress and does not loop', async () => {
+test('user rejects has_more without cursor progress and does not loop', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   const stalled = { ...events, events: [], next_cursor: 0, has_more: true };
   const fixture = clientFixture([
     response(status), response({ ...events, events: [], next_cursor: 0, has_more: false }),
     response(status), response(stalled),
   ]);
+  // When fixture.client.poll processes the configured inputs
   await fixture.client.poll(new AbortController().signal);
+  // Then user rejects has_more without cursor progress and does not loop
   await assert.rejects(
     fixture.client.poll(new AbortController().signal),
     /cursor did not advance/,
@@ -192,19 +228,27 @@ test('rejects has_more without cursor progress and does not loop', async () => {
   assert.equal(fixture.requests.length, 4);
 });
 
-test('rejects an event for a symbol other than the strict requested identity', async () => {
+test('user rejects an event for a symbol other than the strict requested identity', async () => {
+  // Given a response containing a different symbol from the requested market
   const wrongSymbol = structuredClone(events);
   wrongSymbol.events[0].symbol = 'ETH/USDT:USDT';
   const fixture = clientFixture([response(status), response(wrongSymbol)]);
-  await assert.rejects(fixture.client.poll(new AbortController().signal), /requested symbol/);
+  // When the current-symbol client validates the delivered events
+  const pending = fixture.client.poll(new AbortController().signal);
+  // Then the foreign market response is rejected
+  await assert.rejects(pending, /requested symbol/);
 });
 
-test('reports unavailable status separately from fatal HTTP and contract errors', async () => {
+test('user sees unavailable status separately from fatal HTTP and contract errors', async () => {
+  // Given a gateway explicitly reporting database unavailability
   const unavailable = clientFixture([
     response({ schema_version: 1, error: 'database_unavailable' }, 503),
   ]);
+  // When the summary client polls the unavailable gateway
+  const result = await unavailable.client.poll(new AbortController().signal);
+  // Then unavailability is reported while unauthorized, malformed and transport failures retain their contracts
   assert.deepEqual(
-    await unavailable.client.poll(new AbortController().signal),
+    result,
     { state: 'unavailable', pages: 0, hasMore: false },
   );
 
@@ -224,10 +268,14 @@ test('reports unavailable status separately from fatal HTTP and contract errors'
 
 for (const error of ['module_disabled', 'gateway_unavailable']) {
   for (const endpoint of ['status', 'events']) {
-    test(`${endpoint} preserves the typed ${error} state without requesting extra pages`, async () => {
+    test(`user observes that ${endpoint} preserves the typed ${error} state without requesting extra pages`, async () => {
+      // Given an exact typed module error from the selected summary endpoint
       const body = { schema_version: 1, error, strategy_id: '29', ...(error === 'module_disabled' ? { status: 'disabled' } : {}) };
       const fixture = clientFixture(endpoint === 'status' ? [response(body, 503)] : [response(status), response(body, 503)]);
-      assert.deepEqual(await fixture.client.poll(new AbortController().signal), {
+      // When the real summary client processes that endpoint response
+      const result = await fixture.client.poll(new AbortController().signal);
+      // Then the typed state is retained without publishing history or extra requests
+      assert.deepEqual(result, {
         state: error, pages: endpoint === 'status' ? 0 : 1, hasMore: false,
       });
       assert.equal(fixture.requests.length, endpoint === 'status' ? 1 : 2);
@@ -237,23 +285,31 @@ for (const error of ['module_disabled', 'gateway_unavailable']) {
   }
 }
 
-test('exposes remote/local spec mismatch before requesting event history', async () => {
+test('user sees remote/local spec mismatch before requesting event history', async () => {
+  // Given a status envelope declaring an incompatible observer specification
   const mismatch = { ...status, spec_version: 'other_spec' };
   delete mismatch.universe;
   const fixture = clientFixture([response(mismatch)]);
+  // When the client validates the status identity
+  const result = await fixture.client.poll(new AbortController().signal);
+  // Then the incompatibility is visible before any event-history request
   assert.deepEqual(
-    await fixture.client.poll(new AbortController().signal),
+    result,
     { state: 'incompatible', pages: 0, hasMore: false },
   );
   assert.equal(fixture.requests.length, 1);
   assert.equal(fixture.snapshots[0].spec_version, 'other_spec');
 });
 
-test('a v3 backend is incompatible before requesting the per-timeframe snapshot', async () => {
+test('user observes that a v3 backend is incompatible before requesting the per-timeframe snapshot', async () => {
+  // Given a backend still advertising the previous status API version
   const fixture = clientFixture([
     response({ ...status, spec_version: '29_2_spec_v3' }), response(events),
   ]);
-  assert.deepEqual(await fixture.client.poll(new AbortController().signal), {
+  // When the current client reads the backend status
+  const result = await fixture.client.poll(new AbortController().signal);
+  // Then version mismatch leaves event history and cursor untouched
+  assert.deepEqual(result, {
     state: 'incompatible', pages: 0, hasMore: false,
   });
   assert.deepEqual(fixture.requests.map(request => request.path), ['/v1/strategy29/status']);
@@ -261,23 +317,30 @@ test('a v3 backend is incompatible before requesting the per-timeframe snapshot'
   assert.equal(fixture.client.diagnostics.cursor, null);
 });
 
-test('a rollback between status and events cannot publish a v3 snapshot or advance its cursor', async () => {
+test('user observes that a rollback between status and events cannot publish a v3 snapshot or advance its cursor', async () => {
+  // Given a current status response followed by a rolled-back event envelope
   const fixture = clientFixture([
     response(status), response({ ...events, spec_version: '29_2_spec_v3' }),
   ]);
-  await assert.rejects(fixture.client.poll(new AbortController().signal), /events.spec_version/);
+  // When the client reads the mismatched event snapshot
+  const pending = fixture.client.poll(new AbortController().signal);
+  // Then the event version failure prevents publication and cursor advancement
+  await assert.rejects(pending, /events.spec_version/);
   assert.deepEqual(fixture.received, []);
   assert.equal(fixture.client.diagnostics.cursor, null);
 });
 
 
-test('Unicode selected markets and events preserve canonical identity through polling', async () => {
+test('user observes that Unicode selected markets and events preserve canonical identity through polling', async () => {
+  // Given the Strategy 29 status, event pages and retained cursor
   const unicodeStatus = JSON.parse(JSON.stringify(status).replaceAll('BTC/USDT:USDT', '牛来/USDT:USDT'));
   const unicodeEvents = JSON.parse(JSON.stringify(events).replaceAll('BTC/USDT:USDT', '牛来/USDT:USDT'));
   const fixture = clientFixture([response(unicodeStatus), response(unicodeEvents)], {
     canonicalSymbol: '牛来/USDT:USDT',
   });
+  // When fixture.client.poll processes the configured inputs
   await fixture.client.poll(new AbortController().signal);
+  // Then user observes that Unicode selected markets and events preserve canonical identity through polling
   assert.equal(new URL(fixture.requests[1].path, 'https://gateway.invalid').searchParams.get('symbol'), '牛来/USDT:USDT');
   assert.deepEqual(fixture.received.map(event => event.symbol), ['牛来/USDT:USDT', '牛来/USDT:USDT']);
   assert.equal(fixture.snapshots.length, 1);

@@ -40,12 +40,14 @@ async function expectRestoredState(page, scenario) {
 }
 
 for (const entry of CANCEL_COVERING_SCENARIOS) {
-  test(`${entry.id} preserves the cancel-current-symbol invariants`, async ({ page }) => {
+  test(`user preserves scoped cancellation and restores UI for ${entry.id}`, async ({ page }) => {
+    // Given the covering scenario declares positions, orders, initial UI, host timing, and a native dialog decision.
     const { scenario, vector } = entry;
     const hasCurrentOrders = currentSymbolOrders(scenario).length > 0;
     const { errors } = await openUserscriptScenario(page, scenario);
     await installInteractionProbe(page, CANCEL_BUTTON_SELECTOR);
 
+    // When the user requests cancellation and makes the declared native decision if current orders exist.
     await page.getByRole('button', { name: '撤单' }).click();
     if (!hasCurrentOrders) {
       await expect(page.getByRole('button', { name: '无挂单' })).toBeVisible();
@@ -64,6 +66,7 @@ for (const entry of CANCEL_COVERING_SCENARIOS) {
       )).toBeVisible();
     }
 
+    // Then orders, restored UI, chart saves, geometry, and real-time responsiveness satisfy the scenario invariants.
     await expectRestoredState(page, scenario);
     const probe = await finishInteractionProbe(page);
     assertResponsiveInteraction(expect, probe);

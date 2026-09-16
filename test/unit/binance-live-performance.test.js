@@ -116,34 +116,41 @@ function scaleCapture() {
   return result;
 }
 
-test('live performance capture requires three complete isolated samples', () => {
-  assert.equal(validateLivePerformanceCapture(capture()).schemaVersion, 1);
+test('user observes that live performance capture requires three complete isolated samples', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = capture();
+  // When the real operation processes that input
+  const observed = validateLivePerformanceCapture(scenarioInput).schemaVersion;
+  // Then live performance capture requires three complete isolated samples
+  assert.equal(observed, 1);
   assert.throws(
     () => validateLivePerformanceCapture(capture([sample(90, 150, 140), sample(100, 160, 150)])),
     /at least three isolated samples/,
   );
 });
 
-test('scenario kind fixes the exact wall-clock segment contract', () => {
+test('user observes that scenario kind fixes the exact wall-clock segment contract', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const invalid = capture();
   invalid.scenarios[0].applicableSegments = ['clickToFirstFeedback', 'decisionToFinalReady'];
+  // When the performance contract processes the supplied capture
   for (const entry of invalid.scenarios[0].samples) {
     delete entry.segmentsMs.clickToDialog;
   }
+  // Then scenario kind fixes the exact wall-clock segment contract
   assert.throws(
     () => validateLivePerformanceCapture(invalid),
     /applicableSegments must match the dialog-cancel contract/,
   );
 });
 
-test('live performance capture models no-orders, dialog-cancel, and dialog-confirm explicitly', () => {
+test('user observes that live performance capture models no-orders, dialog-cancel, and dialog-confirm explicitly', () => {
+  // Given captures describe all three supported dialog outcomes
   const dialogCancel = capture();
-  assert.equal(validateLivePerformanceCapture(dialogCancel).scenarios[0].parameters.kind, 'dialog-cancel');
 
   const dialogConfirm = structuredClone(dialogCancel);
   dialogConfirm.scenarios[0].name = 'cancel-dialog-confirm';
   dialogConfirm.scenarios[0].parameters.kind = 'dialog-confirm';
-  assert.equal(validateLivePerformanceCapture(dialogConfirm).scenarios[0].parameters.kind, 'dialog-confirm');
 
   const noOrders = structuredClone(dialogCancel);
   noOrders.scenarios[0].name = 'cancel-current-symbol-no-orders';
@@ -160,12 +167,18 @@ test('live performance capture models no-orders, dialog-cancel, and dialog-confi
       clickToFinalReady: entry.segmentsMs.decisionToFinalReady,
     };
   }
-  assert.equal(validateLivePerformanceCapture(noOrders).scenarios[0].parameters.kind, 'no-orders');
+  // When all three complete evidence records are validated
+  const kinds = [dialogCancel, dialogConfirm, noOrders].map(value => validateLivePerformanceCapture(value).scenarios[0].parameters.kind);
+  // Then each recorded outcome remains distinct in the validated capture
+  assert.deepEqual(kinds, ['dialog-cancel', 'dialog-confirm', 'no-orders']);
 });
 
-test('dialog captures bind the declared test-order count to capacity and ledger evidence', () => {
+test('user observes that dialog captures bind the declared test-order count to capacity and ledger evidence', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const missingOrder = capture();
+  // When the performance contract processes the supplied capture
   missingOrder.scenarios[0].samples[0].testOrderLedger.created = [];
+  // Then dialog captures bind the declared test-order count to capacity and ledger evidence
   assert.throws(
     () => validateLivePerformanceCapture(missingOrder),
     /created ledger count must match the declared test order count/,
@@ -182,9 +195,12 @@ test('dialog captures bind the declared test-order count to capacity and ledger 
   );
 });
 
-test('live performance capture rejects missing segments and failed cleanup invariants', () => {
+test('user observes that live performance capture rejects missing segments and failed cleanup invariants', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const missingSegment = capture();
+  // When the performance contract processes the supplied capture
   delete missingSegment.scenarios[0].samples[0].segmentsMs.clickToDialog;
+  // Then live performance capture rejects missing segments and failed cleanup invariants
   assert.throws(() => validateLivePerformanceCapture(missingSegment), /keys must be exactly/);
 
   const residualOrder = capture();
@@ -192,7 +208,8 @@ test('live performance capture rejects missing segments and failed cleanup invar
   assert.throws(() => validateLivePerformanceCapture(residualOrder), /must match testOrderLedger.residual/);
 });
 
-test('live performance capture requires fill and residual claims to be backed by the test-order ledger', () => {
+test('user observes that live performance capture requires fill and residual claims to be backed by the test-order ledger', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const order = {
     symbol: 'HYPEUSDT',
     side: 'SELL',
@@ -202,7 +219,9 @@ test('live performance capture requires fill and residual claims to be backed by
     createdAt: '2026-08-26T08:00:01.000Z',
   };
   const unsupportedFill = scaleCapture();
+  // When the performance contract processes the supplied capture
   unsupportedFill.scenarios[0].samples[0].testOrderLedger.fills.push(order);
+  // Then live performance capture requires fill and residual claims to be backed by the test-order ledger
   assert.throws(
     () => validateLivePerformanceCapture(unsupportedFill),
     /fills must reference a created test order/,
@@ -218,8 +237,13 @@ test('live performance capture requires fill and residual claims to be backed by
   );
 });
 
-test('order-scale capture binds effective target to capacity evidence and created ledger', () => {
-  assert.equal(validateLivePerformanceCapture(scaleCapture()).schemaVersion, 1);
+test('user observes that order-scale capture binds effective target to capacity evidence and created ledger', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = scaleCapture();
+  // When the real operation processes that input
+  const observed = validateLivePerformanceCapture(scenarioInput).schemaVersion;
+  // Then order-scale capture binds effective target to capacity evidence and created ledger
+  assert.equal(observed, 1);
   const mismatchedCount = scaleCapture();
   mismatchedCount.scenarios[0].parameters.preferredTargetOrderCount = 2;
   mismatchedCount.scenarios[0].parameters.effectiveTargetOrderCount = 2;
@@ -229,10 +253,13 @@ test('order-scale capture binds effective target to capacity evidence and create
   );
 });
 
-test('live performance summary calculates median and nearest-rank p95', () => {
+test('user observes that live performance summary calculates median and nearest-rank p95', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const summary = summarizeLivePerformanceCapture(capture());
+  // When the performance contract processes the supplied capture
   const scenario = summary.scenarios[0];
 
+  // Then live performance summary calculates median and nearest-rank p95
   assert.equal(scenario.sampleCount, 3);
   assert.deepEqual(scenario.segmentsMs.clickToFirstFeedback, {
     min: 90,
@@ -248,18 +275,21 @@ test('live performance summary calculates median and nearest-rank p95', () => {
   });
 });
 
-test('baseline comparison reports only regressions beyond both tolerances', () => {
+test('user observes that baseline comparison reports only regressions beyond both tolerances', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const baseline = summarizeLivePerformanceCapture(capture());
   const current = structuredClone(baseline);
   current.scenarios[0].segmentsMs.clickToDialog.median = 260;
   current.scenarios[0].segmentsMs.clickToDialog.p95 = 400;
   current.scenarios[0].segmentsMs.clickToDialog.max = 400;
+  // When the performance contract processes the supplied capture
   const findings = compareLivePerformanceSummaries(current, baseline, {
     absoluteToleranceMs: 50,
     medianRatio: 1.5,
     p95Ratio: 1.5,
   });
 
+  // Then baseline comparison reports only regressions beyond both tolerances
   assert.deepEqual(findings, [
     {
       scenario: 'cancel-dialog-cancel',
@@ -280,9 +310,11 @@ test('baseline comparison reports only regressions beyond both tolerances', () =
   ]);
 });
 
-test('baseline comparison rejects the same scale name with different effective counts', () => {
+test('user observes that baseline comparison rejects the same scale name with different effective counts', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const baseline = summarizeLivePerformanceCapture(capture());
   const current = structuredClone(baseline);
+  // When the performance contract processes the supplied capture
   current.scenarios[0].parameters = {
     kind: 'order-scale',
     profileName: 'smoke',
@@ -292,6 +324,7 @@ test('baseline comparison rejects the same scale name with different effective c
     sampleCount: 3,
   };
 
+  // Then baseline comparison rejects the same scale name with different effective counts
   assert.deepEqual(
     compareLivePerformanceSummaries(current, baseline, {
       absoluteToleranceMs: 50,
@@ -308,14 +341,17 @@ test('baseline comparison rejects the same scale name with different effective c
   );
 });
 
-test('baseline validation rejects missing summary statistics instead of silently passing comparison', () => {
+test('user observes that baseline validation rejects missing summary statistics instead of silently passing comparison', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const summary = summarizeLivePerformanceCapture(capture());
   const baseline = {
     ...structuredClone(summary),
     comparisonPolicy: { absoluteToleranceMs: 50, medianRatio: 1.5, p95Ratio: 1.5 },
   };
+  // When the performance contract processes the supplied capture
   delete baseline.scenarios[0].segmentsMs.clickToDialog.median;
 
+  // Then baseline validation rejects missing summary statistics instead of silently passing comparison
   assert.throws(() => validateLivePerformanceBaseline(baseline), /keys must be exactly/);
   assert.throws(
     () => compareLivePerformanceSummaries(summary, baseline, baseline.comparisonPolicy),
@@ -323,13 +359,16 @@ test('baseline validation rejects missing summary statistics instead of silently
   );
 });
 
-test('baseline comparison reports a baseline scenario omitted from the current capture', () => {
+test('user observes that baseline comparison reports a baseline scenario omitted from the current capture', () => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const baseline = summarizeLivePerformanceCapture(capture());
   const missingScenario = structuredClone(baseline.scenarios[0]);
   missingScenario.name = 'cancel-dialog-confirm';
   baseline.scenarios.push(missingScenario);
+  // When the performance contract processes the supplied capture
   const current = summarizeLivePerformanceCapture(capture());
 
+  // Then baseline comparison reports a baseline scenario omitted from the current capture
   assert.deepEqual(
     compareLivePerformanceSummaries(current, baseline, {
       absoluteToleranceMs: 50,
@@ -340,7 +379,8 @@ test('baseline comparison reports a baseline scenario omitted from the current c
   );
 });
 
-test('CLI compare and enforce use the documented baseline root shape', async (context) => {
+test('user compare and enforce use the documented baseline root shape', async (context) => {
+  // Given the capture fixture contains measured segments and cleanup evidence
   const directory = await mkdtemp(join(tmpdir(), 'binance-live-performance-'));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const capturePath = join(directory, 'capture.json');
@@ -354,7 +394,9 @@ test('CLI compare and enforce use the documented baseline root shape', async (co
   await writeFile(capturePath, JSON.stringify(liveCapture));
   await writeFile(baselinePath, JSON.stringify(baseline));
 
+  // When the performance contract processes the supplied capture
   const passing = await runLivePerformanceCli([capturePath, '--compare', baselinePath, '--enforce']);
+  // Then CLI compare and enforce use the documented baseline root shape
   assert.deepEqual(passing.findings, []);
 
   liveCapture.scenarios[0].samples = [

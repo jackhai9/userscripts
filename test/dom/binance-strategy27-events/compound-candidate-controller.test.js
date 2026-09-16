@@ -5,6 +5,7 @@ import { loadFixtureDom } from '../../helpers/dom.js';
 import { createCompoundCandidateController } from '../../../src/binance-strategy27-events/core/compound-candidate-controller.js';
 import { createStrategy27EventPanel } from '../../../src/binance-strategy27-events/dom/strategy27-event-panel.js';
 import { Strategy27GatewayTransportError } from '../../../src/binance-strategy27-events/core/live-event-client.js';
+import { createStrategyDigestGate } from '../../helpers/strategy-migration-boundaries.js';
 
 const fixtures = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-compound-candidates.json', import.meta.url), 'utf8'));
 const EPOCH = 'a'.repeat(32);
@@ -116,10 +117,13 @@ function harness(t, steps, { render, reconcile, createError, removeError, clearE
   };
 }
 
-test('controller composes real protocol/lifecycle/panel and renders each independent candidate once', async (t) => {
+test('user observes that controller composes real protocol/lifecycle/panel and renders each independent candidate once', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope(fixtures[0], 2), envelope(fixtures[1], 3), envelope(fixtures[0], 4)])]);
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
+  // Then user observes that controller composes real protocol/lifecycle/panel and renders each independent candidate once
   assert.equal(h.panel.size, 1);
   assert.equal(h.panel.compoundSize, 2);
   assert.deepEqual([...h.shapes.keys()], fixtures.map((item) => item.candidate_id));
@@ -134,9 +138,12 @@ test('controller composes real protocol/lifecycle/panel and renders each indepen
   assert.equal(h.panel.size, 1);
 });
 
-test('unsupported gateways never construct a chart layer and leave ordinary data intact', async (t) => {
+test('user observes that unsupported gateways never construct a chart layer and leave ordinary data intact', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [{ status: 404, responseText: '<html>old gateway</html>' }]);
+  // When h.run processes the configured inputs
   await h.run();
+  // Then user observes that unsupported gateways never construct a chart layer and leave ordinary data intact
   assert.equal(h.calls.length, 1);
   assert.equal(h.layerCreates, 0);
   assert.equal(h.panel.size, 1);
@@ -145,13 +152,16 @@ test('unsupported gateways never construct a chart layer and leave ordinary data
   assert.equal(h.statusKind(), 'inactive');
 });
 
-test('a compound endpoint removed after delivery freezes history without further repairs', async (t) => {
+test('user observes that a compound endpoint removed after delivery freezes history without further repairs', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   let repairs = 0;
   const h = harness(t, [bootstrap(), batch([envelope()]), { status: 404, responseText: '<html>route removed</html>' }], {
     reconcile: () => { repairs += 1; },
   });
+  // When h.run processes the configured inputs
   await h.run();
   await h.controller.reconcile();
+  // Then user observes that a compound endpoint removed after delivery freezes history without further repairs
   assert.equal(repairs, 0);
   assert.equal(h.panel.compoundSize, 1);
   assert.equal(h.shapes.size, 1);
@@ -162,37 +172,45 @@ test('a compound endpoint removed after delivery freezes history without further
   assert.equal(h.shapes.size, 0);
 });
 
-test('same-decision panel ordering uses publication time without extending chart retention time', async (t) => {
+test('user observes that same-decision panel ordering uses publication time without extending chart retention time', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const high = { ...envelope(fixtures[0], 2), observed_at_ms: 7010 };
   const low = { ...envelope(fixtures[1], 3), observed_at_ms: 7020 };
   const h = harness(t, [bootstrap(), batch([high, low])]);
+  // When h.setClock processes the configured inputs
   h.setClock(7030);
   h.run();
   await h.parked;
+  // Then user observes that same-decision panel ordering uses publication time without extending chart retention time
   assert.deepEqual(h.compoundRows(), [fixtures[1].candidate_id, fixtures[0].candidate_id]);
   assert.deepEqual(h.renders.map((item) => item.decisionAtMs), [7000, 7000]);
 });
 
-test('validated 503 recovery merges a new snapshot without deleting compound or ordinary history', async (t) => {
-  for (const errorCode of ['compound_unavailable', 'redis_unavailable']) {
+for (const errorCode of ['compound_unavailable', 'redis_unavailable']) {
+  test(`user observes that validated 503 recovery merges a new snapshot without deleting compound or ordinary history (errorCode=${JSON.stringify(errorCode)})`, async (t) => {
+    // Given a compound gateway sequence and independent ordinary event history
     let recovering;
     const h = harness(t, [bootstrap(), batch([envelope()]), response({ schema_version: 1, status: 'error', error_code: errorCode }, 503),
       ({ panel, shapes, calls }) => {
         recovering = { ordinary: panel.size, compound: panel.compoundSize, ids: [...shapes.keys()], hasCursor: calls.at(-1).searchParams.has('cursor') };
         return bootstrap('5-0', 'b'.repeat(32));
       }, batch([envelope(fixtures[0], 2, 'b'.repeat(32)), envelope(fixtures[1], 3, 'b'.repeat(32))], '5-0', '6-0')]);
+    // When h.run processes the configured inputs
     h.run();
     await h.parked;
+    // Then user observes that validated 503 recovery merges a new snapshot without deleting compound or ordinary history (errorCode=the selected case)
     assert.deepEqual(recovering, { ordinary: 1, compound: 1, ids: [fixtures[0].candidate_id], hasCursor: false });
     assert.equal(h.panel.compoundSize, 2);
     assert.deepEqual([...h.shapes.keys()], fixtures.map((candidate) => candidate.candidate_id));
     assert.equal(h.renders.length, 2);
     assert.equal(h.layerClears, 0);
     assert.equal(h.status(), '复合候选数据：已连接。接口连通不代表该币种仍在监控中。');
-  }
-});
 
-test('network reconnect retains compound history and original cursor', async (t) => {
+  });
+}
+
+test('user observes that network reconnect retains compound history and original cursor', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope()]), new Strategy27GatewayTransportError('fixture connection failure'),
     ({ panel, shapes, calls }) => {
       assert.equal(panel.compoundSize, 1);
@@ -200,16 +218,21 @@ test('network reconnect retains compound history and original cursor', async (t)
       assert.equal(calls.at(-1).searchParams.get('cursor'), '2-0');
       return batch([envelope(fixtures[0], 3)], '2-0', '3-0');
     }]);
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
+  // Then user observes that network reconnect retains compound history and original cursor
   assert.equal(h.renders.length, 1);
   assert.equal(h.panel.size, 1);
 });
 
-test('stream reset retains both candidates and sequence failure freezes their verified history', async (t) => {
+test('user observes that stream reset retains both candidates and sequence failure freezes their verified history', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope(), state(1, 'b'.repeat(32)), envelope(fixtures[1], 2, 'b'.repeat(32))]),
     batch([envelope(fixtures[0], 2, 'b'.repeat(32))], '2-0', '3-0')]);
+  // When h.run processes the configured inputs
   await h.run();
+  // Then user observes that stream reset retains both candidates and sequence failure freezes their verified history
   assert.equal(h.renders.length, 2);
   assert.equal(h.panel.compoundSize, 2);
   assert.deepEqual([...h.shapes.keys()], fixtures.map((candidate) => candidate.candidate_id));
@@ -220,25 +243,32 @@ test('stream reset retains both candidates and sequence failure freezes their ve
   assert.equal(h.statusKind(), 'error');
 });
 
-test('contract and lazy renderer failures are terminal only for the compound job', async (t) => {
-  for (const mode of ['protocol', 'renderer']) {
+for (const mode of ['protocol', 'renderer']) {
+  test(`user observes that contract and lazy renderer failures are terminal only for the compound job (mode=${JSON.stringify(mode)})`, async (t) => {
+    // Given a compound gateway sequence and independent ordinary event history
     const h = harness(t, mode === 'protocol' ? [{ status: 200, responseText: 'invalid JSON' }] : [bootstrap(), batch([envelope()])],
       mode === 'renderer' ? { createError: new Error('fixture chart capability missing') } : {});
+    // When h.run processes the configured inputs
     await h.run();
+    // Then user observes that contract and lazy renderer failures are terminal only for the compound job (mode=the selected case)
     assert.equal(h.panel.size, 1);
     assert.equal(h.panel.compoundSize, 0);
     assert.equal(h.statusKind(), 'error');
     assert.match(h.status(), mode === 'renderer' ? /fixture chart capability missing/ : /JSON/);
     assert.equal(h.calls.length, mode === 'renderer' ? 2 : 1);
-  }
-});
 
-test('manual clear suppresses pending render and exact replay without restarting the stream', async (t) => {
+  });
+}
+
+test('user observes that manual clear suppresses pending render and exact replay without restarting the stream', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope(), envelope(fixtures[0], 3), envelope(fixtures[1], 4)])], {
     render: ({ controller, id }) => { if (id === fixtures[0].candidate_id) controller.clear(); },
   });
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
+  // Then user observes that manual clear suppresses pending render and exact replay without restarting the stream
   assert.equal(h.renders.length, 2);
   assert.deepEqual([...h.shapes.keys()], [fixtures[1].candidate_id]);
   assert.equal(h.panel.compoundSize, 1);
@@ -246,43 +276,45 @@ test('manual clear suppresses pending render and exact replay without restarting
   assert.equal(h.calls.length, 3);
 });
 
-test('ordinary clear does not reset compound replay bookkeeping', async (t) => {
+test('user observes that ordinary clear does not reset compound replay bookkeeping', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope()]), ({ panel }) => {
     panel.clear();
     return batch([envelope(fixtures[0], 3)], '2-0', '3-0');
   }]);
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
+  // Then user observes that ordinary clear does not reset compound replay bookkeeping
   assert.equal(h.panel.size, 0);
   assert.equal(h.panel.compoundSize, 1);
   assert.equal(h.renders.length, 1);
 });
 
-test('manual clear during lifecycle hash validation suppresses late display and later exact replay', async (t) => {
-  const validating = deferred();
-  const release = deferred();
-  const digest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
-  let digestCalls = 0;
-  t.mock.method(globalThis.crypto.subtle, 'digest', async (...args) => {
-    digestCalls += 1;
-    // Two gateway hashes precede the lifecycle's independent profile hash.
-    if (digestCalls === 3) { validating.resolve(); await release.promise; }
-    return digest(...args);
-  });
+test('user observes that manual clear during lifecycle hash validation suppresses late display and later exact replay', async (t) => {
+  // Two gateway hashes precede the lifecycle's independent profile hash.
+  // Given a compound gateway sequence and independent ordinary event history
+  const gate = createStrategyDigestGate(globalThis.crypto.subtle, 3);
+  const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { subtle: gate.subtle } });
+  t.after(() => Object.defineProperty(globalThis, 'crypto', cryptoDescriptor));
   const h = harness(t, [bootstrap(), batch([envelope()]), batch([envelope(fixtures[0], 3)], '2-0', '3-0')]);
+  // When h.run processes the configured inputs
   h.run();
-  await validating.promise;
+  await gate.entered;
   h.controller.clear();
-  release.resolve();
+  gate.release();
   await h.parked;
-  assert.equal(digestCalls, 8);
+  // Then user observes that manual clear during lifecycle hash validation suppresses late display and later exact replay
+  assert.equal(gate.calls.length, 8);
   assert.equal(h.renders.length, 0);
   assert.equal(h.panel.compoundSize, 0);
   assert.equal(h.panel.size, 1);
   assert.equal(h.calls.length, 4);
 });
 
-test('stale cursor reset preserves history absent from the new bootstrap and accepts the new stream', async (t) => {
+test('user observes that stale cursor reset preserves history absent from the new bootstrap and accepts the new stream', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   let recovering;
   const h = harness(t, [bootstrap(), batch([envelope()]),
     response({ schema_version: 1, status: 'reset', reason: 'stale_cursor', requested_cursor: '2-0', next_cursor: '7-0', messages: [] }, 409),
@@ -290,8 +322,10 @@ test('stale cursor reset preserves history absent from the new bootstrap and acc
       recovering = { compound: panel.compoundSize, shapes: shapes.size, ordinary: panel.size };
       return bootstrap('7-0', 'b'.repeat(32));
     }, batch([envelope(fixtures[1], 2, 'b'.repeat(32))], '7-0', '8-0')]);
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
+  // Then user observes that stale cursor reset preserves history absent from the new bootstrap and accepts the new stream
   assert.deepEqual(recovering, { compound: 1, shapes: 1, ordinary: 1 });
   assert.deepEqual([...h.shapes.keys()], fixtures.map((candidate) => candidate.candidate_id));
   assert.equal(h.panel.compoundSize, 2);
@@ -299,8 +333,10 @@ test('stale cursor reset preserves history absent from the new bootstrap and acc
   assert.equal(h.statusKind(), 'normal');
 });
 
-test('stop during an asynchronous draw prevents late shapes and panel publication', async (t) => {
+test('user observes that stop during an asynchronous draw prevents late shapes and panel publication', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const drawing = deferred();
+  // When deferred processes the configured inputs
   const release = deferred();
   const h = harness(t, [bootstrap(), batch([envelope()])], { render: async () => { drawing.resolve(); await release.promise; } });
   const done = h.run();
@@ -309,14 +345,17 @@ test('stop during an asynchronous draw prevents late shapes and panel publicatio
   h.controller.stop('interval_changed');
   release.resolve();
   await done;
+  // Then user observes that stop during an asynchronous draw prevents late shapes and panel publication
   assert.equal(h.panel.compoundSize, 0);
   assert.equal(h.shapes.size, 0);
   assert.equal(h.panel.size, 1);
   assert.equal(h.calls.length, 2);
 });
 
-test('age eviction during a pending draw prevents late publication and needs no new timer', async (t) => {
+test('user observes that age eviction during a pending draw prevents late publication and needs no new timer', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const drawing = deferred();
+  // When deferred processes the configured inputs
   const release = deferred();
   const h = harness(t, [bootstrap(), batch([envelope()])], { maxAgeMs: 1000, render: async () => { drawing.resolve(); await release.promise; } });
   h.run();
@@ -325,26 +364,33 @@ test('age eviction during a pending draw prevents late publication and needs no 
   h.controller.prune();
   release.resolve();
   await h.parked;
+  // Then user observes that age eviction during a pending draw prevents late publication and needs no new timer
   assert.deepEqual(h.removed, [fixtures[0].candidate_id]);
   assert.equal(h.panel.compoundSize, 0);
   assert.equal(h.shapes.size, 0);
   assert.equal(h.panel.size, 1);
 });
 
-test('post-draw age check rejects a candidate that expired while rendering', async (t) => {
+test('user observes that post-draw age check rejects a candidate that expired while rendering', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope()])], { maxAgeMs: 1000, render: () => h.setClock(8001) });
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
+  // Then user observes that post-draw age check rejects a candidate that expired while rendering
   assert.equal(h.panel.compoundSize, 0);
   assert.equal(h.shapes.size, 0);
   assert.deepEqual(h.removed, [fixtures[0].candidate_id]);
 });
 
-test('timer-driven prune failures stop only the optional job and do not escape to the shared context timer', async (t) => {
+test('user observes that timer-driven prune failures stop only the optional job and do not escape to the shared context timer', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope()])], { maxAgeMs: 1000, removeError: new Error('fixture removal failure') });
+  // When h.run processes the configured inputs
   const done = h.run();
   await h.parked;
   h.setClock(8001);
+  // Then user observes that timer-driven prune failures stop only the optional job and do not escape to the shared context timer
   assert.doesNotThrow(() => h.controller.prune());
   await done;
   assert.equal(h.panel.size, 1);
@@ -356,22 +402,28 @@ test('timer-driven prune failures stop only the optional job and do not escape t
   assert.match(h.status(), /fixture removal failure/);
 });
 
-test('capacity evictions remove only the evicted compound marker', async (t) => {
+test('user observes that capacity evictions remove only the evicted compound marker', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const sorted = [...fixtures].sort((a, b) => a.candidate_id.localeCompare(b.candidate_id));
   const h = harness(t, [bootstrap(), batch(sorted.map((item, index) => envelope(item, index + 2)))], { maxCandidates: 1 });
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
+  // Then user observes that capacity evictions remove only the evicted compound marker
   assert.deepEqual([...h.shapes.keys()], [sorted[1].candidate_id]);
   assert.deepEqual(h.removed, [sorted[0].candidate_id]);
   assert.equal(h.panel.compoundSize, 1);
   assert.equal(h.panel.size, 1);
 });
 
-test('manual clear and stop contain native cleanup failures without retrying removal', async (t) => {
-  for (const action of ['clear', 'stop']) {
+for (const action of ['clear', 'stop']) {
+  test(`user observes that manual clear and stop contain native cleanup failures without retrying removal (action=${JSON.stringify(action)})`, async (t) => {
+    // Given a compound gateway sequence and independent ordinary event history
     const h = harness(t, [bootstrap(), batch([envelope()])], { clearError: new Error('fixture native cleanup failure') });
+    // When h.run processes the configured inputs
     const done = h.run();
     await h.parked;
+    // Then user observes that manual clear and stop contain native cleanup failures without retrying removal (action=the selected case)
     assert.doesNotThrow(() => h.controller[action]('route_changed'));
     await done;
     assert.equal(h.layerClears, 1);
@@ -379,14 +431,19 @@ test('manual clear and stop contain native cleanup failures without retrying rem
     assert.equal(h.panel.compoundSize, 0);
     assert.equal(h.statusKind(), 'error');
     assert.match(h.status(), /fixture native cleanup failure/);
-  }
-});
 
-test('terminal protocol failure retains history and explicit cleanup preserves both errors', async (t) => {
+  });
+}
+
+test('user observes that terminal protocol failure retains history and explicit cleanup preserves both errors', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope()]), { status: 200, responseText: 'invalid JSON' }], {
     clearError: new Error('fixture native cleanup failure'),
   });
-  await assert.doesNotReject(h.run());
+  // When h.run processes the configured inputs
+  const observedResult = h.run();
+  // Then user observes that terminal protocol failure retains history and explicit cleanup preserves both errors
+  await assert.doesNotReject(observedResult);
   assert.equal(h.layerClears, 0);
   assert.equal(h.panel.size, 1);
   assert.equal(h.panel.compoundSize, 1);
@@ -400,8 +457,10 @@ test('terminal protocol failure retains history and explicit cleanup preserves b
   assert.match(h.status(), /fixture native cleanup failure/);
 });
 
-test('late drawing failure after context retirement remains inspectable without updating the old panel', async (t) => {
+test('user observes that late drawing failure after context retirement remains inspectable without updating the old panel', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const drawing = deferred();
+  // When deferred processes the configured inputs
   const release = deferred();
   const failure = new Error('fixture late cleanup failure');
   const h = harness(t, [bootstrap(), batch([envelope()])], {
@@ -413,6 +472,7 @@ test('late drawing failure after context retirement remains inspectable without 
   h.controller.stop('route_changed');
   const retiredStatus = h.status();
   release.resolve();
+  // Then user observes that late drawing failure after context retirement remains inspectable without updating the old panel
   await assert.doesNotReject(done);
   assert.equal(h.controller.lastError, failure);
   assert.equal(h.status(), retiredStatus);
@@ -420,13 +480,16 @@ test('late drawing failure after context retirement remains inspectable without 
   assert.equal(h.panel.size, 1);
 });
 
-test('timer repair failures stop only the compound job and retain both histories', async (t) => {
+test('user observes that timer repair failures stop only the compound job and retain both histories', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope()])], {
     reconcile: async () => { throw new Error('fixture native repair failure'); },
   });
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
   await h.controller.reconcile();
+  // Then user observes that timer repair failures stop only the compound job and retain both histories
   assert.equal(h.panel.size, 1);
   assert.equal(h.panel.compoundSize, 1);
   assert.equal(h.shapes.size, 1);
@@ -437,7 +500,8 @@ test('timer repair failures stop only the compound job and retain both histories
   assert.match(h.controller.lastError.message, /fixture native repair failure/);
 });
 
-test('manual clear stays effective across unavailable, bootstrap replay and another epoch', async (t) => {
+test('user observes that manual clear stays effective across unavailable, bootstrap replay and another epoch', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const epoch = 'b'.repeat(32);
   const snapshot = JSON.parse(bootstrap('5-0', epoch).responseText);
   snapshot.records = [envelope(fixtures[0], 2, epoch)];
@@ -446,18 +510,23 @@ test('manual clear stays effective across unavailable, bootstrap replay and anot
     controller.clear();
     return response({ schema_version: 1, status: 'error', error_code: 'redis_unavailable' }, 503);
   }, response(snapshot), batch([state(1, 'c'.repeat(32)), envelope(fixtures[0], 2, 'c'.repeat(32)), envelope(fixtures[1], 3, 'c'.repeat(32))], '5-0', '6-0')]);
+  // When h.run processes the configured inputs
   h.run();
   await h.parked;
+  // Then user observes that manual clear stays effective across unavailable, bootstrap replay and another epoch
   assert.deepEqual(h.renders.map((render) => render.id), fixtures.map((candidate) => candidate.candidate_id));
   assert.deepEqual([...h.shapes.keys()], [fixtures[1].candidate_id]);
   assert.equal(h.panel.compoundSize, 1);
   assert.equal(h.layerClears, 1);
 });
 
-test('retained history remains clearable and expires after terminal failure', async (t) => {
-  for (const action of ['clear', 'prune', 'stop']) {
+for (const action of ['clear', 'prune', 'stop']) {
+  test(`user observes that retained history remains clearable and expires after terminal failure (action=${JSON.stringify(action)})`, async (t) => {
+    // Given a compound gateway sequence and independent ordinary event history
     const h = harness(t, [bootstrap(), batch([envelope()]), { status: 200, responseText: 'invalid JSON' }], { maxAgeMs: 1000 });
+    // When h.run processes the configured inputs
     await h.run();
+    // Then user observes that retained history remains clearable and expires after terminal failure (action=the selected case)
     assert.equal(h.panel.compoundSize, 1);
     assert.equal(h.shapes.size, 1);
     assert.equal(h.statusKind(), 'error');
@@ -468,18 +537,22 @@ test('retained history remains clearable and expires after terminal failure', as
     assert.equal(h.panel.size, 1, action);
     assert.match(h.status(), /JSON/);
     assert.equal(h.calls.length, 3);
-  }
-});
 
-test('age cleanup attempts every expired candidate once when a native removal fails', async (t) => {
+  });
+}
+
+test('user observes that age cleanup attempts every expired candidate once when a native removal fails', async (t) => {
+  // Given a compound gateway sequence and independent ordinary event history
   const h = harness(t, [bootstrap(), batch([envelope(fixtures[0], 2), envelope(fixtures[1], 3)])], {
     maxAgeMs: 1000, removeError: new Error('fixture removal failure'),
   });
+  // When h.run processes the configured inputs
   const done = h.run();
   await h.parked;
   h.setClock(8001);
   h.controller.prune();
   await done;
+  // Then user observes that age cleanup attempts every expired candidate once when a native removal fails
   assert.deepEqual(h.removed, fixtures.map((candidate) => candidate.candidate_id));
   assert.equal(h.panel.compoundSize, 0);
   h.controller.prune();

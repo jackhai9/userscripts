@@ -1,3 +1,4 @@
+import { captureThrownError } from '../../helpers/orderbook-migration-errors.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -21,25 +22,38 @@ function loadChartTarget({ mode = 'tradingview' } = {}) {
   return { dom, api };
 }
 
-test('locates the one TradingView API used by TradingView and Basic chart modes', () => {
-  for (const mode of ['tradingview', 'basic']) {
+for (const [scenarioIndex, mode] of (['tradingview', 'basic']).entries()) {
+  test(`user locates the one TradingView API used by TradingView and Basic chart modes (case ${scenarioIndex + 1})`, () => {
+    // Given the native fixture represents this supported scenario
     const { dom, api } = loadChartTarget({ mode });
+    // When the real adapter handles this fixture
     const target = getBinanceTradingViewTarget(dom.window.document);
 
+    // Then the user locates the one TradingView API used by TradingView and Basic chart modes
     assert.equal(target.chartRoot.className, 'chart-widget-root');
     assert.equal(target.tradingViewApi, api);
-  }
-});
+  });
+}
 
-test('target discovery does not depend on the native chart settings menu', () => {
+test("user sees that target discovery does not depend on the native chart settings menu", () => {
+  // Given the native chart roots and APIs are mounted
   const { dom, api } = loadChartTarget();
-  assert.equal(dom.window.document.querySelector('[aria-describedby]'), null);
+  // When the active TradingView target is resolved
+  const observed = dom.window.document.querySelector('[aria-describedby]');
+
+  // Then sees that target discovery does not depend on the native chart settings menu
+  assert.equal(observed, null);
   assert.equal(getBinanceTradingViewTarget(dom.window.document).tradingViewApi, api);
 });
 
-test('find waits for the visible chart root and TradingView API', () => {
+test("user sees that find waits for the visible chart root and TradingView API", () => {
+  // Given the native chart roots and APIs are mounted
   const missingDom = loadFixtureDom('<div></div>');
-  assert.equal(findBinanceTradingViewTarget(missingDom.window.document), null);
+  // When the active TradingView target is resolved
+  const observed = findBinanceTradingViewTarget(missingDom.window.document);
+
+  // Then sees that find waits for the visible chart root and TradingView API
+  assert.equal(observed, null);
 
   const hiddenDom = loadFixtureDom(createChartMarkup());
   hiddenDom.window.document.querySelector('.chart-widget-root').setAttribute('data-hidden', '');
@@ -49,20 +63,24 @@ test('find waits for the visible chart root and TradingView API', () => {
   assert.equal(findBinanceTradingViewTarget(apiPendingDom.window.document), null);
 });
 
-test('get rejects an unavailable TradingView target', () => {
+test("user sees that get rejects an unavailable TradingView target", () => {
+  // Given the native chart roots and APIs are mounted
   const dom = loadFixtureDom(createChartMarkup());
-  assert.throws(
-    () => getBinanceTradingViewTarget(dom.window.document),
-    /未找到可用图表接口/,
-  );
+  // When the active TradingView target is resolved
+  const observedFailure = captureThrownError(() => getBinanceTradingViewTarget(dom.window.document));
+
+  // Then sees that get rejects an unavailable TradingView target
+  assert.match(observedFailure.message, /未找到可用图表接口/);
 });
 
-test('target discovery rejects ambiguous chart roots or TradingView APIs', () => {
+test("user sees that target discovery rejects ambiguous chart roots or TradingView APIs", () => {
+  // Given the native chart roots and APIs are mounted
   const duplicateRootDom = loadFixtureDom(`${createChartMarkup()}${createChartMarkup()}`);
-  assert.throws(
-    () => findBinanceTradingViewTarget(duplicateRootDom.window.document),
-    /可见图表区域数量异常：2/,
-  );
+  // When the active TradingView target is resolved
+  const observedFailure = captureThrownError(() => findBinanceTradingViewTarget(duplicateRootDom.window.document));
+
+  // Then sees that target discovery rejects ambiguous chart roots or TradingView APIs
+  assert.match(observedFailure.message, /可见图表区域数量异常：2/);
 
   const { dom } = loadChartTarget();
   const secondFrame = dom.window.document.createElement('iframe');

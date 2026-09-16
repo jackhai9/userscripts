@@ -34,6 +34,27 @@ L0 and L1 remain fast PR gates. L2 owns the full scenario matrix. L3 and L4 are
 smaller integration and release gates because extension state, network timing, and
 market state are not deterministic enough for the full matrix.
 
+Scenario naming, Given/When/Then structure, assertions, and permitted test
+boundaries follow [Behavioral Test Policy](test-policy.md). L2 still executes the
+generated install artifact. Its reviewed fake is tested separately in
+`test/unit/binance-fixture-contract.test.js`: wrong symbol filtering or the wrong
+Basic/conditional tab must produce the corresponding wrong cancellation scope,
+so the fake cannot silently repair an unsafe caller. Native confirmation and
+delayed clearing retain the initiating scope snapshot.
+
+Use `helpers/scenario-clock.js` for business deadlines, cooldowns, and negative
+proofs such as no new submission after Stop. A pending request stays pending
+until `releaseSubmitResponse()` explicitly delivers success or rejection. Keep
+performance budgets on real `performance` time; advancing a virtual clock is
+not a latency or throughput measurement. The ordinary single-round unknown
+submission scenario must not be generalized to continuous mode, whose existing
+`submit_unconfirmed` policy deliberately permits a later recovery round.
+
+`npm run test:coverage` additionally collects V8 execution and maps it to the
+complete production source set. The collector's own browser proof uses virtual
+code and remains separate from production coverage. See [Source Coverage](test-coverage.md)
+for report completeness and shared-source merge checks.
+
 ## Scenario Model
 
 Scenarios are data, not copied test procedures. Each scenario declares these axes:

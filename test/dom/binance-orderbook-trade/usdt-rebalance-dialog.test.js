@@ -42,12 +42,15 @@ function createDialogModel() {
   };
 }
 
-test('USDT rebalance dialog renders the plan and focuses the safe action', async () => {
+test("user sees that USDT rebalance dialog renders the plan and focuses the safe action", async () => {
+  // Given the account balances and rebalance dialog are available
   const dom = createDialogDocument();
   const { document } = dom.window;
+  // When the requested dialog interaction executes
   const result = showUsdtRebalanceDialog(document, createDialogModel());
   const dialog = document.getElementById(USDT_REBALANCE_DIALOG_ID);
 
+  // Then sees that USDT rebalance dialog renders the plan and focuses the safe action
   assert.equal(dialog.tagName, 'DIALOG');
   assert.equal(dialog.open, true);
   assert.equal(dialog.getAttribute('aria-labelledby'), `${USDT_REBALANCE_DIALOG_ID}-title`);
@@ -65,36 +68,45 @@ test('USDT rebalance dialog renders the plan and focuses the safe action', async
   assert.equal(document.getElementById(USDT_REBALANCE_DIALOG_ID), null);
 });
 
-test('USDT rebalance dialog resolves true only from the confirm action', async () => {
+test("user sees that USDT rebalance dialog resolves true only from the confirm action", async () => {
+  // Given the account balances and rebalance dialog are available
   const dom = createDialogDocument();
   const { document } = dom.window;
   const result = showUsdtRebalanceDialog(document, createDialogModel());
 
+  // When the requested dialog interaction executes
   document.querySelector('[data-rebalance-dialog-action="confirm"]').click();
 
+  // Then sees that USDT rebalance dialog resolves true only from the confirm action
   assert.equal(await result, true);
   assert.equal(document.getElementById(USDT_REBALANCE_DIALOG_ID), null);
 });
 
-test('USDT rebalance dialog treats Escape as cancellation', async () => {
+test("user sees that USDT rebalance dialog treats Escape as cancellation", async () => {
+  // Given the account balances and rebalance dialog are available
   const dom = createDialogDocument();
   const { document } = dom.window;
   const result = showUsdtRebalanceDialog(document, createDialogModel());
   const dialog = document.getElementById(USDT_REBALANCE_DIALOG_ID);
   const event = new dom.window.Event('cancel', { cancelable: true });
 
+  // When the requested dialog interaction executes
   dialog.dispatchEvent(event);
 
+  // Then sees that USDT rebalance dialog treats Escape as cancellation
   assert.equal(event.defaultPrevented, true);
   assert.equal(await result, false);
   assert.equal(document.getElementById(USDT_REBALANCE_DIALOG_ID), null);
 });
 
-test('USDT rebalance dialog rejects concurrent dialogs', async () => {
+test("user sees that USDT rebalance dialog rejects concurrent dialogs", async () => {
+  // Given the account balances and rebalance dialog are available
   const dom = createDialogDocument();
   const { document } = dom.window;
+  // When the requested dialog interaction executes
   const firstResult = showUsdtRebalanceDialog(document, createDialogModel());
 
+  // Then sees that USDT rebalance dialog rejects concurrent dialogs
   assert.throws(
     () => showUsdtRebalanceDialog(document, createDialogModel()),
     /USDT rebalance dialog is already open/,

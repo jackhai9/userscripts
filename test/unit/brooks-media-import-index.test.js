@@ -26,21 +26,32 @@ function createIndex(exportedAt = '2026-06-03T10:42:15.123Z') {
   };
 }
 
-test('Brooks media index import builds a flat timestamped report filename', () => {
+test('user observes that Brooks media index import builds a flat timestamped report filename', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = createIndex();
+  // When the real operation processes that input
+  const observed = buildBrooksMediaIndexReportName(scenarioInput);
+  // Then Brooks media index import builds a flat timestamped report filename
   assert.equal(
-    buildBrooksMediaIndexReportName(createIndex()),
+    observed,
     'brooks-media-index-2026-06-03T104215Z.json',
   );
 });
 
-test('Brooks media index import derives the default report directory from the user home', () => {
+test('user observes that Brooks media index import derives the default report directory from the user home', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = '/Users/alice';
+  // When the real operation processes that input
+  const observed = getDefaultBrooksReportsDir(scenarioInput);
+  // Then Brooks media index import derives the default report directory from the user home
   assert.equal(
-    getDefaultBrooksReportsDir('/Users/alice'),
+    observed,
     '/Users/alice/PA/brooks-media-sync/reports',
   );
 });
 
-test('Brooks media index import moves the latest completed export into the flat reports directory', async () => {
+test('user observes that Brooks media index import moves the latest completed export into the flat reports directory', async () => {
+  // Given the downloads fixture contains timestamped complete media indexes
   const dir = await mkdtemp(join(tmpdir(), 'brooks-import-test-'));
   try {
     const downloadsDir = join(dir, 'Downloads');
@@ -52,8 +63,10 @@ test('Brooks media index import moves the latest completed export into the flat 
     await writeFile(oldPath, JSON.stringify(createIndex('2026-06-03T09:00:00.000Z'), null, 2));
     await writeFile(latestPath, JSON.stringify(createIndex('2026-06-03T10:42:15.123Z'), null, 2));
 
+    // When the importer resolves the appropriate report destination
     const result = await importLatestBrooksMediaIndex({ downloadsDir, reportsDir });
 
+    // Then Brooks media index import moves the latest completed export into the flat reports directory
     assert.equal(result.status, 'moved');
     assert.equal(result.targetPath, join(reportsDir, 'brooks-media-index-2026-06-03T104215Z.json'));
     assert.equal(
@@ -70,7 +83,8 @@ test('Brooks media index import moves the latest completed export into the flat 
   }
 });
 
-test('Brooks media index import removes duplicate downloads when the report already exists', async () => {
+test('user observes that Brooks media index import removes duplicate downloads when the report already exists', async () => {
+  // Given the downloads fixture contains timestamped complete media indexes
   const dir = await mkdtemp(join(tmpdir(), 'brooks-import-dedupe-test-'));
   try {
     const downloadsDir = join(dir, 'Downloads');
@@ -83,8 +97,10 @@ test('Brooks media index import removes duplicate downloads when the report alre
     await writeFile(sourcePath, content);
     await writeFile(targetPath, content);
 
+    // When the importer resolves the appropriate report destination
     const result = await importLatestBrooksMediaIndex({ downloadsDir, reportsDir });
 
+    // Then Brooks media index import removes duplicate downloads when the report already exists
     assert.deepEqual(result, {
       status: 'duplicate',
       sourcePath,

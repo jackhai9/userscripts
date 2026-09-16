@@ -27,8 +27,13 @@ function liveContext(overrides = {}) {
   };
 }
 
-test('smoke profile derives three internal scales from live capacity', () => {
-  assert.equal(validateLiveOrderScaleProfile(profile).profileName, 'smoke');
+test('user observes that smoke profile derives three internal scales from live capacity', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = profile;
+  // When the real operation processes that input
+  const observed = validateLiveOrderScaleProfile(scenarioInput).profileName;
+  // Then smoke profile derives three internal scales from live capacity
+  assert.equal(observed, 'smoke');
   const plan = createLiveOrderScalePlan(profile, liveContext());
 
   assert.equal(plan.effectiveCapacity, 3);
@@ -42,23 +47,39 @@ test('smoke profile derives three internal scales from live capacity', () => {
   assert.equal(plan.capacityEvidence.maxNewOrdersByMargin, 10);
 });
 
-test('scale counts are configuration-driven rather than fixed to smoke values', () => {
-  const plan = createLiveOrderScalePlan({ ...profile, maxOrderCount: 40 }, liveContext({
+test('user observes that scale counts are configuration-driven rather than fixed to smoke values', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = { ...profile, maxOrderCount: 40 };
+  // When the scale counts are configuration-driven rather than fixed to smoke values
+  const plan = createLiveOrderScalePlan(scenarioInput, liveContext({
     testBudget: '100',
   }));
 
+  // Then scale counts are configuration-driven rather than fixed to smoke values
   assert.deepEqual(plan.scales.map((scale) => scale.effectiveTargetOrderCount), [10, 20, 40]);
 });
 
-test('insufficient live capacity fails instead of silently collapsing scale labels', () => {
-  assert.throws(
-    () => createLiveOrderScalePlan(profile, liveContext({ testBudget: '0.4' })),
-    /cannot form three distinct scales/,
-  );
+test('user observes that insufficient live capacity fails instead of silently collapsing scale labels', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = liveContext({ testBudget: '0.4' });
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    createLiveOrderScalePlan(profile, scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then insufficient live capacity fails instead of silently collapsing scale labels
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /cannot form three distinct scales/);
 });
 
-test('capacity evidence validates actual notional and slot arithmetic', () => {
-  const evidence = createLiveOrderScalePlan(profile, liveContext()).capacityEvidence;
+test('user observes that capacity evidence validates actual notional and slot arithmetic', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = profile;
+  // When the capacity evidence validates actual notional and slot arithmetic
+  const evidence = createLiveOrderScalePlan(scenarioInput, liveContext()).capacityEvidence;
+  // Then capacity evidence validates actual notional and slot arithmetic
   assert.equal(validateLiveOrderCapacityEvidence(evidence).perOrderNotional, '5');
   assert.throws(
     () => validateLiveOrderCapacityEvidence({ ...evidence, perOrderNotional: '4.9' }),
@@ -66,14 +87,18 @@ test('capacity evidence validates actual notional and slot arithmetic', () => {
   );
 });
 
-test('one-order smoke capacity is valid without requiring three scale levels', () => {
-  const evidence = createLiveOrderCapacityEvidence(liveContext({
+test('user observes that one-order smoke capacity is valid without requiring three scale levels', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = liveContext({
     testBudget: '1.25',
     currentLeverage: 1,
     perOrderPrice: '1',
     perOrderQuantity: '1',
-  }));
+  });
+  // When the one-order smoke capacity is valid without requiring three scale levels
+  const evidence = createLiveOrderCapacityEvidence(scenarioInput);
 
+  // Then one-order smoke capacity is valid without requiring three scale levels
   assert.equal(evidence.maxNewOrdersByMargin, 1);
   assert.equal(validateLiveOrderCapacityEvidence(evidence), evidence);
   assert.throws(
@@ -87,20 +112,32 @@ test('one-order smoke capacity is valid without requiring three scale levels', (
   );
 });
 
-test('live order slots subtract existing and outstanding test-owned orders', () => {
-  const plan = createLiveOrderScalePlan(profile, liveContext({
+test('user observes that live order slots subtract existing and outstanding test-owned orders', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = profile;
+  // When the live order slots subtract existing and outstanding test-owned orders
+  const plan = createLiveOrderScalePlan(scenarioInput, liveContext({
     liveMaxNumOrdersLimit: 8,
     existingCurrentSymbolOpenOrders: 2,
     outstandingTestOwnedOrders: 1,
   }));
 
+  // Then live order slots subtract existing and outstanding test-owned orders
   assert.equal(plan.capacityEvidence.maxNewOrdersBySlots, 4);
   assert.equal(plan.effectiveCapacity, 3);
 });
 
-test('zero leverage fails instead of inventing test capacity', () => {
-  assert.throws(
-    () => createLiveOrderScalePlan(profile, liveContext({ currentLeverage: 0 })),
-    /currentLeverage must be positive/,
-  );
+test('user observes that zero leverage fails instead of inventing test capacity', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = liveContext({ currentLeverage: 0 });
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    createLiveOrderScalePlan(profile, scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then zero leverage fails instead of inventing test capacity
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /currentLeverage must be positive/);
 });

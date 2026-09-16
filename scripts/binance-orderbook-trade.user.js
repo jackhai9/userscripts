@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.208
+// @version      2.7.211
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1028,15 +1028,6 @@
     for (let i = 0; i < actualLevels; i += 1) {
       const isLast = i === actualLevels - 1;
       const steps = isLast ? remainingSteps : baseSteps;
-      if (steps < minSteps) {
-        if (quantities.length === 0) return null;
-        const previous = decimalToStepCount(quantities.pop(), stepSize, "floor");
-        const merged = previous + steps;
-        if (merged < minSteps) return null;
-        quantities.push(formatStepCount(merged, stepSize));
-        remainingSteps = 0n;
-        break;
-      }
       quantities.push(formatStepCount(steps, stepSize));
       remainingSteps -= steps;
     }
@@ -1582,7 +1573,7 @@
       `${progress.completedRounds}/${progress.startedRounds} 轮`,
       `${progress.completedRounds}/${progress.startedRounds} rounds`
     ));
-    if (progress.lastRound?.plannedOrders !== null) {
+    if (progress.lastRound !== null && progress.lastRound.plannedOrders !== null) {
       parts.push(localizedText(
         `本轮 ${progress.lastRound.currentPlanSubmittedOrders}/${progress.lastRound.plannedOrders} 笔`,
         `This round ${progress.lastRound.currentPlanSubmittedOrders}/${progress.lastRound.plannedOrders}`
@@ -1864,10 +1855,10 @@
     if (apiError.success !== false || apiError.code !== 90802022) return null;
     return apiError;
   }
-  function parseRetryAfterMs(value) {
-    if (value == null || value === "") return null;
+  function resolveBinanceRateLimitCooldownMs(value) {
+    if (value == null || value === "") return 1e4;
     const seconds = Number(value);
-    return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1e3 : null;
+    return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1e3 : 1e4;
   }
   function resolveBinanceSubmitResponseRecovery(diagnostics, apiErrors) {
     if (!Array.isArray(diagnostics) || !Array.isArray(apiErrors)) {
@@ -1878,7 +1869,7 @@
     if (rateLimitDiagnostic || hasRateLimitCode) {
       return {
         kind: "rate_limited",
-        cooldownMs: parseRetryAfterMs(rateLimitDiagnostic?.retryAfter) ?? 1e4
+        cooldownMs: resolveBinanceRateLimitCooldownMs(rateLimitDiagnostic?.retryAfter)
       };
     }
     if (diagnostics.some(({ httpStatus }) => httpStatus >= 500 && httpStatus <= 599)) {
@@ -3987,6 +3978,7 @@
     }
     const observedFetch = new Proxy(nativeFetch, {
       apply(target, receiver, args) {
+        if (restored) return Reflect.apply(target, receiver, args);
         let observation = null;
         try {
           observation = resolveNativeSnapshotSymbol(args[0], baseUrl);
@@ -4011,7 +4003,9 @@
             return response.clone().json();
           }).then(
             (payload) => acceptSnapshot(symbol, payload),
-            (error) => failRecord(ensureRecord(symbol), error)
+            (error) => {
+              if (!restored) failRecord(ensureRecord(symbol), error);
+            }
           );
         }
         return result;
@@ -4020,7 +4014,7 @@
     const ObservedWebSocket = new Proxy(NativeWebSocket, {
       construct(target, args, newTarget) {
         const socket = Reflect.construct(target, args, newTarget);
-        observeSocket(socket);
+        if (!restored) observeSocket(socket);
         return socket;
       }
     });
@@ -4028,6 +4022,7 @@
     globalObject.WebSocket = ObservedWebSocket;
     return {
       subscribe(options) {
+        if (restored) throw new Error("Binance native depth source has been restored");
         const {
           symbol,
           onProfile,
@@ -4038,7 +4033,6 @@
           onProfile: assertFunction(onProfile, "profile listener"),
           onStatus: assertFunction(onStatus, "status listener")
         };
-        if (restored) throw new Error("Binance native depth source has been restored");
         record.subscribers.add(subscriber);
         subscriber.onStatus(record.status);
         if (record.profile) subscriber.onProfile(record.profile);
@@ -6426,8 +6420,7 @@
     }
     function ensureOrderbookPrecisionObserver() {
       if (document.hidden || !isFuturesTradingPage()) return;
-      const trigger = findOrderbookPrecisionTrigger();
-      const root = trigger?.element?.closest(".orderbook-tickSize") || trigger?.element || null;
+      const root = document.querySelector("#futuresOrderbook .orderbook-tickSize");
       if (!root) {
         if (orderbookPrecisionObserverRoot) stopOrderbookPrecisionObserver();
         return;
@@ -7022,8 +7015,7 @@
           rateLimited ? "仓位确认请求频率受限" : "仓位确认暂未完成"
         );
         if (rateLimited) {
-          const retryAfterSeconds = Number(error.retryAfter);
-          recoveryError.continuousRecoveryCooldownMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0 ? retryAfterSeconds * 1e3 : 1e4;
+          recoveryError.continuousRecoveryCooldownMs = resolveBinanceRateLimitCooldownMs(error.retryAfter);
         }
         recoveryError.skipImmediateCloseRecheck = true;
         throw recoveryError;
@@ -10041,9 +10033,23 @@
             await restoreOpenOrdersSubTab(previousOpenOrdersSubTabIdentity, symbol);
           }
           if (previousOpenOrdersScrollTop !== null) {
-            openOrdersScope = await waitForActiveOpenOrdersScope();
-            const scrollContainer = findOpenOrderRowsScrollContainer(openOrdersScope);
-            if (scrollContainer) {
+            const restoredRows = await waitForAccountOrdersState(() => {
+              if (!isCurrentObservedSymbol(symbol)) return null;
+              const root = getActiveOpenOrdersScope2();
+              if (!root) return null;
+              if (previousOpenOrdersSubTabIdentity && getOpenOrdersSubTabIdentity2(
+                findSelectedOpenOrdersSubTab2(root)
+              ) !== previousOpenOrdersSubTabIdentity) return null;
+              if (symbolFilterOriginalChecked !== null && getCheckboxCheckedState(
+                findHideOtherSymbolCheckbox(root)
+              ) !== symbolFilterOriginalChecked) return null;
+              const hasRows = readOpenOrderRowElements(root).length > 0;
+              const empty = !hasRows && !findCurrentSymbolCancelAllButton(root) && hasBinanceCurrentSymbolOpenOrdersEmptyText(readOpenOrdersScopeText2(root));
+              if (!hasRows && !empty) return null;
+              return { root, scrollContainer: findOpenOrderRowsScrollContainer(root) };
+            }, 2200);
+            const scrollContainer = restoredRows?.scrollContainer;
+            if (isCurrentObservedSymbol(symbol) && restoredRows?.root === getActiveOpenOrdersScope2() && scrollContainer?.isConnected && restoredRows.root.contains(scrollContainer)) {
               scrollContainer.scrollTop = Math.min(
                 previousOpenOrdersScrollTop,
                 scrollContainer.scrollHeight
@@ -11182,16 +11188,18 @@
     function getLadderControlSections(tradeMode, closeContext, symbol, precision) {
       const ladderRunning = !!ladderTask || !!continuousLadderTask;
       const actionDisabled = ladderRunning || !!singleOrderTask || cancelCurrentSymbolOpenOrdersBlocksLadderActions;
+      const activeActionType = activeLadderActionType || activeContinuousLadderActionType;
+      const activeStopButtons = activeActionType ? [ladderExecutionButton(activeActionType)] : [];
       if (!["OPEN", "CLOSE"].includes(tradeMode)) {
         return {
           optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">${ui(PANEL_COPY.state.waitingTradeMode)}</div>`],
-          actionButtons: []
+          actionButtons: activeStopButtons
         };
       }
       if (!precision) {
         return {
           optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">${ui(PANEL_COPY.state.waitingPricePrecision)}</div>`],
-          actionButtons: []
+          actionButtons: activeStopButtons
         };
       }
       if (tradeMode === "OPEN") {

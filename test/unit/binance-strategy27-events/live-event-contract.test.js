@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { captureStrategyError } from '../../helpers/strategy-migration-boundaries.js';
 
 import {
   canonicalSymbolToRoute,
@@ -90,27 +91,42 @@ function envelope({
   };
 }
 
-test('canonical and route symbols round-trip exactly', () => {
-  assert.equal(canonicalSymbolToRoute('BTR/USDT:USDT'), 'BTRUSDT');
+test('user observes that canonical and route symbols round-trip exactly', () => {
+  // Given the ordinary event payload and stream contract
+  const scenarioInput = 'BTR/USDT:USDT';
+  // When canonicalSymbolToRoute processes the configured inputs
+  const observedResult = canonicalSymbolToRoute(scenarioInput);
+  // Then user observes that canonical and route symbols round-trip exactly
+  assert.equal(observedResult, 'BTRUSDT');
   assert.equal(routeSymbolToCanonical('BTRUSDT'), 'BTR/USDT:USDT');
   assert.throws(() => canonicalSymbolToRoute('BTR/USDT'), /canonical Strategy 27 symbol/);
   assert.throws(() => routeSymbolToCanonical('BTRUSD'), /Binance futures route symbol/);
 });
 
-test('event time maps by exact integer-second floor', () => {
-  assert.equal(eventTimeToChartSecond(1_999), 1);
+test('user observes that event time maps by exact integer-second floor', () => {
+  // Given the ordinary event payload and stream contract
+  const scenarioInput = 1_999;
+  // When eventTimeToChartSecond processes the configured inputs
+  const observedResult = eventTimeToChartSecond(scenarioInput);
+  // Then user observes that event time maps by exact integer-second floor
+  assert.equal(observedResult, 1);
   assert.throws(() => eventTimeToChartSecond(1.5), /integer milliseconds/);
 });
 
-test('validates the exact gateway reset and success bodies', () => {
-  assert.deepEqual(validateGatewayResponse({
+test('user validates the exact gateway reset and success bodies', () => {
+  // Given the ordinary event payload and stream contract
+  const scenarioInput = {
     schema_version: 1,
     status: 'reset',
     reason: 'initial_cursor',
     requested_cursor: null,
     next_cursor: '0-0',
     messages: [],
-  }, 200), {
+  };
+  // When validateGatewayResponse processes the configured inputs
+  const observedResult = validateGatewayResponse(scenarioInput, 200);
+  // Then user validates the exact gateway reset and success bodies
+  assert.deepEqual(observedResult, {
     schema_version: 1,
     status: 'reset',
     reason: 'initial_cursor',
@@ -131,7 +147,8 @@ test('validates the exact gateway reset and success bodies', () => {
   assert.throws(() => validateGatewayResponse({ ...response, extra: true }, 200), /exact keys/);
 });
 
-test('validates live envelopes without coercing decimal strings or extra keys', () => {
+test('user validates live envelopes without coercing decimal strings or extra keys', () => {
+  // Given the ordinary event payload and stream contract
   const opened = envelope();
   assert.equal(validateLiveEnvelope(opened), opened);
   assert.throws(
@@ -169,8 +186,10 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
     /trigger snapshot must start at triggered_at_ms/,
   );
 
+  // When envelope processes the configured inputs
   const triggerCandidate = envelope();
   triggerCandidate.payload.event.trigger_snapshot.candidate_observations = ['bearish_buy_impact_failure'];
+  // Then user validates live envelopes without coercing decimal strings or extra keys
   assert.throws(() => validateLiveEnvelope(triggerCandidate), /uncategorized research bucket/);
 
   const partialCandidate = envelope();
@@ -219,11 +238,13 @@ test('validates live envelopes without coercing decimal strings or extra keys', 
   assert.throws(() => validateLiveEnvelope(postCloseLatest), /must not follow active end/);
 });
 
-test('allows a closed event to retain the last eligible snapshot before its lifecycle boundary', () => {
+test('user allows a closed event to retain the last eligible snapshot before its lifecycle boundary', () => {
+  // Given the ordinary event payload and stream contract
   const closedEvent = {
     ...event({ status: 'complete', activeEnd: 2_000 }),
     latest_snapshot: snapshot({ start: 1_500, end: 1_750 }),
   };
+  // When envelope processes the configured inputs
   const closedEnvelope = envelope({
     kind: 'event_closed',
     payload: { event: closedEvent },
@@ -231,6 +252,7 @@ test('allows a closed event to retain the last eligible snapshot before its life
     eventTime: 2_000,
   });
 
+  // Then user allows a closed event to retain the last eligible snapshot before its lifecycle boundary
   assert.equal(validateLiveEnvelope(closedEnvelope), closedEnvelope);
   assert.throws(
     () => validateLiveEnvelope({ ...closedEnvelope, event_time_ms: 1_999 }),
@@ -238,9 +260,12 @@ test('allows a closed event to retain the last eligible snapshot before its life
   );
 });
 
-test('tracks exact sequence and event lifecycle while allowing reset rehydration', () => {
+test('user tracks exact sequence and event lifecycle while allowing reset rehydration', () => {
+  // Given the ordinary event payload and stream contract
   const lifecycle = new LiveEventLifecycle('BTR/USDT:USDT', lifecycleOptions);
+  // When lifecycle.apply processes the configured inputs
   const opened = lifecycle.apply(envelope());
+  // Then user tracks exact sequence and event lifecycle while allowing reset rehydration
   assert.equal(opened.type, 'event');
   assert.equal(opened.rehydrated, false);
 
@@ -295,7 +320,8 @@ test('tracks exact sequence and event lifecycle while allowing reset rehydration
   assert.equal(rehydrated.rehydrated, true);
 });
 
-test('bootstrap restores a sparse retained subsequence and advances to the live tail', () => {
+test('user observes that bootstrap restores a sparse retained subsequence and advances to the live tail', () => {
+  // Given the ordinary event payload and stream contract
   const retained = envelope({ sequence: 4, kind: 'event_updated', eventTime: 1_250 });
   const body = {
     schema_version: 1,
@@ -321,6 +347,7 @@ test('bootstrap restores a sparse retained subsequence and advances to the live 
     }, 200),
     /event envelope is required/,
   );
+  // When event processes the configured inputs
   const closedEvent = event({ status: 'complete', activeEnd: 2_000 });
   const outcomeOnly = envelope({
     sequence: 6,
@@ -358,6 +385,7 @@ test('bootstrap restores a sparse retained subsequence and advances to the live 
       outcome_envelope: outcomeOnly,
     }],
   };
+  // Then user observes that bootstrap restores a sparse retained subsequence and advances to the live tail
   assert.equal(validateGatewayBootstrapResponse(outcomeOnlyBody, 200), outcomeOnlyBody);
   assert.throws(
     () => validateGatewayBootstrapResponse({
@@ -396,8 +424,10 @@ test('bootstrap restores a sparse retained subsequence and advances to the live 
   assert.equal(lifecycle.lastSequence, 8);
 });
 
-test('rejects unknown lifecycle transitions without a reset', () => {
+test('user rejects unknown lifecycle transitions without a reset', () => {
+  // Given the ordinary event payload and stream contract
   const lifecycle = new LiveEventLifecycle('BTR/USDT:USDT', lifecycleOptions);
+  // When lifecycle.apply processes the configured inputs
   lifecycle.apply(envelope());
   const lateSnapshot = snapshot({ start: 3_000, end: 3_250 });
   const lateEvent = {
@@ -406,6 +436,7 @@ test('rejects unknown lifecycle transitions without a reset', () => {
     trigger_snapshot: lateSnapshot,
     latest_snapshot: lateSnapshot,
   };
+  // Then user rejects unknown lifecycle transitions without a reset
   assert.throws(
     () => lifecycle.apply(envelope({
       sequence: 2,
@@ -418,8 +449,10 @@ test('rejects unknown lifecycle transitions without a reset', () => {
   );
 });
 
-test('rejects a repeated stream_state inside the same epoch before any event', () => {
+test('user rejects a repeated stream_state inside the same epoch before any event', () => {
+  // Given the ordinary event payload and stream contract
   const lifecycle = new LiveEventLifecycle('BTR/USDT:USDT', lifecycleOptions);
+  // When envelope processes the configured inputs
   const streamState = envelope({
     kind: 'stream_state',
     symbol: null,
@@ -428,6 +461,7 @@ test('rejects a repeated stream_state inside the same epoch before any event', (
     eventTime: 2_000,
     payload: { state: 'ready', reason: 'startup' },
   });
+  // Then user rejects a repeated stream_state inside the same epoch before any event
   assert.equal(lifecycle.apply(streamState).type, 'stream_reset');
   assert.throws(
     () => lifecycle.apply({ ...streamState, sequence: 2 }),
@@ -435,14 +469,17 @@ test('rejects a repeated stream_state inside the same epoch before any event', (
   );
 });
 
-test('bounds retained lifecycle events and reports exact count and age evictions', () => {
+test('user observes that bounds retained lifecycle events and reports exact count and age evictions', () => {
+  // Given the ordinary event payload and stream contract
   const lifecycle = new LiveEventLifecycle('BTR/USDT:USDT', { maxEvents: 2, maxAgeMs: 1_000 });
+  // When 'b'.repeat processes the configured inputs
   const eventB = 'b'.repeat(64);
   const eventC = 'c'.repeat(64);
   lifecycle.apply(envelope({ id: eventId, sequence: 1 }));
   lifecycle.apply(envelope({ id: eventB, sequence: 2 }));
 
   const inserted = lifecycle.apply(envelope({ id: eventC, sequence: 3 }));
+  // Then user observes that bounds retained lifecycle events and reports exact count and age evictions
   assert.deepEqual(inserted.evictedEventIds, [eventId]);
   assert.equal(lifecycle.size, 2);
 
@@ -459,12 +496,24 @@ test('bounds retained lifecycle events and reports exact count and age evictions
 });
 
 
-test('canonical Unicode symbols round-trip without normalizing invalid wire input', () => {
-  for (const base of ['币安人生', '龙虾', '4', 'W', '1INCH', '1000PEPE']) {
-    assert.equal(routeSymbolToCanonical(base + 'USDT'), base + '/USDT:USDT');
+for (const base of ['币安人生', '龙虾', '4', 'W', '1INCH', '1000PEPE']) {
+  test(`user preserves the exact canonical symbol for ${base}`, () => {
+    // Given an exchange asset name composed of canonical Unicode letters and numbers
+    const route = base + 'USDT';
+    // When the route symbol is converted to its wire identity
+    const canonical = routeSymbolToCanonical(route);
+    // Then the exact asset name survives both conversion directions
+    assert.equal(canonical, base + '/USDT:USDT');
     assert.equal(canonicalSymbolToRoute(base + '/USDT:USDT'), base + 'USDT');
-  }
-  for (const symbol of ['btc/USDT:USDT', '币 安/USDT:USDT', '/USDT:USDT', 'BTC/USDT:USDT\n', 'BTC_/USDT:USDT']) {
-    assert.throws(() => canonicalSymbolToRoute(symbol));
-  }
-});
+  });
+}
+for (const symbol of ['btc/USDT:USDT', '币 安/USDT:USDT', '/USDT:USDT', 'BTC/USDT:USDT\n', 'BTC_/USDT:USDT']) {
+  test(`user rejects noncanonical wire symbol ${JSON.stringify(symbol)}`, () => {
+    // Given an invalid wire symbol that must not be normalized
+    const wireSymbol = symbol;
+    // When the route converter validates the canonical symbol
+    const failure = captureStrategyError(() => canonicalSymbolToRoute(wireSymbol));
+    // Then the malformed identity is explicitly rejected
+    assert.match(failure.message, /canonical Strategy 27 symbol/);
+  });
+}

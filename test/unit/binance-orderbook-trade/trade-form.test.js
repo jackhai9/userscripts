@@ -1,3 +1,5 @@
+import { captureThrownError } from '../../helpers/orderbook-migration-errors.js';
+import { createAnimationFrameBoundary } from '../../helpers/orderbook-migration-frames.js';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,23 +33,62 @@ const fixture = await readFile(
   'utf8',
 );
 
-test('panel insertion point is immediately before the native trade-mode row', () => {
+test('user preserves frame callback order, cancellation, and next-frame scheduling in the boundary fixture', () => {
+  // Given an isolated browser frame queue contains ordinary and cancelled callbacks
+  const dom = loadFixtureDom('<main></main>');
+  const frames = createAnimationFrameBoundary(dom.window);
+  const calls = [];
+  let cancelledDuringFrame;
+  const first = dom.window.requestAnimationFrame((timestamp) => {
+    calls.push(['first', timestamp]);
+    dom.window.cancelAnimationFrame(cancelledDuringFrame);
+    dom.window.requestAnimationFrame((nextTimestamp) => calls.push(['next', nextTimestamp]));
+  });
+  const cancelledBeforeFrame = dom.window.requestAnimationFrame((timestamp) => calls.push(['cancelled-before', timestamp]));
+  cancelledDuringFrame = dom.window.requestAnimationFrame((timestamp) => calls.push(['cancelled-during', timestamp]));
+  dom.window.cancelAnimationFrame(cancelledBeforeFrame);
+
+  // When the first explicit browser frame runs
+  frames.runFrame(16);
+
+  // Then cancelled callbacks do not run and newly scheduled callbacks remain pending
+  assert.equal(first, 1);
+  assert.equal(cancelledBeforeFrame, 2);
+  assert.equal(cancelledDuringFrame, 3);
+  assert.deepEqual(calls, [['first', 16]]);
+  assert.equal(frames.pendingCount, 1);
+
+  // When the following explicit frame runs
+  frames.runFrame(32);
+
+  // Then the deferred callback receives the next frame timestamp exactly once
+  assert.deepEqual(calls, [['first', 16], ['next', 32]]);
+  assert.equal(frames.pendingCount, 0);
+});
+
+test("user sees that panel insertion point is immediately before the native trade-mode row", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(fixture);
+  // When the trade form state is read or synchronized
   const insertionPoint = findTradePanelInsertionPoint(dom.window.document);
 
+  // Then sees that panel insertion point is immediately before the native trade-mode row
   assert.equal(insertionPoint.parent.className, 'trade-header');
   assert.equal(insertionPoint.before.className, 'trade-mode-row');
   assert.equal(insertionPoint.before.previousElementSibling.className, 'quick-controls');
 });
 
-test('English trade-mode labels use the same panel insertion contract', () => {
+test("user sees that English trade-mode labels use the same panel insertion contract", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(
     fixture.replace('>开仓<', '>Open<').replace('>平仓<', '>Close<'),
   );
   const { document } = dom.window;
+  // When the trade form state is read or synchronized
   const insertionPoint = findTradePanelInsertionPoint(document);
   const tabs = Array.from(document.querySelectorAll('#position-direction [role="tab"]'));
 
+  // Then sees that English trade-mode labels use the same panel insertion contract
   assert.equal(insertionPoint.parent.className, 'trade-header');
   assert.equal(insertionPoint.before.className, 'trade-mode-row');
   assert.equal(parseTradeModeLabel('Open'), 'OPEN');
@@ -56,15 +97,23 @@ test('English trade-mode labels use the same panel insertion contract', () => {
   assert.equal(isTradeModeTab(tabs[1], { panelId: 'jh-binance-close-qty-multiplier-panel' }), true);
 });
 
-test('trade-mode parsing rejects action labels instead of guessing a mode', () => {
-  assert.equal(parseTradeModeLabel('Open Long'), null);
+test("user sees that trade-mode parsing rejects action labels instead of guessing a mode", () => {
+  // Given the current trade fields and requested values are available
+  const scenarioInputs = ['Open Long'];
+
+  // When the trade form state is read or synchronized
+  const observed = parseTradeModeLabel(...scenarioInputs);
+
+  // Then sees that trade-mode parsing rejects action labels instead of guessing a mode
+  assert.equal(observed, null);
   assert.equal(parseTradeModeLabel('Close Short'), null);
   assert.equal(parseTradeModeLabel('开多'), null);
   assert.equal(parseTradeModeLabel('平空'), null);
 });
 
-test('reads the exact Chinese and English available-balance contract', () => {
-  for (const label of ['可用', 'Avbl']) {
+for (const [scenarioIndex, label] of (['可用', 'Avbl']).entries()) {
+  test(`user reads the exact Chinese and English available-balance contract (case ${scenarioIndex + 1})`, () => {
+    // Given the native fixture represents this supported scenario
     const dom = loadFixtureDom(`
       <section id="trade-form">
         <div class="bn-flex items-center gap-[4px]">
@@ -75,16 +124,21 @@ test('reads the exact Chinese and English available-balance contract', () => {
     `);
     const { document } = dom.window;
 
-    assert.deepEqual(
-      readTradeAvailableBalance(document.querySelector('#trade-form'), {
+    // When the real adapter handles this fixture
+    const observed = readTradeAvailableBalance(document.querySelector('#trade-form'), {
         isVisibleElement: () => true,
-      }),
+      });
+
+    // Then the user reads the exact Chinese and English available-balance contract
+    assert.deepEqual(
+      observed,
       { amount: '0.00', asset: 'USDT' },
     );
-  }
-});
+  });
+}
 
-test('rejects missing, malformed, or ambiguous available-balance contracts', () => {
+test("user rejects missing, malformed, or ambiguous available-balance contracts", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="trade-form">
       <div><span>可用</span><span>0.00 USDT</span></div>
@@ -93,30 +147,42 @@ test('rejects missing, malformed, or ambiguous available-balance contracts', () 
     </section>
   `);
 
-  assert.equal(
-    readTradeAvailableBalance(dom.window.document.querySelector('#trade-form'), {
+  // When the trade form state is read or synchronized
+  const observed = readTradeAvailableBalance(dom.window.document.querySelector('#trade-form'), {
       isVisibleElement: () => true,
-    }),
+    });
+
+  // Then rejects missing, malformed, or ambiguous available-balance contracts
+  assert.equal(
+    observed,
     null,
   );
 });
 
-test('available-balance asset identifiers retain Unicode and single-digit names', () => {
-  for (const asset of ['龙虾', '币安人生', '4', '1INCH', '1000PEPE', 'A_B']) {
+for (const [scenarioIndex, asset] of (['龙虾', '币安人生', '4', '1INCH', '1000PEPE', 'A_B']).entries()) {
+  test(`user sees that available-balance asset identifiers retain Unicode and single-digit names (case ${scenarioIndex + 1})`, () => {
+    // Given the native fixture represents this supported scenario
     const dom = loadFixtureDom(`<section><div><span>可用</span><span>1,234.50 ${asset}</span></div></section>`);
-    assert.deepEqual(readTradeAvailableBalance(dom.window.document.querySelector('section'), {
+    // When the real adapter handles this fixture
+    const observed = readTradeAvailableBalance(dom.window.document.querySelector('section'), {
       isVisibleElement: () => true,
-    }), { amount: '1234.50', asset });
-  }
-});
+    });
 
-test('panel spacer is restored before native trade mode after a rerender moves it', () => {
+    // Then the user sees that available-balance asset identifiers retain Unicode and single-digit names
+    assert.deepEqual(observed, { amount: '1234.50', asset });
+  });
+}
+
+test("user sees that panel spacer is restored before native trade mode after a rerender moves it", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(fixture);
   const { document } = dom.window;
   const spacer = document.createElement('div');
   spacer.id = 'jh-binance-close-qty-multiplier-spacer';
+  // When the trade form state is read or synchronized
   const insertionPoint = findTradePanelInsertionPoint(document);
 
+  // Then sees that panel spacer is restored before native trade mode after a rerender moves it
   assert.equal(placeTradePanelSpacer(spacer, insertionPoint), true);
   assert.equal(spacer.nextElementSibling, insertionPoint.before);
 
@@ -128,18 +194,23 @@ test('panel spacer is restored before native trade mode after a rerender moves i
   assert.equal(spacer.nextElementSibling, insertionPoint.before);
 });
 
-test('floating panel layout follows anchor movement without changing its size contract', () => {
+test("user sees that floating panel layout follows anchor movement without changing its size contract", () => {
+  // Given the current trade fields and requested values are available
   const base = {
     panelHeight: 466,
     viewportWidth: 1684,
     viewportHeight: 900,
   };
 
-  assert.deepEqual(
-    calculateFloatingPanelLayout({
+  // When the trade form state is read or synchronized
+  const observed = calculateFloatingPanelLayout({
       ...base,
       anchorRect: { left: 1430, top: 112, width: 241, height: 478 },
-    }),
+    });
+
+  // Then sees that floating panel layout follows anchor movement without changing its size contract
+  assert.deepEqual(
+    observed,
     { width: 280, left: 1396, top: 112 },
   );
   assert.deepEqual(
@@ -151,19 +222,27 @@ test('floating panel layout follows anchor movement without changing its size co
   );
 });
 
-test('floating panel layout rejects a hidden anchor', () => {
-  assert.equal(
-    calculateFloatingPanelLayout({
+test("user sees that floating panel layout rejects a hidden anchor", () => {
+  // Given the current trade fields and requested values are available
+  const scenarioInputs = [{
       anchorRect: { left: 0, top: 0, width: 0, height: 0 },
       panelHeight: 466,
       viewportWidth: 1684,
       viewportHeight: 900,
-    }),
+    }];
+
+  // When the trade form state is read or synchronized
+  const observed = calculateFloatingPanelLayout(...scenarioInputs);
+
+  // Then sees that floating panel layout rejects a hidden anchor
+  assert.equal(
+    observed,
     null,
   );
 });
 
-test('trade form mutation wait resolves as soon as the requested state is selected', async () => {
+test("user sees that trade form mutation wait resolves as soon as the requested state is selected", async () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="trade-form">
       <div role="tab" aria-selected="false">Open</div>
@@ -179,148 +258,195 @@ test('trade form mutation wait resolves as soon as the requested state is select
     100,
   );
 
+  // When the trade form state is read or synchronized
   openTab.setAttribute('aria-selected', 'true');
 
+  // Then sees that trade form mutation wait resolves as soon as the requested state is selected
   assert.equal(await pending, 'OPEN');
 });
 
-test('trade form mutation wait returns the final state at its deadline', async () => {
+test("user receives the final trade form state at its virtual mutation deadline", async (t) => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom('<section id="trade-form"></section>');
   const root = dom.window.document.querySelector('#trade-form');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
 
+  // When the trade form state is read or synchronized
+  const pending = waitForTradeFormMutationState(root, () => root.querySelector('[data-ready]'), 50);
+  t.mock.timers.tick(50);
+  const observed = await pending;
+
+  // Then sees that trade form mutation wait returns the final state at its deadline
   assert.equal(
-    await waitForTradeFormMutationState(root, () => null, 5),
+    observed,
     null,
   );
 });
 
-test('trade form frame wait requires consecutive live-state confirmations', async () => {
-  const dom = loadFixtureDom('<section id="trade-form"></section>');
-  const root = dom.window.document.querySelector('#trade-form');
-  const states = [
-    { price: '81.9', qty: '0.01' },
-    null,
-    { price: '81.9', qty: '0.01' },
-    { price: '81.9', qty: '0.01' },
-  ];
-  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(callback, 0);
-  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+test('user confirms controlled trade inputs only after consecutive stable frames', async () => {
+  // Given real native inputs match the expected values on the first observed frame
+  const dom = loadFixtureDom('<section><input id="price" value="81.9"><input id="qty" value="0.01"></section>');
+  const root = dom.window.document.querySelector('section');
+  const price = root.querySelector('#price');
+  const qty = root.querySelector('#qty');
+  const frames = createAnimationFrameBoundary(dom.window);
+  let result = 'pending';
+  const pending = waitForTradeFormFrameState(root, () => (
+    price.value === '81.9' && qty.value === '0.01' ? { price: price.value, qty: qty.value } : null
+  ), 1000, 2).then((value) => { result = value; return value; });
 
-  const result = await waitForTradeFormFrameState(
-    root,
-    () => states.shift() ?? null,
-    100,
-    2,
-  );
+  // When the first match is followed by a native rollback and one restored match
+  frames.runFrame(16);
+  qty.value = '0';
+  frames.runFrame(32);
+  qty.value = '0.01';
+  frames.runFrame(48);
+  await Promise.resolve();
 
-  assert.deepEqual(result, { price: '81.9', qty: '0.01' });
-  assert.equal(states.length, 0);
+  // Then the interrupted matching sequence cannot complete early
+  assert.equal(result, 'pending');
+  assert.equal(frames.pendingCount, 1);
+
+  // When the restored values remain valid for their second consecutive frame
+  frames.runFrame(64);
+  const observed = await pending;
+
+  // Then the actual controlled values are returned and frame observation stops
+  assert.deepEqual(observed, { price: '81.9', qty: '0.01' });
+  assert.equal(frames.pendingCount, 0);
 });
 
-test('trade form frame wait rejects a value that never remains synchronized', async () => {
-  const dom = loadFixtureDom('<section id="trade-form"></section>');
-  const root = dom.window.document.querySelector('#trade-form');
-  let matches = false;
-  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(() => {
-    matches = !matches;
-    callback();
-  }, 0);
-  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+test('user rejects trade inputs that keep rolling back before their virtual deadline', async (t) => {
+  // Given a real native quantity input alternates between the expected and rolled-back values
+  const dom = loadFixtureDom('<section><input value="0.01"></section>');
+  const root = dom.window.document.querySelector('section');
+  const qty = root.querySelector('input');
+  const frames = createAnimationFrameBoundary(dom.window);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let result = 'pending';
+  const pending = waitForTradeFormFrameState(root, () => (
+    qty.value === '0.01' ? { price: '81.9', qty: qty.value } : null
+  ), 20, 2).then((value) => { result = value; return value; });
 
-  assert.equal(
-    await waitForTradeFormFrameState(
-      root,
-      () => (matches ? { price: '81.9', qty: '0.01' } : null),
-      20,
-      2,
-    ),
-    null,
-  );
+  // When each matching frame is followed by a native rollback before stability
+  for (let frame = 1; frame <= 4; frame += 1) {
+    qty.value = frame % 2 === 1 ? '0.01' : '0';
+    frames.runFrame(frame * 4);
+  }
+  t.mock.timers.tick(19);
+  await Promise.resolve();
+
+  // Then the unstable values remain unconfirmed before the deadline
+  assert.equal(result, 'pending');
+
+  // When the final virtual millisecond expires
+  t.mock.timers.tick(1);
+  const observed = await pending;
+
+  // Then no input state is accepted and the outstanding frame is cancelled
+  assert.equal(observed, null);
+  assert.equal(frames.pendingCount, 0);
 });
 
-test('trade action button wait survives the selected tab preceding its action buttons', async () => {
-  const dom = loadFixtureDom('<section id="trade-form"><div role="tab" aria-selected="true">开仓</div></section>');
+test('user waits for stable action buttons when the selected mode mounts first', async () => {
+  // Given the selected mode is mounted before its corresponding native action button
+  const dom = loadFixtureDom('<section><div role="tab" aria-selected="true">Open</div></section>');
   const { document } = dom.window;
-  const root = document.querySelector('#trade-form');
-  let frame = 0;
-  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(() => {
-    frame += 1;
-    if (frame === 2) {
-      const button = document.createElement('button');
-      button.textContent = '开空';
-      root.append(button);
-    }
-    callback();
-  }, 0);
-  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+  const root = document.querySelector('section');
+  const frames = createAnimationFrameBoundary(dom.window);
+  let result = 'pending';
+  const pending = waitForTradeActionButtonFrameState(document, () => root.querySelector('button'), () => true, 1000, 2)
+    .then((value) => { result = value; return value; });
 
-  const button = await waitForTradeActionButtonFrameState(
-    document,
-    () => Array.from(root.querySelectorAll('button')).find((candidate) => candidate.textContent === '开空') || null,
-    () => true,
-    100,
-    2,
-  );
+  // When one frame has no button and the next contains the newly mounted control
+  frames.runFrame(16);
+  const nativeButton = document.createElement('button');
+  nativeButton.textContent = '开空';
+  root.append(nativeButton);
+  frames.runFrame(32);
+  await Promise.resolve();
 
-  assert.equal(button?.textContent, '开空');
-  assert.equal(button?.isConnected, true);
-  assert.equal(frame, 3);
+  // Then a single actionable observation is still insufficient
+  assert.equal(result, 'pending');
+
+  // When the same button remains actionable for another frame
+  frames.runFrame(48);
+  const observed = await pending;
+
+  // Then the exact connected native button is accepted
+  assert.equal(observed, nativeButton);
+  assert.equal(observed.textContent, '开空');
+  assert.equal(observed.isConnected, true);
+  assert.equal(frames.pendingCount, 0);
 });
 
-test('trade action button wait restarts stability after React replaces the button node', async () => {
-  const dom = loadFixtureDom('<section id="trade-form"><button>平空</button></section>');
+test('user restarts action-button stability after React replaces the native node', async () => {
+  // Given an observed native button may be replaced before the locator updates its reference
+  const dom = loadFixtureDom('<section><button>平空</button></section>');
   const { document } = dom.window;
-  const root = document.querySelector('#trade-form');
+  const root = document.querySelector('section');
   const originalButton = root.querySelector('button');
-  let replacementButton = null;
+  const replacementButton = document.createElement('button');
+  replacementButton.textContent = '平空';
   let resolvedButton = originalButton;
-  let frame = 0;
-  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(() => {
-    frame += 1;
-    if (frame === 2) {
-      replacementButton = document.createElement('button');
-      replacementButton.textContent = '平空';
-      originalButton.replaceWith(replacementButton);
-    }
-    if (frame === 3) resolvedButton = replacementButton;
-    callback();
-  }, 0);
-  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+  const frames = createAnimationFrameBoundary(dom.window);
+  let result = 'pending';
+  const pending = waitForTradeActionButtonFrameState(document, () => resolvedButton, () => true, 1000, 2)
+    .then((value) => { result = value; return value; });
 
-  const button = await waitForTradeActionButtonFrameState(
-    document,
-    () => resolvedButton,
-    () => true,
-    100,
-    2,
-  );
+  // When React replaces the previously observed button and the locator catches up a frame later
+  frames.runFrame(16);
+  originalButton.replaceWith(replacementButton);
+  frames.runFrame(32);
+  resolvedButton = replacementButton;
+  frames.runFrame(48);
+  await Promise.resolve();
 
-  assert.equal(button, replacementButton);
+  // Then the replacement starts its own stability period
+  assert.equal(result, 'pending');
   assert.equal(originalButton.isConnected, false);
-  assert.equal(button?.isConnected, true);
-  assert.equal(frame, 4);
+
+  // When the replacement survives its second actionable frame
+  frames.runFrame(64);
+  const observed = await pending;
+
+  // Then only the new connected button is returned
+  assert.equal(observed, replacementButton);
+  assert.equal(observed.isConnected, true);
+  assert.equal(frames.pendingCount, 0);
 });
 
-test('trade action button wait rejects a button that remains disabled', async () => {
+test('user rejects a natively disabled action button at the virtual deadline', async (t) => {
+  // Given the native button remains aria-disabled throughout observation
   const dom = loadFixtureDom('<section id="trade-form"><button aria-disabled="true">开多</button></section>');
   const { document } = dom.window;
   const root = document.querySelector('#trade-form');
-  dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(callback, 0);
-  dom.window.cancelAnimationFrame = (handle) => dom.window.clearTimeout(handle);
+  const frames = createAnimationFrameBoundary(dom.window);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let result = 'pending';
+  const pending = waitForTradeActionButtonFrameState(document, () => root.querySelector('button'), () => true, 10, 2)
+    .then((value) => { result = value; return value; });
 
-  assert.equal(
-    await waitForTradeActionButtonFrameState(
-      document,
-      () => root.querySelector('button'),
-      () => true,
-      10,
-      2,
-    ),
-    null,
-  );
+  // When repeated frames still show the disabled button before the timeout
+  frames.runFrame(4);
+  frames.runFrame(8);
+  t.mock.timers.tick(9);
+  await Promise.resolve();
+
+  // Then a mounted but disabled native button stays unaccepted
+  assert.equal(result, 'pending');
+
+  // When the final virtual millisecond expires
+  t.mock.timers.tick(1);
+  const observed = await pending;
+
+  // Then no action target is returned and frame observation ends
+  assert.equal(observed, null);
+  assert.equal(frames.pendingCount, 0);
 });
 
-test('unexpected trade-mode structure is rejected instead of inserting at a guessed location', () => {
+test("user sees that unexpected trade-mode structure is rejected instead of inserting at a guessed location", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <main>
       <div id="position-direction">
@@ -330,10 +456,15 @@ test('unexpected trade-mode structure is rejected instead of inserting at a gues
     </main>
   `);
 
-  assert.equal(findTradePanelInsertionPoint(dom.window.document), null);
+  // When the trade form state is read or synchronized
+  const observed = findTradePanelInsertionPoint(dom.window.document);
+
+  // Then sees that unexpected trade-mode structure is rejected instead of inserting at a guessed location
+  assert.equal(observed, null);
 });
 
-test('trade form root ignores duplicated Binance tab-pane IDs', () => {
+test("user sees that trade form root ignores duplicated Binance tab-pane IDs", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="bn-tab-pane-0"><button>平空</button></section>
     <section id="bn-tab-pane-0"><button>平空</button></section>
@@ -351,14 +482,17 @@ test('trade form root ignores duplicated Binance tab-pane IDs', () => {
   const activeTab = document.querySelector('#position-direction [aria-selected="true"]');
   const qtyInput = document.querySelector('#unitAmount-close');
 
+  // When the trade form state is read or synchronized
   const root = findTradeFormRoot(activeTab, qtyInput);
 
+  // Then sees that trade form root ignores duplicated Binance tab-pane IDs
   assert.equal(root?.id, 'trade-form');
   assert.notEqual(root, document.getElementById('bn-tab-pane-0'));
   assert.equal(root.querySelector('[data-testid="max-buy-amount"]')?.textContent, '0.00 HYPE');
 });
 
-test('trade form root observes live position state after React replaces descendants', async () => {
+test("user sees that trade form root observes live position state after React replaces descendants", async () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="trade-form">
       <div id="position-direction">
@@ -375,8 +509,10 @@ test('trade form root observes live position state after React replaces descenda
   const qtyInput = document.querySelector('#unitAmount-close');
   const root = findTradeFormRoot(activeTab, qtyInput);
   const observedTexts = [];
+  const delivered = Promise.withResolvers();
   const observer = new MutationObserver(() => {
     observedTexts.push(root.querySelector('[data-testid="max-buy-amount"]')?.textContent);
+    delivered.resolve();
   });
   observer.observe(root, { subtree: true, childList: true, characterData: true });
 
@@ -385,15 +521,18 @@ test('trade form root observes live position state after React replaces descenda
   maxBuy.dataset.testid = 'max-buy-amount';
   maxBuy.textContent = '0.00 HYPE';
   document.querySelector('.trade-fields').append(maxBuy);
-  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  await delivered.promise;
+  // When the trade form state is read or synchronized
   observer.disconnect();
 
+  // Then sees that trade form root observes live position state after React replaces descendants
   assert.equal(root.isConnected, true);
   assert.equal(root.querySelector('[data-testid="max-buy-amount"]')?.textContent, '0.00 HYPE');
   assert.ok(observedTexts.includes('0.00 HYPE'));
 });
 
-test('active trade inputs ignore hidden duplicate forms and remain one coherent pair', () => {
+test("user sees that active trade inputs ignore hidden duplicate forms and remain one coherent pair", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section data-form="hidden">
       <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
@@ -407,17 +546,20 @@ test('active trade inputs ignore hidden duplicate forms and remain one coherent 
     </section>
   `);
   const { document } = dom.window;
+  // When the trade form state is read or synchronized
   const inputs = findActiveTradeInputs(document, {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement: (element) => element.closest('section')?.dataset.form === 'visible',
   });
 
+  // Then sees that active trade inputs ignore hidden duplicate forms and remain one coherent pair
   assert.equal(inputs?.root.dataset.form, 'visible');
   assert.equal(inputs?.priceInput.id, 'limitPrice-close');
   assert.equal(inputs?.qtyInput.id, 'unitAmount-close');
 });
 
-test('active trade form can be resolved before a limit-price input is rendered', () => {
+test("user sees that active trade form can be resolved before a limit-price input is rendered", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section data-form="visible">
       <div id="position-direction"><div role="tab" aria-selected="true">开仓</div></div>
@@ -427,10 +569,14 @@ test('active trade form can be resolved before a limit-price input is rendered',
   const { document } = dom.window;
   const visibility = (element) => element.closest('section')?.dataset.form === 'visible';
 
-  assert.equal(findActiveTradeInputs(document, {
+  // When the trade form state is read or synchronized
+  const observed = findActiveTradeInputs(document, {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement: visibility,
-  }), null);
+  });
+
+  // Then sees that active trade form can be resolved before a limit-price input is rendered
+  assert.equal(observed, null);
   const form = findActiveTradeInputs(document, {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement: visibility,
@@ -441,7 +587,8 @@ test('active trade form can be resolved before a limit-price input is rendered',
   assert.equal(form?.priceInput, null);
 });
 
-test('trade input resolver scans the document once and then resolves live inputs inside the cached root', () => {
+test("user sees that trade input resolver scans the document once and then resolves live inputs inside the cached root", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="trade-form">
       <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
@@ -456,11 +603,15 @@ test('trade input resolver scans the document once and then resolves live inputs
     documentScans += 1;
     return originalQuerySelectorAll(...args);
   };
+  // When the trade form state is read or synchronized
   const resolveInputs = createTradeInputResolver(document, {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement: () => true,
   });
 
+
+
+  // Then sees that trade input resolver scans the document once and then resolves live inputs inside the cached root
   assert.equal(resolveInputs()?.qtyInput.id, 'unitAmount-close');
   const scansAfterDiscovery = documentScans;
   assert.ok(scansAfterDiscovery > 0);
@@ -469,7 +620,8 @@ test('trade input resolver scans the document once and then resolves live inputs
   assert.equal(documentScans, scansAfterDiscovery);
 });
 
-test('trade input resolver starts from a proven root without another document scan', () => {
+test("user sees that trade input resolver starts from a proven root without another document scan", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="trade-form">
       <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
@@ -485,18 +637,23 @@ test('trade input resolver starts from a proven root without another document sc
     documentScans += 1;
     return originalQuerySelectorAll(...args);
   };
+  // When the trade form state is read or synchronized
   const resolveInputs = createTradeInputResolver(document, {
     initialRoot: root,
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement: () => true,
   });
 
+
+
+  // Then sees that trade input resolver starts from a proven root without another document scan
   assert.equal(resolveInputs()?.qtyInput.id, 'unitAmount-close');
   assert.equal(resolveInputs()?.priceInput.id, 'limitPrice-close');
   assert.equal(documentScans, 0);
 });
 
-test('trade input resolver follows React descendant replacement without rescanning the document', () => {
+test("user sees that trade input resolver follows React descendant replacement without rescanning the document", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="trade-form">
       <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
@@ -522,16 +679,19 @@ test('trade input resolver follows React descendant replacement without rescanni
   const replacementQty = document.createElement('input');
   replacementQty.id = 'unitAmount-close-replacement';
   first.priceInput.replaceWith(replacementPrice);
+  // When the trade form state is read or synchronized
   first.qtyInput.replaceWith(replacementQty);
 
   const second = resolveInputs();
+  // Then sees that trade input resolver follows React descendant replacement without rescanning the document
   assert.equal(second?.root, first.root);
   assert.equal(second?.priceInput, replacementPrice);
   assert.equal(second?.qtyInput, replacementQty);
   assert.equal(documentScans, scansAfterDiscovery);
 });
 
-test('trade input resolver waits inside a connected root while React temporarily removes inputs', () => {
+test("user sees that trade input resolver waits inside a connected root while React temporarily removes inputs", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="trade-form">
       <div id="position-direction"><div role="tab" aria-selected="true">平仓</div></div>
@@ -553,8 +713,10 @@ test('trade input resolver waits inside a connected root while React temporarily
   const first = resolveInputs();
   const scansAfterDiscovery = documentScans;
   first.priceInput.remove();
+  // When the trade form state is read or synchronized
   first.qtyInput.remove();
 
+  // Then sees that trade input resolver waits inside a connected root while React temporarily removes inputs
   assert.equal(resolveInputs(), null);
   assert.equal(first.root.isConnected, true);
   assert.equal(documentScans, scansAfterDiscovery);
@@ -571,7 +733,8 @@ test('trade input resolver waits inside a connected root while React temporarily
   assert.equal(documentScans, scansAfterDiscovery);
 });
 
-test('trade input resolver rediscovers the form after React replaces the cached root', () => {
+test("user sees that trade input resolver rediscovers the form after React replaces the cached root", () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <main>
       <section id="trade-form">
@@ -587,6 +750,7 @@ test('trade input resolver rediscovers the form after React replaces the cached 
     isVisibleElement: () => true,
   });
   const first = resolveInputs();
+  // When the trade form state is read or synchronized
   first.root.outerHTML = `
     <section id="trade-form-next">
       <div id="position-direction"><div role="tab" aria-selected="true">开仓</div></div>
@@ -596,13 +760,15 @@ test('trade input resolver rediscovers the form after React replaces the cached 
   `;
 
   const second = resolveInputs();
+  // Then sees that trade input resolver rediscovers the form after React replaces the cached root
   assert.equal(first.root.isConnected, false);
   assert.equal(second?.root.id, 'trade-form-next');
   assert.equal(second?.priceInput.id, 'limitPrice-open');
   assert.equal(second?.qtyInput.id, 'unitAmount-open');
 });
 
-test('trade input synchronization performs one post-transition write after a stable same-node rollback', () => {
+test("user sees that trade input synchronization performs one post-transition write after a stable same-node rollback", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: { value: '' },
@@ -628,7 +794,11 @@ test('trade input synchronization performs one post-transition write after a sta
     },
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization performs one post-transition write after a stable same-node rollback
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   assert.equal(writes.length, 1);
   assert.equal(readState(), null);
@@ -642,7 +812,8 @@ test('trade input synchronization performs one post-transition write after a sta
   assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.01', '81.9']);
 });
 
-test('trade input synchronization can settle a ladder input after repeated stable same-node rollbacks', () => {
+test("user sees that trade input synchronization can settle a ladder input after repeated stable same-node rollbacks", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -668,7 +839,11 @@ test('trade input synchronization can settle a ladder input after repeated stabl
     ),
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization can settle a ladder input after repeated stable same-node rollbacks
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   assert.equal(readState(), null);
   assert.equal(readState(), null);
@@ -680,7 +855,8 @@ test('trade input synchronization can settle a ladder input after repeated stabl
   assert.deepEqual(writes.map(({ value }) => value), ['0.02', '0.02', '0.02']);
 });
 
-test('trade input synchronization recovers a provisional match rolled back before the first observation frame', () => {
+test("user sees that trade input synchronization recovers a provisional match rolled back before the first observation frame", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -714,7 +890,11 @@ test('trade input synchronization recovers a provisional match rolled back befor
     }),
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization recovers a provisional match rolled back before the first observation frame
+  assert.equal(observed, null);
   currentInputs.qtyInput.value = '';
   assert.equal(readState(), null);
   assert.equal(readState(), null);
@@ -726,7 +906,8 @@ test('trade input synchronization recovers a provisional match rolled back befor
   assert.deepEqual(writes.map(({ value }) => value), ['0.07', '0.07']);
 });
 
-test('trade input synchronization uses elapsed stability time instead of assuming a frame rate', () => {
+test("user sees that trade input synchronization uses elapsed stability time instead of assuming a frame rate", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -747,7 +928,11 @@ test('trade input synchronization uses elapsed stability time instead of assumin
     readNowMs: () => nowMs,
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization uses elapsed stability time instead of assuming a frame rate
+  assert.equal(observed, null);
   nowMs = 100;
   assert.equal(readState(), null);
   nowMs = 150;
@@ -759,7 +944,8 @@ test('trade input synchronization uses elapsed stability time instead of assumin
   });
 });
 
-test('one timed synchronization state machine confirms quantity before price without rechecking quantity from zero', () => {
+test("user sees that one timed synchronization state machine confirms quantity before price without rechecking quantity from zero", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: { value: '' },
@@ -783,7 +969,11 @@ test('one timed synchronization state machine confirms quantity before price wit
     readNowMs: () => nowMs,
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that one timed synchronization state machine confirms quantity before price without rechecking quantity from zero
+  assert.equal(observed, null);
   nowMs = 100;
   assert.equal(readState(), null);
   nowMs = 280;
@@ -802,7 +992,8 @@ test('one timed synchronization state machine confirms quantity before price wit
   assert.deepEqual(writes.map(({ value }) => value), ['0.08', '81.9']);
 });
 
-test('trade input stability duration restarts after React rolls the accepted value back', () => {
+test("user sees that trade input stability duration restarts after React rolls the accepted value back", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -830,7 +1021,11 @@ test('trade input stability duration restarts after React rolls the accepted val
     readNowMs: () => nowMs,
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input stability duration restarts after React rolls the accepted value back
+  assert.equal(observed, null);
   nowMs = 100;
   assert.equal(readState(), null);
   currentInputs.qtyInput.value = '';
@@ -852,7 +1047,8 @@ test('trade input stability duration restarts after React rolls the accepted val
   });
 });
 
-test('script-owned trade input recovery accepts only the same field previous value or empty state', () => {
+test("user sees that script-owned trade input recovery accepts only the same field previous value or empty state", () => {
+  // Given the current trade fields and requested values are available
   const previousSubmittedInputs = {
     submittedPrice: '84.5',
     submittedQty: '0.05',
@@ -865,11 +1061,15 @@ test('script-owned trade input recovery accepts only the same field previous val
     compareValues: compareDecimalStrings,
   });
 
-  assert.equal(isAllowed('qty', {
+  // When the trade form state is read or synchronized
+  const observed = isAllowed('qty', {
     preWriteValue: '0.05',
     rollbackValue: '0.05',
     submittedValue: '0.05',
-  }), true);
+  });
+
+  // Then sees that script-owned trade input recovery accepts only the same field previous value or empty state
+  assert.equal(observed, true);
   assert.equal(isAllowed('qty', {
     preWriteValue: '0.05',
     rollbackValue: null,
@@ -892,7 +1092,8 @@ test('script-owned trade input recovery accepts only the same field previous val
   }), false);
 });
 
-test('trade input synchronization recovers a previous acknowledged quantity cleared by Binance', () => {
+test("user sees that trade input synchronization recovers a previous acknowledged quantity cleared by Binance", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -933,7 +1134,11 @@ test('trade input synchronization recovers a previous acknowledged quantity clea
     }),
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization recovers a previous acknowledged quantity cleared by Binance
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   currentInputs.qtyInput.value = '';
   assert.equal(readState(), null);
@@ -946,7 +1151,8 @@ test('trade input synchronization recovers a previous acknowledged quantity clea
   assert.deepEqual(writes.map(({ value }) => value), ['0.1', '0.1']);
 });
 
-test('previous acknowledged recovery remains bounded when Binance repeatedly clears the input', () => {
+test("user sees that previous acknowledged recovery remains bounded when Binance repeatedly clears the input", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -982,10 +1188,15 @@ test('previous acknowledged recovery remains bounded when Binance repeatedly cle
   for (let frame = 0; frame < 10; frame += 1) {
     assert.equal(readState(), null);
   }
-  assert.deepEqual(writes.map(({ value }) => value), ['0.1', '0.1', '0.1']);
+  // When the trade form state is read or synchronized
+  const observed = writes.map(({ value }) => value);
+
+  // Then sees that previous acknowledged recovery remains bounded when Binance repeatedly clears the input
+  assert.deepEqual(observed, ['0.1', '0.1', '0.1']);
 });
 
-test('previous acknowledged recovery gives a replacement input an independent bounded write', () => {
+test("user sees that previous acknowledged recovery gives a replacement input an independent bounded write", () => {
+  // Given the current trade fields and requested values are available
   let currentInputs = {
     root: {},
     priceInput: null,
@@ -1019,7 +1230,11 @@ test('previous acknowledged recovery gives a replacement input an independent bo
     }),
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that previous acknowledged recovery gives a replacement input an independent bounded write
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   currentInputs = {
     root: {},
@@ -1035,7 +1250,8 @@ test('previous acknowledged recovery gives a replacement input an independent bo
   assert.deepEqual(writes.map(({ value }) => value), ['0.1', '0.1']);
 });
 
-test('trade input synchronization cancels provisional recovery for a different non-empty value', () => {
+test("user sees that trade input synchronization cancels provisional recovery for a different non-empty value", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -1069,7 +1285,11 @@ test('trade input synchronization cancels provisional recovery for a different n
     }),
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization cancels provisional recovery for a different non-empty value
+  assert.equal(observed, null);
   currentInputs.qtyInput.value = '0.005';
   for (let frame = 0; frame < 5; frame += 1) {
     assert.equal(readState(), null);
@@ -1078,7 +1298,8 @@ test('trade input synchronization cancels provisional recovery for a different n
   assert.deepEqual(writes.map(({ value }) => value), ['0.07']);
 });
 
-test('trade input synchronization rejects a provisionally accepted value that rolls back before settling', () => {
+test("user sees that trade input synchronization rejects a provisionally accepted value that rolls back before settling", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -1101,7 +1322,11 @@ test('trade input synchronization rejects a provisionally accepted value that ro
     isRecoveryWriteAllowed: ({ rollbackValue }) => rollbackValue === null,
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization rejects a provisionally accepted value that rolls back before settling
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   assert.equal(readState(), null);
   currentInputs.qtyInput.value = '';
@@ -1116,7 +1341,8 @@ test('trade input synchronization rejects a provisionally accepted value that ro
   assert.deepEqual(writes.map(({ value }) => value), ['0.19', '0.19']);
 });
 
-test('bounded input writer shares one total budget for each input identity', () => {
+test("user sees that bounded input writer shares one total budget for each input identity", () => {
+  // Given the current trade fields and requested values are available
   const writes = [];
   const writeValue = createBoundedInputWriter({
     writeValue: (input, value) => writes.push({ input, value }),
@@ -1125,7 +1351,11 @@ test('bounded input writer shares one total budget for each input identity', () 
   const input = {};
   const replacement = {};
 
-  assert.equal(writeValue(input, '0.01'), true);
+  // When the trade form state is read or synchronized
+  const observed = writeValue(input, '0.01');
+
+  // Then sees that bounded input writer shares one total budget for each input identity
+  assert.equal(observed, true);
   assert.equal(writeValue(input, '0.02'), true);
   assert.equal(writeValue(input, '0.03'), true);
   assert.equal(writeValue(input, '0.04'), false);
@@ -1134,7 +1364,8 @@ test('bounded input writer shares one total budget for each input identity', () 
   assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.02', '0.03', '0.06']);
 });
 
-test('trade input synchronization remains fail-closed after the post-transition write is rejected', () => {
+test("user sees that trade input synchronization remains fail-closed after the post-transition write is rejected", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -1153,7 +1384,11 @@ test('trade input synchronization remains fail-closed after the post-transition 
     },
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization remains fail-closed after the post-transition write is rejected
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   assert.equal(readState(), null);
   assert.equal(readState(), null);
@@ -1161,7 +1396,8 @@ test('trade input synchronization remains fail-closed after the post-transition 
   assert.deepEqual(writes.map(({ value }) => value), ['0.01', '0.01']);
 });
 
-test('trade input synchronization never exceeds an expanded write-attempt budget', () => {
+test("user sees that trade input synchronization never exceeds an expanded write-attempt budget", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -1186,12 +1422,16 @@ test('trade input synchronization never exceeds an expanded write-attempt budget
   for (let frame = 0; frame < 10; frame += 1) {
     assert.equal(readState(), null);
   }
-  assert.deepEqual(writes.map(({ value }) => value), ['0.02', '0.02', '0.02']);
+  // When the trade form state is read or synchronized
+  const observed = writes.map(({ value }) => value);
+
+  // Then sees that trade input synchronization never exceeds an expanded write-attempt budget
+  assert.deepEqual(observed, ['0.02', '0.02', '0.02']);
 });
 
-test('trade input synchronization rejects an invalid rollback stability contract', () => {
-  assert.throws(
-    () => createTradeInputStateReader({
+test("user sees that trade input synchronization rejects an invalid rollback stability contract", () => {
+  // Given the current trade fields and requested values are available
+  const scenarioInputs = [{
       resolveInputs: () => null,
       expectedQty: '0.01',
       includePrice: false,
@@ -1199,9 +1439,13 @@ test('trade input synchronization rejects an invalid rollback stability contract
       compareValues: (expected, actual) => expected === actual ? 0 : 1,
       writeValue: () => {},
       requiredStableMismatchFrames: 0,
-    }),
-    /输入框回退稳定帧数必须为正整数/,
-  );
+    }];
+
+  // When the trade form state is read or synchronized
+  const observedFailure = captureThrownError(() => createTradeInputStateReader(...scenarioInputs));
+
+  // Then sees that trade input synchronization rejects an invalid rollback stability contract
+  assert.match(observedFailure.message, /输入框回退稳定帧数必须为正整数/);
   assert.throws(
     () => createTradeInputStateReader({
       resolveInputs: () => null,
@@ -1264,7 +1508,8 @@ test('trade input synchronization rejects an invalid rollback stability contract
   );
 });
 
-test('trade input synchronization stops when the recovery policy rejects the rollback', () => {
+test("user sees that trade input synchronization stops when the recovery policy rejects the rollback", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -1285,14 +1530,19 @@ test('trade input synchronization stops when the recovery policy rejects the rol
     isRecoveryWriteAllowed: () => false,
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization stops when the recovery policy rejects the rollback
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   assert.equal(readState(), null);
   assert.equal(readState(), null);
   assert.deepEqual(writes.map(({ value }) => value), ['0.02']);
 });
 
-test('trade input synchronization cancels the post-transition write when the rollback value changes', () => {
+test("user sees that trade input synchronization cancels the post-transition write when the rollback value changes", () => {
+  // Given the current trade fields and requested values are available
   const currentInputs = {
     root: {},
     priceInput: null,
@@ -1311,7 +1561,11 @@ test('trade input synchronization cancels the post-transition write when the rol
     },
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization cancels the post-transition write when the rollback value changes
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   currentInputs.qtyInput.value = '0.005';
   assert.equal(readState(), null);
@@ -1322,7 +1576,8 @@ test('trade input synchronization cancels the post-transition write when the rol
   assert.deepEqual(writes.map(({ value }) => value), ['0.01']);
 });
 
-test('trade input synchronization gives each replacement identity an independent write budget', () => {
+test("user sees that trade input synchronization gives each replacement identity an independent write budget", () => {
+  // Given the current trade fields and requested values are available
   let currentInputs = {
     root: {},
     priceInput: { value: '' },
@@ -1342,7 +1597,11 @@ test('trade input synchronization gives each replacement identity an independent
     },
   });
 
-  assert.equal(readState(), null);
+  // When the trade form state is read or synchronized
+  const observed = readState();
+
+  // Then sees that trade input synchronization gives each replacement identity an independent write budget
+  assert.equal(observed, null);
   assert.equal(readState(), null);
   assert.deepEqual(readState(), {
     ...currentInputs,
@@ -1365,7 +1624,8 @@ test('trade input synchronization gives each replacement identity an independent
   assert.deepEqual(writes.map(({ value }) => value), ['0.01', '81.9', '0.01', '81.9']);
 });
 
-test('recognizes only close-quantity mutations as a confirmed close snapshot', async () => {
+test("user sees that recognizes only close-quantity mutations as a confirmed close snapshot", async () => {
+  // Given the current trade fields and requested values are available
   const dom = loadFixtureDom(`
     <section id="trade-form">
       <div data-testid="max-buy-amount">4.06 HYPE</div>
@@ -1374,7 +1634,11 @@ test('recognizes only close-quantity mutations as a confirmed close snapshot', a
   `);
   const { document, MutationObserver } = dom.window;
   const mutationBatches = [];
-  const observer = new MutationObserver((mutations) => mutationBatches.push(mutations));
+  const deliveries = [Promise.withResolvers(), Promise.withResolvers()];
+  const observer = new MutationObserver((mutations) => {
+    mutationBatches.push(mutations);
+    deliveries[mutationBatches.length - 1].resolve();
+  });
   observer.observe(document.querySelector('#trade-form'), {
     subtree: true,
     childList: true,
@@ -1382,11 +1646,13 @@ test('recognizes only close-quantity mutations as a confirmed close snapshot', a
   });
 
   document.querySelector('.unrelated').textContent = 'changed';
-  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  await deliveries[0].promise;
   document.querySelector('[data-testid="max-buy-amount"]').textContent = '0.00 HYPE';
-  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  await deliveries[1].promise;
+  // When the trade form state is read or synchronized
   observer.disconnect();
 
+  // Then sees that recognizes only close-quantity mutations as a confirmed close snapshot
   assert.equal(mutationBatches.length, 2);
   assert.equal(mutationBatches[0].some(mutationTouchesCloseQuantity), false);
   assert.equal(mutationBatches[1].some(mutationTouchesCloseQuantity), true);

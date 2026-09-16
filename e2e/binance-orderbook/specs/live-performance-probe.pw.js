@@ -6,6 +6,7 @@ import {
   createCancelScenario,
 } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario } from '../helpers/userscript-page.js';
+import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
 import {
   armLivePerformanceProbe,
   createLivePerformanceProbeExpression,
@@ -17,7 +18,8 @@ import {
   validateLivePerformanceProbeSnapshot,
 } from '../helpers/live-performance-probe.js';
 
-test('live probe captures a no-order run and destroys every listener', async ({ page }) => {
+test('user receives complete no-order evidence and can dispose the performance probe', async ({ page }) => {
+  // Given an empty account has a live probe armed idempotently for the no-order action.
   await openUserscriptScenario(page, createCancelScenario());
   await installLivePerformanceProbe(page);
   const firstArm = await armLivePerformanceProbe(page, 'cancel-current-symbol-no-orders');
@@ -25,7 +27,9 @@ test('live probe captures a no-order run and destroys every listener', async ({ 
   expect(secondArm.sessionId).toBe(firstArm.sessionId);
 
   await prepareLivePerformanceProbeCompletion(page, 'no-orders');
+  // When the user requests cancellation after page-owned completion tracking is prepared.
   await page.getByRole('button', { name: '撤单' }).click();
+  // Then the real-time capture finishes promptly and ignores later mutations and clicks after disposal.
   const snapshot = await finishLivePerformanceProbeWhenReady(page);
   await expect(page.getByRole('button', { name: '无挂单' })).toBeEnabled();
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
@@ -36,22 +40,32 @@ test('live probe captures a no-order run and destroys every listener', async ({ 
   expect(snapshot.lastSemanticState.statusText).toBe('当前交易对无挂单');
 
   const finishedEventCount = snapshot.events.length;
-  await page.evaluate(() => {
+
+  // When a mutation and two real rendering frames occur after capture completion.
+  await page.evaluate(async () => {
     const panel = document.querySelector('#jh-binance-close-qty-multiplier-panel');
     panel?.setAttribute('data-after-finish', 'ignored');
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
-  await page.waitForTimeout(20);
+
+  // Then disconnected mutation observers cannot append another event.
   const frozen = await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__.snapshot());
   expect(frozen.events).toHaveLength(finishedEventCount);
 
   const beforeDestroy = snapshot.events.length;
+
+  // When the user destroys the probe and clicks the action again.
   await destroyLivePerformanceProbe(page);
   await page.getByRole('button', { name: '撤单' }).click();
+
+  // Then no probe remains and the completed capture stays immutable.
   expect(await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__)).toBeUndefined();
   expect(snapshot.events).toHaveLength(beforeDestroy);
 });
 
-test('live probe has no user-decision deadline and follows a replaced portal dialog', async ({ page }) => {
+test('user can leave confirmation open for a minute and dismiss the replaced native dialog', async ({ page }) => {
+  // Given a lifecycle clock controls a native dialog that will be replaced after opening.
+  await installScenarioClock(page);
   const scenario = createCancelScenario({
     positions: POSITION_SETS.current,
     orders: ORDER_SETS.current,
@@ -61,10 +75,13 @@ test('live probe has no user-decision deadline and follows a replaced portal dia
   await installLivePerformanceProbe(page);
   await armLivePerformanceProbe(page, 'cancel-dialog-cancel');
 
-  await prepareLivePerformanceProbeCompletion(page, 'dialog-cancel');
+  await prepareLivePerformanceProbeCompletion(page, 'dialog-cancel', { timeoutMs: 120_000 });
+  // When the user opens confirmation and a full minute passes without a decision.
   await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await page.waitForTimeout(1_000);
+  await pauseScenarioClock(page);
+  await page.clock.runFor(60_000);
+  // Then the probe remains unfinished and continues tracking the dialog until the user cancels.
   const waiting = await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__.snapshot());
   expect(waiting.finishedAtMonotonicMs).toBeNull();
   expect(waiting.events.map((event) => event.kind)).toContain('dialog-visible');
@@ -73,7 +90,11 @@ test('live probe has no user-decision deadline and follows a replaced portal dia
     button.parentElement.classList.add('bn-modal-footer');
   });
 
+  // When the user decides to cancel through the replacement dialog.
+  await page.clock.resume();
   await page.getByRole('button', { name: '取消' }).click();
+
+  // Then completion records the decision and final cancellation state.
   const snapshot = await finishLivePerformanceProbeWhenReady(page);
   await expect(page.getByText('撤单已取消')).toBeVisible();
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
@@ -85,7 +106,8 @@ test('live probe has no user-decision deadline and follows a replaced portal dia
   await destroyLivePerformanceProbe(page);
 });
 
-test('live completion waits for confirmed cancellation cleanup', async ({ page }) => {
+test('user receives completed cancellation evidence only after native cleanup finishes', async ({ page }) => {
+  // Given the current symbol has a Basic order and page-owned completion tracking is prepared.
   const scenario = createCancelScenario({
     positions: POSITION_SETS.current,
     orders: ORDER_SETS.current,
@@ -95,9 +117,11 @@ test('live completion waits for confirmed cancellation cleanup', async ({ page }
   await armLivePerformanceProbe(page, 'cancel-dialog-confirm');
 
   await prepareLivePerformanceProbeCompletion(page, 'dialog-confirm');
+  // When the user opens and confirms the native cancellation.
   await page.getByRole('button', { name: '撤单' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '确认' }).click();
+  // Then the completed capture contains a primary decision and the final cancellation status.
   const snapshot = await finishLivePerformanceProbeWhenReady(page);
 
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
@@ -106,7 +130,8 @@ test('live completion waits for confirmed cancellation cleanup', async ({ page }
   await destroyLivePerformanceProbe(page);
 });
 
-test('live completion flushes the final long task before disconnecting observers', async ({ page }) => {
+test('user retains evidence of a final long host task in the completed capture', async ({ page }) => {
+  // Given a real 80 ms host stall is attached to the cancellation click.
   await openUserscriptScenario(page, createCancelScenario());
   await installLivePerformanceProbe(page);
   await armLivePerformanceProbe(page, 'cancel-current-symbol-no-orders-long-task');
@@ -120,22 +145,27 @@ test('live completion flushes the final long task before disconnecting observers
   });
 
   await prepareLivePerformanceProbeCompletion(page, 'no-orders');
+  // When the user requests cancellation while the real performance observers are active.
   await page.getByRole('button', { name: '撤单' }).click();
+  // Then the final long task is included before the observers disconnect.
   const snapshot = await finishLivePerformanceProbeWhenReady(page);
 
   expect(snapshot.longTasks.some((entry) => entry.duration >= 75)).toBe(true);
   await destroyLivePerformanceProbe(page);
 });
 
-test('live probe rejects a sample while prior no-order feedback is still visible', async ({ page }) => {
+test('user cannot rearm a performance sample until prior no-order feedback clears', async ({ page }) => {
+  // Given an empty-account sample is armed and completion tracking is prepared.
   await openUserscriptScenario(page, createCancelScenario());
   await installLivePerformanceProbe(page);
   await armLivePerformanceProbe(page, 'cancel-current-symbol-no-orders-first');
 
   await prepareLivePerformanceProbeCompletion(page, 'no-orders');
+  // When the user completes one no-order action and immediately tries to arm another sample.
   await page.getByRole('button', { name: '撤单' }).click();
   await finishLivePerformanceProbeWhenReady(page);
   await expect(page.getByRole('button', { name: '无挂单' })).toBeEnabled();
+  // Then rearming fails until the normal cancellation action becomes ready again.
   await expect(page.evaluate(() => (
     window.__BINANCE_LIVE_PERFORMANCE_PROBE__.arm('cancel-current-symbol-no-orders-too-soon')
   ))).rejects.toThrow(/cannot arm before the cancel UI is fully ready/);
@@ -146,11 +176,13 @@ test('live probe rejects a sample while prior no-order feedback is still visible
   await destroyLivePerformanceProbe(page);
 });
 
-test('live probe serializes uncaught errors and unhandled rejections', async ({ page }) => {
+test('user receives serializable evidence for uncaught errors and unhandled rejections', async ({ page }) => {
+  // Given a live probe is armed on an empty-account fixture.
   await openUserscriptScenario(page, createCancelScenario());
   await installLivePerformanceProbe(page);
   await armLivePerformanceProbe(page, 'serializable-errors');
 
+  // When the user requests cancellation and the host emits an error and an unhandled rejection.
   await page.getByRole('button', { name: '撤单' }).click();
   await page.evaluate(() => {
     window.dispatchEvent(new ErrorEvent('error', { message: 'probe test error' }));
@@ -158,6 +190,7 @@ test('live probe serializes uncaught errors and unhandled rejections', async ({ 
     Object.defineProperty(rejection, 'reason', { value: new Error('probe test rejection') });
     window.dispatchEvent(rejection);
   });
+  // Then both error kinds retain their messages in a serializable capture.
   const snapshot = await finishLivePerformanceProbe(page);
   expect(snapshot.errors).toEqual([
     expect.objectContaining({ type: 'error', message: 'probe test error' }),
@@ -167,7 +200,8 @@ test('live probe serializes uncaught errors and unhandled rejections', async ({ 
   await destroyLivePerformanceProbe(page);
 });
 
-test('live probe follows a userscript panel replaced after arm and before click', async ({ page }) => {
+test('user receives feedback evidence after the host replaces an armed panel', async ({ page }) => {
+  // Given a custom cancellation panel has an armed live performance probe.
   await openUserscriptScenario(page, createCancelScenario());
   await page.evaluate(() => {
     const panel = document.createElement('section');
@@ -182,6 +216,7 @@ test('live probe follows a userscript panel replaced after arm and before click'
     statusSelector: '#probe-status',
   });
   await armLivePerformanceProbe(page, 'replaced-panel-before-click');
+  // When the host replaces the panel and the user clicks its new cancellation button.
   await page.evaluate(() => {
     const oldPanel = document.querySelector('#probe-panel');
     const newPanel = oldPanel.cloneNode(true);
@@ -194,6 +229,7 @@ test('live probe follows a userscript panel replaced after arm and before click'
   });
 
   await page.getByRole('button', { name: 'Probe cancel' }).click();
+  // Then the probe reacquires the replacement and records first feedback.
   await expect(page.getByRole('button', { name: 'Probe processing' })).toBeDisabled();
   const snapshot = await finishLivePerformanceProbe(page);
   expect(() => validateLivePerformanceProbeSnapshot(snapshot)).not.toThrow();
@@ -201,12 +237,15 @@ test('live probe follows a userscript panel replaced after arm and before click'
   await destroyLivePerformanceProbe(page);
 });
 
-test('live probe reports overflow and supports raw Runtime.evaluate injection', async ({ page }) => {
+test('user receives an explicit overflow failure from a directly injected performance probe', async ({ page }) => {
+  // Given a raw evaluation installs a live probe with a one-event limit.
   await openUserscriptScenario(page, createCancelScenario());
   await page.evaluate(createLivePerformanceProbeExpression({ eventLimit: 1 }));
   await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__.arm('overflow'));
 
+  // When the user requests cancellation and generates more events than the declared limit.
   await page.getByRole('button', { name: '撤单' }).click();
+  // Then the capture reports discarded events and fails strict validation.
   await expect(page.getByRole('button', { name: '撤单' })).toBeEnabled();
   const snapshot = await page.evaluate(() => window.__BINANCE_LIVE_PERFORMANCE_PROBE__.finish());
   expect(snapshot.dropped.events).toBeGreaterThan(0);

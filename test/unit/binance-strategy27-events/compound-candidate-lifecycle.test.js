@@ -27,10 +27,13 @@ async function shiftedCandidate(seconds) {
   return value;
 }
 
-test('independent high/low records coexist at one second and exact replay is immutable', async () => {
+test('user observes that independent high/low records coexist at one second and exact replay is immutable', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle();
+  // When state.apply processes the configured inputs
   const high = await state.apply(envelope(), 7000);
   const low = await state.apply(envelope(structuredClone(fixtures[1]), 5), 7000);
+  // Then user observes that independent high/low records coexist at one second and exact replay is immutable
   assert.equal(high.type, 'candidate');
   assert.equal(low.type, 'candidate');
   assert.equal(state.size, 2);
@@ -45,10 +48,13 @@ test('independent high/low records coexist at one second and exact replay is imm
   assert.equal(state.lastSequence, 8);
 });
 
-test('heartbeat and epoch reset retain immutable candidates while sequence validation stays strict', async () => {
+test('user observes that heartbeat and epoch reset retain immutable candidates while sequence validation stays strict', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle();
   assert.equal((await state.apply(control(1, 'stream_state'), 7000)).type, 'stream_reset');
+  // When state.apply processes the configured inputs
   await state.apply(envelope(), 7000);
+  // Then user observes that heartbeat and epoch reset retain immutable candidates while sequence validation stays strict
   assert.equal((await state.apply(control(7), 7000)).type, 'heartbeat');
   assert.equal(state.size, 1);
   await assert.rejects(state.apply(control(7), 7000), /sequence regression/);
@@ -63,12 +69,15 @@ test('heartbeat and epoch reset retain immutable candidates while sequence valid
   assert.equal(state.size, 1);
 });
 
-test('protocol resets and bootstrap preserve retained candidates and the eviction cutoff', async () => {
-  for (const reason of ['initial_cursor', 'stale_cursor', 'unavailable']) {
+for (const reason of ['initial_cursor', 'stale_cursor', 'unavailable']) {
+  test(`user observes that protocol resets and bootstrap preserve retained candidates and the eviction cutoff (reason=${JSON.stringify(reason)})`, async () => {
+    // Given the compound lifecycle and retained candidate records
     const state = lifecycle(2);
     const candidates = await Promise.all([shiftedCandidate(0), shiftedCandidate(1), shiftedCandidate(2)]);
     for (const [index, candidate] of candidates.entries()) await state.apply(envelope(candidate, index + 2), 9000);
+    // When state.resetProtocol processes the configured inputs
     state.resetProtocol(reason);
+    // Then user observes that protocol resets and bootstrap preserve retained candidates and the eviction cutoff (reason=the selected case)
     assert.equal(state.runtimeEpoch, null);
     assert.equal(state.lastSequence, null);
     assert.equal(state.size, 2);
@@ -82,32 +91,43 @@ test('protocol resets and bootstrap preserve retained candidates and the evictio
     await state.apply(control(1, 'stream_state', 'c'.repeat(32)), 9000);
     assert.equal((await state.apply(envelope(candidates[0], 2, 'c'.repeat(32)), 9000)).type, 'expired');
     assert.deepEqual(state.prune(7209001), candidates.slice(1).map((candidate) => candidate.candidate_id));
-  }
-});
 
-test('stream reset prunes expired candidates without extending their decision-time retention', async () => {
+  });
+}
+
+test('user observes that stream reset prunes expired candidates without extending their decision-time retention', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle(80, 1000);
+  // When state.apply processes the configured inputs
   await state.apply(envelope(), 7000);
   const reset = await state.apply(control(1, 'stream_state', 'b'.repeat(32)), 8001);
+  // Then user observes that stream reset prunes expired candidates without extending their decision-time retention
   assert.deepEqual(reset.removedCandidateIds, [fixtures[0].candidate_id]);
   assert.equal(state.size, 0);
   assert.equal((await state.apply(envelope(fixtures[0], 2, 'b'.repeat(32)), 8001)).type, 'expired');
 });
 
-test('context retirement clears protocol and candidate retention', async () => {
-  for (const reason of ['route_changed', 'interval_changed', 'stopped']) {
+for (const reason of ['route_changed', 'interval_changed', 'stopped']) {
+  test(`user observes that context retirement clears protocol and candidate retention (reason=${JSON.stringify(reason)})`, async () => {
+    // Given the compound lifecycle and retained candidate records
     const state = lifecycle();
+    // When state.apply processes the configured inputs
     await state.apply(envelope(), 7000);
     state.reset(reason);
+    // Then user observes that context retirement clears protocol and candidate retention (reason=the selected case)
     assert.equal(state.runtimeEpoch, null);
     assert.equal(state.lastSequence, null);
     assert.equal(state.size, 0);
-  }
-});
 
-test('age is based on the original decision, not replay or heartbeat delivery', async () => {
+  });
+}
+
+test('user observes that age is based on the original decision, not replay or heartbeat delivery', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle(80, 1000);
+  // When state.apply processes the configured inputs
   await state.apply(envelope(), 7000);
+  // Then user observes that age is based on the original decision, not replay or heartbeat delivery
   assert.equal((await state.apply(envelope(fixtures[0], 3), 8000)).type, 'replay');
   const heartbeat = await state.apply(control(4), 8001);
   assert.deepEqual(heartbeat.removedCandidateIds, [fixtures[0].candidate_id]);
@@ -117,12 +137,15 @@ test('age is based on the original decision, not replay or heartbeat delivery', 
   assert.equal(state.size, 0);
 });
 
-test('capacity eviction keeps the newest decisions and does not resurrect evicted replay', async () => {
+test('user observes that capacity eviction keeps the newest decisions and does not resurrect evicted replay', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle(2);
   const candidates = await Promise.all([shiftedCandidate(0), shiftedCandidate(1), shiftedCandidate(2)]);
+  // When state.apply processes the configured inputs
   await state.apply(envelope(candidates[0], 2), 9000);
   await state.apply(envelope(candidates[1], 3), 9000);
   const latest = await state.apply(envelope(candidates[2], 4), 9000);
+  // Then user observes that capacity eviction keeps the newest decisions and does not resurrect evicted replay
   assert.deepEqual(latest.removedCandidateIds, [candidates[0].candidate_id]);
   assert.equal(state.size, 2);
   assert.equal((await state.apply(envelope(candidates[0], 5), 9000)).type, 'expired');
@@ -131,22 +154,28 @@ test('capacity eviction keeps the newest decisions and does not resurrect evicte
   assert.equal(state.size, 0);
 });
 
-test('same-time independent family is not deduplicated by direction or timestamp', async () => {
+test('user observes that same-time independent family is not deduplicated by direction or timestamp', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle();
   const passive = structuredClone(fixtures[0]);
   passive.family = 'passive_support_loss';
   const { candidate_id, ...record } = passive;
   passive.candidate_id = await compoundHash(record);
+  // When state.apply processes the configured inputs
   await state.apply(envelope(), 7000);
   const action = await state.apply(envelope(passive, 3), 7000);
+  // Then user observes that same-time independent family is not deduplicated by direction or timestamp
   assert.equal(action.type, 'candidate');
   assert.equal(state.size, 2);
 });
 
-test('a reset during async validation invalidates the in-flight application', async () => {
+test('user observes that a reset during async validation invalidates the in-flight application', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle();
+  // When state.apply processes the configured inputs
   const pending = state.apply(envelope(), 7000);
   state.reset('unavailable');
+  // Then user observes that a reset during async validation invalidates the in-flight application
   assert.equal((await pending).type, 'cancelled');
   assert.equal(state.size, 0);
   assert.equal(state.runtimeEpoch, null);
@@ -158,27 +187,37 @@ test('a reset during async validation invalidates the in-flight application', as
   assert.equal(action.candidate.seed.buy_notional, fixtures[0].seed.buy_notional);
 });
 
-test('a protocol reset cancels async validation without deleting previously accepted candidates', async () => {
+test('user observes that a protocol reset cancels async validation without deleting previously accepted candidates', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle();
+  // When state.apply processes the configured inputs
   await state.apply(envelope(fixtures[1]), 7000);
   const pending = state.apply(envelope(fixtures[0], 3), 7000);
   state.resetProtocol('unavailable');
+  // Then user observes that a protocol reset cancels async validation without deleting previously accepted candidates
   assert.equal((await pending).type, 'cancelled');
   assert.equal(state.size, 1);
   state.beginBootstrap('b'.repeat(32));
   assert.equal((await state.apply(envelope(fixtures[1], 2, 'b'.repeat(32)), 7000)).type, 'replay');
 });
 
-test('wrong-symbol data cannot mutate stream state', async () => {
+test('user observes that wrong-symbol data cannot mutate stream state', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = new CompoundCandidateLifecycle('ETH/USDT:USDT', { maxCandidates: 2, maxAgeMs: 1000 });
-  await assert.rejects(state.apply(envelope(), 7000), /symbol does not match/);
+  // When state.apply processes the configured inputs
+  const observedResult = state.apply(envelope(), 7000);
+  // Then user observes that wrong-symbol data cannot mutate stream state
+  await assert.rejects(observedResult, /symbol does not match/);
   assert.equal(state.size, 0);
   assert.equal(state.runtimeEpoch, null);
 });
 
-test('bootstrap restores retained candidates and advances to the live tail', async () => {
+test('user observes that bootstrap restores retained candidates and advances to the live tail', async () => {
+  // Given the compound lifecycle and retained candidate records
   const state = lifecycle();
+  // When state.beginBootstrap processes the configured inputs
   state.beginBootstrap(EPOCH);
+  // Then user observes that bootstrap restores retained candidates and advances to the live tail
   assert.equal((await state.apply(envelope(fixtures[0], 4), 7000)).type, 'candidate');
   state.finishBootstrap(7);
   assert.equal((await state.apply(control(8), 7000)).type, 'heartbeat');

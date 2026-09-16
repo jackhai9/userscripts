@@ -14,11 +14,14 @@ const source = await readFile(artifactPath, 'utf8');
 const strategy27ArtifactPath = new URL('../../scripts/binance-strategy27-events.user.js', import.meta.url);
 const strategy27Source = await readFile(strategy27ArtifactPath, 'utf8');
 
-test('Strategy29 has an independent observation-only install identity', async () => {
+test('user installs Strategy29 with its independent observation-only identity', async () => {
+  // Given the current generated Strategy29 installer.
   const artifact = new URL('../../scripts/binance-strategy29-bollinger.user.js', import.meta.url);
   const text = await readFile(artifact, 'utf8');
+  // When its install identity and browser capabilities are inspected.
   const contract = createUserscriptReleaseContract(text, artifact.pathname);
   const metadata = parseUserscriptMetadata(text);
+  // Then the installer retains its pinned identity and declared observation boundary.
   assert.equal(contract.name, '【自写】Binance Strategy 29 布林带信号');
   assert.equal(contract.namespace, 'binance.strategy29.bollinger');
   assert.equal(contract.version, '0.5.5');
@@ -38,9 +41,12 @@ test('Strategy29 has an independent observation-only install identity', async ()
   }
 });
 
-test('release contract identifies the generated Binance orderbook artifact', () => {
-  const contract = createUserscriptReleaseContract(source, artifactPath.pathname);
-
+test('user identifies the generated orderbook installer by its release contract', () => {
+  // Given the public orderbook artifact at its install path.
+  const path = artifactPath.pathname;
+  // When the installer is parsed into a release contract.
+  const contract = createUserscriptReleaseContract(source, path);
+  // Then identity, route scope, update location, and content fingerprints match the artifact.
   assert.equal(contract.name, '【自写】Binance 订单簿单击下单');
   assert.equal(contract.namespace, 'binance.orderbook.trade');
   assert.match(contract.version, /^\d+\.\d+\.\d+$/);
@@ -55,10 +61,13 @@ test('release contract identifies the generated Binance orderbook artifact', () 
   assert.equal(contract.characters, source.length);
 });
 
-test('release contract identifies the generated Strategy 27 annotation artifact', () => {
-  const contract = createUserscriptReleaseContract(strategy27Source, strategy27ArtifactPath.pathname);
+test('user identifies Strategy27 and its declared local gateway capabilities', () => {
+  // Given the current generated annotation installer.
+  const path = strategy27ArtifactPath.pathname;
+  // When its release contract and browser grants are parsed.
+  const contract = createUserscriptReleaseContract(strategy27Source, path);
   const metadata = parseUserscriptMetadata(strategy27Source);
-
+  // Then the installer retains its identity and exact gateway capability boundary.
   assert.equal(contract.name, '【自写】Binance Strategy 27 事件标注');
   assert.equal(contract.namespace, 'binance.strategy27.events');
   assert.equal(contract.version, '0.6.5');
@@ -81,54 +90,68 @@ test('release contract identifies the generated Strategy 27 annotation artifact'
   assert.equal(strategy27Source.includes('apiKey'), false);
 });
 
-test('release contract requires metadata at the first byte', () => {
-  assert.throws(
-    () => parseUserscriptMetadata(`\n${source}`),
-    /metadata must start at the first byte/,
-  );
+test('user rejects an installer whose metadata no longer begins at the first byte', () => {
+  // Given an installer has unexpected content before its metadata header.
+  const malformed = `\n${source}`;
+  // When release validation attempts to read that metadata.
+  const validate = () => parseUserscriptMetadata(malformed);
+  // Then validation names the broken first-byte contract.
+  assert.throws(validate, /metadata must start at the first byte/);
 });
 
-test('release contract rejects duplicate identity metadata', () => {
+test('user rejects an installer with ambiguous duplicate namespace metadata', () => {
+  // Given two namespace declarations appear in one installer.
   const duplicate = source.replace('// @namespace    binance.orderbook.trade', [
     '// @namespace    binance.orderbook.trade',
     '// @namespace    duplicate.namespace',
   ].join('\n'));
 
-  assert.throws(
-    () => createUserscriptReleaseContract(duplicate, artifactPath.pathname),
-    /Expected exactly one @namespace, found 2/,
-  );
+  // When its release identity is validated.
+  const validate = () => createUserscriptReleaseContract(duplicate, artifactPath.pathname);
+  // Then the duplicate identity fails with its exact conflicting count.
+  assert.throws(validate, /Expected exactly one @namespace, found 2/);
 });
 
-test('source comparison reports exact equality and divergent hashes', () => {
-  const equal = compareUserscriptSources(source, source);
+test('user distinguishes exact installed source from a modified installer', () => {
+  // Given an exact source copy and one with changed metadata.
+  const exactCopy = source.slice();
+  const changed = source.replace('// @description  ', '// @description  changed ');
+  // When both installed texts are compared with the original artifact.
+  const equal = compareUserscriptSources(source, exactCopy);
+  const divergent = compareUserscriptSources(source, changed);
+  // Then exact identity and differing content hashes distinguish the two installations.
   assert.equal(equal.exactSourceMatch, true);
   assert.equal(equal.actual.sha256, equal.expected.sha256);
-
-  const changed = source.replace('// @description  ', '// @description  changed ');
-  const divergent = compareUserscriptSources(source, changed);
   assert.equal(divergent.exactSourceMatch, false);
   assert.notEqual(divergent.actual.sha256, divergent.expected.sha256);
 });
 
-test('Tampermonkey MCP text read-back separates the transport modification footer', () => {
+test('user compares installed source without the MCP transport modification footer', () => {
+  // Given an MCP text readback includes its separate modification timestamp.
   const readback = `${source}\n\n---\nLast modified: 2026-08-26T06:52:12.240Z`;
+  // When the transport response is parsed.
   const parsed = parseTampermonkeyMcpReadback(readback);
-
+  // Then installer bytes remain exact and the timestamp stays separate.
   assert.equal(parsed.source, source);
   assert.equal(parsed.lastModified, '2026-08-26T06:52:12.240Z');
 });
 
-test('Tampermonkey MCP JSON read-back requires an explicit source value', () => {
-  const parsed = parseTampermonkeyMcpReadback(JSON.stringify({
+test('user requires explicit installed source in an MCP JSON readback', () => {
+  // Given the transport returns one complete readback and one without source text.
+  const complete = JSON.stringify({
     value: source,
     lastModified: 1_777_184_732,
-  }));
+  });
+  const missingSource = JSON.stringify({ lastModified: 1_777_184_732 });
+  // When the complete response is parsed and the incomplete response is validated.
+  const parsed = parseTampermonkeyMcpReadback(complete);
+  const validate = () => parseTampermonkeyMcpReadback(missingSource);
+  // Then the exact source and timestamp are retained and absent source is rejected.
   assert.equal(parsed.source, source);
   assert.equal(parsed.lastModified, 1_777_184_732);
 
   assert.throws(
-    () => parseTampermonkeyMcpReadback(JSON.stringify({ lastModified: 1_777_184_732 })),
+    validate,
     /missing the source value/,
   );
 });

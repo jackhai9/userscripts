@@ -62,38 +62,56 @@ function loadChartTarget(options = {}) {
   return { dom, tradingViewApi };
 }
 
-test('locates the current chart Open Orders target in TradingView and Basic modes', () => {
-  for (const mode of ['tradingview', 'basic']) {
+for (const [scenarioIndex, mode] of (['tradingview', 'basic']).entries()) {
+  test(`user locates the current chart Open Orders target in TradingView and Basic modes (case ${scenarioIndex + 1})`, () => {
+    // Given the native fixture represents this supported scenario
     const { dom, tradingViewApi } = loadChartTarget({ mode });
+    // When the real adapter handles this fixture
     const target = getBinanceChartOrdersTarget(dom.window.document);
 
+    // Then the user locates the current chart Open Orders target in TradingView and Basic modes
     assert.equal(target.chartRoot.className, 'chart-widget-root');
     assert.equal(target.toolbar.getAttribute('data-testid'), 'chart-toolbar');
     assert.equal(target.trigger.getAttribute('data-testid'), 'orders-trigger');
     assert.equal(target.popoverId, 'chart-orders-menu');
     assert.equal(target.tradingViewApi, tradingViewApi);
-  }
-});
+  });
+}
 
-test('supports the English current-price label without broad text scanning', () => {
+test("user supports the English current-price label without broad text scanning", () => {
+  // Given the native chart toolbar and order controls are mounted
   const { dom } = loadChartTarget({ latestPriceLabel: 'Last Price' });
+  // When the active chart order controls are inspected
+  const observed = getBinanceChartOrdersTarget(dom.window.document).trigger.getAttribute('data-testid');
+
+  // Then supports the English current-price label without broad text scanning
   assert.equal(
-    getBinanceChartOrdersTarget(dom.window.document).trigger.getAttribute('data-testid'),
+    observed,
     'orders-trigger',
   );
 });
 
-test('supports Binance wrapping the current-price control in a contents slot', () => {
+test("user supports Binance wrapping the current-price control in a contents slot", () => {
+  // Given the native chart toolbar and order controls are mounted
   const { dom } = loadChartTarget({ wrapLatestPrice: true });
+  // When the active chart order controls are inspected
+  const observed = getBinanceChartOrdersTarget(dom.window.document).trigger.getAttribute('data-testid');
+
+  // Then supports Binance wrapping the current-price control in a contents slot
   assert.equal(
-    getBinanceChartOrdersTarget(dom.window.document).trigger.getAttribute('data-testid'),
+    observed,
     'orders-trigger',
   );
 });
 
-test('find waits for a visible complete and unambiguous chart contract', () => {
+test("user sees that find waits for a visible complete and unambiguous chart contract", () => {
+  // Given the native chart toolbar and order controls are mounted
   const missingDom = loadFixtureDom('<div></div>');
-  assert.equal(findBinanceChartOrdersTarget(missingDom.window.document), null);
+  // When the active chart order controls are inspected
+  const observed = findBinanceChartOrdersTarget(missingDom.window.document);
+
+  // Then sees that find waits for a visible complete and unambiguous chart contract
+  assert.equal(observed, null);
 
   const hidden = loadChartTarget();
   hidden.dom.window.document.querySelector('.chart-widget-root').setAttribute('data-hidden', '');
@@ -116,13 +134,15 @@ test('find waits for a visible complete and unambiguous chart contract', () => {
   );
 });
 
-test('finds the trigger-linked Chinese or English Open Orders checkbox', () => {
-  for (const label of ['当前委托', 'Open Orders']) {
+for (const [scenarioIndex, label] of (['当前委托', 'Open Orders']).entries()) {
+  test(`user finds the trigger-linked Chinese or English Open Orders checkbox (case ${scenarioIndex + 1})`, () => {
+    // Given the native fixture represents this supported scenario
     const { dom } = loadChartTarget();
     dom.window.document.body.insertAdjacentHTML(
       'beforeend',
       createPopoverMarkup({ labels: ['快捷下单', label, '持有仓位'], openOrdersChecked: 'false' }),
     );
+    // When the real adapter handles this fixture
     const target = getBinanceChartOrdersTarget(dom.window.document);
     const result = findActiveBinanceChartOrdersPopover(
       dom.window.document,
@@ -130,31 +150,38 @@ test('finds the trigger-linked Chinese or English Open Orders checkbox', () => {
       isVisibleElement,
     );
 
+    // Then the user finds the trigger-linked Chinese or English Open Orders checkbox
     assert.equal(result.checkbox.textContent.trim(), label);
     assert.equal(result.checked, false);
-  }
-});
+  });
+}
 
-test('ignores active lookalike popovers not linked to the chart trigger', () => {
+test("user ignores active lookalike popovers not linked to the chart trigger", () => {
+  // Given the native chart toolbar and order controls are mounted
   const { dom } = loadChartTarget();
   dom.window.document.body.insertAdjacentHTML(
     'beforeend',
     createPopoverMarkup({ popoverId: 'another-menu' }),
   );
+  // When the active chart order controls are inspected
   const target = getBinanceChartOrdersTarget(dom.window.document);
 
+  // Then ignores active lookalike popovers not linked to the chart trigger
   assert.equal(
     findActiveBinanceChartOrdersPopover(dom.window.document, target, isVisibleElement),
     null,
   );
 });
 
-test('invalid or duplicate Open Orders checkboxes fail explicitly', () => {
+test("user sees that invalid or duplicate Open Orders checkboxes fail explicitly", () => {
+  // Given the native chart toolbar and order controls are mounted
   const invalid = loadChartTarget();
+  // When the active chart order controls are inspected
   invalid.dom.window.document.body.insertAdjacentHTML(
     'beforeend',
     createPopoverMarkup({ openOrdersChecked: 'mixed' }),
   );
+  // Then sees that invalid or duplicate Open Orders checkboxes fail explicitly
   assert.throws(
     () => findActiveBinanceChartOrdersPopover(
       invalid.dom.window.document,
@@ -179,12 +206,15 @@ test('invalid or duplicate Open Orders checkboxes fail explicitly', () => {
   );
 });
 
-test('rejects a replaced chart root toolbar trigger or runtime', () => {
+test("user rejects a replaced chart root toolbar trigger or runtime", () => {
+  // Given the native chart toolbar and order controls are mounted
   const first = loadChartTarget();
   const second = loadChartTarget();
   const oldTarget = getBinanceChartOrdersTarget(first.dom.window.document);
+  // When the active chart order controls are inspected
   const newTarget = getBinanceChartOrdersTarget(second.dom.window.document);
 
+  // Then rejects a replaced chart root toolbar trigger or runtime
   assert.throws(
     () => assertSameBinanceChartOrdersTarget(oldTarget, newTarget),
     /图表“显示当前委托”控件已变化/,

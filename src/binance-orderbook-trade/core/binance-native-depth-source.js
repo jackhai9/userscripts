@@ -181,6 +181,8 @@ export function installBinanceNativeDepthSource(globalObject) {
 
   const observedFetch = new Proxy(nativeFetch, {
     apply(target, receiver, args) {
+      // The page can retain a wrapper after its global transport has been restored.
+      if (restored) return Reflect.apply(target, receiver, args);
       let observation = null;
       try {
         observation = resolveNativeSnapshotSymbol(args[0], baseUrl);
@@ -205,7 +207,9 @@ export function installBinanceNativeDepthSource(globalObject) {
           return response.clone().json();
         }).then(
           (payload) => acceptSnapshot(symbol, payload),
-          (error) => failRecord(ensureRecord(symbol), error),
+          (error) => {
+            if (!restored) failRecord(ensureRecord(symbol), error);
+          },
         );
       }
       return result;
@@ -215,7 +219,7 @@ export function installBinanceNativeDepthSource(globalObject) {
   const ObservedWebSocket = new Proxy(NativeWebSocket, {
     construct(target, args, newTarget) {
       const socket = Reflect.construct(target, args, newTarget);
-      observeSocket(socket);
+      if (!restored) observeSocket(socket);
       return socket;
     },
   });
@@ -225,6 +229,7 @@ export function installBinanceNativeDepthSource(globalObject) {
 
   return {
     subscribe(options) {
+      if (restored) throw new Error('Binance native depth source has been restored');
       const {
         symbol,
         onProfile,
@@ -235,7 +240,6 @@ export function installBinanceNativeDepthSource(globalObject) {
         onProfile: assertFunction(onProfile, 'profile listener'),
         onStatus: assertFunction(onStatus, 'status listener'),
       };
-      if (restored) throw new Error('Binance native depth source has been restored');
       record.subscribers.add(subscriber);
       subscriber.onStatus(record.status);
       if (record.profile) subscriber.onProfile(record.profile);

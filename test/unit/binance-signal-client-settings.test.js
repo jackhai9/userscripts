@@ -5,12 +5,15 @@ import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
 import { readSignalGatewaySettings } from '../../src/shared/signal-client-settings.js';
 
-test('signal settings retain the existing private installation keys', () => {
+test('user observes that signal settings retain the existing private installation keys', () => {
+  // Given the installed scripts have explicit settings and ownership state
   const read = [];
+  // When the settings migration applies the stated installation order
   const settings = readSignalGatewaySettings((key, initial) => {
     read.push(key);
     return key === 'strategy27GatewayAuthSecret' ? 'synthetic-existing-secret' : initial;
   });
+  // Then signal settings retain the existing private installation keys
   assert.deepEqual(read, ['strategy27GatewayAuthSecret', 'strategy27GatewayOrigin']);
   assert.deepEqual(settings, { authSecret: 'synthetic-existing-secret', gatewayOrigin: 'http://127.0.0.1:18765' });
 });
@@ -57,10 +60,13 @@ async function fixture(t, existingStores = null) {
 }
 
 for (const order of [['host', 'local'], ['local', 'host']]) {
-  test(`Strategy29 owns the default summary and private position: ${order.join('-')}`, async t => {
+  test(`user observes that Strategy29 owns the default summary and private position: ${order.join('-')}`, async t => {
+    // Given the installed scripts have explicit settings and ownership state
     const f = await fixture(t);
     for (const kind of order) await f.run(kind);
+    // When the settings migration applies the stated installation order
     await f.tick();
+    // Then Strategy29 owns the default summary and private position: the selected script
     assert.equal(f.requests.length, 1);
     assert.equal(f.requests[0].kind, 'host');
     assert.equal(f.requests[0].options.url, 'http://127.0.0.1:18765/v1/strategy29/status');
@@ -86,7 +92,8 @@ for (const order of [['host', 'local'], ['local', 'host']]) {
 
 for (const pair of [['old-host', 'local'], ['host', 'old-local'], ['host', 'legacy']]) {
   for (const order of [pair, [...pair].reverse()]) {
-    test(`staged upgrade cannot duplicate the summary: ${order.join('-')}`, async t => {
+    test(`user observes that staged upgrade cannot duplicate the summary: ${order.join('-')}`, async t => {
+      // Given the installed scripts have explicit settings and ownership state
       const f = await fixture(t);
       let legacyPanel;
       for (const kind of order) {
@@ -94,7 +101,9 @@ for (const pair of [['old-host', 'local'], ['host', 'old-local'], ['host', 'lega
         if (kind === 'legacy') legacyPanel = f.page.document.querySelector('#jh-strategy29-summary-panel');
       }
       await f.tick();
+      // When the settings migration applies the stated installation order
       const legacy = pair.includes('legacy');
+      // Then staged upgrade cannot duplicate the summary: the selected script
       assert.equal(f.page.document.querySelectorAll('#jh-strategy29-summary-panel').length, legacy ? 1 : 0);
       assert.equal(f.requests.filter(request => request.kind !== 'legacy').length, 0);
       if (legacy) {
@@ -112,12 +121,15 @@ for (const pair of [['old-host', 'local'], ['host', 'old-local'], ['host', 'lega
 
 
 for (const order of [['host', 'local'], ['local', 'host']]) {
-  test(`host-owned position is handed back once: ${order.join('-')}`, async t => {
+  test(`user observes that host-owned position is handed back once: ${order.join('-')}`, async t => {
+    // Given the installed scripts have explicit settings and ownership state
     const f = await fixture(t);
     f.stores.host.set('strategy29SummaryPanelPosition', { left: 200, top: 250 });
     for (const kind of order) await f.run(kind);
     await f.tick();
+    // When the settings migration applies the stated installation order
     const panel = f.page.document.getElementById('jh-strategy29-summary-panel');
+    // Then host-owned position is handed back once: the selected script
     assert.equal(panel.style.left, '200px');
     assert.equal(panel.style.top, '250px');
     assert.equal(f.stores.local.get('strategy29PanelPositionHandoffVersion'), 1);
@@ -132,13 +144,16 @@ for (const order of [['host', 'local'], ['local', 'host']]) {
   });
 }
 
-test('invalid legacy position stops only the summary without copying malformed private values', async t => {
+test('user observes that invalid legacy position stops only the summary without copying malformed private values', async t => {
+  // Given the installed scripts have explicit settings and ownership state
   const f = await fixture(t);
   f.stores.host.set('strategy29SummaryPanelPosition', { left: 'broken', top: 80, privateExtra: 'synthetic-value' });
   await f.run('host');
   await f.run('local');
   await f.tick();
+  // When the settings migration applies the stated installation order
   const record = f.page[Symbol.for('jh-userscripts.strategy29-panel-position-handoff')];
+  // Then invalid legacy position stops only the summary without copying malformed private values
   assert.equal(JSON.stringify(record), JSON.stringify({ version: 1, error: 'invalid_position' }));
   assert.equal(f.page[Symbol.for('jh-userscripts.signal-gateway')].version, 1);
   assert.equal(f.page.__TM_STRATEGY29_DEBUG__.diagnostics.remoteSummary.state, 'stopped');

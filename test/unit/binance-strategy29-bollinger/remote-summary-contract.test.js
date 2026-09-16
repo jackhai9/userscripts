@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { captureStrategyError } from '../../helpers/strategy-migration-boundaries.js';
 
 import {
   STRATEGY29_API_SPEC_VERSION,
@@ -14,10 +15,14 @@ import {
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
-test('unified gateway module errors require exact identity and state fields', () => {
+test('user observes that unified gateway module errors require exact identity and state fields', () => {
+  // Given the Strategy 29 wire identity and observer snapshot
   const disabled = { schema_version: 1, error: 'module_disabled', strategy_id: '29', status: 'disabled' };
   const unavailable = { schema_version: 1, error: 'gateway_unavailable', strategy_id: '29' };
-  assert.equal(validateStrategy29GatewayError(disabled, 503), disabled);
+  // When validateStrategy29GatewayError processes the configured inputs
+  const observedResult = validateStrategy29GatewayError(disabled, 503);
+  // Then user observes that unified gateway module errors require exact identity and state fields
+  assert.equal(observedResult, disabled);
   assert.equal(validateStrategy29GatewayError(unavailable, 503), unavailable);
   for (const body of [
     { ...disabled, strategy_id: '27' }, { ...disabled, status: 'running' },
@@ -46,7 +51,8 @@ function universeForReason(reason) {
   return universe;
 }
 
-test('requires metadata belonging to the reported refresh state', () => {
+test('user requires metadata belonging to the reported refresh state', () => {
+  // Given the Strategy 29 wire identity and observer snapshot
   const required = {
     current: ['generation', 'refreshed_at_ms', ...SUCCESS_KEYS],
     using_stale_selection_after_refresh_error: METADATA_KEYS,
@@ -61,8 +67,10 @@ test('requires metadata belonging to the reported refresh state', () => {
       ...status, universe: { ...universe, [key]: null },
     }, 200), /universe/, `${reason} requires ${key}`);
   }
+  // When universeForReason processes the configured inputs
   const freshWithoutSuccess = universeForReason('current');
   for (const key of SUCCESS_KEYS) freshWithoutSuccess[key] = null;
+  // Then user requires metadata belonging to the reported refresh state
   assert.throws(() => validateStrategy29StatusResponse({ ...status, universe: freshWithoutSuccess }, 200), /universe/);
   const failedWithoutSuccess = universeForReason('selection_fail_closed');
   for (const key of SUCCESS_KEYS) failedWithoutSuccess[key] = null;
@@ -91,28 +99,43 @@ test('requires metadata belonging to the reported refresh state', () => {
   assert.equal(validateStrategy29StatusResponse(clockBack, 200), clockBack);
 });
 
-test('accepts stored ready processing while current live admission is pending', () => {
+test('user accepts stored ready processing while current live admission is pending', () => {
+  // Given stored ready processing whose current universe admission is still pending
   const candidate = { ...status, universe: {
     ...status.universe, ready_unit_count: 0, pending_unit_count: status.universe.selected_unit_count,
   } };
   assert.equal(candidate.units[0].status, 'ready');
-  assert.equal(validateStrategy29StatusResponse(candidate, 200), candidate);
+  // When the observer status contract validates these independent states
+  const result = validateStrategy29StatusResponse(candidate, 200);
+  // Then stored processing is not mistaken for current producer readiness
+  assert.equal(result, candidate);
 });
 
-test('rejects malformed or contradictory universe status fields', () => {
-  for (const change of [
+for (const change of [
     { generation: '1' }, { refresh_status: 'unknown' }, { unexpected: true },
     { selected_markets: ['BTC'] }, { configured_timeframes: ['1s'] },
     { ready_unit_count: 2 }, { selected_unit_count: 129 },
     { last_success_age_seconds: -1 }, { last_successful_refreshed_at_ms: null },
     { refresh_status: 'fail_closed' },
   ]) {
-    assert.throws(() => validateStrategy29StatusResponse({ ...status, universe: { ...status.universe, ...change } }, 200), /universe/);
-  }
-});
+  test(`user rejects malformed or contradictory universe status fields (change=${JSON.stringify(change)})`, () => {
+    // Given a universe snapshot with a malformed or contradictory field
+    const candidate = { ...status, universe: { ...status.universe, ...change } };
+    // When the current universe contract validates that snapshot
+    const failure = captureStrategyError(() => validateStrategy29StatusResponse(candidate, 200));
+    // Then the invalid universe is rejected explicitly
+    assert.match(failure.message, /universe/);
 
-test('canonical Strategy29 symbols round-trip without server-side normalization', () => {
-  assert.equal(routeSymbolToCanonical('牛来USDT'), '牛来/USDT:USDT');
+  });
+}
+
+test('user observes that canonical Strategy29 symbols round-trip without server-side normalization', () => {
+  // Given the Strategy 29 wire identity and observer snapshot
+  const scenarioInput = '牛来USDT';
+  // When routeSymbolToCanonical processes the configured inputs
+  const observedResult = routeSymbolToCanonical(scenarioInput);
+  // Then user observes that canonical Strategy29 symbols round-trip without server-side normalization
+  assert.equal(observedResult, '牛来/USDT:USDT');
   assert.equal(canonicalSymbolToRoute('牛来/USDT:USDT'), '牛来USDT');
   assert.equal(routeSymbolToCanonical('BTRUSDT'), 'BTR/USDT:USDT');
   assert.equal(canonicalSymbolToRoute('BTR/USDT:USDT'), 'BTRUSDT');
@@ -121,34 +144,52 @@ test('canonical Strategy29 symbols round-trip without server-side normalization'
   assert.throws(() => canonicalSymbolToRoute('BTR/USDT'), /canonical USDT symbol/);
 });
 
-test('accepts only coherent universe refresh state and reason combinations', () => {
+test('user accepts only coherent universe refresh state and reason combinations', () => {
+  // Given the exact allowed refresh states and reasons
   const reasons = {
     fresh: ['current'],
     stale_if_error: ['using_stale_selection_after_refresh_error'],
     fail_closed: ['selection_fail_closed', 'selection_expired_or_unusable', 'missing_current_universe_facts', 'incompatible_current_universe_facts'],
   };
+  const observed = [];
+  // When every refresh-state and reason pairing is validated
   for (const refreshState of Object.keys(reasons)) {
     for (const reason of Object.values(reasons).flat()) {
       const universe = { ...universeForReason(reason), refresh_status: refreshState };
       const candidate = { ...status, universe };
-      if (reasons[refreshState].includes(reason)) assert.equal(validateStrategy29StatusResponse(candidate, 200), candidate);
-      else assert.throws(() => validateStrategy29StatusResponse(candidate, 200), /universe/);
+      const accepted = reasons[refreshState].includes(reason);
+      observed.push({ accepted, candidate, result: accepted
+        ? validateStrategy29StatusResponse(candidate, 200)
+        : captureStrategyError(() => validateStrategy29StatusResponse(candidate, 200)) });
     }
+  }
+  // Then coherent pairs preserve the snapshot and contradictory pairs report universe errors
+  for (const { accepted, candidate, result } of observed) {
+    if (accepted) assert.equal(result, candidate);
+    else assert.match(result.message, /universe/);
   }
 });
 
-test('projects only validated identity when status belongs to an incompatible spec', () => {
+test('user projects only validated identity when status belongs to an incompatible spec', () => {
+  // Given the Strategy 29 wire identity and observer snapshot
   const identity = { schema_version: 1, spec_version: 'other_spec', observed_at_ms: status.observed_at_ms };
   const incompatible = { ...identity, get units() { throw new Error('incompatible payload must not be read'); } };
-  assert.deepEqual(validateStrategy29StatusResponse(incompatible, 200), identity);
+  // When validateStrategy29StatusResponse processes the configured inputs
+  const observedResult = validateStrategy29StatusResponse(incompatible, 200);
+  // Then user projects only validated identity when status belongs to an incompatible spec
+  assert.deepEqual(observedResult, identity);
   for (const invalid of [{ schema_version: 2 }, { spec_version: '' }, { observed_at_ms: '1' }]) {
     assert.throws(() => validateStrategy29StatusResponse({ ...identity, ...invalid }, 200), /status/);
   }
 });
 
-test('validates exact status fields while preserving visible spec mismatch', () => {
+test('user validates exact status fields while preserving visible spec mismatch', () => {
+  // Given the current observer API version and complete fixture status
   assert.equal(STRATEGY29_API_SPEC_VERSION, '29_2_spec_v4');
-  assert.equal(validateStrategy29StatusResponse(status, 200), status);
+  // When the real status validator checks the fixture envelope
+  const result = validateStrategy29StatusResponse(status, 200);
+  // Then current status is preserved and malformed or incompatible fields follow their separate contracts
+  assert.equal(result, status);
   const mismatch = structuredClone(status);
   mismatch.spec_version = 'other_spec';
   assert.deepEqual(validateStrategy29StatusResponse(mismatch, 200), {
@@ -171,8 +212,13 @@ test('validates exact status fields while preserving visible spec mismatch', () 
   assert.throws(() => validateStrategy29StatusResponse(oversized, 200), /128-unit bound/);
 });
 
-test('validates exact event identity, direction and cursor progress fields', () => {
-  assert.equal(validateStrategy29EventsResponse(events, 200), events);
+test('user validates exact event identity, direction and cursor progress fields', () => {
+  // Given the Strategy 29 wire identity and observer snapshot
+  const scenarioInput = events;
+  // When validateStrategy29EventsResponse processes the configured inputs
+  const observedResult = validateStrategy29EventsResponse(scenarioInput, 200);
+  // Then user validates exact event identity, direction and cursor progress fields
+  assert.equal(observedResult, events);
   const invalidIdentity = structuredClone(events);
   invalidIdentity.events[0].strategy_id = '30';
   assert.throws(() => validateStrategy29EventsResponse(invalidIdentity, 200), /strategy_id/);
@@ -200,12 +246,17 @@ test('validates exact event identity, direction and cursor progress fields', () 
   assert.throws(() => validateStrategy29EventsResponse(oversized, 200), /200-event page bound/);
 });
 
-test('validates Strategy29 error bodies using error rather than error_code', () => {
-  assert.deepEqual(
-    validateStrategy29GatewayError(
-      { schema_version: 1, error: 'cursor_expired', oldest_cursor: 42 },
+test('user validates Strategy29 error bodies using error rather than error_code', () => {
+  // Given the Strategy 29 wire identity and observer snapshot
+  const scenarioInput = { schema_version: 1, error: 'cursor_expired', oldest_cursor: 42 };
+  // When validateStrategy29GatewayError processes the configured inputs
+  const observedResult = validateStrategy29GatewayError(
+      scenarioInput,
       409,
-    ),
+    );
+  // Then user validates Strategy29 error bodies using error rather than error_code
+  assert.deepEqual(
+    observedResult,
     { schema_version: 1, error: 'cursor_expired', oldest_cursor: 42 },
   );
   assert.deepEqual(
@@ -219,8 +270,13 @@ test('validates Strategy29 error bodies using error rather than error_code', () 
 });
 
 
-test('v4 API envelopes retain v2 event identities and reject mixed layers', () => {
-  assert.equal(validateStrategy29EventsResponse(events, 200), events);
+test('user observes that v4 API envelopes retain v2 event identities and reject mixed layers', () => {
+  // Given the Strategy 29 wire identity and observer snapshot
+  const scenarioInput = events;
+  // When validateStrategy29EventsResponse processes the configured inputs
+  const observedResult = validateStrategy29EventsResponse(scenarioInput, 200);
+  // Then user observes that v4 API envelopes retain v2 event identities and reject mixed layers
+  assert.equal(observedResult, events);
   assert.equal(events.spec_version, '29_2_spec_v4');
   assert.deepEqual([...new Set(events.events.map(event => event.spec_version))], ['29_2_spec_v2']);
   const wrongRow = structuredClone(events);

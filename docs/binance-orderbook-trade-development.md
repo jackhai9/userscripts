@@ -56,6 +56,11 @@ Include affected shared-contract and integration checks when the change crosses
 script boundaries. Full-suite release validation and reuse of passing local
 results are defined in `skills/userscript-release/SKILL.md`.
 
+Test work also follows [Behavioral Test Policy](test-policy.md). Prefer executable
+entry-to-outcome scenarios over source-text assertions for runtime behavior;
+retain metadata, generated-artifact, and module-boundary contracts. Test changes
+must pass `npm run lint:tests` in addition to the affected behavior checks.
+
 ## Layout
 
 ```text
@@ -282,6 +287,11 @@ Every observed place-order response keeps a sanitized diagnostic contract: HTTP 
 Continuous ladder trading is available only for close actions through `Option/Alt + click`; an ordinary click remains one round. A round is the complete existing ladder-close workflow, including any scoped same-direction replacement and cleanup. After a completed round, the runner must observe the same symbol, close mode, current precision, and native close button as ready before starting a full one-second cooldown. It must validate readiness again after the cooldown; losing readiness restarts the wait and a new full cooldown. Every new round must rebuild its plan from the latest panel profile and live trading context. A failed, stopped, or interrupted round ends the continuous session.
 
 Continuous-session feedback stays in the shared ladder status row and uses `连续阶梯平多` / `连续阶梯平空` as the stable action name. The action, phase, and counters are separated with ` · ` instead of concatenating `连续` after the ordinary ladder label. `2/3 轮` means two rounds completed out of three started, `本轮 1/3 笔` reports the active or latest partial plan, and `累计 7 笔` reports all confirmed submissions across the session. Confirmed cancellations are appended only when greater than zero. The active round must combine its live progress with the completed-round aggregate; ordinary single-round status text must never overwrite the continuous-session identity. Round outcomes must expose a detached progress snapshot so a terminal continuous summary cannot be overwritten by the latest single-round message.
+
+A session waiting for readiness, stopping, or failing before its first recorded
+round has `lastRound: null`. Its status shows zero rounds and zero confirmed
+submissions, with no current-plan segment. Formatting this valid initial state
+must not fail or invent a round.
 
 The active continuous-close control keeps a compact direction-specific stop action (`停止平多` / `停止平空`) on one line throughout both execution and inter-round waiting. Before the native submit control is ready, the status places `等待按钮恢复` immediately after the continuous action name. Only after the fixed cooldown actually begins may it show `1s 后继续` in that same priority position; this is a static duration label, not a countdown. `停止中`, `已停止`, `失败`, and `已中止` use the same phase slot. The button must not temporarily revert to a ladder-start action between rounds.
 

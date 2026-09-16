@@ -17,10 +17,12 @@ function strategy29Sandbox(source) {
 }
 
 for (const first of [true, false]) {
-  test(`independent generated scripts share chart coordination (Strategy29 first=${first})`, async ({ page }) => {
+  test(`user runs independent Strategy29 and orderbook scripts together (Strategy29 first=${first})`, async ({ page }) => {
+    // Given both complete generated artifacts are injected in the declared order with the remote summary disabled.
     const sandboxedStrategy29 = strategy29Sandbox(strategy29);
     const { errors } = await openUserscriptScenario(page, createCancelScenario(), first
       ? { beforeOrderbook: sandboxedStrategy29 } : { afterOrderbook: sandboxedStrategy29 });
+    // When the host exposes a ready chart with deterministic candles and drawing operations.
     await page.evaluate(symbol => {
       const api = document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi;
       const shapes = new Map();
@@ -56,6 +58,7 @@ for (const first of [true, false]) {
       api.activeChart = () => chart;
       api.saveChart = callback => callback({ drawings: ['foreign-channel'] });
     }, CURRENT_SYMBOL);
+    // Then Strategy29 draws nine markers and shares the existing orderbook coordination owner without embedding its detector.
     await expect.poll(() => page.evaluate(() => window.__TM_STRATEGY29_DEBUG__.diagnostics.layerSize)).toBe(9);
     expect(await page.evaluate(() => ({
       embedded: Object.hasOwn(window.__TM_CLOSE_LONG_DEBUG__, 'bollingerAlertState'),
@@ -63,10 +66,16 @@ for (const first of [true, false]) {
         Symbol.for('jh-userscripts.chart-marker-save-controller')].version,
       owners: [...window[Symbol.for('jh-userscripts.chart-mutation-owners')].predicates.keys()],
     }))).toEqual({ embedded: false, controller: 1, owners: ['orderbook'] });
-    // Reinjecting the complete standalone artifact must reuse its page singleton.
+    // When the same complete Strategy29 artifact is injected again.
     await page.addScriptTag({ content: sandboxedStrategy29 });
+
+    // Then the existing page singleton keeps exactly nine markers.
     expect(await page.evaluate(() => window.__TM_STRATEGY29_DEBUG__.diagnostics.layerSize)).toBe(9);
+
+    // When the Strategy29 runtime is disposed.
     await page.evaluate(() => window.__TM_STRATEGY29_DEBUG__.dispose());
+
+    // Then its chart shapes are all removed without uncaught errors.
     expect(await page.evaluate(() => document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi.activeChart().getAllShapes())).toEqual([]);
     expect(errors).toEqual([]);
   });

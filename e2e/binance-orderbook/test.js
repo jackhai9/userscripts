@@ -1,4 +1,9 @@
 import { test as base, expect } from '@playwright/test';
+import {
+  startBrowserCoverage,
+  checkpointBrowserCoverage,
+  finishBrowserCoverage,
+} from '../../scripts/test-coverage/collect-browser.mjs';
 
 import {
   readFixtureState,
@@ -13,6 +18,16 @@ function jsonAttachment(value) {
 }
 
 export const test = base.extend({
+  sourceCoverage: [async ({ page }, use, testInfo) => {
+    const directory = process.env.USERSCRIPTS_BROWSER_COVERAGE_DIRECTORY;
+    if (!directory) {
+      await use();
+      return;
+    }
+    await startBrowserCoverage(page);
+    await use();
+    await finishBrowserCoverage(page, directory, testInfo);
+  }, { auto: true }],
   // Failure evidence belongs to the test runner boundary so every future scenario
   // receives the same diagnostics without duplicating cleanup code in each spec.
   failureEvidence: [async ({ page }, use, testInfo) => {
@@ -39,3 +54,11 @@ export const test = base.extend({
 });
 
 export { expect };
+
+/** Preserve the outgoing document's full roots before its real reload. */
+export async function reloadPageWithCoverage(page) {
+  if (process.env.USERSCRIPTS_BROWSER_COVERAGE_DIRECTORY) {
+    await checkpointBrowserCoverage(page, 'before-reload');
+  }
+  return page.reload();
+}

@@ -1,3 +1,4 @@
+import { captureThrownError } from '../../helpers/orderbook-migration-errors.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -7,27 +8,41 @@ import {
   resolveSymbolPositionStatus,
 } from '../../../src/binance-orderbook-trade/core/auto-open-leverage.js';
 
-test('other symbols do not prevent the current symbol from being confirmed flat', () => {
-  assert.deepEqual(resolveSymbolPositionStatus({
+test("user sees that other symbols do not prevent the current symbol from being confirmed flat", () => {
+  // Given the current symbol and position observations are available
+  const scenarioInputs = [{
     success: true,
     data: [
       { symbol: 'BTCUSDT', positionSide: 'BOTH', positionAmount: '0.25' },
       { symbol: 'ETHUSDT', positionSide: 'SHORT', positionAmount: '-1.5' },
     ],
-  }, 'HYPEUSDT'), {
+  }, 'HYPEUSDT'];
+
+  // When the confirmed position transition is evaluated
+  const observed = resolveSymbolPositionStatus(...scenarioInputs);
+
+  // Then sees that other symbols do not prevent the current symbol from being confirmed flat
+  assert.deepEqual(observed, {
     status: 'flat',
     matchingPositionCount: 0,
   });
 });
 
-test('all current-symbol position directions must be zero before reset', () => {
-  assert.deepEqual(resolveSymbolPositionStatus({
+test("user sees that all current-symbol position directions must be zero before reset", () => {
+  // Given the current symbol and position observations are available
+  const scenarioInputs = [{
     success: true,
     data: [
       { symbol: 'HYPEUSDT', positionSide: 'LONG', positionAmount: '0' },
       { symbol: 'HYPEUSDT', positionSide: 'SHORT', positionAmount: '-0.50' },
     ],
-  }, 'HYPEUSDT'), {
+  }, 'HYPEUSDT'];
+
+  // When the confirmed position transition is evaluated
+  const observed = resolveSymbolPositionStatus(...scenarioInputs);
+
+  // Then sees that all current-symbol position directions must be zero before reset
+  assert.deepEqual(observed, {
     status: 'has_position',
     matchingPositionCount: 2,
   });
@@ -44,7 +59,8 @@ test('all current-symbol position directions must be zero before reset', () => {
   });
 });
 
-test('close completion checks only the requested position side in hedge mode', () => {
+test("user sees that close completion checks only the requested position side in hedge mode", () => {
+  // Given the current symbol and position observations are available
   const payload = {
     success: true,
     data: [
@@ -53,7 +69,11 @@ test('close completion checks only the requested position side in hedge mode', (
     ],
   };
 
-  assert.deepEqual(resolveSymbolPositionSideStatus(payload, 'HYPEUSDT', 'LONG'), {
+  // When the confirmed position transition is evaluated
+  const observed = resolveSymbolPositionSideStatus(payload, 'HYPEUSDT', 'LONG');
+
+  // Then sees that close completion checks only the requested position side in hedge mode
+  assert.deepEqual(observed, {
     status: 'has_position',
     matchingPositionCount: 1,
     positionQty: '1.25',
@@ -65,7 +85,8 @@ test('close completion checks only the requested position side in hedge mode', (
   });
 });
 
-test('close completion maps signed one-way positions to the requested side', () => {
+test("user sees that close completion maps signed one-way positions to the requested side", () => {
+  // Given the current symbol and position observations are available
   const longPayload = {
     success: true,
     data: [{ symbol: 'HYPEUSDT', positionSide: 'BOTH', positionAmount: '1.25' }],
@@ -75,27 +96,36 @@ test('close completion maps signed one-way positions to the requested side', () 
     data: [{ symbol: 'HYPEUSDT', positionSide: 'BOTH', positionAmount: '-1.25' }],
   };
 
-  assert.equal(resolveSymbolPositionSideStatus(longPayload, 'HYPEUSDT', 'LONG').status, 'has_position');
+  // When the confirmed position transition is evaluated
+  const observed = resolveSymbolPositionSideStatus(longPayload, 'HYPEUSDT', 'LONG').status;
+
+  // Then sees that close completion maps signed one-way positions to the requested side
+  assert.equal(observed, 'has_position');
   assert.equal(resolveSymbolPositionSideStatus(longPayload, 'HYPEUSDT', 'SHORT').status, 'flat');
   assert.equal(resolveSymbolPositionSideStatus(shortPayload, 'HYPEUSDT', 'LONG').status, 'flat');
   assert.equal(resolveSymbolPositionSideStatus(shortPayload, 'HYPEUSDT', 'SHORT').status, 'has_position');
 });
 
-test('close completion rejects unknown position directions instead of guessing', () => {
-  assert.throws(
-    () => resolveSymbolPositionSideStatus({
+test("user sees that close completion rejects unknown position directions instead of guessing", () => {
+  // Given the current symbol and position observations are available
+  const scenarioInputs = [{
       success: true,
       data: [{ symbol: 'HYPEUSDT', positionSide: 'UNKNOWN', positionAmount: '1' }],
-    }, 'HYPEUSDT', 'LONG'),
-    /持仓方向无效/,
-  );
+    }, 'HYPEUSDT', 'LONG'];
+
+  // When the confirmed position transition is evaluated
+  const observedFailure = captureThrownError(() => resolveSymbolPositionSideStatus(...scenarioInputs));
+
+  // Then sees that close completion rejects unknown position directions instead of guessing
+  assert.match(observedFailure.message, /持仓方向无效/);
   assert.throws(
     () => resolveSymbolPositionSideStatus({ success: true, data: [] }, 'HYPEUSDT', 'UNKNOWN'),
     /目标持仓方向无效/,
   );
 });
 
-test('directional recovery quantities preserve exact signed decimals and existing numeric inputs', () => {
+test("user sees that directional recovery quantities preserve exact signed decimals and existing numeric inputs", () => {
+  // Given the current symbol and position observations are available
   for (const [positionSide, positionAmount, side, positionQty] of [
     ['SHORT', '-1.000000000000000002', 'SHORT', '1.000000000000000002'],
     ['LONG', '1.000000000000000001', 'LONG', '1.000000000000000001'],
@@ -116,7 +146,11 @@ test('directional recovery quantities preserve exact signed decimals and existin
     assert.equal(state.positionQty, positionQty);
     assert.equal(state.status, positionQty === '0' ? 'flat' : 'has_position');
   }
-  assert.deepEqual(resolveSymbolPositionSideStatus({ success: true, data: [] }, 'HYPEUSDT', 'SHORT'), {
+  // When the confirmed position transition is evaluated
+  const observed = resolveSymbolPositionSideStatus({ success: true, data: [] }, 'HYPEUSDT', 'SHORT');
+
+  // Then sees that directional recovery quantities preserve exact signed decimals and existing numeric inputs
+  assert.deepEqual(observed, {
     status: 'flat', matchingPositionCount: 0, positionQty: '0',
   });
   for (const positionAmount of ['1e-8', '--1', 'NaN', Infinity, null]) {
@@ -126,31 +160,34 @@ test('directional recovery quantities preserve exact signed decimals and existin
   }
 });
 
-test('rejects unsuccessful or malformed current-symbol position responses', () => {
-  assert.throws(
-    () => resolveSymbolPositionStatus({ success: false, data: [] }, 'HYPEUSDT'),
-    (error) => (
-      error.name === 'PositionPayloadContractError'
-      && /持仓接口返回失败/.test(error.message)
-    ),
-  );
-  assert.throws(
-    () => resolveSymbolPositionStatus({
+test("user rejects unsuccessful or malformed current-symbol position responses", () => {
+  // Given a failed response and a successful response with an unreadable position
+  const payloads = [{ success: false, data: [] }, {
       success: true,
       data: [{ symbol: 'HYPEUSDT', positionAmount: 'unknown' }],
-    }, 'HYPEUSDT'),
-    (error) => (
-      error.name === 'PositionPayloadContractError'
-      && /持仓数量无效/.test(error.message)
-    ),
-  );
+  }];
+
+  // When position status is read from each response
+  const failures = payloads.map((payload) => captureThrownError(() => resolveSymbolPositionStatus(payload, 'HYPEUSDT')));
+
+  // Then each response fails with the specific position contract error
+  assert.deepEqual(failures.map((error) => error.name), ['PositionPayloadContractError', 'PositionPayloadContractError']);
+  assert.match(failures[0].message, /持仓接口返回失败/);
+  assert.match(failures[1].message, /持仓数量无效/);
 });
 
-test('queues once when a symbol first becomes confirmed flat', () => {
-  let observation = observeAutoOpenLeveragePositionState(null, {
+test("user queues once when a symbol first becomes confirmed flat", () => {
+  // Given the current symbol and position observations are available
+  const scenarioInputs = [null, {
     symbol: 'HYPEUSDT',
     status: 'unknown',
-  });
+  }];
+
+  // When the confirmed position transition is evaluated
+  let observation = observeAutoOpenLeveragePositionState(...scenarioInputs);
+
+
+  // Then queues once when a symbol first becomes confirmed flat
   assert.equal(observation.shouldReset, false);
 
   observation = observeAutoOpenLeveragePositionState(observation.state, {
@@ -166,11 +203,18 @@ test('queues once when a symbol first becomes confirmed flat', () => {
   assert.equal(observation.shouldReset, false);
 });
 
-test('queues once when positions transition from present to flat', () => {
-  let observation = observeAutoOpenLeveragePositionState(null, {
+test("user queues once when positions transition from present to flat", () => {
+  // Given the current symbol and position observations are available
+  const scenarioInputs = [null, {
     symbol: 'HYPEUSDT',
     status: 'has_position',
-  });
+  }];
+
+  // When the confirmed position transition is evaluated
+  let observation = observeAutoOpenLeveragePositionState(...scenarioInputs);
+
+
+  // Then queues once when positions transition from present to flat
   assert.equal(observation.shouldReset, false);
 
   observation = observeAutoOpenLeveragePositionState(observation.state, {
@@ -180,11 +224,18 @@ test('queues once when positions transition from present to flat', () => {
   assert.equal(observation.shouldReset, true);
 });
 
-test('does not create a new flat epoch when the observed root temporarily disappears', () => {
-  let observation = observeAutoOpenLeveragePositionState(null, {
+test("user does not create a new flat epoch when the observed root temporarily disappears", () => {
+  // Given the current symbol and position observations are available
+  const scenarioInputs = [null, {
     symbol: 'HYPEUSDT',
     status: 'flat',
-  });
+  }];
+
+  // When the confirmed position transition is evaluated
+  let observation = observeAutoOpenLeveragePositionState(...scenarioInputs);
+
+
+  // Then does not create a new flat epoch when the observed root temporarily disappears
   assert.equal(observation.shouldReset, true);
 
   observation = observeAutoOpenLeveragePositionState(observation.state, {
@@ -200,16 +251,19 @@ test('does not create a new flat epoch when the observed root temporarily disapp
   assert.equal(observation.shouldReset, false);
 });
 
-test('starts a new flat epoch for a different symbol', () => {
+test("user starts a new flat epoch for a different symbol", () => {
+  // Given the current symbol and position observations are available
   const first = observeAutoOpenLeveragePositionState(null, {
     symbol: 'HYPEUSDT',
     status: 'flat',
   });
+  // When the confirmed position transition is evaluated
   const second = observeAutoOpenLeveragePositionState(first.state, {
     symbol: 'BTCUSDT',
     status: 'flat',
   });
 
+  // Then starts a new flat epoch for a different symbol
   assert.equal(second.shouldReset, true);
   assert.deepEqual(second.state, { symbol: 'BTCUSDT', lastKnownStatus: 'flat' });
 });

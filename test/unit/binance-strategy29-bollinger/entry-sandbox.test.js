@@ -11,7 +11,8 @@ async function bundledEntry() {
   return result.outputFiles[0].text;
 }
 
-test('sandbox entry installs the runtime on unsafeWindow and keeps the shared page singleton visible', async () => {
+test('user observes that sandbox entry installs the runtime on unsafeWindow and keeps the shared page singleton visible', async () => {
+  // Given the userscript sandbox and separate native page context
   const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTRUSDT', pretendToBeVisual: true });
   const menus = [];
   const stored = new Map();
@@ -29,7 +30,9 @@ test('sandbox entry installs the runtime on unsafeWindow and keeps the shared pa
     DOMException,
     console,
   };
+  // When vm.runInNewContext processes the configured inputs
   vm.runInNewContext(await bundledEntry(), sandbox);
+  // Then user observes that sandbox entry installs the runtime on unsafeWindow and keeps the shared page singleton visible
   assert.equal(typeof dom.window.__TM_STRATEGY29_DEBUG__.dispose, 'function');
   assert.equal(sandbox.__TM_STRATEGY29_DEBUG__, undefined);
   assert.equal(dom.window[Symbol.for('jh-userscripts.strategy29-bollinger')].version, 4);

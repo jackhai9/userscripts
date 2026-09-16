@@ -1,0 +1,78 @@
+name: Userscript Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 20 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: userscript-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint:tests
+      - run: npm run build:userscripts
+      - run: git diff --exit-code -- 'scripts/*.user.js'
+      - run: npm run check:binance-userscripts
+      - run: npm run check:m3u8-downloader
+      - name: Select affected tests
+        id: selection
+        env:
+          TEST_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TEST_FULL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          mkdir -p test-results
+          if [ "$TEST_FULL" = "true" ]; then
+            node scripts/test-selection/run.mjs --full --list > test-results/selection.json
+          else
+            node scripts/test-selection/run.mjs --base "$TEST_BASE_SHA" --list > test-results/selection.json
+          fi
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const plan = JSON.parse(readFileSync('test-results/selection.json', 'utf8'));
+          appendFileSync(process.env.GITHUB_OUTPUT, 'browser=' + (plan.browserTests.length > 0) + '\n');
+          process.stdout.write(JSON.stringify(plan, null, 2) + '\n');
+          JS
+      - name: Install browser for selected scenarios
+        if: steps.selection.outputs.browser == 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Run affected tests
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        env:
+          TEST_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm run test:affected -- --base "$TEST_BASE_SHA"
+      - name: Run complete source coverage
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: npm run test:coverage
+      - name: Upload test selection and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: userscript-test-evidence
+          path: |
+            test-results/selection.json
+            playwright-report/
+            test-results/coverage/latest.json
+            test-results/coverage/run-*/report/
+            test-results/coverage/run-*/node-results.txt
+          if-no-files-found: ignore
+          retention-days: 14

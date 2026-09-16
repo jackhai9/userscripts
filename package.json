@@ -25,6 +25,11 @@
     "check:binance-orderbook-trade": "node --check scripts/binance-orderbook-trade.user.js",
     "check:m3u8-downloader": "node --check scripts/m3u8-downloader.user.js",
     "test": "node --test 'test/unit/**/*.test.js' 'test/dom/**/*.test.js'",
+    "lint:tests": "eslint test e2e --max-warnings=0",
+    "test:test-policy": "node --test test/unit/test-policy.test.js",
+    "test:affected": "node scripts/test-selection/run.mjs",
+    "test:coverage": "node scripts/test-coverage/run.mjs all",
+    "test:coverage:node": "node scripts/test-coverage/run.mjs node",
     "test:binance-orderbook-trade": "node --test test/unit/binance-orderbook-trade/*.test.js test/dom/binance-orderbook-trade/*.test.js",
     "test:binance-orderbook-ui-toolchain": "node --test test/unit/binance-orderbook-trade/*.test.js test/dom/binance-orderbook-trade/*.test.js test/unit/binance-strategy29-bollinger/*.test.js test/dom/binance-strategy29-bollinger/*.test.js test/unit/binance-*.test.js",
     "test:binance-strategy27-events": "node --test test/unit/binance-strategy27-events/*.test.js test/dom/binance-strategy27-events/*.test.js test/unit/userscript-metadata-icons.test.js test/unit/userscript-release-contract.test.js",
@@ -33,8 +38,13 @@
     "test:ui:debug": "playwright test --debug"
   },
   "devDependencies": {
+    "@bcoe/v8-coverage": "1.0.2",
+    "@jridgewell/sourcemap-codec": "1.6.0",
     "@playwright/test": "^1.62.1",
+    "acorn": "8.18.0",
     "esbuild": "^0.25.0",
-    "jsdom": "^29.1.1"
+    "eslint": "10.10.0",
+    "jsdom": "^29.1.1",
+    "monocart-coverage-reports": "2.13.0"
   }
 }

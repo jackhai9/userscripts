@@ -1,9 +1,10 @@
 import { fileURLToPath } from 'node:url';
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../test.js';
 
 const artifact = name => fileURLToPath(new URL(`../../../scripts/${name}.user.js`, import.meta.url));
 
-test('CMC valuation updates coalesce while real layout reads stay on the metric cards', async ({ page }, testInfo) => {
+test('user sees updated valuation labels while price changes avoid unrelated layout reads', async ({ page }, testInfo) => {
+  // Given the page has two valuation cards, one thousand quote rows, and real layout-read instrumentation.
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/*', route => route.abort('blockedbyclient'));
@@ -35,10 +36,14 @@ test('CMC valuation updates coalesce while real layout reads stay on the metric 
       return query(selector);
     };
   });
+  // When the user loads the valuation helper.
   await page.addScriptTag({ path: artifact('coinmarketcap-valuation-helper') });
+  // Then the two cards get correct labels and highlights before burst updates are measured.
   await expect(page.locator('#cap')).toHaveText('流通市值');
   await expect(page.locator('#fdv')).toHaveText('FDV/总估值');
   await expect(page.locator('.jh-cmc-valuation-highlight')).toHaveCount(2);
+
+  // When ten quote updates arrive before the next two rendering frames.
   const result = await page.evaluate(async () => {
     const stats = window.performanceFixture;
     const before = { ...stats };
@@ -54,13 +59,16 @@ test('CMC valuation updates coalesce while real layout reads stay on the metric 
       layoutReads: stats.layoutReads - before.layoutReads,
     };
   });
+
+  // Then one coalesced scan reads only the metric-card geometry.
   expect(result).toEqual({ initialQuoteLayoutReads: 0, quoteLayoutReads: 0, scans: 1, layoutReads: 8 });
   expect(errors).toEqual([]);
   await testInfo.attach('operation-counts', { body: JSON.stringify(result, null, 2), contentType: 'application/json' });
   await page.locator('#stats').screenshot({ path: testInfo.outputPath('valuation-cards.png') });
 });
 
-test('m3u8 discovery inspects one changed video in a real 100-video document', async ({ page }, testInfo) => {
+test('user discovers a changed video source without rescanning the other ninety-nine videos', async ({ page }, testInfo) => {
+  // Given one hundred native video elements are instrumented and the generated downloader is installed.
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/*', route => route.abort('blockedbyclient'));
@@ -88,6 +96,7 @@ test('m3u8 discovery inspects one changed video in a real 100-video document', a
     };
   });
   await page.addScriptTag({ path: artifact('m3u8-downloader') });
+  // When the source of video 42 changes to a playlist URL.
   const result = await page.evaluate(async () => {
     const stats = window.performanceFixture;
     stats.documentScans = 0;
@@ -96,6 +105,7 @@ test('m3u8 discovery inspects one changed video in a real 100-video document', a
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return stats;
   });
+  // Then only that video is inspected and exactly its playlist URL is requested.
   expect(result).toEqual({ documentScans: 0, videoIds: ['v42'], requests: ['https://media.example/changed.m3u8'] });
   expect(errors).toEqual([]);
   await testInfo.attach('operation-counts', { body: JSON.stringify(result, null, 2), contentType: 'application/json' });

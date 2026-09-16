@@ -1,3 +1,4 @@
+import { captureThrownError } from '../../helpers/orderbook-migration-errors.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -6,9 +7,14 @@ import {
   parseChartOrdersRecoveryRecord,
 } from '../../../src/binance-orderbook-trade/core/chart-orders-recovery.js';
 
-test('creates and parses an exact chart orders reload recovery record', () => {
+test("user creates and parses an exact chart orders reload recovery record", () => {
+  // Given the persisted chart recovery record is available
   const raw = createChartOrdersRecoveryRecord(1_000);
-  assert.deepEqual(JSON.parse(raw), {
+  // When the chart recovery contract is evaluated
+  const observed = JSON.parse(raw);
+
+  // Then creates and parses an exact chart orders reload recovery record
+  assert.deepEqual(observed, {
     version: 2,
     originalChecked: true,
     createdAtMs: 1_000,
@@ -19,8 +25,15 @@ test('creates and parses an exact chart orders reload recovery record', () => {
   });
 });
 
-test('distinguishes missing, invalid, and future recovery records', () => {
-  assert.deepEqual(parseChartOrdersRecoveryRecord(null, 2_000), {
+test("user distinguishes missing, invalid, and future recovery records", () => {
+  // Given the persisted chart recovery record is available
+  const scenarioInputs = [null, 2_000];
+
+  // When the chart recovery contract is evaluated
+  const observed = parseChartOrdersRecoveryRecord(...scenarioInputs);
+
+  // Then distinguishes missing, invalid, and future recovery records
+  assert.deepEqual(observed, {
     status: 'missing',
     record: null,
   });
@@ -46,19 +59,31 @@ test('distinguishes missing, invalid, and future recovery records', () => {
   });
 });
 
-test('valid recovery records do not expire before the hidden chart state is restored', () => {
+test("user sees that valid recovery records do not expire before the hidden chart state is restored", () => {
+  // Given the persisted chart recovery record is available
   const oldRecord = { version: 2, originalChecked: true, createdAtMs: 1_000 };
-  assert.deepEqual(parseChartOrdersRecoveryRecord(
+  // When the chart recovery contract is evaluated
+  const observed = parseChartOrdersRecoveryRecord(
     JSON.stringify(oldRecord),
     1_000 + (365 * 24 * 60 * 60 * 1000),
-  ), {
+  );
+
+  // Then sees that valid recovery records do not expire before the hidden chart state is restored
+  assert.deepEqual(observed, {
     status: 'valid',
     record: oldRecord,
   });
 });
 
-test('recovery records reject extra fields and invalid timestamps', () => {
-  assert.throws(() => createChartOrdersRecoveryRecord(Number.NaN), /图表委托线恢复时间无效/);
+test("user sees that recovery records reject extra fields and invalid timestamps", () => {
+  // Given the persisted chart recovery record is available
+  const scenarioInputs = [Number.NaN];
+
+  // When the chart recovery contract is evaluated
+  const observedFailure = captureThrownError(() => createChartOrdersRecoveryRecord(...scenarioInputs));
+
+  // Then sees that recovery records reject extra fields and invalid timestamps
+  assert.match(observedFailure.message, /图表委托线恢复时间无效/);
   assert.throws(
     () => parseChartOrdersRecoveryRecord('{}', Number.NaN),
     /图表委托线恢复当前时间无效/,

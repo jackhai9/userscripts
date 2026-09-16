@@ -106,14 +106,18 @@ function createAudit() {
   };
 }
 
-test('Brooks media download builds limited Chinese subtitle tasks and skips existing files', () => {
-  const tasks = buildBrooksMediaDownloadTasks({
+test('user observes that Brooks media download builds limited Chinese subtitle tasks and skips existing files', () => {
+  // Given the supplied input describes this media scenario
+  const scenarioInput = {
     audit: createAudit(),
     only: 'zhSubtitle',
     existingNames: new Set(['Video 01 Terminology.zh.vtt']),
     limit: 1,
-  });
+  };
+  // When the Brooks media download builds limited Chinese subtitle tasks and skips existing files
+  const tasks = buildBrooksMediaDownloadTasks(scenarioInput);
 
+  // Then Brooks media download builds limited Chinese subtitle tasks and skips existing files
   assert.deepEqual(tasks.map(task => ({
     index: task.index,
     kind: task.kind,
@@ -129,7 +133,8 @@ test('Brooks media download builds limited Chinese subtitle tasks and skips exis
   ]);
 });
 
-test('Brooks media download validates VTT responses before writing final files', async () => {
+test('user observes that Brooks media download validates VTT responses before writing final files', async () => {
+  // Given the reviewed media plan defines the selected files and download boundary
   const dir = await mkdtemp(join(tmpdir(), 'brooks-download-test-'));
   try {
     const task = buildBrooksMediaDownloadTasks({
@@ -139,6 +144,7 @@ test('Brooks media download validates VTT responses before writing final files',
       limit: 1,
     })[0];
 
+    // When the downloader processes the supplied task
     const result = await downloadBrooksMediaTask(task, {
       fetchImpl: async () => ({
         ok: true,
@@ -147,6 +153,7 @@ test('Brooks media download validates VTT responses before writing final files',
       }),
     });
 
+    // Then Brooks media download validates VTT responses before writing final files
     assert.equal(result.status, 'downloaded');
     assert.equal(await readFile(join(dir, 'Video 01 Terminology.zh.vtt'), 'utf8'), '\uFEFFWEBVTT\n\n00:00:00.000 --> 00:00:01.000\n你好\n');
   } finally {
@@ -154,7 +161,8 @@ test('Brooks media download validates VTT responses before writing final files',
   }
 });
 
-test('Brooks media download classifies missing Chinese captions when English captions exist', async () => {
+test('user observes that Brooks media download classifies missing Chinese captions when English captions exist', async () => {
+  // Given the reviewed media plan defines the selected files and download boundary
   const task = buildBrooksMediaDownloadTasks({
     audit: createAudit(),
     only: 'zhSubtitle',
@@ -162,6 +170,7 @@ test('Brooks media download classifies missing Chinese captions when English cap
   })[0];
   const requestedUrls = [];
 
+  // When the downloader processes the supplied task
   const result = await downloadBrooksMediaTask(task, {
     fetchImpl: async url => {
       requestedUrls.push(url);
@@ -180,6 +189,7 @@ test('Brooks media download classifies missing Chinese captions when English cap
     },
   });
 
+  // Then Brooks media download classifies missing Chinese captions when English captions exist
   assert.equal(result.status, 'unavailable');
   assert.equal(result.reason, 'zhSubtitleNotPublished');
   assert.equal(result.httpStatus, 404);
@@ -193,20 +203,32 @@ test('Brooks media download classifies missing Chinese captions when English cap
   ]);
 });
 
-test('Brooks media download rejects non-VTT error pages', () => {
-  assert.throws(
-    () => assertValidVtt('<html><body>403 Forbidden</body></html>', 'Video 01 Terminology.zh.vtt'),
-    /not a VTT file/,
-  );
+test('user observes that Brooks media download rejects non-VTT error pages', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = 'Video 01 Terminology.zh.vtt';
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    assertValidVtt('<html><body>403 Forbidden</body></html>', scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then Brooks media download rejects non-VTT error pages
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /not a VTT file/);
 });
 
-test('Brooks media download builds video tasks for yt-dlp dry runs', () => {
-  const tasks = buildBrooksMediaDownloadTasks({
+test('user observes that Brooks media download builds video tasks for yt-dlp dry runs', () => {
+  // Given the supplied input describes this media scenario
+  const scenarioInput = {
     audit: createAudit(),
     only: 'video',
     existingNames: new Set(),
-  });
+  };
+  // When the Brooks media download builds video tasks for yt-dlp dry runs
+  const tasks = buildBrooksMediaDownloadTasks(scenarioInput);
 
+  // Then Brooks media download builds video tasks for yt-dlp dry runs
   assert.deepEqual(tasks.map(task => ({
     index: task.index,
     kind: task.kind,
@@ -234,7 +256,8 @@ test('Brooks media download builds video tasks for yt-dlp dry runs', () => {
   ]);
 });
 
-test('Brooks media download executes one video task through yt-dlp args', () => {
+test('user observes that Brooks media download executes one video task through yt-dlp args', () => {
+  // Given the reviewed media plan defines the selected files and download boundary
   const task = buildBrooksMediaDownloadTasks({
     audit: createAudit(),
     only: 'video',
@@ -243,6 +266,7 @@ test('Brooks media download executes one video task through yt-dlp args', () => 
   })[0];
   const calls = [];
 
+  // When the downloader processes the supplied task
   const result = downloadBrooksVideoTask(task, {
     spawnImpl: (command, args, options) => {
       calls.push({ command, args, options });
@@ -250,6 +274,7 @@ test('Brooks media download executes one video task through yt-dlp args', () => 
     },
   });
 
+  // Then Brooks media download executes one video task through yt-dlp args
   assert.deepEqual(result, {
     status: 'downloaded',
     output: 'Video 03A Forex Basics.%(ext)s',
@@ -263,8 +288,9 @@ test('Brooks media download executes one video task through yt-dlp args', () => 
   ]);
 });
 
-test('Brooks media download can attach forced caption refresh tasks to video downloads', () => {
-  const tasks = buildBrooksMediaDownloadTasks({
+test('user observes that Brooks media download can attach forced caption refresh tasks to video downloads', () => {
+  // Given the supplied input describes this media scenario
+  const scenarioInput = {
     audit: createAudit(),
     only: 'video',
     existingNames: new Set([
@@ -272,8 +298,11 @@ test('Brooks media download can attach forced caption refresh tasks to video dow
       'Video 03A Forex Basics.zh.vtt',
     ]),
     refreshCaptionsWithVideo: true,
-  });
+  };
+  // When the Brooks media download can attach forced caption refresh tasks to video downloads
+  const tasks = buildBrooksMediaDownloadTasks(scenarioInput);
 
+  // Then Brooks media download can attach forced caption refresh tasks to video downloads
   assert.equal(tasks.length, 1);
   assert.deepEqual(tasks[0].captionTasks.map(task => ({
     kind: task.kind,
@@ -296,15 +325,19 @@ test('Brooks media download can attach forced caption refresh tasks to video dow
   ]);
 });
 
-test('Brooks media download attaches old variant archive metadata to video tasks', () => {
-  const tasks = buildBrooksMediaDownloadTasks({
+test('user observes that Brooks media download attaches old variant archive metadata to video tasks', () => {
+  // Given the supplied input describes this media scenario
+  const scenarioInput = {
     audit: createAudit(),
     only: 'video',
     existingNames: new Set(),
     refreshCaptionsWithVideo: true,
     archiveOldVariantsDir: '/archive',
-  });
+  };
+  // When the Brooks media download attaches old variant archive metadata to video tasks
+  const tasks = buildBrooksMediaDownloadTasks(scenarioInput);
 
+  // Then Brooks media download attaches old variant archive metadata to video tasks
   assert.deepEqual(tasks[0].oldVariantFiles, [
     {
       kind: 'video',
@@ -323,13 +356,17 @@ test('Brooks media download attaches old variant archive metadata to video tasks
   ]);
 });
 
-test('Brooks media download builds existing old variant archive tasks from audit items', () => {
-  const tasks = buildBrooksMediaDownloadTasks({
+test('user observes that Brooks media download builds existing old variant archive tasks from audit items', () => {
+  // Given the supplied input describes this media scenario
+  const scenarioInput = {
     audit: createAudit(),
     only: 'oldVariants',
     archiveOldVariantsDir: '/archive',
-  });
+  };
+  // When the Brooks media download builds existing old variant archive tasks from audit items
+  const tasks = buildBrooksMediaDownloadTasks(scenarioInput);
 
+  // Then Brooks media download builds existing old variant archive tasks from audit items
   assert.deepEqual(tasks, [
     {
       index: 2,
@@ -356,13 +393,15 @@ test('Brooks media download builds existing old variant archive tasks from audit
   ]);
 });
 
-test('Brooks media download preflights old variant archive batches before moving files', async () => {
+test('user observes that Brooks media download preflights old variant archive batches before moving files', async () => {
+  // Given the reviewed media plan defines the selected files and download boundary
   const dir = await mkdtemp(join(tmpdir(), 'brooks-archive-preflight-test-'));
   try {
     const localDir = join(dir, 'local');
     const archiveDir = join(dir, 'archive');
     await mkdir(localDir, { recursive: true });
     await writeFile(join(localDir, 'Video 03A Forex Basics.mp4'), 'old video');
+    // When the downloader processes the supplied task
     const tasks = [
       {
         index: 2,
@@ -379,6 +418,7 @@ test('Brooks media download preflights old variant archive batches before moving
       },
     ];
 
+    // Then Brooks media download preflights old variant archive batches before moving files
     assert.deepEqual(await preflightBrooksOldVariantArchiveTasks(tasks), {
       files: 1,
     });
@@ -387,7 +427,8 @@ test('Brooks media download preflights old variant archive batches before moving
   }
 });
 
-test('Brooks media download rejects duplicate old variant archive targets', async () => {
+test('user observes that Brooks media download rejects duplicate old variant archive targets', async () => {
+  // Given the reviewed media plan defines the selected files and download boundary
   const dir = await mkdtemp(join(tmpdir(), 'brooks-archive-duplicate-test-'));
   try {
     const localDir = join(dir, 'local');
@@ -396,6 +437,7 @@ test('Brooks media download rejects duplicate old variant archive targets', asyn
     await writeFile(join(localDir, 'first.mp4'), 'first');
     await writeFile(join(localDir, 'second.mp4'), 'second');
     const duplicateTarget = join(archiveDir, 'videos', 'same.mp4');
+    // When the downloader processes the supplied task
     const tasks = [
       {
         oldVariantFiles: [
@@ -421,6 +463,7 @@ test('Brooks media download rejects duplicate old variant archive targets', asyn
       },
     ];
 
+    // Then Brooks media download rejects duplicate old variant archive targets
     await assert.rejects(
       preflightBrooksOldVariantArchiveTasks(tasks),
       /Duplicate archive target/,
@@ -430,7 +473,8 @@ test('Brooks media download rejects duplicate old variant archive targets', asyn
   }
 });
 
-test('Brooks media download archives old variant files without overwriting targets', async () => {
+test('user observes that Brooks media download archives old variant files without overwriting targets', async () => {
+  // Given the reviewed media plan defines the selected files and download boundary
   const dir = await mkdtemp(join(tmpdir(), 'brooks-archive-test-'));
   try {
     const localDir = join(dir, 'local');
@@ -459,8 +503,10 @@ test('Brooks media download archives old variant files without overwriting targe
       ],
     };
 
+    // When the downloader processes the supplied task
     const result = await archiveBrooksOldVariantFiles(task);
 
+    // Then Brooks media download archives old variant files without overwriting targets
     assert.deepEqual(result, {
       status: 'archived',
       count: 2,
@@ -480,10 +526,15 @@ test('Brooks media download archives old variant files without overwriting targe
   }
 });
 
-test('Brooks media download detects whether yt-dlp is available', () => {
-  assert.deepEqual(getYtDlpAvailability({
+test('user observes that Brooks media download detects whether yt-dlp is available', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = {
     commandExists: () => true,
-  }), {
+  };
+  // When the real operation processes that input
+  const observed = getYtDlpAvailability(scenarioInput);
+  // Then Brooks media download detects whether yt-dlp is available
+  assert.deepEqual(observed, {
     available: true,
     command: 'yt-dlp',
   });

@@ -34,8 +34,13 @@ function snapshot(overrides = {}) {
   };
 }
 
-test('live probe snapshot requires complete supported performance evidence', () => {
-  assert.equal(validateLivePerformanceProbeSnapshot(snapshot()).schemaVersion, 1);
+test('user observes that live probe snapshot requires complete supported performance evidence', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = snapshot();
+  // When the real operation processes that input
+  const observed = validateLivePerformanceProbeSnapshot(scenarioInput).schemaVersion;
+  // Then live probe snapshot requires complete supported performance evidence
+  assert.equal(observed, 1);
   assert.throws(
     () => validateLivePerformanceProbeSnapshot(snapshot({
       performanceSupport: { longTask: false, longAnimationFrame: true },
@@ -54,42 +59,66 @@ test('live probe snapshot requires complete supported performance evidence', () 
   );
 });
 
-test('live probe snapshot rejects every bounded-buffer overflow', () => {
-  for (const stream of ['events', 'errors', 'longTasks', 'longAnimationFrames']) {
+test('user observes that live probe snapshot rejects every bounded-buffer overflow', () => {
+  // Given each bounded evidence stream has a snapshot with one dropped entry
+  const streams = ['events', 'errors', 'longTasks', 'longAnimationFrames'];
+  const snapshots = streams.map(stream => {
     const dropped = { events: 0, errors: 0, longTasks: 0, longAnimationFrames: 0 };
     dropped[stream] = 1;
-    assert.throws(
-      () => validateLivePerformanceProbeSnapshot(snapshot({ dropped })),
-      new RegExp(`${stream} overflowed`),
-    );
+    return snapshot({ dropped });
+  });
+  // When each incomplete snapshot is validated
+  const failures = snapshots.map(value => {
+    try {
+      validateLivePerformanceProbeSnapshot(value);
+      return null;
+    } catch (error) {
+      return error;
+    }
+  });
+  // Then every rejection identifies the stream that lost evidence
+  for (const [index, stream] of streams.entries()) {
+    assert.ok(failures[index] instanceof Error);
+    assert.match(failures[index].message, new RegExp(`${stream} overflowed`));
   }
 });
 
-test('live probe Runtime.evaluate expression is self-contained', () => {
-  const expression = createLivePerformanceProbeExpression({ eventLimit: 25 });
+test('user observes that live probe Runtime.evaluate expression is self-contained', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = { eventLimit: 25 };
+  // When the live probe Runtime.evaluate expression is self-contained
+  const expression = createLivePerformanceProbeExpression(scenarioInput);
 
+  // Then live probe Runtime.evaluate expression is self-contained
   assert.match(expression, /^\(function installBinanceLivePerformanceProbe/);
   assert.match(expression, /"eventLimit":25/);
   assert.doesNotMatch(expression, /DEFAULT_GLOBAL_NAME/);
 });
 
-test('live completion preparation and result expressions remove the action race', () => {
+test('user observes that live completion preparation and result expressions remove the action race', () => {
+  // Given the live probe fixture contains performance support and bounded buffers
   const preparation = createLivePerformanceCompletionPreparationExpression({
     kind: 'no-orders',
   });
+  // When the probe contract evaluates the supplied snapshot
   const result = createLivePerformanceCompletionResultExpression();
 
+  // Then live completion preparation and result expressions remove the action race
   assert.match(preparation, /window\[completionGlobalName\] = \(function waitForBinanceLivePerformanceCompletion/);
   assert.match(preparation, /prepared: true/);
   assert.match(result, /return await completion/);
   assert.match(result, /delete window\[completionGlobalName\]/);
 });
 
-test('live completion Runtime.evaluate expression owns the page-ready contract', () => {
-  const expression = createLivePerformanceCompletionExpression({
+test('user observes that live completion Runtime.evaluate expression owns the page-ready contract', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = {
     kind: 'dialog-confirm',
-  });
+  };
+  // When the live completion Runtime.evaluate expression owns the page-ready contract
+  const expression = createLivePerformanceCompletionExpression(scenarioInput);
 
+  // Then live completion Runtime.evaluate expression owns the page-ready contract
   assert.match(expression, /^\(function waitForBinanceLivePerformanceCompletion/);
   assert.match(expression, /"kind":"dialog-confirm"/);
   assert.match(expression, /finishAfterPerformanceTail/);

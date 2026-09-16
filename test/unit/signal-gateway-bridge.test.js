@@ -19,12 +19,15 @@ function fixture(implementation) {
   return { view, owner, values, requests, timers, api: view[SIGNAL_GATEWAY_BRIDGE], client: createSharedGatewayClient(view) };
 }
 
-test('public capability accepts only exact bounded Strategy29 read paths', () => {
-  for (const path of ['/v1/strategy29/status', '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest&limit=20',
+test('user observes that public capability accepts only exact bounded Strategy29 read paths', () => {
+  // Given public callers use the supported fixed routes and bounded query modes
+  const validPaths = ['/v1/strategy29/status', '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest&limit=20',
     '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest_per_timeframe&limit=3',
-    '/v1/strategy29/events?symbol=%E7%89%9B%E6%9D%A5%2FUSDT%3AUSDT&cursor=42']) {
-    assert.equal(validateSignalGatewayPath(path), path);
-  }
+    '/v1/strategy29/events?symbol=%E7%89%9B%E6%9D%A5%2FUSDT%3AUSDT&cursor=42'];
+  // When the public boundary validates each supported request path
+  const validated = validPaths.map(validateSignalGatewayPath);
+  // Then valid paths are unchanged and unbounded or alternate routes are rejected
+  assert.deepEqual(validated, validPaths);
   for (const path of ['https://127.0.0.1:18765/v1/strategy29/status', '//127.0.0.1/v1/strategy29/status',
     '/v1/strategy29/status?x=1', '/v1/strategy29/status#x', '/v1/strategy29/../strategy29/status',
     '/v1/strategy29/status/', '/v1/strategy29/events?symbol=BTC%2FUSDT%3AUSDT&mode=latest&limit=200',
@@ -39,11 +42,14 @@ test('public capability accepts only exact bounded Strategy29 read paths', () =>
   }
 });
 
-test('only provider headers receive private authentication; public responses are stripped', async () => {
+test('user observes that only provider headers receive private authentication; public responses are stripped', async () => {
+  // Given the shared gateway fixture owns its configuration and pending requests
   const f = fixture();
   const signal = new AbortController().signal;
   const pending = f.client.request({ path: '/v1/strategy29/status', signal });
+  // When the public boundary handles the specified request or lifecycle event
   const request = f.requests[0];
+  // Then only provider headers receive private authentication; public responses are stripped
   assert.equal(request.method, 'GET');
   assert.equal(request.url, 'http://127.0.0.1:18765/v1/strategy29/status');
   assert.deepEqual(request.headers, { Authorization: 'Bearer synthetic-private-value' });
@@ -57,22 +63,28 @@ test('only provider headers receive private authentication; public responses are
   f.owner.dispose();
 });
 
-test('settings changes abort old work and cannot publish an obsolete response', async () => {
+test('user observes that settings changes abort old work and cannot publish an obsolete response', async () => {
+  // Given the shared gateway fixture owns its configuration and pending requests
   const f = fixture();
   const pending = f.client.request({ path: '/v1/strategy29/status', signal: new AbortController().signal });
   f.owner.settingsChanged();
+  // When the public boundary handles the specified request or lifecycle event
   f.requests[0].onload({ status: 200, responseText: '{"late":true}' });
+  // Then settings changes abort old work and cannot publish an obsolete response
   await assert.rejects(pending, error => error.name === 'AbortError');
   assert.equal(f.client.getGatewayState().settingsRevision, 1);
   assert.equal(f.timers.size, 0);
   f.owner.dispose();
 });
 
-test('caller abort, transport timeout, initialization failure and synchronous completion are bounded', async () => {
+test('user observes that caller abort, transport timeout, initialization failure and synchronous completion are bounded', async () => {
+  // Given the shared gateway fixture owns its configuration and pending requests
   const f = fixture();
   const controller = new AbortController();
   const aborted = f.client.request({ path: '/v1/strategy29/status', signal: controller.signal });
+  // When the public boundary handles the specified request or lifecycle event
   controller.abort();
+  // Then caller abort, transport timeout, initialization failure and synchronous completion are bounded
   await assert.rejects(aborted, error => error.name === 'AbortError');
   const timed = f.client.request({ path: '/v1/strategy29/status', signal: new AbortController().signal });
   [...f.timers.values()][0]();
@@ -88,9 +100,12 @@ test('caller abort, transport timeout, initialization failure and synchronous co
   failed.owner.dispose(); done.owner.dispose();
 });
 
-test('missing configuration, invalid origin and excessive public concurrency make no extra requests', async () => {
+test('user observes that missing configuration, invalid origin and excessive public concurrency make no extra requests', async () => {
+  // Given the shared gateway fixture owns its configuration and pending requests
   const f = fixture();
+  // When the public boundary handles the specified request or lifecycle event
   f.values.set('strategy27GatewayAuthSecret', '');
+  // Then missing configuration, invalid origin and excessive public concurrency make no extra requests
   assert.equal(f.client.getGatewayState().configured, false);
   assert.deepEqual(await f.api.request('/v1/strategy29/status', new AbortController().signal), { kind: 'configuration_required' });
   assert.equal(f.requests.length, 0);
