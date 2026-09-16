@@ -11,6 +11,12 @@ are owned by `skills/userscript-release/SKILL.md`.
 The eight-script performance audit, operation-count baselines, and reproduction
 commands are recorded in `docs/userscript-performance-review.md`.
 
+The behavioral test rules, reviewed fake contracts, virtual-time boundaries,
+and explicit migration inventory are owned by [Behavioral Test Policy](test-policy.md).
+Use [Affected Test Selection](test-selection.md) for dependency-based local and CI
+selection, and [Source Coverage](test-coverage.md) for the complete-source coverage
+scope, threshold policy, and report interpretation.
+
 ## Script Matrix
 
 | Script | Editable source | Artifact | Focused checks | Detailed guide |
@@ -33,6 +39,13 @@ or required live validation step.
 The default suite runs all `test/unit/**/*.test.js` and `test/dom/**/*.test.js`
 files. Scripts under `test/manual/` are explicit manual probes and previews;
 they are not automatically executed by the test runner.
+
+Test changes also run `npm run lint:tests`. `npm run test:affected -- --list`
+explains the selected Node and browser files before execution. The scheduled
+`Userscript Tests` workflow runs the complete Node and browser coverage pipeline;
+ordinary PR and main-push runs select tests using an explicit Git base. Existing
+script-specific workflows retain their independent checks. All three workflows
+read the Node version from `.nvmrc`.
 
 ## Shared Contracts
 

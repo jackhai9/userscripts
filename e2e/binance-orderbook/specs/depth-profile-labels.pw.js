@@ -73,8 +73,12 @@ async function attachChart(page, testInfo, name) {
   });
 }
 
-test('compact depth quantities preserve cumulative bars, chart layout and click-through', async ({ page }, testInfo) => {
+test('user reads compact depth quantities without changing chart layout or blocking chart clicks', async ({ page }, testInfo) => {
+  // Given the native depth snapshot is rendered beside a TradingView chart with a latest-price divider.
   const evidence = await openDepthLabelScenario(page);
+  // When the user views the visible depth canvas.
+  await page.locator(`${DEPTH_PROFILE_SELECTOR} canvas`).waitFor({ state: 'visible' });
+  // Then labels keep exact quantities, cumulative bar geometry, opaque pixels, and native click-through.
   await expect.poll(() => labelTexts(page)).toEqual(['1.3 · 620K', '1.8 · 3.8M', '2 · 2.4M']);
   const { drawing, boxes, canvas } = await expectCompactLabelGeometry(page, { currentPriceY: 182 });
   const largeAskBar = drawing.rectangles.find((rectangle) => (
@@ -92,13 +96,18 @@ test('compact depth quantities preserve cumulative bars, chart layout and click-
   }))).toEqual({ pointerEvents: 'none', canvasPointerEvents: 'none', childTags: ['CANVAS', 'BUTTON', 'DIV'] });
 
   const label = boxes[0];
+
+  // When the user clicks the chart through a painted depth label.
   await page.mouse.click(canvas.x + label.x + label.width / 2, canvas.y + label.y + label.height / 2);
+
+  // Then the underlying chart receives the click and the overlay stays read-only.
   expect(await page.evaluate(() => window.__DEPTH_LABEL_FIXTURE__.chartClicks)).toBe(1);
   await expectIsolatedReadOnlyFixture(page, evidence);
   await attachChart(page, testInfo, 'compact-depth-labels.png');
 });
 
-test('pixel-row quantities remain readable with no latest price and a wide price band', async ({ page }, testInfo) => {
+test('user reads aggregated depth quantities when a wide price band has no latest-price marker', async ({ page }, testInfo) => {
+  // Given several real depth levels share one pixel row and no latest trade price is available.
   const evidence = await openDepthLabelScenario(page, {
     currentPrice: null,
     levels: {
@@ -106,6 +115,9 @@ test('pixel-row quantities remain readable with no latest price and a wide price
       bids: [['1.49', '600000'], ['1.4', '700000'], ['1.3', '900000']],
     },
   });
+  // When the user views the visible depth canvas.
+  await page.locator(`${DEPTH_PROFILE_SELECTOR} canvas`).waitFor({ state: 'visible' });
+  // Then the label shows the aggregated quantity within its bounds while cumulative bars and chart layout stay correct.
   await expect.poll(() => labelTexts(page)).toEqual(['1.3 · 900K', '1.4 · 700K', '2 · 2.4M', '3.8M']);
   const { drawing } = await expectCompactLabelGeometry(page);
   await expect(page.locator('.tradew-tradelist .price.emit-price').first()).toHaveText('—');
@@ -121,30 +133,44 @@ test('pixel-row quantities remain readable with no latest price and a wide price
   await attachChart(page, testInfo, 'aggregated-depth-labels.png');
 });
 
-test('native updates, collapse and disconnect remove stale depth label pixels', async ({ page }, testInfo) => {
+test('user sees depth labels update and clear across collapse and native disconnection', async ({ page }, testInfo) => {
+  // Given a native depth snapshot initially includes the 1.8 price-band label.
   const evidence = await openDepthLabelScenario(page);
   await expect.poll(() => labelTexts(page)).toContain('1.8 · 3.8M');
+  // When the native stream changes the displayed levels.
   await emitDepthLabelUpdate(page, {
     asks: [['1.8', '1200'], ['2', '0'], ['2.05', '2600000']],
     bids: [['1.3', '0'], ['1.35', '900000']],
   });
+  // Then the labels reflect the new levels before collapse, re-expansion, and disconnect are exercised.
   const updatedTexts = ['1.35 · 900K', '2.05 · 2.6M'];
   await expect.poll(() => labelTexts(page)).toEqual(updatedTexts);
   await expectCompactLabelGeometry(page, { currentPriceY: 182 });
   await attachChart(page, testInfo, 'updated-depth-labels.png');
 
   const root = page.locator(DEPTH_PROFILE_SELECTOR);
+
+  // When the user collapses the profile.
   await root.locator('button').click();
+
+  // Then label pixels disappear and the native chart geometry is unchanged.
   await expect(root).toHaveAttribute('data-expanded', 'false');
   await expect(root.locator('canvas')).toBeHidden();
   await expect.poll(() => labelTexts(page)).toEqual([]);
   expect(await readDepthChartLayout(page)).toEqual(evidence.initialLayout);
+
+  // When the user expands the profile again.
   await root.locator('button').click();
+
+  // Then only the current labels return within the same chart geometry.
   await expect(root).toHaveAttribute('data-expanded', 'true');
   await expect.poll(() => labelTexts(page)).toEqual(updatedTexts);
   expect(await readDepthChartLayout(page)).toEqual(evidence.initialLayout);
 
+  // When the native depth connection closes.
   await page.evaluate(() => window.__DEPTH_LABEL_FIXTURE__.socket.dispatchEvent(new Event('close')));
+
+  // Then the connection status is visible and every stale canvas pixel is cleared.
   await expect(root.locator('.jh-depth-profile-status')).toHaveText('重新连接深度');
   await expect.poll(() => labelTexts(page)).toEqual([]);
   expect(await root.locator('canvas').evaluate((canvas) => (

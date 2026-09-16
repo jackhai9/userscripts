@@ -1,0 +1,12 @@
+{
+  "minimumBranches": 66.5,
+  "criticalSources": [
+    "src/binance-orderbook-trade/core/cancel-orders.js",
+    "src/binance-orderbook-trade/core/close-action.js",
+    "src/binance-orderbook-trade/core/close-ladder-recovery.js",
+    "src/binance-orderbook-trade/core/continuous-ladder.js",
+    "src/binance-orderbook-trade/core/order-feedback.js",
+    "src/binance-orderbook-trade/core/quantity.js",
+    "src/binance-orderbook-trade/core/chart-save-coalescer.js"
+  ]
+}

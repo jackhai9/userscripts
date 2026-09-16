@@ -132,7 +132,10 @@ export function renderBinanceFuturesFixture(scenario) {
         ...detail,
       });
       const currentOrders = () => state.orders.filter((item) => item.symbol === scenario.currentSymbol);
-      const visibleOrders = () => state.hideOtherSymbols ? currentOrders() : state.orders;
+      const visibleOrders = () => state.orders.filter((item) => (
+        item.kind === state.openOrdersSubTab
+        && (!state.hideOtherSymbols || item.symbol === scenario.currentSymbol)
+      ));
       const selected = (value, expected) => String(value === expected);
       const scheduleCommit = (callback) => setTimeout(callback, scenario.host.mutationDelayMs);
       let orderSubmitSequence = 0;
@@ -211,23 +214,29 @@ export function renderBinanceFuturesFixture(scenario) {
               price: orderEntry.querySelector('input[id^="limitPrice-"]')?.value || '',
               quantity: orderEntry.querySelector('input[id^="unitAmount-"]')?.value || '',
             });
+            const showFeedback = (outcome) => {
+              const feedback = document.createElement('div');
+              feedback.setAttribute('role', 'alert');
+              feedback.textContent = outcome === 'success' ? '订单已提交成功' : '订单提交失败';
+              document.body.append(feedback);
+              record('order-submit-feedback', { action: button.textContent.trim(), submitSequence, outcome });
+            };
             window.fetch('/bapi/futures/v1/private/future/order/place-order', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ submitSequence }),
-            }).then(() => record('order-submit-api-success', { submitSequence }));
-            const showFeedback = () => {
-              const feedback = document.createElement('div');
-              feedback.setAttribute('role', 'alert');
-              feedback.textContent = '订单已提交成功';
-              document.body.append(feedback);
-              record('order-submit-feedback', { action: button.textContent.trim(), submitSequence });
-            };
-            if (scenario.host.submitFeedbackDelayMs > 0) {
-              setTimeout(showFeedback, scenario.host.submitFeedbackDelayMs);
-            } else {
-              showFeedback();
-            }
+            }).then(async (response) => {
+              const payload = await response.json();
+              const outcome = response.ok && payload.success === true ? 'success'
+                : payload.success === false ? 'rejected' : 'unknown';
+              record('order-submit-api-' + outcome, { submitSequence, code: payload.code });
+              if (outcome === 'unknown') return;
+              if (scenario.host.submitFeedbackDelayMs > 0) {
+                setTimeout(() => showFeedback(outcome), scenario.host.submitFeedbackDelayMs);
+              } else {
+                showFeedback(outcome);
+              }
+            });
           });
         });
         orderEntry.querySelectorAll('input').forEach((input) => {
@@ -351,6 +360,8 @@ export function renderBinanceFuturesFixture(scenario) {
       function renderAccountWidget() {
         const positionCount = state.positions.length;
         const orderCount = state.orders.length;
+        const basicCount = state.orders.filter((order) => order.kind === 'basic').length;
+        const conditionalCount = state.orders.filter((order) => order.kind === 'conditional').length;
         accountWidget.innerHTML =
           '<div id="account-tabs">' +
             '<div role="tab" data-account-tab="positions" aria-selected="' + selected(state.accountTab, 'positions') + '">仓位(' + positionCount + ')</div>' +
@@ -359,12 +370,12 @@ export function renderBinanceFuturesFixture(scenario) {
           '</div>' +
           '<div id="OPEN_ORDERS" style="display:' + (state.accountTab === 'openOrders' ? 'block' : 'none') + '">' +
             '<div class="sub-tabs">' +
-              '<div role="tab" data-open-orders-sub-tab="basic" aria-selected="' + selected(state.openOrdersSubTab, 'basic') + '">基础单(' + orderCount + ')</div>' +
-              '<div role="tab" data-open-orders-sub-tab="conditional" aria-selected="' + selected(state.openOrdersSubTab, 'conditional') + '">条件委托(0)</div>' +
+              '<div role="tab" data-open-orders-sub-tab="basic" aria-selected="' + selected(state.openOrdersSubTab, 'basic') + '">基础单(' + basicCount + ')</div>' +
+              '<div role="tab" data-open-orders-sub-tab="conditional" aria-selected="' + selected(state.openOrdersSubTab, 'conditional') + '">条件委托(' + conditionalCount + ')</div>' +
             '</div>' +
             '<div role="checkbox" name="hideOtherSymbol" aria-checked="' + state.hideOtherSymbols + '">隐藏其他合约</div>' +
-            '<div class="orders-content" style="display:' + (state.openOrdersSubTab === 'basic' ? 'block' : 'none') + '">' + renderOrdersRows() + '</div>' +
-            (state.openOrdersSubTab === 'basic' && visibleOrders().length ? '<div class="cursor-pointer" data-cancel-all>全撤</div>' : '') +
+            '<div class="orders-content">' + renderOrdersRows() + '</div>' +
+            (visibleOrders().length ? '<div class="cursor-pointer" data-cancel-all>全撤</div>' : '') +
           '</div>';
 
         accountWidget.querySelectorAll('[data-account-tab]').forEach((tab) => {
@@ -400,18 +411,19 @@ export function renderBinanceFuturesFixture(scenario) {
         if (event.key === 'Escape' && state.dialogOpen) closeDialog('escape');
       }
 
-      function attachDialogHandlers(root) {
+      function attachDialogHandlers(root, scope) {
         root.addEventListener('click', (event) => {
           if (event.target === root) closeDialog('backdrop');
         });
         root.querySelector('[data-dialog-action="cancel"]').addEventListener('click', () => closeDialog('cancel'));
         root.querySelector('[data-dialog-action="confirm"]').addEventListener('click', () => {
-          record('cancel-requested', { symbol: scenario.currentSymbol });
+          record('cancel-requested', { ...scope });
           setTimeout(() => {
-            if (scenario.host.clearMode === 'currentSymbol') {
-              const removedOrders = currentOrders().map((item) => ({ ...item }));
-              state.orders = state.orders.filter((item) => item.symbol !== scenario.currentSymbol);
+            if (scenario.host.clearMode === 'capturedScope') {
+              const removedOrders = state.orders.filter((item) => scope.orderIds.includes(item.id));
+              state.orders = state.orders.filter((item) => !scope.orderIds.includes(item.id));
               scheduleChartOrderRemovals(removedOrders);
+              record('cancel-cleared', { ...scope, orderIds: removedOrders.map((item) => item.id) });
             }
             closeDialog('confirm');
             renderAccountWidget();
@@ -425,8 +437,16 @@ export function renderBinanceFuturesFixture(scenario) {
           record('dialog-missing');
           return;
         }
+        /** The host honors the initiating UI scope, including an unsafe unfiltered request. */
+        const scope = Object.freeze({
+          symbol: scenario.currentSymbol,
+          accountTab: state.accountTab,
+          openOrdersSubTab: state.openOrdersSubTab,
+          hideOtherSymbols: state.hideOtherSymbols,
+          orderIds: Object.freeze(visibleOrders().map((item) => item.id)),
+        });
         state.dialogOpen = true;
-        record('dialog-opened');
+        record('dialog-opened', { scope });
         const root = document.createElement('div');
         root.className = 'bn-modal-root';
         const primaryClass = scenario.host.dialogMode === 'missingPrimary'
@@ -441,13 +461,13 @@ export function renderBinanceFuturesFixture(scenario) {
           extraAction + '</div>';
         document.body.append(root);
         document.addEventListener('keydown', handleDialogKeydown);
-        attachDialogHandlers(root);
+        attachDialogHandlers(root, scope);
         if (scenario.host.dialogReplacementDelayMs !== null) {
           setTimeout(() => {
             if (!state.dialogOpen || !root.isConnected) return;
             const replacement = root.cloneNode(true);
             root.replaceWith(replacement);
-            attachDialogHandlers(replacement);
+            attachDialogHandlers(replacement, scope);
             record('dialog-replaced');
           }, scenario.host.dialogReplacementDelayMs);
         }
@@ -552,7 +572,16 @@ export function renderBinanceFuturesFixture(scenario) {
 
       window.__BINANCE_FIXTURE__ = {
         replacePrecisionControl,
+        switchSymbol(symbol) {
+          if (typeof symbol !== 'string' || !symbol) throw new Error('A symbol is required');
+          scenario.currentSymbol = symbol;
+          history.pushState({}, '', '/zh-CN/futures/' + symbol);
+          renderTradeMode();
+          renderAccountWidget();
+          record('symbol-changed', { symbol });
+        },
         snapshot: () => JSON.parse(JSON.stringify({
+          currentSymbol: scenario.currentSymbol,
           positions: state.positions,
           orders: state.orders,
           accountTab: state.accountTab,

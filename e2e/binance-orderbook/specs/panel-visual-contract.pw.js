@@ -40,20 +40,28 @@ async function expectNativeDivider(page) {
   });
 }
 
-test('open panel matches the fixed visual contract', async ({ page }) => {
-  await openUserscriptScenario(page, createCancelScenario({
+test('user sees the fixed panel layout in open mode', async ({ page }) => {
+  // Given the native trade form starts in open mode.
+  const scenario = createCancelScenario({
     ui: { tradeMode: 'OPEN' },
-  }));
+  });
+  // When the user opens the generated userscript panel.
+  await openUserscriptScenario(page, scenario);
+  // Then the precision controls, full-width divider, and layout match the checked-in visual contract.
   await expectPrecisionReady(page);
   await expectNativeDivider(page);
   await expectVisualContract(page, 'open-fixed.visual.json');
 });
 
-test('close panel matches the disabled-state visual contract', async ({ page }) => {
-  await openUserscriptScenario(page, createCancelScenario({
+test('user sees only valid close directions enabled in the fixed panel layout', async ({ page }) => {
+  // Given the current symbol has only a long position and the trade form starts in close mode.
+  const scenario = createCancelScenario({
     positions: POSITION_SETS.current,
     ui: { tradeMode: 'CLOSE' },
-  }));
+  });
+  // When the user opens the generated userscript panel.
+  await openUserscriptScenario(page, scenario);
+  // Then the long direction is enabled, the short direction is disabled, and the visual contract is unchanged.
   const panel = page.locator(PANEL_SELECTOR);
   await expect(panel.getByRole('radio', { name: '平多' })).toBeEnabled();
   await expect(panel.getByRole('radio', { name: '平空' })).toBeDisabled();

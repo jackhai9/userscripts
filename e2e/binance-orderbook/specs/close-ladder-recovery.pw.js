@@ -2,7 +2,8 @@ import { test, expect } from '../test.js';
 import { CURRENT_SYMBOL, createCancelScenario } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
 
-test('continuous close preserves partial submissions through repeated reduce-only rejections and confirmed flat', async ({ page }) => {
+test('user retains partial close progress through reduce-only rejections until the position is confirmed flat', async ({ page }) => {
+  // Given two native close submissions can succeed before repeated reduce-only rejections and decreasing authoritative positions.
   test.setTimeout(30_000);
   const scenario = createCancelScenario({
     positions: [{ symbol: CURRENT_SYMBOL, side: 'SHORT', quantity: '100' }],
@@ -36,8 +37,10 @@ test('continuous close preserves partial submissions through repeated reduce-onl
     });
   });
   const panel = page.locator('#jh-binance-close-qty-multiplier-panel');
+  // When the user starts continuous close-short trading.
   await panel.getByRole('button', { name: '阶梯平空', exact: true }).click({ modifiers: ['Alt'] });
   const status = panel.locator('#jh-binance-ladder-status');
+  // Then the runner rechecks position progress, preserves the two confirmed submissions, and ends on confirmed flat without cancellations.
   await expect(status).toContainText('只减仓冲突，3s 后复核仓位', { timeout: 8_000 });
   await expect(status).toContainText('当前方向已无持仓', { timeout: 18_000 });
   await expect(status).toContainText('连续阶梯平空');
@@ -51,7 +54,8 @@ test('continuous close preserves partial submissions through repeated reduce-onl
   expect(errors).toEqual([]);
 });
 
-test('a close that disables the native button during recovery still confirms flat', async ({ page }) => {
+test('user can finish continuous close on confirmed flat even when the native button becomes disabled', async ({ page }) => {
+  // Given the first close request is rejected and the position response disables the native submit button.
   const scenario = createCancelScenario({
     positions: [{ symbol: CURRENT_SYMBOL, side: 'SHORT', quantity: '100' }],
     ui: { tradeMode: 'CLOSE', orderbookPrecision: '0.1' },
@@ -82,14 +86,17 @@ test('a close that disables the native button during recovery still confirms fla
     });
   });
   const panel = page.locator('#jh-binance-close-qty-multiplier-panel');
+  // When the user starts continuous close-short trading.
   await panel.getByRole('button', { name: '阶梯平空', exact: true }).click({ modifiers: ['Alt'] });
+  // Then the authoritative flat position ends the session after one submit and two position reads.
   await expect(panel.locator('#jh-binance-ladder-status')).toContainText('当前方向已无持仓', { timeout: 10_000 });
   expect(submissions).toBe(1);
   expect(positionReads).toBe(2);
   expect(errors).toEqual([]);
 });
 
-test('a capacity rejection during reduce-only recovery stops without entering batch cancellation', async ({ page }) => {
+test('user stops on a capacity rejection during reduce-only recovery without cancelling orders', async ({ page }) => {
+  // Given a reduce-only rejection is followed by position progress and then a capacity rejection.
   const scenario = createCancelScenario({
     positions: [{ symbol: CURRENT_SYMBOL, side: 'SHORT', quantity: '100' }],
     ui: { tradeMode: 'CLOSE', orderbookPrecision: '0.1' },
@@ -118,8 +125,10 @@ test('a capacity rejection during reduce-only recovery stops without entering ba
     });
   });
   const panel = page.locator('#jh-binance-close-qty-multiplier-panel');
+  // When the user starts continuous close-short trading.
   await panel.getByRole('button', { name: '阶梯平空', exact: true }).click({ modifiers: ['Alt'] });
   const status = panel.locator('#jh-binance-ladder-status');
+  // Then the specific native capacity failure stays visible and no batch cancellation begins.
   await expect(status).toContainText('失败', { timeout: 10_000 });
   await expect(status).toContainText('Maximum open orders');
   await expect(status).toContainText('90802025');

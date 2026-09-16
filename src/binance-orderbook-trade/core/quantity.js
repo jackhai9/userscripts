@@ -46,18 +46,10 @@ export function allocateLadderQuantities(totalQty, desiredLevels, stepSize, minR
 
   const quantities = [];
   let remainingSteps = totalSteps;
+  /** The final order adds the division remainder, so it cannot fall below baseSteps. */
   for (let i = 0; i < actualLevels; i += 1) {
     const isLast = i === actualLevels - 1;
     const steps = isLast ? remainingSteps : baseSteps;
-    if (steps < minSteps) {
-      if (quantities.length === 0) return null;
-      const previous = decimalToStepCount(quantities.pop(), stepSize, 'floor');
-      const merged = previous + steps;
-      if (merged < minSteps) return null;
-      quantities.push(formatStepCount(merged, stepSize));
-      remainingSteps = 0n;
-      break;
-    }
     quantities.push(formatStepCount(steps, stepSize));
     remainingSteps -= steps;
   }

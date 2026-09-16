@@ -171,7 +171,7 @@ function buildContinuousLadderProgressParts(label, phase, progress) {
       `${progress.completedRounds}/${progress.startedRounds} 轮`,
       `${progress.completedRounds}/${progress.startedRounds} rounds`,
     ));
-  if (progress.lastRound?.plannedOrders !== null) {
+  if (progress.lastRound !== null && progress.lastRound.plannedOrders !== null) {
     parts.push(localizedText(
       `本轮 ${progress.lastRound.currentPlanSubmittedOrders}/${progress.lastRound.plannedOrders} 笔`,
       `This round ${progress.lastRound.currentPlanSubmittedOrders}/${progress.lastRound.plannedOrders}`,

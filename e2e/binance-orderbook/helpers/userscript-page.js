@@ -9,6 +9,16 @@ const USERSCRIPT_PATH = fileURLToPath(
 );
 const evidenceByPage = new WeakMap();
 
+function submitResponseBody(response) {
+  if (response.outcome === 'success') return { success: true };
+  if (response.outcome === 'rejected'
+    && typeof response.code === 'string' && response.code
+    && typeof response.message === 'string' && response.message) {
+    return { success: false, code: response.code, message: response.message };
+  }
+  throw new Error('A released submit response must explicitly succeed or reject with a reason');
+}
+
 function readUserscriptVersion(source) {
   const match = source.match(/^\/\/\s*@version\s+(\S+)/m);
   if (!match) throw new Error('Generated userscript is missing @version metadata');
@@ -29,6 +39,7 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
   };
   evidenceByPage.set(page, { scenario, userscript, errors });
   let placeOrderRequestCount = 0;
+  const pendingSubmitResponses = new Map();
   await page.route('https://www.binance.com/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/__binance_orderbook_userscript__.js') {
@@ -48,17 +59,24 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
       return;
     }
     if (url.pathname === '/bapi/futures/v1/private/future/order/place-order') {
-      const delayMs = scenario.host.submitApiResponseDelayMsByOrder[placeOrderRequestCount];
+      let response = scenario.host.submitApiResponses[placeOrderRequestCount];
       placeOrderRequestCount += 1;
-      if (delayMs === undefined) {
-        throw new Error('Fixture received more than five ladder order requests');
+      if (!response) {
+        throw new Error('Fixture received an undeclared order request');
       }
-      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      let delivered;
+      if (response.delivery === 'manual') {
+        const release = Promise.withResolvers();
+        delivered = Promise.withResolvers();
+        pendingSubmitResponses.set(placeOrderRequestCount, { response, release, delivered });
+        response = await release.promise;
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ success: true }),
+        body: JSON.stringify(submitResponseBody(response)),
       });
+      delivered?.resolve();
       return;
     }
     if (url.pathname === '/bapi/futures/v6/private/future/user-data/user-position') {
@@ -115,7 +133,21 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
   await page.evaluate(() => new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));
-  return { errors, userscript };
+  return {
+    errors,
+    userscript,
+    /** Network delivery is controlled separately from the page's simulated clock. */
+    async releaseSubmitResponse(submitSequence, response) {
+      const pending = pendingSubmitResponses.get(submitSequence);
+      if (!pending) throw new Error('No pending submit response exists for this sequence');
+      const settledResponse = response === undefined ? pending.response : response;
+      submitResponseBody(settledResponse);
+      pendingSubmitResponses.delete(submitSequence);
+      pending.release.resolve(settledResponse);
+      await pending.delivered.promise;
+    },
+    pendingSubmitSequences: () => [...pendingSubmitResponses.keys()],
+  };
 }
 
 export async function readFixtureState(page) {

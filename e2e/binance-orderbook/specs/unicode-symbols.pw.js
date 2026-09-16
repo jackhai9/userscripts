@@ -48,7 +48,8 @@ async function mountDepthChart(page, symbol) {
 }
 
 for (const symbol of ['BTCUSDT', '龙虾USDT', '4USDT']) {
-  test(`generated userscript renders native depth for ${symbol}`, async ({ page }, testInfo) => {
+  test(`user sees native depth for the complete ${symbol} symbol`, async ({ page }, testInfo) => {
+    // Given the generated script runs on the declared symbol with one native depth socket and snapshot route.
     await page.route('**/*', (route) => route.abort('blockedbyclient'));
     const { errors } = await openUserscriptScenario(page, createCancelScenario({ currentSymbol: symbol }), {
       beforeOrderbook: nativeSocketFixture,
@@ -66,6 +67,7 @@ for (const symbol of ['BTCUSDT', '龙虾USDT', '4USDT']) {
     });
     await mountDepthChart(page, symbol);
     await expect(page.locator('#jh-binance-depth-profile canvas')).toBeVisible();
+    // When the native socket and snapshot deliver depth updates for that exact symbol.
     await page.evaluate(async (symbol) => {
       const socket = new WebSocket('wss://depth-fixture.invalid/ws');
       const response = fetch(`/fapi/v1/rpiDepth?${new URLSearchParams({ symbol, limit: '1000' })}`);
@@ -76,6 +78,7 @@ for (const symbol of ['BTCUSDT', '龙虾USDT', '4USDT']) {
       }) }));
       await (await response).json();
     }, symbol);
+    // Then the canvas paints both sides with a ready native book and no trade or cancellation actions.
     await expect.poll(() => page.evaluate(() => window.__TM_CLOSE_LONG_DEBUG__.nativeDepthState)).toMatchObject({
       status: { symbol, status: 'ready' }, bidCount: 2, askCount: 2,
     });
@@ -100,25 +103,31 @@ for (const symbol of ['BTCUSDT', '龙虾USDT', '4USDT']) {
 }
 
 for (const symbol of ['龙虾USDT', '4USDT']) {
-  test(`generated cancel flow recognizes ${symbol} without consuming another contract`, async ({ page }) => {
+  test(`user cancels ${symbol} orders without matching a longer contract name`, async ({ page }) => {
+    // Given the account has one exact-symbol Basic order and one longer contract containing that symbol.
     await page.route('**/*', (route) => route.abort('blockedbyclient'));
     const orders = [
-      { id: 'current', symbol, side: 'SELL', price: '90', quantity: '0.01' },
-      { id: 'other', symbol: `超级${symbol}`, side: 'SELL', price: '90', quantity: '0.01' },
+      { id: 'current', symbol, kind: 'basic', side: 'SELL', price: '90', quantity: '0.01' },
+      { id: 'other', symbol: `超级${symbol}`, kind: 'basic', side: 'SELL', price: '90', quantity: '0.01' },
     ];
     const { errors } = await openUserscriptScenario(page, createCancelScenario({ currentSymbol: symbol, orders }));
+    // When the user first inspects and dismisses native cancellation.
     await page.getByRole('button', { name: '撤单', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.locator('[data-order-id="current"]')).toBeVisible();
     await expect(page.locator('[data-order-id="other"]')).toHaveCount(0);
     expect((await readFixtureState(page)).events.filter((event) => event.type === 'cancel-requested')).toEqual([]);
     await page.getByRole('button', { name: '取消', exact: true }).click();
+    // Then both orders survive dismissal before a second explicitly confirmed cancellation is exercised.
     await expect(page.getByText('撤单已取消')).toBeVisible();
     expect((await readFixtureState(page)).orders).toEqual(orders);
 
+    // When the user requests cancellation again and explicitly confirms it.
     await page.getByRole('button', { name: '撤单', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.getByRole('button', { name: '确认', exact: true }).click();
+
+    // Then only the exact-symbol order is cancelled and the original view is restored.
     await expect(page.getByText('撤单已完成')).toBeVisible();
     const state = await readFixtureState(page);
     expect(state.orders).toEqual([orders[1]]);

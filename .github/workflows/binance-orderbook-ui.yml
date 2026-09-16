@@ -6,6 +6,7 @@ on:
       - ".github/workflows/binance-orderbook-ui.yml"
       - "package.json"
       - "package-lock.json"
+      - ".nvmrc"
       - "playwright.config.js"
       - "src/binance-orderbook-trade/**"
       - "src/binance-strategy29-bollinger/**"
@@ -29,6 +30,7 @@ on:
       - ".github/workflows/binance-orderbook-ui.yml"
       - "package.json"
       - "package-lock.json"
+      - ".nvmrc"
       - "playwright.config.js"
       - "src/binance-orderbook-trade/**"
       - "src/binance-strategy29-bollinger/**"
@@ -57,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium

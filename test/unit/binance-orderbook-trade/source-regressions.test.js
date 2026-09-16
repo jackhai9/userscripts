@@ -72,13 +72,6 @@ test('close snapshot validation refreshes button scope before checking close act
   assert.match(waitBody, /closeQuantityChanged[\s\S]*findCloseLongButton\(\)[\s\S]*findCloseShortButton\(\)[\s\S]*snapshotReady = true/);
 });
 
-test('cancel-symbol flow restores temporary symbol filter through cleanup path', () => {
-  const cancelBody = readFunctionBody('runCancelCurrentSymbolOpenOrders');
-  assert.match(cancelBody, /finally\s*\{/);
-  assert.match(cancelBody, /await waitForBinanceCancelAllDialogDecision\(/);
-  assert.match(cancelBody, /restoreOpenOrdersSymbolFilter\(openOrdersScope,\s*symbolFilterOriginalChecked,\s*symbol\)/);
-});
-
 test('fixed ladder panel avoids rebuilding unchanged body markup', () => {
   const ladderBody = readFunctionBody('refreshLadderPanel');
   assert.match(ladderBody, /ladderPanelBodySignature/);

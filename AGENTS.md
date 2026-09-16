@@ -39,6 +39,7 @@
 | Strategy 29 observer or cross-script chart coordination | docs/binance-strategy29-bollinger-development.md |
 | Brooks/m3u8 indexing, export state, timing, or captions | docs/brooks-media-sync-workflow.md |
 | Trading-data, CoinMarketCap-data, auto-refresh, or cross-script validation | docs/userscript-validation.md |
+| Behavioral tests, test lint, affected selection, or source coverage | docs/test-policy.md |
 | Read-only review | skills/userscript-review/SKILL.md |
 | Release or publish | skills/userscript-release/SKILL.md |
 | Codex/browser/proxy/helper/connection timeout | global timeout rule; if available, ~/.dotfiles/knowledge/shared/CODEX_TOOL_TIMEOUT_TRIAGE.md |
@@ -78,6 +79,9 @@
 
 ## Validation
 
+- Changed tests must pass `npm run lint:tests`. The behavioral test policy and
+  explicit migration inventory are owned by `docs/test-policy.md`; affected
+  selection and coverage commands do not replace required builds or live checks.
 - Run the affected tests, build, syntax/check commands, and git diff --check for
   behavior changes. The release skill owns stage-specific validation and reuse
   of passing local checks for unchanged inputs.
