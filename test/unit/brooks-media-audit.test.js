@@ -12,14 +12,24 @@ import {
   titleKey,
 } from '../../scripts/brooks-media-audit.mjs';
 
-test('Brooks media audit normalizes titles and version suffixes', () => {
-  assert.equal(titleKey('Video 05: Program Trading v3'), 'video 05 program trading v3');
+test('user observes that Brooks media audit normalizes titles and version suffixes', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = 'Video 05: Program Trading v3';
+  // When the real operation processes that input
+  const observed = titleKey(scenarioInput);
+  // Then Brooks media audit normalizes titles and version suffixes
+  assert.equal(observed, 'video 05 program trading v3');
   assert.equal(stripVersionSuffix('Video 05 Program Trading v3'), 'Video 05 Program Trading');
   assert.equal(stripVersionSuffix('Video 07B Starting Out version 2'), 'Video 07B Starting Out');
 });
 
-test('Brooks media audit parses local video and subtitle filenames', () => {
-  assert.deepEqual(parseLocalMediaFile('/tmp/Video 15A Breakouts v2.mp4'), {
+test('user observes that Brooks media audit parses local video and subtitle filenames', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = '/tmp/Video 15A Breakouts v2.mp4';
+  // When the real operation processes that input
+  const observed = parseLocalMediaFile(scenarioInput);
+  // Then Brooks media audit parses local video and subtitle filenames
+  assert.deepEqual(observed, {
     path: '/tmp/Video 15A Breakouts v2.mp4',
     name: 'Video 15A Breakouts v2.mp4',
     kind: 'video',
@@ -40,7 +50,8 @@ test('Brooks media audit parses local video and subtitle filenames', () => {
   assert.equal(parseLocalMediaFile('/tmp/notes.txt'), null);
 });
 
-test('Brooks media audit distinguishes current exact files from local variants', () => {
+test('user observes that Brooks media audit distinguishes current exact files from local variants', () => {
+  // Given the media index and local archive describe current and variant files
   const index = {
     total: 2,
     records: [
@@ -72,6 +83,7 @@ test('Brooks media audit distinguishes current exact files from local variants',
     '/videos/Video 16A Channels.zh.vtt',
   ];
 
+  // When the audit resolves the supplied media identity
   const audit = auditBrooksMediaIndex({
     index,
     indexPath: '/tmp/index.json',
@@ -80,6 +92,7 @@ test('Brooks media audit distinguishes current exact files from local variants',
     generatedAt: '2026-06-03T00:00:00.000Z',
   });
 
+  // Then Brooks media audit distinguishes current exact files from local variants
   assert.equal(audit.summary.records, 2);
   assert.equal(audit.summary.currentComplete, 1);
   assert.equal(audit.summary.missingCurrentVideo, 1);
@@ -98,8 +111,9 @@ test('Brooks media audit distinguishes current exact files from local variants',
   assert.deepEqual(audit.items[1].needs, []);
 });
 
-test('Brooks media audit matches records whose media title already ends with a video extension', () => {
-  const audit = auditBrooksMediaIndex({
+test('user observes that Brooks media audit matches records whose media title already ends with a video extension', () => {
+  // Given the supplied input describes this media scenario
+  const scenarioInput = {
     index: {
       records: [
         {
@@ -119,8 +133,11 @@ test('Brooks media audit matches records whose media title already ends with a v
       '/videos/BTC HTT 47C Trading in Trading Ranges.mp4',
       '/videos/BTC HTT 47C Trading in Trading Ranges.mp4.zh.vtt',
     ],
-  });
+  };
+  // When the Brooks media audit matches records whose media title already ends with a video extension
+  const audit = auditBrooksMediaIndex(scenarioInput);
 
+  // Then Brooks media audit matches records whose media title already ends with a video extension
   assert.deepEqual(audit.items[0].needs, ['enSubtitle']);
   assert.deepEqual(audit.items[0].local.current.video.map(file => file.name), [
     'BTC HTT 47C Trading in Trading Ranges.mp4',
@@ -130,8 +147,9 @@ test('Brooks media audit matches records whose media title already ends with a v
   ]);
 });
 
-test('Brooks media audit keeps caption download metadata when only the current video is missing', () => {
-  const audit = auditBrooksMediaIndex({
+test('user observes that Brooks media audit keeps caption download metadata when only the current video is missing', () => {
+  // Given the supplied input describes this media scenario
+  const scenarioInput = {
     index: {
       records: [
         {
@@ -151,8 +169,11 @@ test('Brooks media audit keeps caption download metadata when only the current v
       '/videos/Video 21B Reversals v4.en.vtt',
       '/videos/Video 21B Reversals v4.zh.vtt',
     ],
-  });
+  };
+  // When the Brooks media audit keeps caption download metadata when only the current video is missing
+  const audit = auditBrooksMediaIndex(scenarioInput);
 
+  // Then Brooks media audit keeps caption download metadata when only the current video is missing
   assert.deepEqual(audit.items[0].needs, ['video']);
   assert.deepEqual(Object.keys(audit.downloadPlan[0].downloads).sort(), [
     'enSubtitle',
@@ -169,18 +190,24 @@ test('Brooks media audit keeps caption download metadata when only the current v
   );
 });
 
-test('Brooks media audit builds quoted yt-dlp commands', () => {
-  assert.equal(
-    buildYtDlpCommand({
+test('user observes that Brooks media audit builds quoted yt-dlp commands', () => {
+  // Given the supplied input retains its original contract values
+  const scenarioInput = {
       referer: 'https://example.com/embed?id=1',
       output: "Video 01 Trader's Test.%(ext)s",
       m3u8: 'https://cdn.example.com/video.m3u8?token=abc',
-    }),
+    };
+  // When the real operation processes that input
+  const observed = buildYtDlpCommand(scenarioInput);
+  // Then Brooks media audit builds quoted yt-dlp commands
+  assert.equal(
+    observed,
     "yt-dlp --referer 'https://example.com/embed?id=1' -N 16 -o 'Video 01 Trader'\\''s Test.%(ext)s' 'https://cdn.example.com/video.m3u8?token=abc'",
   );
 });
 
-test('Brooks media audit can import the latest downloaded index before auditing', async () => {
+test('user observes that Brooks media audit can import the latest downloaded index before auditing', async () => {
+  // Given the media index and local archive describe current and variant files
   const dir = await mkdtemp(join(tmpdir(), 'brooks-audit-latest-test-'));
   try {
     const downloadsDir = join(dir, 'Downloads');
@@ -220,7 +247,9 @@ test('Brooks media audit can import the latest downloaded index before auditing'
     ]);
 
     const importedPath = join(reportsDir, 'brooks-media-index-2026-06-03T104215Z.json');
+    // When the audit resolves the supplied media identity
     const audit = JSON.parse(await readFile(outputPath, 'utf8'));
+    // Then Brooks media audit can import the latest downloaded index before auditing
     assert.equal(audit.indexPath, importedPath);
     assert.equal(audit.summary.records, 1);
     await assert.rejects(

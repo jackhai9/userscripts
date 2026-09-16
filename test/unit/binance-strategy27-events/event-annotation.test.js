@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { captureStrategyError } from '../../helpers/strategy-migration-boundaries.js';
 import { createLocalizedAnnotation, localizeAnnotation } from '../../../src/binance-strategy27-events/core/ui-copy.js';
 
 import {
@@ -40,7 +41,8 @@ function snapshot(midReturn = '4.2', candidateObservations = []) {
   };
 }
 
-test('formats objective four-force facts without hindsight labels', () => {
+test('user formats objective four-force facts without hindsight labels', () => {
+  // Given the ordinary event evidence and selected language
   const event = {
     event_kind: 'orderflow_event',
     analysis_start_at_ms: 0,
@@ -52,8 +54,10 @@ test('formats objective four-force facts without hindsight labels', () => {
     trigger_snapshot: snapshot(),
     latest_snapshot: snapshot('4.2', ['bullish_sell_impact_failure']),
   };
+  // When buildEventAnnotation processes the configured inputs
   const result = buildEventAnnotation({ event, rehydrated: false });
 
+  // Then user formats objective four-force facts without hindsight labels
   assert.equal(result.markerShape, 'arrow_up');
   assert.equal(result.title, '订单流观察');
   assert.equal(result.windowText, '统计 1 秒 · 4 桶');
@@ -71,7 +75,8 @@ test('formats objective four-force facts without hindsight labels', () => {
   assert.doesNotMatch(JSON.stringify(result), /局部高点|局部低点|阻力|支撑|12345\.6789/);
 });
 
-test('marks rehydrated and input-gap events without a directional conclusion', () => {
+test('user marks rehydrated and input-gap events without a directional conclusion', () => {
+  // Given the ordinary event evidence and selected language
   const event = {
     event_kind: 'price_response_event',
     analysis_start_at_ms: 0,
@@ -83,10 +88,12 @@ test('marks rehydrated and input-gap events without a directional conclusion', (
     trigger_snapshot: snapshot('-3'),
     latest_snapshot: snapshot('-3'),
   };
+  // When buildEventAnnotation processes the configured inputs
   const result = buildEventAnnotation({
     event,
     rehydrated: true,
   });
+  // Then user marks rehydrated and input-gap events without a directional conclusion
   assert.equal(result.markerShape, null);
   assert.equal(result.markerColor, null);
   assert.equal(result.triggerText, '价格响应');
@@ -95,7 +102,8 @@ test('marks rehydrated and input-gap events without a directional conclusion', (
   assert.doesNotMatch(JSON.stringify(result), /延续|恢复|反转|部分回撤/);
 });
 
-test('formats small bps and large notionals without exposing raw decimal tails', () => {
+test('user formats small bps and large notionals without exposing raw decimal tails', () => {
+  // Given the ordinary event evidence and selected language
   const large = snapshot('0.04321');
   large.aggressive_buy.notional = '1250000.9988';
   const event = {
@@ -109,18 +117,21 @@ test('formats small bps and large notionals without exposing raw decimal tails',
     trigger_snapshot: large,
     latest_snapshot: large,
   };
+  // When buildEventAnnotation processes the configured inputs
   const result = buildEventAnnotation({
     event,
     rehydrated: false,
   });
 
+  // Then user formats small bps and large notionals without exposing raw decimal tails
   assert.equal(result.summary, '价格 +0.04 bps · 点差 1.2 bps');
   assert.equal(result.forceRows[0].value, '1.25M USDT · 3 笔');
   assert.equal(result.triggerText, '价格响应、点差变化');
   assert.equal(result.closeText, '达到最长持续时间');
 });
 
-test('labels a zero one-second trade total as no aggressive trades', () => {
+test('user sees a zero one-second trade total labeled as no aggressive trades', () => {
+  // Given the ordinary event evidence and selected language
   const empty = snapshot();
   empty.aggressive_buy = { notional: '0', trade_count: 0, to_opposite_depth: '0' };
   const event = {
@@ -135,8 +146,10 @@ test('labels a zero one-second trade total as no aggressive trades', () => {
     latest_snapshot: empty,
   };
 
+  // When buildEventAnnotation processes the configured inputs
   const result = buildEventAnnotation({ event, rehydrated: false });
 
+  // Then user sees a zero one-second trade total labeled as no aggressive trades
   assert.deepEqual(result.forceRows[0], {
     label: '主动买',
     value: '无主动成交',
@@ -144,7 +157,8 @@ test('labels a zero one-second trade total as no aggressive trades', () => {
   });
 });
 
-test('rejects an unmapped user-visible trigger instead of exposing an internal key', () => {
+test('user rejects an unmapped user-visible trigger instead of exposing an internal key', () => {
+  // Given an ordinary event containing an unmapped trigger identity
   const event = {
     event_kind: 'orderflow_event',
     analysis_start_at_ms: 0,
@@ -157,13 +171,14 @@ test('rejects an unmapped user-visible trigger instead of exposing an internal k
     latest_snapshot: snapshot(),
   };
 
-  assert.throws(
-    () => buildEventAnnotation({ event, rehydrated: false }),
-    /Unknown Strategy 27 trigger reason/,
-  );
+  // When the annotation formats the event for the visible panel
+  const failure = captureStrategyError(() => buildEventAnnotation({ event, rehydrated: false }));
+  // Then the invalid trigger is reported instead of becoming user-facing text
+  assert.match(failure.message, /Unknown Strategy 27 trigger reason/);
 });
 
-test('freezes the first red or green candidate presentation for an event', () => {
+test('user retains the first red or green candidate presentation for an event', () => {
+  // Given the ordinary event evidence and selected language
   const presentations = new Map();
   const first = createLocalizedAnnotation((locale) => ({
     locale,
@@ -184,7 +199,10 @@ test('freezes the first red or green candidate presentation for an event', () =>
     summary: 'later',
   }), 'zh-CN');
 
-  assert.equal(stabilizeCandidatePresentation(presentations, 'event', first), first);
+  // When stabilizeCandidatePresentation processes the configured inputs
+  const observedResult = stabilizeCandidatePresentation(presentations, 'event', first);
+  // Then user retains the first red or green candidate presentation for an event
+  assert.equal(observedResult, first);
   const stable = stabilizeCandidatePresentation(presentations, 'event', later);
   for (const locale of ['zh-CN', 'en']) {
     const translated = localizeAnnotation(stable, locale);
@@ -196,9 +214,12 @@ test('freezes the first red or green candidate presentation for an event', () =>
   }
 });
 
-test('ordinary bilingual copy translates facts and preserves the first candidate across language changes', () => {
+test('user observes that ordinary bilingual copy translates facts and preserves the first candidate across language changes', () => {
+  // Given the ordinary event evidence and selected language
   const event = { event_kind: 'orderflow_event', event_status: 'incomplete', close_reason: 'universe_removed', trigger_reasons: ['mid_return_bps'], latest_snapshot: snapshot('4.2', ['bullish_sell_impact_failure']) };
+  // When buildEventAnnotation processes the configured inputs
   const first = buildEventAnnotation({ event, rehydrated: true, locale: 'en' });
+  // Then user observes that ordinary bilingual copy translates facts and preserves the first candidate across language changes
   assert.equal(first.title, 'Order-flow observation');
   assert.equal(first.closeText, 'Removed from monitoring');
   assert.equal(first.windowText, 'Window 1 s · 4 buckets');

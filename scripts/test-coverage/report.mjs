@@ -7,6 +7,7 @@ import { BRANCH_TARGET, ROOT, isProductionSource, productionSourceFiles } from '
 import { createSourceRegistry, mapCoverageEntry } from './source-maps.mjs';
 import { verifyCaptures } from './capture-contract.mjs';
 import { splitCoverageEntry } from './split-entries.mjs';
+import { mergeBrowserSnapshots } from './browser-snapshots.mjs';
 
 export async function buildCoverageReport({ nodeDirectory, browserDirectory, outputDirectory, expectedNodeTests }) {
   const registry = await createSourceRegistry();
@@ -24,6 +25,7 @@ export async function buildCoverageReport({ nodeDirectory, browserDirectory, out
   const browserManifest = browserDirectory === null ? null
     : JSON.parse(await readFile(resolve(browserDirectory, 'manifest.json'), 'utf8'));
   const unmapped = [];
+  const blockEvidenceUnavailable = [];
   const counts = { node: 0, browser: 0 };
   for (const [layer, directory] of [['node', nodeDirectory], ['browser', browserDirectory]]) {
     if (directory === null) continue;
@@ -31,11 +33,20 @@ export async function buildCoverageReport({ nodeDirectory, browserDirectory, out
     assert.ok(files.length > 0, 'Missing ' + layer + ' coverage captures');
     for (const path of files) {
       const capture = JSON.parse(await readFile(resolve(directory, path), 'utf8'));
-      const entries = capture.entries;
+      let entries;
       if (layer === 'node') capturedTests.add(capture.testFile);
       else {
         assert.equal(capturedBrowserTests.has(capture.testId), false, 'Duplicate browser capture');
         capturedBrowserTests.add(capture.testId);
+      }
+      if (layer === 'browser') {
+        const merged = mergeBrowserSnapshots(capture);
+        entries = merged.entries;
+        blockEvidenceUnavailable.push(...merged.blockEvidenceUnavailable.map(evidence => ({
+          ...evidence, captureFile: path, testId: capture.testId, testFile: capture.testFile,
+        })));
+      } else {
+        entries = capture.entries;
       }
       const mapped = [];
       for (const entry of entries.flatMap((raw) => splitCoverageEntry(raw, registry))) {
@@ -73,6 +84,8 @@ export async function buildCoverageReport({ nodeDirectory, browserDirectory, out
     capturedEntries: counts,
     tests: tested,
     unmapped,
+    metricInterpretation: blockEvidenceUnavailable.length > 0 ? 'retained-evidence-lower-bound' : 'captured-v8-counts',
+    blockEvidenceUnavailable,
   };
   await writeFile(resolve(outputDirectory, 'coverage-summary.json'), JSON.stringify(summary, null, 2) + '\n');
   return { summary, reportPath: resolve(outputDirectory, 'index.html') };

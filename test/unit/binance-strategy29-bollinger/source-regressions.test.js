@@ -4,54 +4,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { STRATEGY29_REFERENCE_SHA256 } from '../../../src/binance-strategy29-bollinger/core/remote-summary-contract.js';
 
-const source = await readFile(new URL('../../../src/binance-strategy29-bollinger/monitor.js', import.meta.url), 'utf8');
-const bollingerPatternSource = await readFile(new URL('../../../src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js', import.meta.url), 'utf8');
-const entrySource = await readFile(new URL('../../../src/binance-strategy29-bollinger/index.user.js', import.meta.url), 'utf8');
-const remoteSource = await readFile(new URL('../../../src/binance-strategy29-bollinger/remote-summary.js', import.meta.url), 'utf8');
-
-function readFunctionBody(name, sourceText = source) {
-  const start = sourceText.indexOf(`function ${name}(`);
-  assert.notEqual(start, -1, `${name} should exist`);
-  const braceStart = sourceText.indexOf('{', start);
-  let depth = 0;
-  for (let index = braceStart; index < sourceText.length; index += 1) {
-    const char = sourceText[index];
-    if (char === '{') depth += 1;
-    if (char === '}') depth -= 1;
-    if (depth === 0) return sourceText.slice(braceStart + 1, index);
-  }
-  assert.fail(`${name} body should be closed`);
-}
-
 function readUserscriptVersion(sourceText) {
   const match = sourceText.match(/^\/\/ @version\s+(\S+)\s*$/m);
   assert.notEqual(match, null, 'userscript version metadata should exist');
   return match[1];
 }
 
-test('bearish chart alerts reconcile every loaded closed-bar window without silent truncation', () => {
-  const synchronizeBody = readFunctionBody('synchronizeBearishBollingerAlerts');
-  assert.match(synchronizeBody, /reconcileBearishBollingerAlertWindow\(\{/);
-  assert.match(synchronizeBody, /lastProcessedClosedBarsWindowKey/);
-  assert.match(synchronizeBody, /lastProcessedSignals/);
-  assert.doesNotMatch(synchronizeBody, /lastProcessedClosedBarTime/);
-  assert.doesNotMatch(synchronizeBody, /\.slice\(-BEARISH_BOLLINGER_ALERT_MAX_MARKERS\)/);
-  assert.doesNotMatch(source, /BEARISH_BOLLINGER_ALERT_MAX_MARKERS/);
-  assert.doesNotMatch(source, /nextExportAtMs/);
-});
+test('user installs Strategy29 with only the reviewed sandbox capabilities', async () => {
+  // Given the public entry and remote-summary modules define the sandbox boundary.
+  const paths = ['index.user.js', 'remote-summary.js'].map(path =>
+    new URL('../../../src/binance-strategy29-bollinger/' + path, import.meta.url));
 
-test('Bollinger chart alert failures distinguish snapshot races from contract failures', () => {
-  const synchronizeBody = readFunctionBody('synchronizeBearishBollingerAlerts');
-  const snapshotBranchStart = synchronizeBody.indexOf("failureKind === 'retry'");
-  assert.ok(snapshotBranchStart >= 0);
-  assert.match(synchronizeBody, /applyBollingerAlertTaskFailure\(context, error\)/);
-  assert.match(synchronizeBody, /failureKind === 'retry'[\s\S]*等待下一次采样/);
-  assert.match(synchronizeBody, /context\.cleanupPending[\s\S]*context\.layer\.clear\(\)/);
-  assert.match(bollingerPatternSource, /context\.failed = true;/);
-  assert.match(bollingerPatternSource, /context\.cleanupPending = true;/);
-});
+  // When their current source bytes are read for the capability audit.
+  const [entrySource, remoteSource] = await Promise.all(paths.map(path => readFile(path, 'utf8')));
 
-test('Strategy29 sandbox metadata is exact and coordinates through unsafeWindow', () => {
+  // Then metadata and page coordination keep the exact reviewed grants and transport boundary.
   assert.equal(readUserscriptVersion(entrySource), '0.5.5');
   assert.deepEqual(
     [...entrySource.matchAll(/^\/\/ @grant\s+(\S+)\s*$/gm)].map(match => match[1]),
@@ -67,11 +34,26 @@ test('Strategy29 sandbox metadata is exact and coordinates through unsafeWindow'
   assert.doesNotMatch(entrySource, /@grant\s+none/);
 });
 
-test('remote summary remains read-only and does not add chart or exchange transports', () => {
+test('user receives a remote summary module with no chart mutations or exchange transport', async () => {
+  // Given the remote summary is an explicitly read-only module.
+  const path = new URL('../../../src/binance-strategy29-bollinger/remote-summary.js', import.meta.url);
+
+  // When the actual module is inspected for forbidden capabilities.
+  const remoteSource = await readFile(path, 'utf8');
+
+  // Then the module retains its entrypoint without acquiring unrelated data or chart APIs.
   assert.doesNotMatch(remoteSource, /WebSocket|\.fetch\(|createMultipointShape|createShape|exchangeInfo|apiKey|apiSecret/);
   assert.match(remoteSource, /createStrategy29RemoteSummary/);
 });
 
-test('remote parity display is pinned to the exact reviewed local detector bytes', () => {
-  assert.equal(createHash('sha256').update(bollingerPatternSource).digest('hex'), STRATEGY29_REFERENCE_SHA256);
+test('user sees remote parity pinned to the exact reviewed local detector bytes', async () => {
+  // Given the remote contract names the reviewed detector hash.
+  const path = new URL('../../../src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js', import.meta.url);
+
+  // When the current detector source is hashed without rewriting its bytes.
+  const source = await readFile(path, 'utf8');
+  const actual = createHash('sha256').update(source).digest('hex');
+
+  // Then parity can only be claimed for that exact detector implementation.
+  assert.equal(actual, STRATEGY29_REFERENCE_SHA256);
 });

@@ -42,6 +42,8 @@ function openNativeHost(t, scenario) {
     fixture: {
       snapshot: () => structuredClone(dom.window.__BINANCE_FIXTURE__.snapshot()),
       switchSymbol: (symbol) => dom.window.__BINANCE_FIXTURE__.switchSymbol(symbol),
+      setPositions: (positions) => dom.window.__BINANCE_FIXTURE__.setPositions(positions),
+      setOrders: (orders) => dom.window.__BINANCE_FIXTURE__.setOrders(orders),
     },
     async respond(payload) {
       submission.resolve(new Response(JSON.stringify(payload), {
@@ -196,3 +198,383 @@ test('user cannot configure undeclared order kinds or invalid submit outcomes', 
   assert.throws(constructUnknown, /unknown.*pending/);
   assert.throws(constructRejection, /code and message/);
 });
+
+test('user can detect an unsafe row cancellation because the fake removes exactly the clicked other-symbol order', (t) => {
+  // Given the native list contains both symbols and a delayed row cancellation.
+  const host = openNativeHost(t, createCancelScenario({
+    orders: mixedOrders,
+    ui: { accountTab: 'openOrders' },
+    host: { rowCancelDelayMs: 200 },
+  }));
+  const icon = host.document.querySelector('[data-order-id="other-1"] svg');
+
+  // When a caller clicks the wrong visible SVG row and navigates before clearing.
+  icon.dispatchEvent(new host.document.defaultView.MouseEvent('click', { bubbles: true }));
+  host.fixture.switchSymbol(OTHER_SYMBOL);
+  t.mock.timers.tick(199);
+  assert.deepEqual(host.fixture.snapshot().orders, mixedOrders);
+  t.mock.timers.tick(1);
+
+  // Then only that captured ID is removed; the fixture has not corrected the caller to the original symbol.
+  const state = host.fixture.snapshot();
+  assert.deepEqual(state.orders, [ORDER_SETS.current[0], ...protectedOrders]);
+  assert.deepEqual(state.events.filter(({ type }) => type.startsWith('row-cancel')).map(({ type, orderId }) => ({ type, orderId })), [
+    { type: 'row-cancel-requested', orderId: 'other-1' },
+    { type: 'row-cancel-cleared', orderId: 'other-1' },
+  ]);
+});
+
+for (const action of ['cancel', 'confirm']) {
+  test(`user must explicitly ${action} a native row dialog before its captured cancellation can settle`, (t) => {
+    // Given row cancellation requires a native decision and releases declared quantity only after clearing.
+    const host = openNativeHost(t, createCancelScenario({
+      orders: mixedOrders,
+      ui: { accountTab: 'openOrders', openableQuantity: '0.04' },
+      host: { rowCancelMode: 'dialog', openableQuantityAfterRowCancel: '10' },
+    }));
+    host.document.querySelector('[data-order-id="current-1"] svg')
+      .dispatchEvent(new host.document.defaultView.MouseEvent('click', { bubbles: true }));
+    t.mock.timers.tick(1000);
+    assert.deepEqual(host.fixture.snapshot().orders, mixedOrders);
+    assert.equal(host.fixture.snapshot().dialogOpen, true);
+
+    // When the user makes the declared native dialog decision.
+    host.document.querySelector('[data-row-dialog-action="' + action + '"]').click();
+    t.mock.timers.tick(0);
+
+    // Then cancellation and released quantity match that decision exactly.
+    const state = host.fixture.snapshot();
+    assert.equal(state.dialogOpen, false);
+    assert.deepEqual(state.orders, action === 'confirm' ? [ORDER_SETS.both[1], ...protectedOrders] : mixedOrders);
+    assert.equal(state.openableQuantity, action === 'confirm' ? '10' : '0.04');
+    assert.equal(host.document.querySelector('[data-testid="max-buy-amount"]').textContent,
+      '可开 ' + (action === 'confirm' ? '10' : '0.04') + ' HYPE');
+  });
+}
+
+test('user sees an unconfirmed row request stay unconfirmed after its deadline', (t) => {
+  // Given the host is explicitly unable to confirm a row cancellation.
+  const host = openNativeHost(t, createCancelScenario({
+    orders: ORDER_SETS.current,
+    ui: { accountTab: 'openOrders' },
+    host: { rowCancelMode: 'unchanged' },
+  }));
+
+  // When the caller clicks the SVG and all modeled response time has elapsed.
+  host.document.querySelector('.open-order-row svg')
+    .dispatchEvent(new host.document.defaultView.MouseEvent('click', { bubbles: true }));
+  t.mock.timers.tick(5000);
+
+  // Then no row removal or successful cancellation is fabricated.
+  assert.deepEqual(host.fixture.snapshot().orders, ORDER_SETS.current);
+  assert.deepEqual(host.fixture.snapshot().events.map(({ type }) => type), ['row-cancel-requested']);
+});
+
+for (const invalid of [
+  { ui: { openableQuantity: null } },
+  { host: { rowCancelMode: 'repair-scope' } },
+  { host: { rowCancelDelayMs: -1 } },
+  { host: { openableQuantityAfterRowCancel: -1 } },
+]) {
+  test(`user cannot configure an ambiguous row host boundary ${JSON.stringify(invalid)}`, () => {
+    // Given the row boundary contains an invalid quantity, outcome, or delay.
+    const scenario = invalid;
+
+    // When the caller declares that native boundary.
+    const construct = () => createCancelScenario(scenario);
+
+    // Then the host refuses the configuration instead of assigning silent behavior.
+    assert.throws(construct, /Openable quantity|Row cancellation/);
+  });
+}
+
+test('user can discover later native pages only by scrolling the declared host list to its bottom', (t) => {
+  // Given the external list has five explicit rows but initially mounts only two.
+  const orders = Array.from({ length: 5 }, (_, index) => ({
+    ...ORDER_SETS.current[0], id: 'page-' + index, price: String(80 + index),
+    symbol: index === 4 ? OTHER_SYMBOL : CURRENT_SYMBOL,
+  }));
+  const host = openNativeHost(t, createCancelScenario({
+    orders, ui: { accountTab: 'openOrders' }, host: { orderRowsPageSize: 2 },
+  }));
+  const content = host.document.querySelector('.orders-content');
+  Object.defineProperties(content, {
+    clientHeight: { value: 96 },
+    scrollHeight: { get: () => content.querySelectorAll('.open-order-row').length * 80 },
+  });
+  const mountedIds = () => Array.from(content.querySelectorAll('[data-order-id]'), row => row.dataset.orderId);
+  assert.deepEqual(mountedIds(), ['page-0', 'page-1']);
+
+  // When an ordinary scroll stops before the bottom of the current page.
+  content.scrollTop = 10;
+  content.dispatchEvent(new host.document.defaultView.Event('scroll'));
+
+  // Then no later page is fabricated by a non-bottom scroll.
+  assert.deepEqual(mountedIds(), ['page-0', 'page-1']);
+
+  // When two actual bottom events expose the remaining pages.
+  content.scrollTop = 64;
+  content.dispatchEvent(new host.document.defaultView.Event('scroll'));
+  assert.deepEqual(mountedIds(), ['page-0', 'page-1', 'page-2', 'page-3']);
+  content.scrollTop = 224;
+  content.dispatchEvent(new host.document.defaultView.Event('scroll'));
+
+  // Then the final unfiltered page includes its real other-symbol row and the account remains unchanged.
+  assert.deepEqual(mountedIds(), ['page-0', 'page-1', 'page-2', 'page-3', 'page-4']);
+  assert.deepEqual(host.fixture.snapshot().orders, orders);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'order-rows-page-loaded')
+    .map(({ ids }) => ids.length), [4, 5]);
+});
+
+test('user sees native row mounting wait for its declared host deadline', (t) => {
+  // Given the account tabs and filter are committed before React mounts its current rows.
+  const host = openNativeHost(t, createCancelScenario({
+    orders: mixedOrders, ui: { accountTab: 'openOrders' }, host: { orderRowsMountDelayMs: 200 },
+  }));
+  assert.equal(host.document.querySelectorAll('.open-order-row').length, 0);
+  assert.equal(host.document.querySelector('[data-orders-loading]').textContent, 'Loading orders');
+
+  // When the host reaches the exact row-mount deadline.
+  t.mock.timers.tick(199);
+  assert.equal(host.document.querySelectorAll('.open-order-row').length, 0);
+  t.mock.timers.tick(1);
+
+  // Then real current and other-symbol basic rows appear without modifying account state.
+  assert.deepEqual(Array.from(host.document.querySelectorAll('[data-order-id]'), row => row.dataset.orderId),
+    ['current-1', 'other-1']);
+  assert.equal(host.document.querySelector('[data-orders-loading]'), null);
+  assert.deepEqual(host.fixture.snapshot().orders, mixedOrders);
+});
+
+test('user cannot receive an old delayed native row mount in a newly selected symbol scope', (t) => {
+  // Given one symbol-filtered mount is pending while another symbol has different orders.
+  const host = openNativeHost(t, createCancelScenario({
+    orders: mixedOrders, ui: { accountTab: 'openOrders', hideOtherSymbols: true },
+    host: { orderRowsMountDelayMs: 200 },
+  }));
+  t.mock.timers.tick(100);
+
+  // When the symbol changes before the retired mount would complete.
+  host.fixture.switchSymbol(OTHER_SYMBOL);
+  t.mock.timers.tick(100);
+
+  // Then the old callback cannot publish rows into the new pending view.
+  assert.equal(host.document.querySelectorAll('.open-order-row').length, 0);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'order-rows-mounted'), []);
+
+  // When the new symbol reaches its own host mount deadline.
+  t.mock.timers.tick(100);
+
+  // Then only that symbol's actual row becomes visible.
+  assert.deepEqual(Array.from(host.document.querySelectorAll('[data-order-id]'), row => row.dataset.orderId), ['other-1']);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'order-rows-mounted').map(({ ids }) => ids),
+    [['other-1']]);
+});
+
+test('user can observe different native cancellation results for the actual requested row IDs', (t) => {
+  // Given one row has an unresolved cancellation while another row is confirmed normally.
+  const host = openNativeHost(t, createCancelScenario({
+    orders: mixedOrders, ui: { accountTab: 'openOrders' },
+    host: { rowCancelModesById: { 'current-1': 'unchanged' } },
+  }));
+  const clickRow = id => host.document.querySelector('[data-order-id="' + id + '"] svg')
+    .dispatchEvent(new host.document.defaultView.MouseEvent('click', { bubbles: true }));
+
+  // When the caller requests both concrete rows in order.
+  clickRow('current-1');
+  clickRow('other-1');
+  t.mock.timers.tick(1000);
+
+  // Then only the explicitly successful other-symbol request changes state and the unresolved row remains.
+  assert.deepEqual(host.fixture.snapshot().orders, [ORDER_SETS.current[0], ...protectedOrders]);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'row-cancel-cleared').map(({ orderId }) => orderId),
+    ['other-1']);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId),
+    ['current-1', 'other-1']);
+});
+
+for (const host of [
+  { orderRowsPageSize: 0 },
+  { orderRowsMountDelayMs: -1 },
+  { rowCancelModesById: { missing: 'clear' } },
+  { rowCancelModesById: { 'current-1': 'invent-success' } },
+]) {
+  test(`user cannot create an ambiguous paged native order fixture ${JSON.stringify(host)}`, () => {
+    // Given the declared host has invalid pagination, timing, or row-specific outcomes.
+    const scenario = { orders: mixedOrders, host };
+
+    // When a caller constructs the fixture from that declaration.
+    const construct = () => createCancelScenario(scenario);
+
+    // Then construction fails before any native DOM or account action occurs.
+    assert.throws(construct, /Native row/);
+  });
+}
+
+test('user receives native account count publications without losing the observed tab identities', (t) => {
+  // Given the account has no positions or orders and the close form has zero available quantities.
+  const host = openNativeHost(t, createCancelScenario({ ui: { tradeMode: 'CLOSE', accountTab: 'openOrders' } }));
+  const tabs = host.document.querySelector('#account-tabs');
+  const positionTab = tabs.querySelector('[data-account-tab="positions"]');
+  const ordersTab = tabs.querySelector('[data-account-tab="openOrders"]');
+  const position = { symbol: CURRENT_SYMBOL, side: 'SHORT', quantity: '4.5' };
+
+  // When independent native publications add a position and both kinds of orders.
+  host.fixture.setPositions([position]);
+  host.fixture.setOrders(mixedOrders);
+
+  // Then the existing observed elements carry the new counts and the form reflects the exact native quantity.
+  assert.equal(host.document.querySelector('#account-tabs'), tabs);
+  assert.equal(host.document.querySelector('[data-account-tab="positions"]'), positionTab);
+  assert.equal(host.document.querySelector('[data-account-tab="openOrders"]'), ordersTab);
+  assert.equal(positionTab.textContent, '仓位(1)');
+  assert.equal(ordersTab.textContent, '当前委托(4)');
+  assert.equal(host.document.querySelector('[data-open-orders-sub-tab="basic"]').textContent, '基础单(2)');
+  assert.equal(host.document.querySelector('[data-open-orders-sub-tab="conditional"]').textContent, '条件委托(2)');
+  assert.equal(host.document.querySelector('[data-testid="max-buy-amount"]').textContent, '可平 4.5 HYPE');
+  assert.deepEqual(host.fixture.snapshot().positions, [position]);
+  assert.deepEqual(host.fixture.snapshot().orders, mixedOrders);
+
+  // When a later native publication clears both account collections.
+  host.fixture.setPositions([]);
+  host.fixture.setOrders([]);
+
+  // Then the same counters return to zero and the obsolete native cancellation control disappears.
+  assert.equal(host.document.querySelector('#account-tabs'), tabs);
+  assert.equal(positionTab.textContent, '仓位(0)');
+  assert.equal(ordersTab.textContent, '当前委托(0)');
+  assert.equal(host.document.querySelector('[data-testid="max-buy-amount"]').textContent, '可平 0 HYPE');
+  assert.equal(host.document.querySelector('[data-cancel-all]'), null);
+  assert.deepEqual(host.fixture.snapshot().positions, []);
+  assert.deepEqual(host.fixture.snapshot().orders, []);
+});
+
+test('user receives a native order drawing only after acceptance and its full chart save after 100 milliseconds', async (t) => {
+  // Given the native chart contains one existing order and the new submit response is pending.
+  const host = openNativeHost(t, createCancelScenario({
+    orders: ORDER_SETS.current,
+    host: { orderDrawingEvents: true },
+  }));
+  const api = host.document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi;
+  const drawings = [];
+  api.subscribe('drawing_event', (drawingId, eventType) => {
+    drawings.push({ drawingId, eventType, toolname: api.activeChart().getShapeById(drawingId).lineDataSource().toolname });
+  });
+  host.document.querySelector('.order-entry button').click();
+  assert.deepEqual(drawings, []);
+
+  // When the accepted response reaches the native caller and 99 milliseconds pass.
+  await host.respond({ success: true });
+  t.mock.timers.tick(99);
+
+  // Then the real native shape API identifies the order while persistence still waits for its deadline.
+  assert.deepEqual(drawings, [{ drawingId: 'order-submitted-1', eventType: 'create', toolname: 'LineToolOrder' }]);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'chart-save-requested'), []);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'chart-saved'), []);
+
+  // When the complete native serialization delay elapses.
+  t.mock.timers.tick(1);
+
+  // Then exactly one native save contains both original and accepted order drawings.
+  const events = host.fixture.snapshot().events;
+  const snapshot = { checked: true, drawingIds: ['order-current-1', 'order-submitted-1'] };
+  assert.deepEqual(events.filter(({ type }) => type === 'chart-save-requested').map(({ drawingId, eventType, snapshot }) => ({ drawingId, eventType, snapshot })),
+    [{ drawingId: 'order-submitted-1', eventType: 'create', snapshot }]);
+  assert.deepEqual(events.filter(({ type }) => type === 'chart-saved').map(({ snapshot }) => snapshot), [snapshot]);
+});
+
+for (const [outcome, payload] of [
+  ['rejected', { success: false, code: '90800001', message: 'Fixture rejection' }],
+  ['unknown', { result: 'unrecognized' }],
+]) {
+  test(`user receives no native order drawing from ${outcome} submission results`, async (t) => {
+    // Given native chart event modeling is enabled for a pending submit.
+    const host = openNativeHost(t, createCancelScenario({ host: { orderDrawingEvents: true } }));
+    host.document.querySelector('.order-entry button').click();
+
+    // When the explicit non-success payload arrives and every chart deadline passes.
+    await host.respond(payload);
+    t.mock.timers.tick(1_000);
+
+    // Then neither an order shape nor chart persistence is fabricated.
+    assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type.startsWith('chart-')), []);
+    const api = host.document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi;
+    assert.throws(() => api.activeChart().getShapeById('order-submitted-1'), /No native chart order drawing exists/);
+  });
+}
+
+for (const changed of ['symbol', 'visibility']) {
+  test(`user receives no off-chart order drawing when ${changed} changes before acceptance`, async (t) => {
+    // Given the native request belongs to the original visible chart context.
+    const host = openNativeHost(t, createCancelScenario({
+      host: { orderDrawingEvents: true },
+    }));
+    host.document.querySelector('.order-entry button').click();
+
+    // When a late successful response belongs to an unavailable order-drawing context.
+    if (changed === 'symbol') host.fixture.switchSymbol(OTHER_SYMBOL);
+    else host.document.querySelector('[data-chart-orders-checkbox]').click();
+    await host.respond({ success: true });
+    t.mock.timers.tick(1_000);
+
+    // Then the API success stays visible without drawing an order into the wrong chart.
+    assert.equal(host.fixture.snapshot().events.filter(({ type }) => type === 'order-submit-api-success').length, 1);
+    assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => [
+      'chart-drawing-event', 'chart-save-requested', 'chart-saved',
+    ].includes(type)), []);
+  });
+}
+
+test('user receives native drawing removals only for the clicked visible-chart order and can unsubscribe from later events', async (t) => {
+  // Given both symbols have native orders while only the current-symbol drawing belongs to this chart.
+  const host = openNativeHost(t, createCancelScenario({
+    orders: ORDER_SETS.both,
+    ui: { accountTab: 'openOrders' },
+    host: { orderDrawingEvents: true },
+  }));
+  const api = host.document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi;
+  const drawings = [];
+  const listener = (drawingId, eventType) => drawings.push({ drawingId, eventType });
+  api.subscribe('drawing_event', listener);
+
+  // When native row actions cancel both IDs and their chart serialization delay completes.
+  host.document.querySelector('[data-order-id="current-1"] svg')
+    .dispatchEvent(new host.document.defaultView.MouseEvent('click', { bubbles: true }));
+  host.document.querySelector('[data-order-id="other-1"] svg')
+    .dispatchEvent(new host.document.defaultView.MouseEvent('click', { bubbles: true }));
+  t.mock.timers.tick(0);
+  t.mock.timers.tick(100);
+
+  // Then only the actual current chart drawing emits removal and its final save is empty.
+  assert.deepEqual(drawings, [{ drawingId: 'order-current-1', eventType: 'remove' }]);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'chart-saved').map(({ snapshot }) => snapshot),
+    [{ checked: true, drawingIds: [] }]);
+  assert.deepEqual(host.fixture.snapshot().orders, []);
+  assert.throws(() => api.activeChart().getShapeById('order-current-1'), /No native chart order drawing exists/);
+
+  // When the listener unsubscribes before a later accepted native submission.
+  api.unsubscribe('drawing_event', listener);
+  host.document.querySelector('.order-entry button').click();
+  await host.respond({ success: true });
+  t.mock.timers.tick(100);
+
+  // Then the native chart still saves, but the removed subscriber cannot receive the create event.
+  assert.deepEqual(drawings, [{ drawingId: 'order-current-1', eventType: 'remove' }]);
+  assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => type === 'chart-saved').map(({ snapshot }) => snapshot), [
+    { checked: true, drawingIds: [] },
+    { checked: true, drawingIds: ['order-submitted-1'] },
+  ]);
+});
+
+for (const enabled of [null, 'true', 1]) {
+  test(`user cannot configure native drawing events with the ambiguous value ${JSON.stringify(enabled)}`, () => {
+    // Given the host option contains an unsupported non-boolean value.
+    const scenario = { host: { orderDrawingEvents: enabled } };
+
+    // When the caller attempts to construct that native scenario.
+    const construct = () => createCancelScenario(scenario);
+
+    // Then the explicit drawing-mode contract rejects the value before any page can load.
+    assert.throws(construct, /Native order drawing events must be explicitly enabled or disabled/);
+  });
+}

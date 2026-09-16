@@ -21,16 +21,24 @@ async function readRepoFile(relativePath) {
   return readFile(new URL(relativePath, import.meta.url), 'utf8');
 }
 
-test('shared Binance futures route helper owns route parsing logic', async () => {
-  const source = await readRepoFile('../../src/shared/binance-futures-route.js');
+test('user receives one shared owner for Binance futures route parsing', async () => {
+  // Given all consumers share the declared futures-route module.
+  const path = '../../src/shared/binance-futures-route.js';
+  // When its public source contract is inspected.
+  const source = await readRepoFile(path);
+  // Then route recognition and symbol parsing remain defined by that module.
   assert.match(source, /const FUTURES_TRADING_PATH_RE = /);
   assert.match(source, /export function parseFuturesTradingSymbolFromPathname/);
   assert.match(source, /export function isFuturesTradingPathname/);
 });
 
 for (const entry of sourceEntries) {
-  test(`${entry.name} source imports shared Binance futures route helper`, async () => {
-    const source = await readRepoFile(entry.path);
+  test(`user gets the shared futures route contract in ${entry.name}`, async () => {
+    // Given this installer's declared editable entry.
+    const path = entry.path;
+    // When its route dependency is inspected.
+    const source = await readRepoFile(path);
+    // Then the installer imports the shared parser without keeping private copies.
     assert.match(source, /from '\.\.\/shared\/binance-futures-route\.js';/);
     assert.doesNotMatch(source, /const FUTURES_TRADING_PATH_RE = /);
     assert.doesNotMatch(source, /location\.pathname\.match\(\/\\\/futures\\\//);

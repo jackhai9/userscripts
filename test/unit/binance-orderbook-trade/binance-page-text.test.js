@@ -10,8 +10,15 @@ import {
   startsWithBinancePageText,
 } from '../../../src/binance-orderbook-trade/contracts/binance-page-text.js';
 
-test('centralizes the verified Chinese and English Binance page labels', () => {
-  assert.equal(matchesBinancePageText('开仓', BINANCE_PAGE_TEXT.tradeMode.OPEN), true);
+test("user centralizes the verified Chinese and English Binance page labels", () => {
+  // Given the page provides localized Binance labels
+  const scenarioInputs = ['开仓', BINANCE_PAGE_TEXT.tradeMode.OPEN];
+
+  // When the native label contract is evaluated
+  const observed = matchesBinancePageText(...scenarioInputs);
+
+  // Then centralizes the verified Chinese and English Binance page labels
+  assert.equal(observed, true);
   assert.equal(matchesBinancePageText('Open', BINANCE_PAGE_TEXT.tradeMode.OPEN), true);
   assert.equal(matchesBinancePageText('可用', BINANCE_PAGE_TEXT.availableBalance), true);
   assert.equal(matchesBinancePageText('Avbl', BINANCE_PAGE_TEXT.availableBalance), true);
@@ -19,22 +26,43 @@ test('centralizes the verified Chinese and English Binance page labels', () => {
   assert.equal(matchesBinancePageText('Cancel Order', BINANCE_PAGE_TEXT.accountOrders.rowCancel), true);
 });
 
-test('matches the verified account-order subtab labels and counts', () => {
-  assert.equal(startsWithBinancePageText('基础单(29)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab), true);
+test("user matches the verified account-order subtab labels and counts", () => {
+  // Given the page provides localized Binance labels
+  const scenarioInputs = ['基础单(29)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab];
+
+  // When the native label contract is evaluated
+  const observed = startsWithBinancePageText(...scenarioInputs);
+
+  // Then matches the verified account-order subtab labels and counts
+  assert.equal(observed, true);
   assert.equal(startsWithBinancePageText('Basic(31)', BINANCE_PAGE_TEXT.accountOrders.basicSubTab), true);
   assert.equal(startsWithBinancePageText('条件委托(0)', BINANCE_PAGE_TEXT.accountOrders.conditionalSubTab), true);
   assert.equal(startsWithBinancePageText('Conditional(0)', BINANCE_PAGE_TEXT.accountOrders.conditionalSubTab), true);
 });
 
-test('parses localized tab counts through the shared page-text contract', () => {
-  assert.equal(parseBinanceTabCount('当前委托(4)', BINANCE_PAGE_TEXT.accountOrders.openOrdersTab), 4);
+test("user parses localized tab counts through the shared page-text contract", () => {
+  // Given the page provides localized Binance labels
+  const scenarioInputs = ['当前委托(4)', BINANCE_PAGE_TEXT.accountOrders.openOrdersTab];
+
+  // When the native label contract is evaluated
+  const observed = parseBinanceTabCount(...scenarioInputs);
+
+  // Then parses localized tab counts through the shared page-text contract
+  assert.equal(observed, 4);
   assert.equal(parseBinanceTabCount('Open Orders (12)', BINANCE_PAGE_TEXT.accountOrders.openOrdersTab), 12);
   assert.equal(parseBinanceTabCount('Positions(1)', BINANCE_PAGE_TEXT.accountOrders.positionTab), 1);
   assert.equal(parseBinanceTabCount('Open Orders', BINANCE_PAGE_TEXT.accountOrders.openOrdersTab), null);
 });
 
-test('matches additional verified Binance page fragments', () => {
-  assert.equal(includesBinancePageText('只做Ｍaker (Post Only)', BINANCE_PAGE_TEXT.postOnly), true);
+test("user matches additional verified Binance page fragments", () => {
+  // Given the page provides localized Binance labels
+  const scenarioInputs = ['只做Ｍaker (Post Only)', BINANCE_PAGE_TEXT.postOnly];
+
+  // When the native label contract is evaluated
+  const observed = includesBinancePageText(...scenarioInputs);
+
+  // Then matches additional verified Binance page fragments
+  assert.equal(observed, true);
   assert.equal(includesBinancePageText('HYPEUSDT Perp', BINANCE_PAGE_TEXT.accountOrders.perpetual), true);
   assert.equal(includesBinancePageText('Hide Other Symbols', BINANCE_PAGE_TEXT.accountOrders.hideOtherSymbols), true);
   assert.equal(includesCompactBinancePageText('Open Long / Limit', BINANCE_PAGE_TEXT.tradeAction.OPEN_LONG), true);

@@ -1,5 +1,5 @@
 {
-  "minimumBranches": 66.5,
+  "minimumBranches": 90,
   "criticalSources": [
     "src/binance-orderbook-trade/core/cancel-orders.js",
     "src/binance-orderbook-trade/core/close-action.js",

@@ -12,28 +12,37 @@ import { isVisibleElement, loadFixtureDom } from '../../helpers/dom.js';
 
 const tradeFormHtml = await readFile(new URL('../../fixtures/binance-orderbook-trade/right-trade-form.html', import.meta.url), 'utf8');
 
-test('detects open and close mode tabs in the trade form only', () => {
+test("user sees that detects open and close mode tabs in the trade form only", () => {
+  // Given the current trade fields and requested values are available
   const { window } = loadFixtureDom(tradeFormHtml);
   const tabs = Array.from(window.document.querySelectorAll('[role="tab"]'));
 
-  assert.equal(isTradeModeTab(tabs[0], { panelId: 'jh-binance-close-qty-multiplier-panel' }), true);
+  // When the trade form state is read or synchronized
+  const observed = isTradeModeTab(tabs[0], { panelId: 'jh-binance-close-qty-multiplier-panel' });
+
+  // Then sees that detects open and close mode tabs in the trade form only
+  assert.equal(observed, true);
   assert.equal(isTradeModeTab(tabs[1], { panelId: 'jh-binance-close-qty-multiplier-panel' }), true);
 });
 
-test('collects trade action buttons from explicit trade scopes and ignores own panel buttons', () => {
+test("user collects trade action buttons from explicit trade scopes and ignores own panel buttons", () => {
+  // Given the current trade fields and requested values are available
   const { window } = loadFixtureDom(tradeFormHtml);
   const tradeScope = window.document.querySelector('#trade-form');
   const ownPanel = window.document.querySelector('#jh-binance-close-qty-multiplier-panel');
 
+  // When the trade form state is read or synchronized
   const openButtons = collectTradeButtonsFromScopes([tradeScope, ownPanel], 'OPEN', {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement,
   });
 
+  // Then collects trade action buttons from explicit trade scopes and ignores own panel buttons
   assert.deepEqual(openButtons.map((button) => button.textContent.trim()), ['开多', '开空']);
 });
 
-test('collects the verified English trade action labels', () => {
+test("user collects the verified English trade action labels", () => {
+  // Given the current trade fields and requested values are available
   const { window } = loadFixtureDom(`
     <section id="trade-form">
       <button>Open Long</button>
@@ -48,16 +57,19 @@ test('collects the verified English trade action labels', () => {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement,
   });
+  // When the trade form state is read or synchronized
   const closeButtons = collectTradeButtonsFromScopes([scope], 'CLOSE', {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement,
   });
 
+  // Then collects the verified English trade action labels
   assert.deepEqual(openButtons.map((button) => button.textContent.trim()), ['Open Long', 'Open Short']);
   assert.deepEqual(closeButtons.map((button) => button.textContent.trim()), ['Close Long', 'Close Short']);
 });
 
-test('reads the unique split leverage button from the active trade scope', () => {
+test("user reads the unique split leverage button from the active trade scope", () => {
+  // Given the current trade fields and requested values are available
   const { window } = loadFixtureDom(`
     <section id="trade-form">
       <button>全仓</button>
@@ -67,17 +79,20 @@ test('reads the unique split leverage button from the active trade scope', () =>
     <aside><button>20x</button></aside>
   `);
   const scope = window.document.querySelector('#trade-form');
+  // When the trade form state is read or synchronized
   const button = findCurrentLeverageButtonFromScopes([scope], {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement,
   });
 
+  // Then reads the unique split leverage button from the active trade scope
   assert.equal(button?.textContent.trim(), '5x');
   assert.equal(parseLeverageButtonText(button?.textContent), 5);
   assert.equal(parseLeverageButtonText('全仓 5x'), null);
 });
 
-test('rejects ambiguous leverage buttons in the active trade scope', () => {
+test("user rejects ambiguous leverage buttons in the active trade scope", () => {
+  // Given the current trade fields and requested values are available
   const { window } = loadFixtureDom(`
     <section id="trade-form">
       <button>5x</button>
@@ -86,8 +101,12 @@ test('rejects ambiguous leverage buttons in the active trade scope', () => {
   `);
   const scope = window.document.querySelector('#trade-form');
 
-  assert.equal(findCurrentLeverageButtonFromScopes([scope], {
+  // When the trade form state is read or synchronized
+  const observed = findCurrentLeverageButtonFromScopes([scope], {
     panelId: 'jh-binance-close-qty-multiplier-panel',
     isVisibleElement,
-  }), null);
+  });
+
+  // Then rejects ambiguous leverage buttons in the active trade scope
+  assert.equal(observed, null);
 });

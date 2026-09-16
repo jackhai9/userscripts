@@ -1,3 +1,4 @@
+import { captureThrownError } from '../../helpers/orderbook-migration-errors.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -23,14 +24,17 @@ import {
 const zh = (value) => formatLocalizedText(value, UI_LOCALE_ZH_CN);
 const en = (value) => formatLocalizedText(value, UI_LOCALE_EN);
 
-test('ladder progress snapshot is detached from later mutations', () => {
+test("user sees that ladder progress snapshot is detached from later mutations", () => {
+  // Given the ladder task and confirmed activity are available
   const progress = createLadderProgress();
   setLadderPlannedOrders(progress, 2);
   recordLadderSubmittedOrder(progress);
 
   const snapshot = snapshotLadderProgress(progress);
+  // When the progress snapshot or status is produced
   recordLadderSubmittedOrder(progress);
 
+  // Then sees that ladder progress snapshot is detached from later mutations
   assert.deepEqual(snapshot, {
     submittedOrders: 1,
     cancelledOrders: 0,
@@ -39,14 +43,17 @@ test('ladder progress snapshot is detached from later mutations', () => {
   });
 });
 
-test('stopped ladder status reports confirmed submitted and cancelled orders', () => {
+test("user sees that stopped ladder status reports confirmed submitted and cancelled orders", () => {
+  // Given the ladder task and confirmed activity are available
   const progress = createLadderProgress();
 
   setLadderPlannedOrders(progress, 5);
   recordLadderSubmittedOrder(progress);
   recordLadderSubmittedOrder(progress);
+  // When the progress snapshot or status is produced
   recordLadderCancelledOrder(progress);
 
+  // Then sees that stopped ladder status reports confirmed submitted and cancelled orders
   assert.deepEqual(progress, {
     submittedOrders: 2,
     cancelledOrders: 1,
@@ -59,9 +66,16 @@ test('stopped ladder status reports confirmed submitted and cancelled orders', (
   );
 });
 
-test('stopped ladder status omits counters for actions that did not happen', () => {
+test("user sees that stopped ladder status omits counters for actions that did not happen", () => {
+  // Given the ladder task and confirmed activity are available
+  const scenarioInputs = ['阶梯平多', createLadderProgress()];
+
+  // When the progress snapshot or status is produced
+  const observed = zh(formatStoppedLadderProgress(...scenarioInputs));
+
+  // Then sees that stopped ladder status omits counters for actions that did not happen
   assert.equal(
-    zh(formatStoppedLadderProgress('阶梯平多', createLadderProgress())),
+    observed,
     '阶梯平多已停止',
   );
 
@@ -88,11 +102,14 @@ test('stopped ladder status omits counters for actions that did not happen', () 
   );
 });
 
-test('completed ladder status names the action and confirmed result', () => {
+test("user sees that completed ladder status names the action and confirmed result", () => {
+  // Given the ladder task and confirmed activity are available
   const progress = createLadderProgress();
   setLadderPlannedOrders(progress, 5);
+  // When the progress snapshot or status is produced
   for (let index = 0; index < 5; index += 1) recordLadderSubmittedOrder(progress);
 
+  // Then sees that completed ladder status names the action and confirmed result
   assert.equal(
     zh(formatCompletedLadderProgress('阶梯平空', 5, 5, progress)),
     '阶梯平空已完成 · 已挂 5/5 笔',
@@ -108,23 +125,29 @@ test('completed ladder status names the action and confirmed result', () => {
   );
 });
 
-test('confirmed flat position is an ended business outcome with retained progress', () => {
+test("user sees that confirmed flat position is an ended business outcome with retained progress", () => {
+  // Given the ladder task and confirmed activity are available
   const progress = createLadderProgress();
   setLadderPlannedOrders(progress, 3);
+  // When the progress snapshot or status is produced
   recordLadderCancelledOrder(progress);
 
+  // Then sees that confirmed flat position is an ended business outcome with retained progress
   assert.equal(
     zh(formatPositionClosedLadderProgress('阶梯平空', progress)),
     '阶梯平空已结束 · 当前方向已无持仓 · 已挂 0/3 笔 · 已撤 1 笔',
   );
 });
 
-test('failed and interrupted ladder statuses retain confirmed progress', () => {
+test("user sees that failed and interrupted ladder statuses retain confirmed progress", () => {
+  // Given the ladder task and confirmed activity are available
   const progress = createLadderProgress();
   setLadderPlannedOrders(progress, 5);
   recordLadderSubmittedOrder(progress);
+  // When the progress snapshot or status is produced
   recordLadderCancelledOrder(progress);
 
+  // Then sees that failed and interrupted ladder statuses retain confirmed progress
   assert.equal(
     zh(formatFailedLadderProgress('阶梯开多', '数量框状态未稳定', progress)),
     '阶梯开多失败：已挂 1/5 笔 · 已撤 1 笔 · 数量框状态未稳定',
@@ -156,11 +179,15 @@ test('failed and interrupted ladder statuses retain confirmed progress', () => {
   );
 });
 
-test('ladder progress rejects invalid counters instead of masking them', () => {
-  assert.throws(
-    () => formatStoppedLadderProgress('阶梯开多', { submittedOrders: -1, cancelledOrders: 0 }),
-    /阶梯进度状态无效/,
-  );
+test("user sees that ladder progress rejects invalid counters instead of masking them", () => {
+  // Given the ladder task and confirmed activity are available
+  const scenarioInputs = ['阶梯开多', { submittedOrders: -1, cancelledOrders: 0 }];
+
+  // When the progress snapshot or status is produced
+  const observedFailure = captureThrownError(() => formatStoppedLadderProgress(...scenarioInputs));
+
+  // Then sees that ladder progress rejects invalid counters instead of masking them
+  assert.match(observedFailure.message, /阶梯进度状态无效/);
   assert.throws(
     () => recordLadderCancelledOrder({ submittedOrders: 0, cancelledOrders: 1.5 }),
     /阶梯进度状态无效/,
@@ -189,7 +216,8 @@ test('ladder progress rejects invalid counters instead of masking them', () => {
   );
 });
 
-test('a replacement plan resets only the ratio numerator and retains cumulative activity', () => {
+test("user sees that a replacement plan resets only the ratio numerator and retains cumulative activity", () => {
+  // Given the ladder task and confirmed activity are available
   const progress = createLadderProgress();
   setLadderPlannedOrders(progress, 5);
   recordLadderSubmittedOrder(progress);
@@ -198,8 +226,10 @@ test('a replacement plan resets only the ratio numerator and retains cumulative 
   recordLadderCancelledOrder(progress);
 
   setLadderPlannedOrders(progress, 3);
+  // When the progress snapshot or status is produced
   recordLadderSubmittedOrder(progress);
 
+  // Then sees that a replacement plan resets only the ratio numerator and retains cumulative activity
   assert.equal(
     zh(formatStoppedLadderProgress('阶梯平空', progress)),
     '阶梯平空已停止 · 已挂 1/3 笔 · 已撤 2 笔',
@@ -212,12 +242,15 @@ test('a replacement plan resets only the ratio numerator and retains cumulative 
   });
 });
 
-test('ladder progress renders the same result data in English', () => {
+test("user sees that ladder progress renders the same result data in English", () => {
+  // Given the ladder task and confirmed activity are available
   const progress = createLadderProgress();
   setLadderPlannedOrders(progress, 3);
   recordLadderSubmittedOrder(progress);
+  // When the progress snapshot or status is produced
   recordLadderCancelledOrder(progress);
 
+  // Then sees that ladder progress renders the same result data in English
   assert.equal(
     en(formatFailedLadderProgress(
       localizedText('阶梯平空', 'Close Short'),

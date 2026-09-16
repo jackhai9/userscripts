@@ -108,10 +108,11 @@ export function readConfirmedReduceOnlyRejection(mode, observation, successes) {
   return apiError;
 }
 
-function parseRetryAfterMs(value) {
-  if (value == null || value === '') return null;
+/** Missing or unusable headers retain Binance's ten-second rate-limit backoff. */
+export function resolveBinanceRateLimitCooldownMs(value) {
+  if (value == null || value === '') return 10000;
   const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 10000;
 }
 
 /**
@@ -130,7 +131,7 @@ export function resolveBinanceSubmitResponseRecovery(diagnostics, apiErrors) {
   if (rateLimitDiagnostic || hasRateLimitCode) {
     return {
       kind: 'rate_limited',
-      cooldownMs: parseRetryAfterMs(rateLimitDiagnostic?.retryAfter) ?? 10000,
+      cooldownMs: resolveBinanceRateLimitCooldownMs(rateLimitDiagnostic?.retryAfter),
     };
   }
   if (diagnostics.some(({ httpStatus }) => httpStatus >= 500 && httpStatus <= 599)) {

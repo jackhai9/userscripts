@@ -39,10 +39,15 @@ function startupFixture() {
     get starts() { return starts; } };
 }
 
-test('production continuous startup waits for marker creation before installing its owner', async () => {
+test("user sees that production continuous startup waits for marker creation before installing its owner", async () => {
+  // Given the continuous action has a pending marker lifecycle
   const f = startupFixture();
   const finish = f.controller.beginMutation();
+  // When the production continuous entrypoint starts
   const task = f.run(new AbortController().signal, 'BTRUSDT');
+
+
+  // Then sees that production continuous startup waits for marker creation before installing its owner
   assert.equal(f.starts, 0);
   finish();
   assert.equal(await task, 'outer-owner');
@@ -51,25 +56,31 @@ test('production continuous startup waits for marker creation before installing 
 });
 
 for (const change of ['changeSymbol', 'replaceChart']) {
-  test(`production continuous startup rejects ${change} during marker drain`, async () => {
-    const f = startupFixture();
+  test(`user sees that production continuous startup rejects ${change} during marker drain`, async () => {
+    // Given the continuous action has a pending marker lifecycle
+  const f = startupFixture();
     const finish = f.controller.beginMutation();
     const task = f.run(new AbortController().signal, 'BTRUSDT');
     f[change]();
-    finish();
-    await assert.rejects(task, { name: 'LadderStoppedError' });
+    // When the production continuous entrypoint starts
+  finish();
+    // Then sees that production continuous startup rejects ${change} during marker drain
+  await assert.rejects(task, { name: 'LadderStoppedError' });
     assert.equal(f.starts, 0);
     assert.deepEqual(f.warnings, []);
   });
 }
 
-test('production continuous startup propagates Stop without optional-optimization fallback', async () => {
+test("user sees that production continuous startup propagates Stop without optional-optimization fallback", async () => {
+  // Given the continuous action has a pending marker lifecycle
   const f = startupFixture();
   const finish = f.controller.beginMutation();
   const abort = new AbortController();
   const reason = Object.assign(new Error('Stopped'), { name: 'LadderStoppedError' });
   const task = f.run(abort.signal, 'BTRUSDT');
+  // When the production continuous entrypoint starts
   abort.abort(reason);
+  // Then sees that production continuous startup propagates Stop without optional-optimization fallback
   await assert.rejects(task, (error) => error === reason);
   assert.equal(f.starts, 0);
   assert.deepEqual(f.warnings, []);

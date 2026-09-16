@@ -42,6 +42,29 @@ Partial functions extracted from a source file and quoted copies of installer
 text receive no credit for executing that source file. Browser collection also
 recognizes complete original modules loaded through Blob URLs.
 
+Browser coverage uses one public CDP session per page and caches script bytes when
+Chromium parses them. A real reload must go through `reloadPageWithCoverage` in
+`e2e/binance-orderbook/test.js`: it takes a precise checkpoint before discarding
+the outgoing document. Raw checkpoints remain in the capture. Only snapshots
+with the same session, script ID, URL, and exact source bytes are merged; a new
+document keeps its own identity even when it loads the same URL.
+
+Chromium can return positive function-call counts without block ranges after
+document teardown. Those calls cannot establish which branches ran. The report
+preserves them in `blockEvidenceUnavailable` with raw-capture provenance and
+gives them no additional branch credit. Each such function must already have a
+captured detailed or zero record with the same function bounds; otherwise the
+collector fails, because dropping it could make the reporter infer execution
+from the enclosing script. No zero record or execution count is invented.
+
+When coarse calls exist, `metricInterpretation` is
+`retained-evidence-lower-bound`: the displayed metrics describe retained evidence,
+not all actual calls. Capture completeness and block-evidence completeness are
+separate. A lower bound at or above 90% proves the repository target was reached;
+a lower bound below 90% does not establish the exact actual coverage. Isolated
+Chromium proofs verify ordinary checkpoint counts and a real reload through the
+collector, splitter, source map, and final coverage report.
+
 One browser script can contain several installers. The collector validates exact
 installer segments against JavaScript statement boundaries and keeps their V8
 execution ranges associated with the original bytes. Shared originals appear
@@ -55,25 +78,21 @@ invalidates completeness. The one explicit collector self-test file uses virtual
 code; it must pass but does not contribute production coverage. Source-map and
 capture tests validate these boundaries independently.
 
-## Target and Staged Gate
+## Repository Gate
 
-The final repository target is **90% branch coverage across the complete scope**.
-The rollout also uses an explicit **66.5% aggregate floor** and requires each
-migrated critical module to reach 90%. The floor rounds the initial 66.58%
-measurement down to one decimal place. The checked-in threshold policy names
-those files; it does not exclude other production sources from the aggregate.
+The default command requires **90% branch coverage across the complete scope**
+and **90% in each of seven critical orderbook modules**. The temporary 66.5%
+migration floor has been replaced. The critical-source list adds checks; it does
+not exclude other production sources from the aggregate.
 
-The staged gate and final target are separate facts. A run may pass the staged
-gate while still reporting `meetsBranchTarget: false`. It must not be described as
-reaching the repository target. Threshold decisions use exact covered/total
-counts, not rounded display percentages. New failures, recovery paths, and
-boundary conditions should close the remaining gap; do not shrink the source
-scope, remove a guard, or invent invalid business states to improve the metric.
+Threshold decisions use exact covered/total counts, not rounded display
+percentages. New failures, recovery paths, and boundary conditions should close
+coverage gaps; do not shrink the source scope, remove a guard, or invent invalid
+business states to improve the metric.
 
-`npm run test:coverage -- --require-target` also requires the final aggregate 90%
-target. `npm run test:coverage -- --report-only` collects diagnostic evidence
-without applying thresholds; CI uses the default gated command. The aggregate
-floor and exact critical-source list are stored in
+`npm run test:coverage -- --report-only` collects diagnostic evidence without
+applying thresholds; CI uses the default gated command. The aggregate threshold
+and exact critical-source list are stored in
 [`branch-policy.json`](../scripts/test-coverage/branch-policy.json).
 
 The policy applies to merged Node and browser results. The complete pipeline runs
@@ -84,29 +103,45 @@ workflows retain their independent checks.
 
 ## Reports and Interpretation
 
-The complete baseline on 2026-09-16 used Node 24.16.0, 97 Node test files
-(1,326 passing tests), and 92 passing Chromium scenarios. The browser total
-contains 87 production scenarios and five collector proofs. All required
-captures completed. The merged denominator contains 82 distinct production
-source files and **6,765 / 10,160 covered branches (66.58%)**.
-The six unmapped VM entries are executions of the three historical installers in
-`test/fixtures/strategy29-migration/`, each loaded twice by the settings migration
-tests. They remain visible in the report and receive no current-source credit.
+The completed migration run on 2026-09-16 used Node 24.16.0, 126 Node test files
+(**2,078 passing tests**), and **364 passing Chromium scenarios**. The browser
+total contains 357 production scenarios and seven collector proofs. All required
+captures completed, without skipped or retried scenarios. The merged denominator
+contains 82 distinct production source files and **9,179 / 10,184 covered
+branches (90.13%)**. The aggregate gate and all seven critical-module gates pass.
+
+The retained local evidence is
+[`run-5M5oY5/report/index.html`](../test-results/coverage/run-5M5oY5/report/index.html),
+with exact counts, capture completion, and source hashes in
+[`coverage-summary.json`](../test-results/coverage/run-5M5oY5/report/coverage-summary.json).
+All 82 recorded source hashes matched the workspace after collection. These
+generated reports are local test artifacts and are not committed.
+
+This run records `metricInterpretation: retained-evidence-lower-bound` and 49
+function-call records without block evidence. Those records remain auditable
+but add no branch credit. The retained lower bound itself exceeds 90%. Six
+unmapped Node VM entries also remain visible and receive no current-source
+credit.
 
 | Migrated critical source | Covered / total branches | Coverage |
 | --- | ---: | ---: |
 | `core/cancel-orders.js` | 74 / 74 | 100% |
-| `core/close-action.js` | 39 / 42 | 92.86% |
+| `core/close-action.js` | 42 / 42 | 100% |
 | `core/close-ladder-recovery.js` | 39 / 39 | 100% |
-| `core/continuous-ladder.js` | 108 / 119 | 90.76% |
-| `core/order-feedback.js` | 194 / 204 | 95.10% |
+| `core/continuous-ladder.js` | 110 / 119 | 92.44% |
+| `core/order-feedback.js` | 194 / 200 | 97.00% |
 | `core/quantity.js` | 26 / 27 | 96.30% |
-| `core/chart-save-coalescer.js` | 247 / 273 | 90.48% |
+| `core/chart-save-coalescer.js` | 253 / 273 | 92.67% |
 
-These paths are under `src/binance-orderbook-trade/`. The baseline passes the
-staged policy and fails the final aggregate 90% target. This is a dated
-measurement, not a promise about later revisions; current reports record source
-hashes so their scope can be verified.
+These paths are under `src/binance-orderbook-trade/`. This is a dated measurement,
+not a promise about later revisions; subsequent reports must verify their own
+source hashes, complete captures, and exact thresholds.
+
+For historical comparison, the first-stage baseline earlier on 2026-09-16 used
+97 Node test files (1,326 tests) and 92 Chromium scenarios, with **6,765 / 10,160
+covered branches (66.58%)** across the same 82-file source scope. It passed only
+the former 66.5% migration floor. That baseline and its smaller branch count do
+not describe the completed migration or the currently enforced 90% gate.
 
 Each collection creates `test-results/coverage/run-*/` with the raw captures,
 Node test output, and a `report/` directory. `test-results/coverage/latest.json`
@@ -116,13 +151,14 @@ than assuming an older report covers current edits.
 The HTML entry is `report/index.html`. `report/coverage-summary.json` records:
 
 - Node version, executed layers, source list, and original source identities;
-- exact branch, statement, function, line, and byte metrics;
+- branch, statement, function, line, and byte metrics for retained evidence,
+  together with their interpretation and any unavailable block evidence;
 - the final target and whether it was met;
 - capture completeness counts and any executed entries that could not be mapped.
 
 An unmapped historical installer or extracted snippet is visible as unmapped
 evidence and is not substituted for current-source execution. Tests passing,
-capture completion, meeting a staged threshold, and meeting the final 90% target
+capture completion, detailed block evidence, and meeting the 90% repository target
 are distinct outcomes. Browser fixture coverage is L2 evidence; Tampermonkey
 installation and current Binance behavior still require their own authorized
 L3/L4 checks.

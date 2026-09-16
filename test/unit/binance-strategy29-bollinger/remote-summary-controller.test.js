@@ -63,9 +63,13 @@ function fixture({ available = true, authSecret = 'synthetic-secret', poll } = {
   return { view, values, gatewayState, menus, prompts, panels, clients, summary };
 }
 
-test('waits without a panel until the shared gateway becomes available', async () => {
+test('user waits without a panel until the shared gateway becomes available', async () => {
+  // Given the current route, summary panel and remote client
   const f = fixture({ available: false });
-  assert.equal(f.summary.sample(0), undefined);
+  // When f.summary.sample processes the configured inputs
+  const observedResult = f.summary.sample(0);
+  // Then user waits without a panel until the shared gateway becomes available
+  assert.equal(observedResult, undefined);
   assert.equal(f.panels.length, 0);
   assert.equal(f.clients.length, 0);
   assert.equal(f.summary.diagnostics.state, 'waiting_for_gateway');
@@ -75,7 +79,8 @@ test('waits without a panel until the shared gateway becomes available', async (
   assert.equal(f.summary.diagnostics.state, 'connected');
 });
 
-test('pause preserves the current client and panel and permits one resumed request', async () => {
+test('user observes that pause preserves the current client and panel and permits one resumed request', async () => {
+  // Given the current route, summary panel and remote client
   let completeOld;
   const oldResponse = new Promise(resolve => { completeOld = resolve; });
   let polls = 0;
@@ -85,8 +90,10 @@ test('pause preserves the current client and panel and permits one resumed reque
     polls += 1;
     return polls === 1 ? oldResponse : new Promise(() => {});
   } });
+  // When f.summary.sample processes the configured inputs
   const oldPoll = f.summary.sample(0);
   f.summary.pause();
+  // Then user observes that pause preserves the current client and panel and permits one resumed request
   assert.equal(signals[0].aborted, true);
   assert.equal(f.summary.diagnostics.contextPresent, true);
   assert.equal(f.panels[0].calls.some(call => call[0] === 'destroy'), false);
@@ -103,17 +110,23 @@ test('pause preserves the current client and panel and permits one resumed reque
   f.summary.dispose();
 });
 
-test('remote module owns no gateway configuration menu and uses host settings', async () => {
+test('user observes that remote module owns no gateway configuration menu and uses host settings', async () => {
+  // Given the current route, summary panel and remote client
   const f = fixture();
+  // When f.summary.sample processes the configured inputs
   await f.summary.sample(0);
+  // Then user observes that remote module owns no gateway configuration menu and uses host settings
   assert.deepEqual(f.menus.map(menu => menu.label), []);
   assert.equal(Object.hasOwn(f.clients[0].options, 'authSecret'), false);
   assert.equal(Object.hasOwn(f.clients[0].options, 'gatewayOrigin'), false);
 });
 
-test('polls the current route symbol independently of the visible chart interval', async () => {
+test('user sees the current route monitored independently of the visible chart interval', async () => {
+  // Given the current route, summary panel and remote client
   const f = fixture();
+  // When f.summary.sample processes the configured inputs
   await f.summary.sample(0);
+  // Then user sees the current route monitored independently of the visible chart interval
   assert.equal(f.panels[0].canonicalSymbol, 'BTR/USDT:USDT');
   assert.equal(f.clients[0].options.canonicalSymbol, 'BTR/USDT:USDT');
   assert.equal(f.summary.diagnostics.inFlight, false);
@@ -123,15 +136,18 @@ test('polls the current route symbol independently of the visible chart interval
 });
 
 for (const previousState of ['connected', 'gateway_unavailable', 'unavailable']) {
-  test(`background polls preserve ${previousState} until the next response`, async () => {
+  test(`user observes that background polls preserve ${previousState} until the next response`, async () => {
+    // Given the current route, summary panel and remote client
     let complete;
     let polls = 0;
     const f = fixture({ poll: () => ++polls === 1
       ? Promise.resolve({ state: previousState, pages: 1, hasMore: false })
       : new Promise(resolve => { complete = resolve; }) });
+    // When f.summary.sample processes the configured inputs
     await f.summary.sample(0);
     const before = f.panels[0].calls.length;
     const pending = f.summary.sample(5_000);
+    // Then user observes that background polls preserve the selected case until the next response
     assert.equal(f.summary.diagnostics.inFlight, true);
     assert.equal(f.summary.diagnostics.state, previousState);
     assert.equal(f.panels[0].calls.length, before);
@@ -143,7 +159,8 @@ for (const previousState of ['connected', 'gateway_unavailable', 'unavailable'])
   });
 }
 
-test('route retirement aborts ownership and ignores a late old-symbol response', async () => {
+test('user observes that route retirement aborts ownership and ignores a late old-symbol response', async () => {
+  // Given the current route, summary panel and remote client
   let resolve;
   let polls = 0;
   const pending = new Promise((value) => { resolve = value; });
@@ -151,66 +168,84 @@ test('route retirement aborts ownership and ignores a late old-symbol response',
     polls += 1;
     return polls === 1 ? pending : Promise.resolve({ state: 'connected', pages: 1, hasMore: false });
   } });
+  // When f.summary.sample processes the configured inputs
   const first = f.summary.sample(0);
   f.view.location.pathname = '/en/futures/ETHUSDT';
   await f.summary.sample(1_000);
   resolve({ state: 'connected', pages: 1, hasMore: false });
   await first;
+  // Then user observes that route retirement aborts ownership and ignores a late old-symbol response
   assert.deepEqual(f.panels[0].calls.at(-1), ['destroy']);
   assert.equal(f.panels[1].canonicalSymbol, 'ETH/USDT:USDT');
   assert.notEqual(f.summary.diagnostics.canonicalSymbol, 'BTR/USDT:USDT');
 });
 
-test('transport and contract failures remain remote-only and never expose the secret', async () => {
-  for (const error of [
+for (const error of [
     new Strategy29GatewayTransportError('offline'),
     new TypeError('invalid response contract'),
   ]) {
+  test(`user observes that transport and contract failures remain remote-only and never expose the secret (error=${JSON.stringify(error)})`, async () => {
+    // Given the current route, summary panel and remote client
     const f = fixture({ poll: async () => { throw error; } });
+    // When f.summary.sample processes the configured inputs
     await f.summary.sample(0);
+    // Then user observes that transport and contract failures remain remote-only and never expose the secret (error=the selected case)
     assert.equal(f.summary.diagnostics.inFlight, false);
     assert.equal(f.summary.diagnostics.state, error instanceof TypeError ? 'stopped' : 'disconnected');
     assert.doesNotMatch(JSON.stringify(f.summary.diagnostics), /synthetic-secret/);
-  }
-});
 
-test('missing secret creates a visible configuration state without constructing a client', async () => {
+  });
+}
+
+test('user observes that missing secret creates a visible configuration state without constructing a client', async () => {
+  // Given the current route, summary panel and remote client
   const f = fixture({ authSecret: '' });
+  // When f.summary.sample processes the configured inputs
   await f.summary.sample(0);
+  // Then user observes that missing secret creates a visible configuration state without constructing a client
   assert.equal(f.clients.length, 0);
   assert.deepEqual(f.panels[0].calls[0], ['connection', 'configuration_required', 'Gateway secret is not configured']);
 });
 
-test('settings revision retires the prior client and reconstructs the active route', async () => {
+test('user observes that settings revision retires the prior client and reconstructs the active route', async () => {
+  // Given the current route, summary panel and remote client
   const f = fixture();
+  // When f.summary.sample processes the configured inputs
   await f.summary.sample(0);
   f.gatewayState.settingsRevision += 1;
   await f.summary.sample(1);
+  // Then user observes that settings revision retires the prior client and reconstructs the active route
   assert.equal(f.clients.length, 2);
   assert.deepEqual(f.panels[0].calls.at(-1), ['destroy']);
   assert.equal(f.summary.diagnostics.gatewayRevision, 1);
 });
 
-test('unsupported futures route is classified once without a retry/log loop', async () => {
+test('user observes that unsupported futures route is classified once without a retry/log loop', async () => {
+  // Given the current route, summary panel and remote client
   const f = fixture();
   let warnings = 0;
   f.view.console.warn = () => { warnings += 1; };
   f.view.location.pathname = '/en/futures/BTCUSD_PERP';
+  // When f.summary.sample processes the configured inputs
   await f.summary.sample(0);
   await f.summary.sample(1_000);
+  // Then user observes that unsupported futures route is classified once without a retry/log loop
   assert.equal(f.summary.diagnostics.state, 'unsupported_route');
   assert.equal(warnings, 1);
   assert.equal(f.panels.length, 0);
   assert.equal(f.clients.length, 0);
 });
 
-test('locale switches preserve the pending request, client cursor and panel while updating existing menu IDs', async () => {
+test('user observes that locale switches preserve the pending request, client cursor and panel while updating existing menu IDs', async () => {
+  // Given the current route, summary panel and remote client
   let complete;
   let requestSignal;
   const f = fixture({ poll: signal => { requestSignal = signal; return new Promise(resolve => { complete = resolve; }); } });
+  // When f.summary.sample processes the configured inputs
   const pending = f.summary.sample(0);
   f.clients[0].diagnostics.cursor = 41;
   f.view.location.pathname = '/zh-CN/futures/BTRUSDT';
+  // Then user observes that locale switches preserve the pending request, client cursor and panel while updating existing menu IDs
   assert.equal(f.summary.sample(1), undefined);
   assert.equal(f.clients.length, 1);
   assert.equal(f.panels.length, 1);
@@ -231,11 +266,14 @@ test('locale switches preserve the pending request, client cursor and panel whil
   f.summary.dispose();
 });
 
-test('no-auth locale change updates the existing panel and localized prompts without creating a client', () => {
+test('user observes that no-auth locale change updates the existing panel and localized prompts without creating a client', () => {
+  // Given the current route, summary panel and remote client
   const f = fixture({ authSecret: '' });
+  // When f.summary.sample processes the configured inputs
   f.summary.sample(0);
   f.view.location.pathname = '/zh-CN/futures/BTRUSDT';
   f.summary.sample(1);
+  // Then user observes that no-auth locale change updates the existing panel and localized prompts without creating a client
   assert.equal(f.panels.length, 1);
   assert.equal(f.panels[0].locale, 'zh-CN');
   assert.equal(f.clients.length, 0);
@@ -244,9 +282,12 @@ test('no-auth locale change updates the existing panel and localized prompts wit
   f.summary.dispose();
 });
 
-test('position adapters persist only the dedicated coordinate value and restore it across symbol contexts', async () => {
+test('user observes that position adapters persist only the dedicated coordinate value and restore it across symbol contexts', async () => {
+  // Given the current route, summary panel and remote client
   const f = fixture();
+  // When f.summary.sample processes the configured inputs
   await f.summary.sample(0);
+  // Then user observes that position adapters persist only the dedicated coordinate value and restore it across symbol contexts
   assert.equal(f.panels[0].options.loadPosition(), null);
   f.panels[0].options.savePosition({ left: 72, top: 124 });
   assert.deepEqual(f.values.get('strategy29SummaryPanelPosition'), { left: 72, top: 124 });

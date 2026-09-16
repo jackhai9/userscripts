@@ -1,6 +1,7 @@
 import { test as base, expect } from '@playwright/test';
 import {
   startBrowserCoverage,
+  checkpointBrowserCoverage,
   finishBrowserCoverage,
 } from '../../scripts/test-coverage/collect-browser.mjs';
 
@@ -53,3 +54,11 @@ export const test = base.extend({
 });
 
 export { expect };
+
+/** Preserve the outgoing document's full roots before its real reload. */
+export async function reloadPageWithCoverage(page) {
+  if (process.env.USERSCRIPTS_BROWSER_COVERAGE_DIRECTORY) {
+    await checkpointBrowserCoverage(page, 'before-reload');
+  }
+  return page.reload();
+}

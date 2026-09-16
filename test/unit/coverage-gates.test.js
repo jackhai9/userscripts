@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { assessBranchCoverage } from '../../scripts/test-coverage/gates.mjs';
 
 const critical = 'src/binance-orderbook-trade/core/cancel-orders.js';
@@ -13,11 +14,11 @@ function measuredCoverage() {
   };
 }
 
-test('user sees a passed staged gate separately from the unmet repository target', () => {
-  // Given complete merged coverage meets the staged floor and critical-module threshold.
+test('user sees a passed custom gate separately from the unmet repository target', () => {
+  // Given complete merged coverage meets a custom floor and critical-module threshold.
   const coverage = measuredCoverage();
 
-  // When the staged policy assesses the measured counts.
+  // When the custom policy assesses the measured counts.
   const result = assessBranchCoverage(coverage, policy);
 
   // Then passing the current gate does not claim that all production branches reached 90 percent.
@@ -28,7 +29,7 @@ test('user sees a passed staged gate separately from the unmet repository target
   assert.deepEqual(result.failures, []);
 });
 
-test('user gets a failing gate when global coverage falls below its staged floor', () => {
+test('user gets a failing gate when global coverage falls below its configured floor', () => {
   // Given production coverage has fallen below the checked-in threshold.
   const coverage = measuredCoverage();
   coverage.summary.branches.covered = 790;
@@ -38,7 +39,7 @@ test('user gets a failing gate when global coverage falls below its staged floor
 
   // Then the global deficit fails even though the critical module still passes.
   assert.equal(result.passed, false);
-  assert.deepEqual(result.failures, ['All production sources: 79.00% is below the staged 80% threshold']);
+  assert.deepEqual(result.failures, ['All production sources: 79.00% is below the configured 80% threshold']);
 });
 
 test('user cannot hide a critical-module regression behind high aggregate coverage', () => {
@@ -61,7 +62,7 @@ test('user can require the final target without accepting a rounded-up display p
   const coverage = measuredCoverage();
   coverage.summary.branches = { covered: 89999, total: 100000, pct: 90 };
 
-  // When the final target is required rather than only the staged threshold.
+  // When the repository target is required in addition to a lower custom threshold.
   const result = assessBranchCoverage(coverage, policy, { requireTarget: true });
 
   // Then the exact counts keep the target unmet and fail the strict run.
@@ -69,6 +70,23 @@ test('user can require the final target without accepting a rounded-up display p
   assert.equal(result.targetMet, false);
   assert.equal(result.failures.length, 1);
   assert.match(result.failures[0], /final 90% target/);
+});
+
+test('user cannot pass the checked-in repository policy with only the earlier migration floor', async () => {
+  // Given all named critical modules are fully covered but the aggregate is only 85 percent.
+  const repositoryPolicy = JSON.parse(await readFile(new URL('../../scripts/test-coverage/branch-policy.json', import.meta.url), 'utf8'));
+  const coverage = measuredCoverage();
+  coverage.files = repositoryPolicy.criticalSources.map(path => ({ path,
+    summary: { branches: { total: 100, covered: 100, pct: 100 } },
+  }));
+
+  // When the same checked-in policy used by the default CI command assesses the result.
+  const result = assessBranchCoverage(coverage, repositoryPolicy);
+
+  // Then the repository gate enforces the complete 90 percent target without an extra command flag.
+  assert.equal(result.passed, false);
+  assert.equal(result.minimumBranches, 90);
+  assert.deepEqual(result.failures, ['All production sources: 85.00% is below the configured 90% threshold']);
 });
 
 test('user cannot substitute a Node-only report for merged coverage', () => {

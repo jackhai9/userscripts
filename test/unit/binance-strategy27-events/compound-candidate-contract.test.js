@@ -16,9 +16,14 @@ const envelope = (payload = candidate()) => ({
   sequence: 2, message_kind: 'candidate', symbol: payload.symbol, observed_at_ms: 8000, payload,
 });
 
-test('Python high/low records validate with identical canonical hashes', async () => {
+test('user observes that Python high/low records validate with identical canonical hashes', async () => {
+  // Given detector records with independently fixed Python candidate hashes
   assert.equal(fixtures[0].candidate_id, 'e9695ec55fc07c3882d80e91235e04f37ebd02d16967f30e5913c63486c12dcf');
   assert.equal(fixtures[1].candidate_id, 'd41dfdb6add66f1ee6a2f5457db3535facfc2ddb74459b98ac4c826ff0a61f58');
+  // When each complete record passes through the real canonical validator
+  const validated = await Promise.all(fixtures.map(fixture => validateCompoundCandidate(fixture)));
+  // Then the original detector records and their envelope identities are preserved
+  assert.deepEqual(validated, fixtures);
   for (const fixture of fixtures) {
     assert.deepEqual(await validateCompoundCandidate(fixture), fixture);
     assert.deepEqual(await validateCompoundEnvelope(envelope(fixture)), envelope(fixture));
@@ -28,35 +33,44 @@ test('Python high/low records validate with identical canonical hashes', async (
   }
 });
 
-test('changed evidence cannot retain an old candidate identity', async () => {
+test('user observes that changed evidence cannot retain an old candidate identity', async () => {
+  // Given the compound candidate identity and evidence schema
   const changed = candidate();
   changed.seed.buy_notional = '7';
   await assert.rejects(validateCompoundCandidate(changed), /candidate hash mismatch/);
+  // When candidate processes the configured inputs
   const profile = candidate();
   profile.profile.significant_flow_ratio = '0.06';
+  // Then user observes that changed evidence cannot retain an old candidate identity
   await assert.rejects(validateCompoundCandidate(profile), /profile hash mismatch/);
 });
 
-test('canonical decimal grammar and exact endpoint comparisons reject invalid evidence', async () => {
+test('user observes that canonical decimal grammar and exact endpoint comparisons reject invalid evidence', async () => {
+  // Given the compound candidate identity and evidence schema
   for (const invalid of ['-0', '01', '1e-5', '1.0', 'NaN']) {
     const value = candidate();
     value.seed.buy_notional = invalid;
     await assert.rejects(validateCompoundCandidate(value), /canonical decimal/);
   }
+  // When candidate processes the configured inputs
   const precise = candidate();
   precise.seed.minimum_mid = '100.0900000000000000000001';
+  // Then user observes that canonical decimal grammar and exact endpoint comparisons reject invalid evidence
   await assert.rejects(validateCompoundCandidate(precise), /extrema/);
   const unsafe = envelope();
   unsafe.sequence = Number.MAX_SAFE_INTEGER + 1;
   await assert.rejects(validateCompoundEnvelope(unsafe), /safe integer/);
 });
 
-test('mirror disclosure, causal order, frozen extreme and exact keys are required', async () => {
+test('user observes that mirror disclosure, causal order, frozen extreme and exact keys are required', async () => {
+  // Given the compound candidate identity and evidence schema
   const low = candidate(1);
   low.validation_status = 'exploratory';
   await assert.rejects(validateCompoundCandidate(low), /validation status/);
+  // When candidate processes the configured inputs
   const earlier = candidate();
   earlier.confirmation = structuredClone(earlier.seed);
+  // Then user observes that mirror disclosure, causal order, frozen extreme and exact keys are required
   await assert.rejects(validateCompoundCandidate(earlier), /evidence ordering/);
   const extreme = candidate();
   extreme.established_extreme = '1000';
@@ -66,7 +80,8 @@ test('mirror disclosure, causal order, frozen extreme and exact keys are require
   await assert.rejects(validateCompoundCandidate(extra), /keys must be exact/);
 });
 
-test('self-contained reinforcement keeps its distinct identity and later decision', async () => {
+test('user observes that self-contained reinforcement keeps its distinct identity and later decision', async () => {
+  // Given the compound candidate identity and evidence schema
   const value = candidate();
   value.parent_candidate_id = value.candidate_id;
   value.family = 'failed_rebound';
@@ -75,7 +90,9 @@ test('self-contained reinforcement keeps its distinct identity and later decisio
   value.decision = { ...value.confirmation, start_ms: 9000, end_ms: 10000 };
   const { candidate_id: baseId, ...record } = value;
   value.candidate_id = await compoundHash(record);
+  // When validateCompoundCandidate processes the configured inputs
   const validated = await validateCompoundCandidate(value);
+  // Then user observes that self-contained reinforcement keeps its distinct identity and later decision
   assert.notEqual(validated.candidate_id, baseId);
   assert.equal(validated.parent_candidate_id, baseId);
   assert.equal(validated.decision.end_ms, 10000);
@@ -83,9 +100,13 @@ test('self-contained reinforcement keeps its distinct identity and later decisio
   await assert.rejects(validateCompoundCandidate(value), /reinforcement evidence ordering/);
 });
 
-test('heartbeat and reset use separate exact control payloads', async () => {
+test('user observes that heartbeat and reset use separate exact control payloads', async () => {
+  // Given the compound candidate identity and evidence schema
   const value = { ...envelope(), message_kind: 'heartbeat', symbol: null, payload: { state: 'ready' } };
-  assert.deepEqual(await validateCompoundEnvelope(value), value);
+  // When validateCompoundEnvelope processes the configured inputs
+  const observedResult = await validateCompoundEnvelope(value);
+  // Then user observes that heartbeat and reset use separate exact control payloads
+  assert.deepEqual(observedResult, value);
   value.payload.reason = 'startup';
   await assert.rejects(validateCompoundEnvelope(value), /keys must be exact/);
   value.message_kind = 'stream_state';
@@ -94,18 +115,26 @@ test('heartbeat and reset use separate exact control payloads', async () => {
   await assert.rejects(validateCompoundEnvelope(value), /state identity/);
 });
 
-test('envelope cannot claim a decision before it is available or on a different symbol', async () => {
+test('user observes that envelope cannot claim a decision before it is available or on a different symbol', async () => {
+  // Given the compound candidate identity and evidence schema
   const early = envelope();
   early.observed_at_ms = 6999;
   await assert.rejects(validateCompoundEnvelope(early), /identity\/time/);
+  // When envelope processes the configured inputs
   const other = envelope();
   other.symbol = 'ETH/USDT:USDT';
+  // Then user observes that envelope cannot claim a decision before it is available or on a different symbol
   await assert.rejects(validateCompoundEnvelope(other), /identity\/time/);
 });
 
 
-test('Unicode canonical JSON uses the same UTF-8 digest as Python', async () => {
-  assert.equal(await compoundHash({symbol: '币安人生/USDT:USDT'}), '3ab4f4a7e5017943dedd5caae3bd17996392a32d843a0cad485f39fba7f96759');
+test('user observes that Unicode canonical JSON uses the same UTF-8 digest as Python', async () => {
+  // Given the compound candidate identity and evidence schema
+  const scenarioInput = {symbol: '币安人生/USDT:USDT'};
+  // When compoundHash processes the configured inputs
+  const observedResult = await compoundHash(scenarioInput);
+  // Then user observes that Unicode canonical JSON uses the same UTF-8 digest as Python
+  assert.equal(observedResult, '3ab4f4a7e5017943dedd5caae3bd17996392a32d843a0cad485f39fba7f96759');
   const value = candidate();
   value.symbol = '币安人生/USDT:USDT';
   const {candidate_id, ...record} = value;
@@ -114,8 +143,12 @@ test('Unicode canonical JSON uses the same UTF-8 digest as Python', async () => 
 });
 
 
-test('Python Unicode detector fixture validates with its original candidate hash', async () => {
+test('user observes that Python Unicode detector fixture validates with its original candidate hash', async () => {
+  // Given the original Unicode detector fixture and its Python candidate hash
   const fixture = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-unicode-candidate.json', import.meta.url), 'utf8'));
   assert.equal(fixture.candidate_id, '07bd5eb977953eb1256784ac14f6cff262c0a2bddfa8928e6c4ab2ddc092b0a1');
-  assert.deepEqual(await validateCompoundCandidate(fixture), fixture);
+  // When the real candidate validator hashes the UTF-8 projection
+  const validated = await validateCompoundCandidate(fixture);
+  // Then the exact original candidate is accepted without symbol normalization
+  assert.deepEqual(validated, fixture);
 });

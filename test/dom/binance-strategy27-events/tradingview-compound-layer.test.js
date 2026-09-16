@@ -48,11 +48,14 @@ function fixture({ bars = [[10, 1.25, 1.3, 1.2, 1.25]], beforeCreate, shiftSecon
   return { chart, shapes, listeners, created, removed, layer: (maxCandidates = 80) => createTradingViewCompoundLayer({ chart }, { maxCandidates, candleWaitMs: 1 }) };
 }
 
-test('native compound arrows are larger, centered outside the candle and own a separate short label', async () => {
+test('user observes that native compound arrows are larger, centered outside the candle and own a separate short label', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture();
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   await layer.renderCandidate('high', annotation(), 11000);
   await layer.renderCandidate('low', annotation({ markerShape: 'arrow_up', markerLabel: '候选低', markerColor: '#087F5B' }), 11000);
+  // Then user observes that native compound arrows are larger, centered outside the candle and own a separate short label
   assert.equal(layer.size, 2);
   assert.equal(f.shapes.size, 5);
   assert.deepEqual(f.created.map((item) => item.point), [
@@ -74,13 +77,16 @@ test('native compound arrows are larger, centered outside the candle and own a s
   assert.equal(f.removed.length, 4);
 });
 
-test('same-time rules own independent fixed slots and eviction never moves surviving entities', async () => {
+test('user observes that same-time rules own independent fixed slots and eviction never moves surviving entities', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture();
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   await layer.renderCandidate('impact', annotation(), 11000);
   await layer.renderCandidate('passive', annotation(), 11000);
   await layer.renderCandidate('impact', annotation(), 11000);
   const survivor = f.created.slice(2).map((item) => ({ ...item.point }));
+  // Then user observes that same-time rules own independent fixed slots and eviction never moves surviving entities
   assert.deepEqual(survivor, [{ time: 10, price: 1.39 }, { time: 10, price: 1.43 }]);
   layer.remove('impact');
   await layer.renderCandidate('reinforcement', annotation(), 11000);
@@ -91,20 +97,26 @@ test('same-time rules own independent fixed slots and eviction never moves survi
   assert.deepEqual(f.removed, ['owned-1', 'owned-2']);
 });
 
-test('different no-trade decision seconds sharing a prior candle receive distinct slots', async () => {
+test('user observes that different no-trade decision seconds sharing a prior candle receive distinct slots', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture();
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   await layer.renderCandidate('second-11', annotation({ markerTime: 11 }), 12000);
   await layer.renderCandidate('second-12', annotation({ markerTime: 12 }), 13000);
+  // Then user observes that different no-trade decision seconds sharing a prior candle receive distinct slots
   assert.deepEqual(f.created.map((item) => item.point.time), [10, 10, 10, 10]);
   assert.deepEqual(f.created.filter((item) => item.options.shape === 'icon').map((item) => item.point.price), [1.326, 1.39]);
   assert.equal(f.listeners.size, 0);
 });
 
-test('remove cancels a pending candle wait without waiting for its deadline', async () => {
+test('user observes that remove cancels a pending candle wait without waiting for its deadline', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture({ bars: [] });
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   const result = layer.renderCandidate('waiting', annotation(), 11000);
+  // Then user observes that remove cancels a pending candle wait without waiting for its deadline
   assert.equal(f.listeners.size, 1);
   layer.remove('waiting');
   assert.equal(await result, false);
@@ -112,8 +124,10 @@ test('remove cancels a pending candle wait without waiting for its deadline', as
   assert.equal(f.created.length, 0);
 });
 
-test('clear removes a native icon that finishes creation late and never creates its label', async () => {
+test('user observes that clear removes a native icon that finishes creation late and never creates its label', async () => {
+  // Given a native chart and compound candidate annotations
   const entered = deferred();
+  // When deferred processes the configured inputs
   const release = deferred();
   const f = fixture({ beforeCreate: async () => { entered.resolve(); await release.promise; } });
   const layer = f.layer();
@@ -121,20 +135,24 @@ test('clear removes a native icon that finishes creation late and never creates 
   await entered.promise;
   layer.clear();
   release.resolve();
+  // Then user observes that clear removes a native icon that finishes creation late and never creates its label
   assert.equal(await result, false);
   assert.equal(layer.size, 0);
   assert.deepEqual(f.removed, ['owned-1']);
   assert.deepEqual([...f.shapes.keys()], ['user-owned']);
 });
 
-test('remove cancels a pending label and removes each part of the pair exactly once', async () => {
+test('user observes that remove cancels a pending label and removes each part of the pair exactly once', async () => {
+  // Given a native chart and compound candidate annotations
   const entered = deferred();
+  // When deferred processes the configured inputs
   const release = deferred();
   const f = fixture({ beforeCreate: async (count) => { if (count === 2) { entered.resolve(); await release.promise; } } });
   const layer = f.layer();
   const result = layer.renderCandidate('late-label', annotation(), 11000);
   await entered.promise;
   layer.remove('late-label');
+  // Then user observes that remove cancels a pending label and removes each part of the pair exactly once
   assert.deepEqual(f.removed, ['owned-1']);
   release.resolve();
   assert.equal(await result, false);
@@ -142,30 +160,40 @@ test('remove cancels a pending label and removes each part of the pair exactly o
   assert.deepEqual([...f.shapes.keys()], ['user-owned']);
 });
 
-test('partial label failure rolls back the already-created icon', async () => {
+test('user observes that partial label failure rolls back the already-created icon', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture({ beforeCreate: (count) => { if (count === 2) throw new Error('fixture label failure'); } });
+  // When f.layer processes the configured inputs
   const layer = f.layer();
+  // Then user observes that partial label failure rolls back the already-created icon
   await assert.rejects(layer.renderCandidate('partial', annotation(), 11000), /fixture label failure/);
   assert.deepEqual(f.removed, ['owned-1']);
   assert.equal(layer.size, 0);
   assert.deepEqual([...f.shapes.keys()], ['user-owned']);
 });
 
-test('shifted times and unsupported drawing properties roll back their own entity', async () => {
-  for (const options of [{ shiftSeconds: 1 }, { wrongProperties: true }]) {
+for (const options of [{ shiftSeconds: 1 }, { wrongProperties: true }]) {
+  test(`user observes that shifted times and unsupported drawing properties roll back their own entity (options=${JSON.stringify(options)})`, async () => {
+    // Given a native chart and compound candidate annotations
     const f = fixture(options);
+    // When f.layer processes the configured inputs
     const layer = f.layer();
+    // Then user observes that shifted times and unsupported drawing properties roll back their own entity (options=the selected case)
     await assert.rejects(layer.renderCandidate('bad', annotation(), 11000), options.shiftSeconds ? /time alignment failed/ : /drawing properties/);
     assert.equal(layer.size, 0);
     assert.deepEqual(f.removed, ['owned-1']);
     assert.deepEqual([...f.shapes.keys()], ['user-owned']);
-  }
-});
 
-test('cleanup attempts both owned entities and reports failures without touching user drawings', async () => {
+  });
+}
+
+test('user observes that cleanup attempts both owned entities and reports failures without touching user drawings', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture({ removeError: new Error('fixture removal failure') });
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   await layer.renderCandidate('high', annotation(), 11000);
+  // Then user observes that cleanup attempts both owned entities and reports failures without touching user drawings
   assert.throws(() => layer.clear(), (error) => error instanceof AggregateError && error.errors.length === 2);
   assert.equal(layer.size, 0);
   assert.deepEqual(f.removed, ['owned-1', 'owned-2']);
@@ -174,14 +202,17 @@ test('cleanup attempts both owned entities and reports failures without touching
   assert.equal(f.removed.length, 2, 'unknown removals are not automatically retried');
 });
 
-test('80 compound pairs plus 80 ordinary markers have a strict 240-entity budget', async () => {
+test('user observes that 80 compound pairs plus 80 ordinary markers have a strict 240-entity budget', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture();
   const ordinary = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 80, maxAgeMs: 7200000 });
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   for (let i = 0; i < 80; i += 1) {
     await ordinary.renderOpened(`ordinary-${i}`, annotation(), 11000);
     await layer.renderCandidate(`compound-${i}`, annotation(), 11000);
   }
+  // Then user observes that 80 compound pairs plus 80 ordinary markers have a strict 240-entity budget
   assert.equal(f.shapes.size, 241);
   assert.equal(layer.size, 80);
   assert.equal(ordinary.size, 80);
@@ -193,8 +224,10 @@ test('80 compound pairs plus 80 ordinary markers have a strict 240-entity budget
   assert.deepEqual([...f.shapes.keys()], ['user-owned']);
 });
 
-test('compound reconciliation restores only missing parts in their original slots', async () => {
+test('user observes that compound reconciliation restores only missing parts in their original slots', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture();
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   await layer.renderCandidate('a', annotation(), 11000);
   await layer.renderCandidate('b', annotation(), 11000);
@@ -202,6 +235,7 @@ test('compound reconciliation restores only missing parts in their original slot
   f.shapes.delete('owned-3');
   f.shapes.delete('owned-4');
   await layer.reconcile();
+  // Then user observes that compound reconciliation restores only missing parts in their original slots
   assert.equal(layer.size, 2);
   assert.equal(f.created.length, 7);
   assert.equal(f.shapes.has('owned-2'), true);
@@ -214,23 +248,29 @@ test('compound reconciliation restores only missing parts in their original slot
   assert.deepEqual([...f.shapes.keys()], ['user-owned']);
 });
 
-test('a repeated candidate restores externally removed entities', async () => {
+test('user observes that a repeated candidate restores externally removed entities', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture();
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   await layer.renderCandidate('a', annotation(), 11000);
   f.shapes.delete('owned-1');
   f.shapes.delete('owned-2');
+  // Then user observes that a repeated candidate restores externally removed entities
   assert.equal(await layer.renderCandidate('a', annotation(), 11000), true);
   assert.equal(f.created.length, 4);
   assert.equal(layer.size, 1);
   assert.equal(f.shapes.size, 3);
 });
 
-test('suspension preserves completed pairs and cancels a pending candle wait', async () => {
+test('user observes that suspension preserves completed pairs and cancels a pending candle wait', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture();
   const layer = createTradingViewCompoundLayer({ chart: f.chart }, { maxCandidates: 80, candleWaitMs: 3000 });
+  // When layer.renderCandidate processes the configured inputs
   await layer.renderCandidate('verified', annotation(), 11000);
   const pending = layer.renderCandidate('waiting', annotation({ markerTime: 11 }), 12000);
+  // Then user observes that suspension preserves completed pairs and cancels a pending candle wait
   assert.equal(f.listeners.size, 1);
   layer.suspend();
   assert.equal(await pending, false);
@@ -246,8 +286,10 @@ test('suspension preserves completed pairs and cancels a pending candle wait', a
 });
 
 for (const phase of ['icon', 'label', 'repair']) {
-  test(`suspension removes late ${phase} entities without removing verified history`, async () => {
+  test(`user observes that suspension removes late ${phase} entities without removing verified history`, async () => {
+    // Given a native chart and compound candidate annotations
     const entered = deferred();
+    // When deferred processes the configured inputs
     const release = deferred();
     const blockedCreate = phase === 'label' ? 4 : 3;
     const f = fixture({ beforeCreate: async (count) => {
@@ -261,6 +303,7 @@ for (const phase of ['icon', 'label', 'repair']) {
     layer.suspend();
     release.resolve();
     await pending;
+    // Then user observes that suspension removes late the selected case entities without removing verified history
     assert.deepEqual([...f.shapes.keys()], phase === 'repair' ? ['user-owned', 'owned-2'] : ['user-owned', 'owned-1', 'owned-2']);
     assert.deepEqual(f.removed, phase === 'label' ? ['owned-3', 'owned-4'] : ['owned-3']);
     assert.equal(layer.size, 1);
@@ -271,9 +314,11 @@ for (const phase of ['icon', 'label', 'repair']) {
   });
 }
 
-test('compound timer and replay share a single repair and discard late parts after invalidation', async () => {
-  for (const action of ['retain', 'clear', 'remove', 'interval', 'symbol']) {
+for (const action of ['retain', 'clear', 'remove', 'interval', 'symbol']) {
+  test(`user observes that compound timer and replay share a single repair and discard late parts after invalidation (action=${JSON.stringify(action)})`, async () => {
+    // Given a native chart and compound candidate annotations
     const entered = deferred();
+    // When deferred processes the configured inputs
     const release = deferred();
     const f = fixture({ beforeCreate: async (count) => { if (count === 3) { entered.resolve(); await release.promise; } } });
     const layer = f.layer();
@@ -288,6 +333,7 @@ test('compound timer and replay share a single repair and discard late parts aft
     if (action === 'interval') f.chart.resolution = () => '1';
     if (action === 'symbol') f.chart.symbol = () => 'BTCUSDT';
     release.resolve();
+    // Then user observes that compound timer and replay share a single repair and discard late parts after invalidation (action=the selected case)
     assert.equal(await replay, action === 'retain', action);
     await Promise.all([repair, anotherTick]);
     assert.equal(f.created.length, 3, action);
@@ -296,14 +342,18 @@ test('compound timer and replay share a single repair and discard late parts aft
     layer.clear();
     await layer.reconcile();
     assert.deepEqual([...f.shapes.keys()], ['user-owned']);
-  }
-});
 
-test('cleanup skips evicted compound parts and still reports a live part removal failure', async () => {
+  });
+}
+
+test('user observes that cleanup skips evicted compound parts and still reports a live part removal failure', async () => {
+  // Given a native chart and compound candidate annotations
   const f = fixture({ removeError: new Error('fixture removal failure') });
+  // When f.layer processes the configured inputs
   const layer = f.layer();
   await layer.renderCandidate('a', annotation(), 11000);
   f.shapes.delete('owned-1');
+  // Then user observes that cleanup skips evicted compound parts and still reports a live part removal failure
   assert.throws(() => layer.clear(), (error) => error instanceof AggregateError && error.errors.length === 1);
   assert.deepEqual(f.removed, ['owned-2']);
   assert.equal(layer.size, 0);
@@ -312,7 +362,8 @@ test('cleanup skips evicted compound parts and still reports a live part removal
 });
 
 for (const phase of ['settled', 'creating', 'restoring']) {
-  test(`locale changes preserve compound entity ownership while ${phase}`, async () => {
+  test(`user observes that locale changes preserve compound entity ownership while ${phase}`, async () => {
+    // Given a native chart and compound candidate annotations
     const gate = deferred();
     let blocked = false;
     const f = fixture({ beforeCreate: (count) => {
@@ -321,6 +372,7 @@ for (const phase of ['settled', 'creating', 'restoring']) {
         return gate.promise;
       }
     } });
+    // When f.layer processes the configured inputs
     const layer = f.layer();
     let pending = layer.renderCandidate('high', annotation(), 11000);
     if (phase !== 'creating') await pending;
@@ -335,6 +387,7 @@ for (const phase of ['settled', 'creating', 'restoring']) {
     layer.setLocale('en');
     gate.resolve();
     await pending;
+    // Then user observes that locale changes preserve compound entity ownership while the selected case
     assert.equal(f.shapes.get(phase === 'restoring' ? 'owned-3' : 'owned-2').getProperties().text, 'High candidate');
     assert.equal(f.shapes.has('owned-1'), true);
     assert.deepEqual(f.removed, []);

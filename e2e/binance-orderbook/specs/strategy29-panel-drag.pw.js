@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { test, expect } from '../test.js';
+import { test, expect, reloadPageWithCoverage } from '../test.js';
 
 const source = await readFile(new URL('../../../src/binance-strategy29-bollinger/dom/panel-position.js', import.meta.url), 'utf8');
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
@@ -46,7 +46,7 @@ test('user drags a panel across the chart iframe and restores its saved position
   await expect(page.frameLocator('iframe').locator('body')).toHaveAttribute('data-clicked', '1');
 
   // When the user reloads the page and the panel is installed again.
-  await page.reload();
+  await reloadPageWithCoverage(page);
   await install(page);
 
   // Then the panel restores the exact saved position.

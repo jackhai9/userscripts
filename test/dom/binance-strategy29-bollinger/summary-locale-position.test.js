@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { captureStrategyError } from '../../helpers/strategy-migration-boundaries.js';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { SUMMARY_COPY } from '../../../src/binance-strategy29-bollinger/ui-copy.js';
@@ -28,11 +29,14 @@ function fixture(locale = 'zh-CN', stored = { left: 100, top: 120 }) {
   return { dom, controller, panel, header, captured, fire, saves, close };
 }
 
-test('Chinese panel translates retained status and signals and switches to English without losing rows', () => {
+test('user observes that Chinese panel translates retained status and signals and switches to English without losing rows', () => {
+  // Given the panel locale, viewport and saved coordinates
   const f = fixture();
   try {
+    // When f.controller.renderStatus processes the configured inputs
     f.controller.renderStatus(status);
     f.controller.addEvents(events.events, events.observed_at_ms);
+    // Then user observes that Chinese panel translates retained status and signals and switches to English without losing rows
     assert.match(f.panel.textContent, /Strategy 29 汇总/);
     assert.match(f.panel.textContent, /最近处理状态/);
     assert.match(f.panel.textContent, /看跌预警/);
@@ -51,13 +55,16 @@ test('Chinese panel translates retained status and signals and switches to Engli
   } finally { f.close(); }
 });
 
-test('header drag restores, clamps and saves position while buttons and destroyed panels never drag', () => {
+test('user observes that header drag restores, clamps and saves position while buttons and destroyed panels never drag', () => {
+  // Given the panel locale, viewport and saved coordinates
   const f = fixture();
   try {
     Object.defineProperties(f.dom.window, { innerWidth: { value: 500, configurable: true }, innerHeight: { value: 400, configurable: true } });
     f.panel.getBoundingClientRect = () => ({ left: parseFloat(f.panel.style.left), top: parseFloat(f.panel.style.top), width: 340, height: 200 });
+    // When f.panel.querySelector processes the configured inputs
     const header = f.panel.querySelector('header');
     const { fire } = f;
+    // Then user observes that header drag restores, clamps and saves position while buttons and destroyed panels never drag
     assert.equal(f.panel.style.left, '100px');
     assert.equal(f.panel.style.top, '120px');
     fire(header, 'pointerdown', 120, 130);
@@ -81,8 +88,9 @@ test('header drag restores, clamps and saves position while buttons and destroye
   } finally { f.close(); }
 });
 
-test('drag ignores other pointers and saves once on cancel, capture loss or blur', () => {
-  for (const ending of ['pointercancel', 'lostpointercapture', 'blur']) {
+for (const ending of ['pointercancel', 'lostpointercapture', 'blur']) {
+  test(`user observes that drag ignores other pointers and saves once on cancel, capture loss or blur (ending=${JSON.stringify(ending)})`, () => {
+    // Given the panel locale, viewport and saved coordinates
     const f = fixture();
     try {
       f.panel.getBoundingClientRect = () => ({ left: parseFloat(f.panel.style.left), top: parseFloat(f.panel.style.top), width: 340, height: 200 });
@@ -90,10 +98,12 @@ test('drag ignores other pointers and saves once on cancel, capture loss or blur
         f.fire(f.header, 'pointerdown', 120, 130, overrides);
         assert.equal(f.captured.size, 0);
       }
+      // When f.fire processes the configured inputs
       f.fire(f.header, 'pointerdown', 120, 130);
       f.fire(f.header, 'pointerdown', 900, 900, { pointerId: 2 });
       f.fire(f.header, 'pointermove', 800, 800, { pointerId: 2 });
       f.fire(f.header, 'pointerup', 800, 800, { pointerId: 2 });
+      // Then user observes that drag ignores other pointers and saves once on cancel, capture loss or blur (ending=the selected case)
       assert.equal(f.panel.style.left, '100px');
       assert.deepEqual(f.saves, []);
       f.fire(f.header, 'pointermove', 180, 170);
@@ -110,16 +120,20 @@ test('drag ignores other pointers and saves once on cancel, capture loss or blur
       assert.equal(f.panel.style.left, '160px');
       assert.equal(f.panel.style.top, '160px');
     } finally { f.close(); }
-  }
-});
 
-test('resize and content growth keep the panel visible, including collapse/expand and locale rerender', () => {
+  });
+}
+
+test('user observes that resize and content growth keep the panel visible, including collapse/expand and locale rerender', () => {
+  // Given the panel locale, viewport and saved coordinates
   const f = fixture('en', { left: 900, top: 600 });
   try {
     let height = 200;
     f.panel.getBoundingClientRect = () => ({ left: parseFloat(f.panel.style.left), top: parseFloat(f.panel.style.top), width: 340, height: f.panel.querySelector('[data-role=body]').style.display === 'none' ? 40 : height });
     Object.defineProperties(f.dom.window, { innerWidth: { value: 500, configurable: true }, innerHeight: { value: 400, configurable: true } });
+    // When f.dom.window.dispatchEvent processes the configured inputs
     f.dom.window.dispatchEvent(new f.dom.window.Event('resize'));
+    // Then user observes that resize and content growth keep the panel visible, including collapse/expand and locale rerender
     assert.equal(f.panel.style.left, '160px');
     assert.equal(f.panel.style.top, '200px');
     height = 300;
@@ -138,21 +152,28 @@ test('resize and content growth keep the panel visible, including collapse/expan
   } finally { f.close(); }
 });
 
-test('invalid persisted positions fail explicitly before installing a panel', () => {
+test('user observes that invalid persisted positions fail explicitly before installing a panel', () => {
+  // Given a persisted position whose horizontal coordinate is not numeric
   const dom = new JSDOM('<body></body>');
   try {
-    assert.throws(() => createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', {
+    // When the summary panel loads those persisted coordinates
+    const failure = captureStrategyError(() => createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', {
       loadPosition: () => ({ left: 'bad', top: 10 }), savePosition() {},
-    }), /position is invalid/);
+    }));
+    // Then the invalid position is reported without installing a panel
+    assert.match(failure.message, /position is invalid/);
     assert.equal(dom.window.document.getElementById('jh-strategy29-summary-panel'), null);
   } finally { dom.window.close(); }
 });
 
 
-test('configuration and error states rerender in the chosen language without clearing diagnostics', () => {
+test('user observes that configuration and error states rerender in the chosen language without clearing diagnostics', () => {
+  // Given the panel locale, viewport and saved coordinates
   const f = fixture('en');
   try {
+    // When f.controller.setConnection processes the configured inputs
     f.controller.setConnection('configuration_required', SUMMARY_COPY.configuration);
+    // Then user observes that configuration and error states rerender in the chosen language without clearing diagnostics
     assert.equal(f.panel.querySelector('[data-role=connection]').textContent, 'Gateway secret is not configured');
     f.controller.setLocale('zh-CN');
     assert.equal(f.panel.querySelector('[data-role=connection]').textContent, '尚未配置网关密钥');

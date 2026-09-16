@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.209
+// @version      2.7.211
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -35,6 +35,7 @@ import {
 import {
   BINANCE_PAGE_TEXT,
   buildBinanceTextAlternation,
+  hasBinanceCurrentSymbolOpenOrdersEmptyText,
   includesBinancePageText,
   includesCompactBinancePageText,
   isBinanceCancelAllText,
@@ -134,6 +135,7 @@ import {
   isReduceOnlyOpenOrdersConflictFeedback,
   isPotentialOrderFeedbackText,
   readConfirmedReduceOnlyRejection,
+  resolveBinanceRateLimitCooldownMs,
   resolveBinanceSubmitResponseRecovery,
   summarizeBinancePlaceOrderPayload,
 } from './core/order-feedback.js';
@@ -1816,8 +1818,8 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
 
   function ensureOrderbookPrecisionObserver() {
     if (document.hidden || !isFuturesTradingPage()) return;
-    const trigger = findOrderbookPrecisionTrigger();
-    const root = trigger?.element?.closest('.orderbook-tickSize') || trigger?.element || null;
+    // Native text can be temporarily empty while this same precision root updates.
+    const root = document.querySelector('#futuresOrderbook .orderbook-tickSize');
     if (!root) {
       if (orderbookPrecisionObserverRoot) stopOrderbookPrecisionObserver();
       return;
@@ -2541,11 +2543,7 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
         rateLimited ? '仓位确认请求频率受限' : '仓位确认暂未完成',
       );
       if (rateLimited) {
-        const retryAfterSeconds = Number(error.retryAfter);
-        recoveryError.continuousRecoveryCooldownMs = Number.isFinite(retryAfterSeconds)
-          && retryAfterSeconds >= 0
-          ? retryAfterSeconds * 1000
-          : 10000;
+        recoveryError.continuousRecoveryCooldownMs = resolveBinanceRateLimitCooldownMs(error.retryAfter);
       }
       recoveryError.skipImmediateCloseRecheck = true;
       throw recoveryError;
@@ -6057,9 +6055,30 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
           await restoreOpenOrdersSubTab(previousOpenOrdersSubTabIdentity, symbol);
         }
         if (previousOpenOrdersScrollTop !== null) {
-          openOrdersScope = await waitForActiveOpenOrdersScope();
-          const scrollContainer = findOpenOrderRowsScrollContainer(openOrdersScope);
-          if (scrollContainer) {
+          // Restored filters and tabs commit before rows mount. The restored list
+          // can include other symbols or Conditional orders, so it has no current-symbol filter requirement.
+          const restoredRows = await waitForAccountOrdersState(() => {
+            if (!isCurrentObservedSymbol(symbol)) return null;
+            const root = getActiveOpenOrdersScope();
+            if (!root) return null;
+            if (previousOpenOrdersSubTabIdentity && getOpenOrdersSubTabIdentity(
+              findSelectedOpenOrdersSubTab(root),
+            ) !== previousOpenOrdersSubTabIdentity) return null;
+            if (symbolFilterOriginalChecked !== null && getCheckboxCheckedState(
+              findHideOtherSymbolCheckbox(root),
+            ) !== symbolFilterOriginalChecked) return null;
+            const hasRows = readOpenOrderRowElements(root).length > 0;
+            const empty = !hasRows
+              && !findCurrentSymbolCancelAllButton(root)
+              && hasBinanceCurrentSymbolOpenOrdersEmptyText(readOpenOrdersScopeText(root));
+            if (!hasRows && !empty) return null;
+            return { root, scrollContainer: findOpenOrderRowsScrollContainer(root) };
+          }, 2200);
+          const scrollContainer = restoredRows?.scrollContainer;
+          if (isCurrentObservedSymbol(symbol)
+            && restoredRows?.root === getActiveOpenOrdersScope()
+            && scrollContainer?.isConnected
+            && restoredRows.root.contains(scrollContainer)) {
             scrollContainer.scrollTop = Math.min(
               previousOpenOrdersScrollTop,
               scrollContainer.scrollHeight,
@@ -7400,16 +7419,21 @@ import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
     const actionDisabled = ladderRunning
       || !!singleOrderTask
       || cancelCurrentSymbolOpenOrdersBlocksLadderActions;
+    const activeActionType = activeLadderActionType || activeContinuousLadderActionType;
+    // Stop belongs to the running task even when fresh numeric inputs are unavailable.
+    const activeStopButtons = activeActionType
+      ? [ladderExecutionButton(activeActionType)]
+      : [];
     if (!['OPEN', 'CLOSE'].includes(tradeMode)) {
       return {
         optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">${ui(PANEL_COPY.state.waitingTradeMode)}</div>`],
-        actionButtons: [],
+        actionButtons: activeStopButtons,
       };
     }
     if (!precision) {
       return {
         optionRows: [`<div style="margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:12px;">${ui(PANEL_COPY.state.waitingPricePrecision)}</div>`],
-        actionButtons: [],
+        actionButtons: activeStopButtons,
       };
     }
     if (tradeMode === 'OPEN') {

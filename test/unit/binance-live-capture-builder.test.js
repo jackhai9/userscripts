@@ -45,15 +45,19 @@ function dialogEvents(primary) {
   ];
 }
 
-test('builds a no-orders sample directly from one probe snapshot', () => {
-  const sample = buildLivePerformanceSample({
+test('user builds a no-orders sample directly from one probe snapshot', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = {
     parameters: { kind: 'no-orders' },
     probe: probeSnapshot([{ kind: 'first-feedback', atMs: 3, detail: null }]),
     capacityEvidence: null,
     testOrderLedger: EMPTY_LEDGER,
     stateRestored: true,
-  });
+  };
+  // When the builds a no-orders sample directly from one probe snapshot
+  const sample = buildLivePerformanceSample(scenarioInput);
 
+  // Then builds a no-orders sample directly from one probe snapshot
   assert.deepEqual(sample.segmentsMs, {
     clickToFirstFeedback: 3,
     clickToFinalReady: 200,
@@ -63,14 +67,18 @@ test('builds a no-orders sample directly from one probe snapshot', () => {
   assert.equal(sample.uncaughtErrors, 0);
 });
 
-test('derives cancel and confirm decision timing from semantic probe events', () => {
-  const cancel = buildLivePerformanceSample({
+test('user derives cancel and confirm decision timing from semantic probe events', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = {
     parameters: { kind: 'dialog-cancel', testOrderCount: 1 },
     probe: probeSnapshot(dialogEvents(false)),
     capacityEvidence: {},
     testOrderLedger: { created: [{}], fills: [], residual: [] },
     stateRestored: true,
-  });
+  };
+  // When the derives cancel and confirm decision timing from semantic probe events
+  const cancel = buildLivePerformanceSample(scenarioInput);
+  // Then derives cancel and confirm decision timing from semantic probe events
   assert.deepEqual(cancel.segmentsMs, {
     clickToFirstFeedback: 4,
     clickToDialog: 80,
@@ -87,22 +95,33 @@ test('derives cancel and confirm decision timing from semantic probe events', ()
   assert.deepEqual(confirm.segmentsMs, cancel.segmentsMs);
 });
 
-test('rejects a dialog outcome that contradicts the declared scenario kind', () => {
-  assert.throws(
-    () => buildLivePerformanceSample({
+test('user rejects a dialog outcome that contradicts the declared scenario kind', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = {
       parameters: { kind: 'dialog-confirm', testOrderCount: 1 },
       probe: probeSnapshot(dialogEvents(false)),
       capacityEvidence: {},
       testOrderLedger: { created: [{}], fills: [], residual: [] },
       stateRestored: true,
-    }),
-    /requires the primary dialog action/,
-  );
+    };
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    buildLivePerformanceSample(scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then rejects a dialog outcome that contradicts the declared scenario kind
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /requires the primary dialog action/);
 });
 
-test('rejects a dialog that closes before the recorded user decision', () => {
+test('user rejects a dialog that closes before the recorded user decision', () => {
+  // Given the probe fixture contains timing events and scenario evidence
   const events = dialogEvents(true);
+  // When the capture builder processes the supplied probe evidence
   events.find((event) => event.kind === 'dialog-hidden').atMs = 140;
+  // Then rejects a dialog that closes before the recorded user decision
   assert.throws(
     () => buildLivePerformanceSample({
       parameters: { kind: 'dialog-confirm', testOrderCount: 1 },
@@ -115,8 +134,9 @@ test('rejects a dialog that closes before the recorded user decision', () => {
   );
 });
 
-test('builds and validates a complete three-sample capture without manual timing transcription', () => {
-  const capture = buildLivePerformanceCapture({
+test('user builds and validates a complete three-sample capture without manual timing transcription', () => {
+  // Given the supplied input describes this data scenario
+  const scenarioInput = {
     capturedAt: '2026-08-27T01:00:00.000Z',
     environment: {
       browser: 'Chrome 151.0.0.0',
@@ -136,8 +156,11 @@ test('builds and validates a complete three-sample capture without manual timing
         stateRestored: true,
       })),
     }],
-  });
+  };
+  // When the builds and validates a complete three-sample capture without manual timing transcription
+  const capture = buildLivePerformanceCapture(scenarioInput);
 
+  // Then builds and validates a complete three-sample capture without manual timing transcription
   assert.equal(capture.scenarios[0].samples.length, 3);
   assert.deepEqual(capture.scenarios[0].applicableSegments, [
     'clickToFirstFeedback',
@@ -145,14 +168,22 @@ test('builds and validates a complete three-sample capture without manual timing
   ]);
 });
 
-test('rejects unknown raw-bundle fields instead of silently dropping them', () => {
-  assert.throws(
-    () => buildLivePerformanceCapture({
+test('user rejects unknown raw-bundle fields instead of silently dropping them', () => {
+  // Given the rejected input preserves the specific invalid condition
+  const scenarioInput = {
       capturedAt: '2026-08-27T01:00:00.000Z',
       environment: {},
       scenarios: [],
       ignored: true,
-    }),
-    /input keys must be exactly/,
-  );
+    };
+  let failure;
+  // When the real operation evaluates the rejected input
+  try {
+    buildLivePerformanceCapture(scenarioInput);
+  } catch (error) {
+    failure = error;
+  }
+  // Then rejects unknown raw-bundle fields instead of silently dropping them
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /input keys must be exactly/);
 });

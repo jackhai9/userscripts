@@ -12,7 +12,7 @@ export function assessBranchCoverage(coverage, policy, { requireTarget = false }
   assert.deepEqual(coverage.layers, ['node', 'browser'], 'Coverage gates require both Node and browser execution');
   assert.ok(coverage.summary.branches.total > 0, 'Production coverage needs a nonempty denominator');
   assert.ok(Number.isFinite(policy.minimumBranches) && policy.minimumBranches >= 0
-    && policy.minimumBranches <= BRANCH_TARGET, 'Invalid staged branch threshold');
+    && policy.minimumBranches <= BRANCH_TARGET, 'Invalid branch threshold');
   assert.ok(Array.isArray(policy.criticalSources) && policy.criticalSources.length > 0,
     'Critical coverage sources must be explicit');
   assert.equal(new Set(policy.criticalSources).size, policy.criticalSources.length, 'Duplicate critical coverage source');
@@ -20,7 +20,7 @@ export function assessBranchCoverage(coverage, policy, { requireTarget = false }
   const targetMet = measured >= BRANCH_TARGET;
   const failures = [];
   if (measured < policy.minimumBranches) {
-    failures.push(`All production sources: ${measured.toFixed(2)}% is below the staged ${policy.minimumBranches}% threshold`);
+    failures.push(`All production sources: ${measured.toFixed(2)}% is below the configured ${policy.minimumBranches}% threshold`);
   }
   const critical = policy.criticalSources.map((path) => {
     const matches = coverage.files.filter((file) => file.path === path);
@@ -32,6 +32,6 @@ export function assessBranchCoverage(coverage, policy, { requireTarget = false }
   if (requireTarget && !targetMet) {
     failures.push(`All production sources: ${measured.toFixed(2)}% is below the final ${BRANCH_TARGET}% target`);
   }
-  return { passed: failures.length === 0, measured, stagedMinimum: policy.minimumBranches,
+  return { passed: failures.length === 0, measured, minimumBranches: policy.minimumBranches,
     target: BRANCH_TARGET, targetMet, requireTarget, critical, failures };
 }

@@ -15,7 +15,7 @@ Use the Node version pinned by `.nvmrc`. The relevant commands are:
 | `npm run test:ui` | Offline Playwright scenarios using the generated userscripts and controlled host fixtures. |
 | `npm run test:affected` | The repository's affected-test selector; consult its selection output before interpreting the result. |
 | `npm run test:coverage:node` | Production-source coverage from the Node layer. |
-| `npm run test:coverage` | Complete Node and browser source coverage, with the staged aggregate and critical-module gates. |
+| `npm run test:coverage` | Complete Node and browser source coverage, with the 90% aggregate and critical-module gates. |
 
 The specialized validation paths, builds, and any required live checks remain in
 [Userscript Validation](userscript-validation.md) and the linked script manuals.
@@ -24,7 +24,7 @@ the current live Binance DOM or grant permission for financial actions.
 
 ## Behavior Names and Stages
 
-New test files and all `e2e/**/specs/**/*.pw.js` scenarios use a title beginning with
+All Node test files and `e2e/**/specs/**/*.pw.js` scenarios use a title beginning with
 `user `. Describe the observable behavior in the rest of the title. A
 parameterized title such as `` `user sees ${quantity} accepted orders` `` keeps a
 static `user ` prefix.
@@ -114,53 +114,21 @@ such as `assert.match(source, /@downloadURL/)` remain valid. Runtime behavior
 should be checked through results and effects instead of merely searching for
 its implementation text.
 
-## Staged Migration and Exact Allowances
+## Completed Inventory and Exact Host Contracts
 
-The first strict Node behavior group covers these orderbook suites:
+The first migration inventory contained 83 existing Node files, seven method
+replacement calls, and 31 fixed waits. Both legacy lists in
+[`scripts/test-policy/migration-inventory.js`](../scripts/test-policy/migration-inventory.js)
+are now empty. Every existing and new suite is subject to the same BDD, assertion,
+mock, and wait rules; there is no legacy ESLint override. Policy tests require
+the legacy lists to stay empty.
 
-- `cancel`, `close-action`, and `close-ladder-recovery`;
-- `continuous-ladder`, `order-feedback`, and `quantity`;
-- `chart-save-coalescer`.
-
-The new policy, fixture-contract, coverage-report, and test-selection suites are
-also strict. Every new `*.test.js` file is strict by default. All browser spec
-files are strict.
-
-The remaining existing Node suites are individually listed, with migration
-reasons, in
-[`scripts/test-policy/migration-inventory.js`](../scripts/test-policy/migration-inventory.js).
-Only their BDD organization is deferred. Focus/skip, empty-test, new mock, and new
-fixed-wait rules still apply. This is explicit migration debt, not proof that the
-legacy suites already satisfy the behavior policy. Add new scenarios in strict
-files or migrate the whole existing file and remove its inventory entry.
-
-The two `source-regressions.test.js` files contain both useful source contracts
-and behavioral checks awaiting migration. Neither file is classified wholesale
-as an architectural test. Preserve the useful contracts while migrating the
-behavioral assertions to executable scenarios.
-
-The remaining method replacements have exact file/target/count allowances:
-
-| File | Retained calls | Remaining work |
-| --- | --- | --- |
-| `test/dom/binance-trading-data-footer.test.js` | `Date.now`: 1 | Move the extracted footer's elapsed-time harness to a deterministic clock. |
-| `test/dom/binance-strategy27-events/compound-candidate-controller.test.js` | `crypto.subtle.digest`: 1 | Move the lifecycle hash pause into a contract-tested crypto boundary. |
-| `test/dom/binance-strategy27-events/strategy27-entrypoint.test.js` | `Date.now`, page `setInterval`/`clearInterval`, `querySelectorAll`, and `prompt`: 1 each | Replace the clock overrides and move query/prompt instrumentation into explicit fixture contracts. |
-
-The remaining fixed waits are likewise bounded:
-
-| File | Retained calls | Remaining work |
-| --- | --- | --- |
-| `test/unit/m3u8-downloader-course-export.test.js` | `setTimeout(20)`: 19; `650`: 1; `1100`: 1 | Introduce export/download completion signals and a virtual runtime clock. |
-| `test/dom/binance-strategy29-bollinger/runtime.test.js` | `f.view.setTimeout(0)`: 5 | Expose remote-request and DOM-render completion signals. |
-| `test/unit/binance-orderbook-trade/trade-form.test.js` | `dom.window.setTimeout(0)`: 3 | Await the observed request or mutation completion. |
-| `test/unit/binance-orderbook-trade/cancel-all-dialog.test.js` | `dom.window.setTimeout(0)`: 1 | Observe delivery of unrelated mutations for the negative case. |
-| `test/dom/binance-strategy29-bollinger/tradingview-bearish-alerts.test.js` | `setTimeout(0)`: 1 | Preserve the actual render-task-yield contract through a controlled scheduling boundary. |
-
-Adding another occurrence or a different target fails lint. Removing an old
-occurrence also fails until its allowance is reduced or removed. This makes the
-inventory shrink as work is migrated. The complete reasons and counts are stored
-in the executable inventory rather than a directory-wide ESLint disable.
+Runtime source-text assertions were replaced with executable behavior tests.
+Source tests retain metadata, generated-artifact identity, module boundaries,
+and explicit CSS/markup contracts. The [migration map](test-migration-map.md)
+tracks each of the 71 original orderbook source-contract titles to its replacement
+and records any remaining verification separately. An empty lint inventory does
+not by itself prove behavioral equivalence.
 
 One separate host contract allows exactly one `window.setTimeout(0)` inside
 `finishAfterPerformanceTail` in
@@ -181,23 +149,23 @@ the complete production-source denominator, including unexecuted files, and
 maps generated artifacts back to their source. The denominator and target live
 in `scripts/test-coverage/config.mjs`.
 
-The default complete run enforces a **66.5% aggregate floor** and **90% for each
-of the seven migrated critical modules**. The initial complete baseline is
-66.58% across 82 production files; the floor rounds that measured value down to
-one decimal place. This preserves an explicit starting gate while the remaining
-behavioral coverage is migrated. The executable threshold and file list live in
+The default complete run enforces **90% across all production sources** and
+**90% for each of the seven critical modules**. The temporary 66.5% migration
+floor is no longer active. The executable threshold and file list live in
 [`branch-policy.json`](../scripts/test-coverage/branch-policy.json).
 
-A successful staged run does not prove that the repository's final 90% target
-was met. Inspect `gate`, `meetsBranchTarget`, `summary.branches.pct`, and the
-recorded layers in `coverage-summary.json`. Use
-`npm run test:coverage -- --require-target` to require the final aggregate target;
-`--report-only` collects diagnostic evidence without enforcing thresholds.
+Inspect `gate`, `meetsBranchTarget`, the exact covered/total counts, and the
+recorded layers in `coverage-summary.json`. The default command requires the
+aggregate target; `--report-only` collects diagnostic evidence without enforcing
+thresholds. `metricInterpretation` and `blockEvidenceUnavailable` distinguish
+retained detailed evidence from coarse Chromium teardown calls. Those coarse
+calls receive no additional branch credit, so the gate may use a conservative
+lower bound rather than an exact count of every actual execution.
 Node-only results must remain labeled Node-only and cannot satisfy the merged
 gate. See [Source Coverage](test-coverage.md) for the measured baseline and
 complete-source contract.
 
-The enforced test policy, the explicit legacy migration inventory, and the
+The enforced test policy, the completed migration inventory, and the
 coverage target are different facts. Report each separately. Do not shrink the
 coverage denominator or mark a legacy suite migrated merely to improve a number.
 

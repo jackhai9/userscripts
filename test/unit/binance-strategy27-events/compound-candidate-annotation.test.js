@@ -5,10 +5,13 @@ import { buildCompoundCandidateAnnotation } from '../../../src/binance-strategy2
 
 const fixtures = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-compound-candidates.json', import.meta.url), 'utf8'));
 
-test('compound high and mirrored low carry explicit rule identity and causal candle time', () => {
-  for (const [index, expected] of [[0, ['候选高', 'arrow_down', '#B71C3B']], [1, ['候选低', 'arrow_up', '#087F5B']]]) {
+for (const [index, expected] of [[0, ['候选高', 'arrow_down', '#B71C3B']], [1, ['候选低', 'arrow_up', '#087F5B']]]) {
+  test(`user observes that compound high and mirrored low carry explicit rule identity and causal candle time (index=${JSON.stringify(index)})`, () => {
+    // Given the compound candidate evidence and presentation fields
     const candidate = fixtures[index];
+    // When buildCompoundCandidateAnnotation processes the configured inputs
     const value = buildCompoundCandidateAnnotation(candidate);
+    // Then user observes that compound high and mirrored low carry explicit rule identity and causal candle time (index=the selected case)
     assert.deepEqual([value.markerLabel, value.markerShape, value.markerColor], expected);
     assert.equal(value.eventTimeMs, candidate.decision.end_ms - 1);
     assert.equal(value.markerTime, 6);
@@ -20,10 +23,12 @@ test('compound high and mirrored low carry explicit rule identity and causal can
     assert.equal(value.notices.includes('探索候选，尚未验证预测能力'), true);
     assert.equal(Object.isFrozen(value.detailRows[0]), true);
     assert.doesNotMatch(JSON.stringify(value), /15\/60|outcome|confidence/);
-  }
-});
 
-test('reinforcement describes only its own later confirmation and linked parent', () => {
+  });
+}
+
+test('user observes that reinforcement describes only its own later confirmation and linked parent', () => {
+  // Given the compound candidate evidence and presentation fields
   const base = buildCompoundCandidateAnnotation(fixtures[0]);
   const source = structuredClone(fixtures[0]);
   source.family = 'failed_rebound';
@@ -32,7 +37,9 @@ test('reinforcement describes only its own later confirmation and linked parent'
   source.trough = { ...source.confirmation, start_ms: 7000, end_ms: 8000 };
   source.rebound = { ...source.confirmation, start_ms: 8000, end_ms: 9000 };
   source.decision = { ...source.confirmation, start_ms: 9000, end_ms: 10000 };
+  // When buildCompoundCandidateAnnotation processes the configured inputs
   const later = buildCompoundCandidateAnnotation(source);
+  // Then user observes that reinforcement describes only its own later confirmation and linked parent
   assert.equal(later.markerTime, 9);
   assert.equal(later.reinforcement, true);
   assert.equal(later.ruleIdentity, `failed_rebound/high/${source.profile_id}/${source.parent_candidate_id}`);
@@ -43,13 +50,16 @@ test('reinforcement describes only its own later confirmation and linked parent'
   assert.equal(base.summary, '候选高 · 买入推动失效');
 });
 
-test('zero active trades are explained and large quantities remain compact', () => {
+test('user observes that zero active trades are explained and large quantities remain compact', () => {
+  // Given the compound candidate evidence and presentation fields
   const source = structuredClone(fixtures[0]);
   source.seed.sell_notional = '0';
   source.seed.sell_count = 0;
   source.seed.buy_notional = '1200000';
   source.seed.buy_count = 200;
+  // When buildCompoundCandidateAnnotation processes the configured inputs
   const value = buildCompoundCandidateAnnotation(source);
+  // Then user observes that zero active trades are explained and large quantities remain compact
   assert.equal(value.detailRows.find((row) => row.label === '主动卖').value, '无主动成交');
   assert.equal(value.detailRows.find((row) => row.label === '主动买').value, '1.2M USDT · 200 笔');
   source.seed.bid_addition = '0.01234';

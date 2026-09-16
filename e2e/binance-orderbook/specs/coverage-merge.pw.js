@@ -10,6 +10,12 @@ import {
   reportProofEntries,
 } from '../../../scripts/test-coverage/merge-proof.mjs';
 import { splitCoverageEntry } from '../../../scripts/test-coverage/split-entries.mjs';
+import {
+  startBrowserCoverage,
+  checkpointBrowserCoverage,
+  stopBrowserCoverage,
+} from '../../../scripts/test-coverage/collect-browser.mjs';
+import { mergeBrowserSnapshots } from '../../../scripts/test-coverage/browser-snapshots.mjs';
 
 const cases = [
   {
@@ -94,3 +100,72 @@ for (const scenario of cases) {
     await testInfo.attach('coverage-merge-evidence', { path: evidencePath, contentType: 'application/json' });
   });
 }
+
+test('user retains a conservative branch report through a real reload without inventing teardown blocks', async ({ page }, testInfo) => {
+  // Given the real collector sees two left-branch calls in each document and three right-branch calls only during teardown.
+  const proof = await createMergeProof(testInfo.outputPath('reload-proof'));
+  const source = proof.registry.artifacts[0].code
+    + '\nCoverageProofMain(true); CoverageProofMain(true);\n'
+    + "addEventListener('pagehide', () => { CoverageProofMain(false); CoverageProofMain(false); CoverageProofMain(false); });\n";
+  const url = 'https://coverage-proof.test/probe.js';
+  await page.route('https://coverage-proof.test/**', route => route.fulfill({
+    contentType: route.request().url() === url ? 'application/javascript' : 'text/html',
+    body: route.request().url() === url ? source : '<!doctype html><script src="/probe.js"></script>',
+  }));
+  await startBrowserCoverage(page);
+  await page.goto('https://coverage-proof.test/');
+  await checkpointBrowserCoverage(page, 'before-reload');
+
+  // When Chromium actually reloads and the collector captures the outgoing and incoming documents.
+  await page.reload();
+  const raw = await stopBrowserCoverage(page);
+  raw.snapshots = raw.snapshots.map(snapshot => ({ ...snapshot,
+    entries: snapshot.entries.filter(entry => entry.url === url),
+  }));
+  await writeFile(resolve(proof.outputDirectory, 'raw-snapshots.json'), JSON.stringify(raw, null, 2));
+  const original = structuredClone(raw);
+  const merged = mergeBrowserSnapshots(raw);
+  const mapped = mapProofEntries(merged.entries, proof, { split: true });
+  const report = await reportProofEntries(proof, 'conservative-reload', mapped);
+
+  // Then each real script root is one, detailed left calls total four, and the three coarse right calls receive no branch credit.
+  expect(raw).toEqual(original);
+  expect(new Set(merged.entries.map(entry => entry.scriptId)).size).toBe(2);
+  expect(merged.entries.map(entry => splitCoverageEntry(entry, proof.registry)[0].functions[0].ranges[0].count)).toEqual([1, 1]);
+  expect(report).toEqual({ sourcePath: proof.sourcePath,
+    branches: { covered: 1, total: 2, counts: [4, 0] }, functions: [{ name: 'chooseBranch', count: 4 }] });
+  expect(merged.blockEvidenceUnavailable.filter(item => item.functionName === 'chooseBranch')
+    .map(item => ({ count: item.range.count, phase: item.phase, snapshotIndex: item.snapshotIndex })))
+    .toEqual([{ count: 3, phase: 'finish', snapshotIndex: 1 }]);
+  await writeFile(resolve(proof.outputDirectory, 'reload-evidence.json'), JSON.stringify({ report,
+    metricInterpretation: 'retained-evidence-lower-bound', blockEvidenceUnavailable: merged.blockEvidenceUnavailable,
+  }, null, 2));
+});
+
+test('user gets exact opposite-branch counts across ordinary browser checkpoints', async ({ page }, testInfo) => {
+  // Given one complete compiled source remains in the same document throughout both intervals.
+  const proof = await createMergeProof(testInfo.outputPath('checkpoint-proof'));
+  const source = proof.registry.artifacts[0].code;
+  await page.setContent('<!doctype html><title>Incremental coverage</title>');
+  await startBrowserCoverage(page);
+  await page.addScriptTag({ content: source });
+  await page.evaluate(() => { window.CoverageProofMain(true); window.CoverageProofMain(true); });
+  await checkpointBrowserCoverage(page, 'first-calls');
+
+  // When the opposite branch runs three times after counters were reset by a checkpoint.
+  await page.evaluate(() => {
+    window.CoverageProofMain(false); window.CoverageProofMain(false); window.CoverageProofMain(false);
+  });
+  const raw = await stopBrowserCoverage(page);
+  raw.snapshots = raw.snapshots.map(snapshot => ({ ...snapshot,
+    entries: snapshot.entries.filter(entry => entry.source === source),
+  }));
+  const merged = mergeBrowserSnapshots(raw);
+  const report = await reportProofEntries(proof, 'merged-checkpoints', mapProofEntries(merged.entries, proof, { split: true }));
+
+  // Then counters sum to five and both branches are proven without any coarse or duplicate execution credit.
+  expect(merged.entries).toHaveLength(1);
+  expect(merged.blockEvidenceUnavailable).toEqual([]);
+  expect(report).toEqual({ sourcePath: proof.sourcePath,
+    branches: { covered: 2, total: 2, counts: [2, 3] }, functions: [{ name: 'chooseBranch', count: 5 }] });
+});

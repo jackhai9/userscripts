@@ -364,14 +364,24 @@ test('user applies full behavior rules to every new test file and migrated suite
   assert.deepEqual(results, files.map(() => ['title', 'stages']));
 });
 
-test('user keeps legacy behavioral debt visible without disabling universal rules', () => {
-  // Given an explicitly inventoried source-regression suite
+test('user enforces behavior rules on formerly exempt source-contract suites', () => {
+  // Given a formerly inventoried source-regression suite and a concrete metadata contract
   const file = 'test/unit/binance-orderbook-trade/source-regressions.test.js';
-  // When its useful source assertion and a newly skipped case are linted
-  const accepted = lintConfigured("test('metadata', () => assert.match(source, /@version/));", file);
-  const skipped = lintConfigured("test.skip('metadata', () => assert.match(source, /@version/));", file);
-  // Then only the staged BDD organization is deferred
+  const code = `test('user installs an artifact with matching metadata', () => {
+    // Given the artifact loaded from disk
+    const artifact = readArtifact();
+    // When the declared version is parsed
+    const version = readVersion(artifact);
+    // Then the version matches its source declaration
+    assert.equal(version, readSourceVersion());
+  });`;
+  // When its full contract, missing stages, and skipped version are linted
+  const accepted = lintConfigured(code, file);
+  const incomplete = lintConfigured("test('metadata', () => assert.match(source, /@version/));", file);
+  const skipped = lintConfigured(code.replace('test(', 'test.skip('), file);
+  // Then static contracts have the same strict organization and focus restrictions as all other tests
   assert.deepEqual(accepted, []);
+  assert.deepEqual(ids(incomplete), ['title', 'stages']);
   assert.deepEqual(messages(skipped), [{ ruleId: 'test-policy/no-focused-tests', messageId: 'forbidden', severity: 2 }]);
 });
 
@@ -395,6 +405,8 @@ test('user inventories only existing exact paths with an explicit migration reas
   const missingReasons = legacyBehaviorGroups.filter(({ reason }) => reason.trim().length < 20);
   const duplicateBehaviorFiles = legacyBehaviorFiles.length - new Set(legacyBehaviorFiles).size;
   // Then no directory-wide allowance or silent unexplained debt exists
+  assert.deepEqual(legacyBehaviorGroups, []);
+  assert.deepEqual(legacyCallAllowances, []);
   assert.deepEqual(invalidFiles, []);
   assert.deepEqual(missingReasons, []);
   assert.equal(duplicateBehaviorFiles, 0);

@@ -6,12 +6,19 @@ import {
   remainingInteractionFeedbackMs,
 } from '../../../src/binance-orderbook-trade/core/interaction-feedback.js';
 
-test('calculates only the remaining interaction feedback duration', () => {
-  assert.equal(remainingInteractionFeedbackMs({
+test("user calculates only the remaining interaction feedback duration", () => {
+  // Given the task and its visible feedback window are configured
+  const scenarioInputs = [{
     startedAtMs: 100,
     nowMs: 124,
     minimumMs: 240,
-  }), 216);
+  }];
+
+  // When the task completion time is evaluated
+  const observed = remainingInteractionFeedbackMs(...scenarioInputs);
+
+  // Then calculates only the remaining interaction feedback duration
+  assert.equal(observed, 216);
   assert.equal(remainingInteractionFeedbackMs({
     startedAtMs: 100,
     nowMs: 400,
@@ -19,7 +26,8 @@ test('calculates only the remaining interaction feedback duration', () => {
   }), 0);
 });
 
-test('keeps an immediate failure pending until its feedback window is visible', async () => {
+test("user keeps an immediate failure pending until its feedback window is visible", async () => {
+  // Given the task and its visible feedback window are configured
   const expectedError = new Error('insufficient funds');
   let releaseDelay;
   let requestedDelayMs = null;
@@ -42,8 +50,10 @@ test('keeps an immediate failure pending until its feedback window is visible', 
   );
 
   await Promise.resolve();
+  // When the task completion time is evaluated
   await Promise.resolve();
 
+  // Then keeps an immediate failure pending until its feedback window is visible
   assert.equal(requestedDelayMs, 216);
   assert.equal(settled, false);
 
@@ -52,8 +62,10 @@ test('keeps an immediate failure pending until its feedback window is visible', 
   assert.equal(settled, true);
 });
 
-test('does not delay a task that already exceeded the feedback window', async () => {
+test("user does not delay a task that already exceeded the feedback window", async () => {
+  // Given the task and its visible feedback window are configured
   let delayCalls = 0;
+  // When the task completion time is evaluated
   const value = await keepInteractionFeedbackVisible(Promise.resolve('done'), {
     startedAtMs: 100,
     minimumMs: 240,
@@ -61,6 +73,7 @@ test('does not delay a task that already exceeded the feedback window', async ()
     delay: async () => { delayCalls += 1; },
   });
 
+  // Then does not delay a task that already exceeded the feedback window
   assert.equal(value, 'done');
   assert.equal(delayCalls, 0);
 });

@@ -1,5 +1,5 @@
 import testPolicy from './scripts/test-policy/eslint-plugin.js';
-import { contractCallAllowances, legacyBehaviorFiles, legacyCallAllowances } from './scripts/test-policy/migration-inventory.js';
+import { contractCallAllowances } from './scripts/test-policy/migration-inventory.js';
 
 export default [
   {
@@ -24,12 +24,7 @@ export default [
     files: ['test/**/*.test.js', 'e2e/**/specs/**/*.pw.js'],
     rules: { 'test-policy/behavior-contract': 'error' },
   },
-  {
-    name: 'explicit-legacy-behavior-inventory',
-    files: legacyBehaviorFiles,
-    rules: { 'test-policy/behavior-contract': 'off' },
-  },
-  ...[...legacyCallAllowances, ...contractCallAllowances].map(({ file, rule, allow }) => ({
+  ...contractCallAllowances.map(({ file, rule, allow }) => ({
     name: `bounded-call-inventory:${file}:${rule}`,
     files: [file],
     rules: { [`test-policy/${rule}`]: ['error', { allow }] },

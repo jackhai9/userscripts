@@ -48,6 +48,7 @@ export function createCancelScenario(overrides = {}) {
       tradeMode: 'OPEN',
       orderbookPrecision: '0.1',
       leverage: 2,
+      openableQuantity: '10',
       ...overrides.ui,
     },
     host: {
@@ -57,10 +58,17 @@ export function createCancelScenario(overrides = {}) {
       dialogReplacementDelayMs: null,
       clearMode: 'capturedScope',
       chartOrdersPopoverCloseMode: 'normal',
+      orderDrawingEvents: false,
       submitFeedbackDelayMs: 0,
       submitButtonBusyMs: 0,
       submitButtonBusyAttribute: 'data-loading',
       submitButtonClearsInputsWhenReady: false,
+      rowCancelMode: 'clear',
+      rowCancelModesById: {},
+      rowCancelDelayMs: 0,
+      orderRowsPageSize: null,
+      orderRowsMountDelayMs: 0,
+      openableQuantityAfterRowCancel: null,
       submitApiResponses: Array.from({ length: 5 }, () => ({
         outcome: 'success', delivery: 'immediate',
       })),
@@ -81,6 +89,35 @@ export function createCancelScenario(overrides = {}) {
   if (!Number.isInteger(scenario.ui.leverage) || scenario.ui.leverage <= 0) {
     throw new Error('Leverage must be a positive integer');
   }
+  const quantities = [scenario.ui.openableQuantity];
+  if (scenario.host.openableQuantityAfterRowCancel !== null) quantities.push(scenario.host.openableQuantityAfterRowCancel);
+  for (const quantity of quantities) {
+    if (typeof quantity !== 'string' || !/^\d+(?:\.\d+)?$/.test(quantity)) {
+      throw new Error('Openable quantity must be an explicit non-negative decimal string');
+    }
+  }
+  if (!['clear', 'unchanged', 'dialog'].includes(scenario.host.rowCancelMode)) {
+    throw new Error('Row cancellation must declare clear, unchanged, or dialog');
+  }
+  if (!Number.isInteger(scenario.host.rowCancelDelayMs) || scenario.host.rowCancelDelayMs < 0) {
+    throw new Error('Row cancellation delay must be a non-negative integer');
+  }
+  if (!Number.isInteger(scenario.host.orderRowsMountDelayMs) || scenario.host.orderRowsMountDelayMs < 0) {
+    throw new Error('Native row mount delay must be a non-negative integer');
+  }
+  if (scenario.host.orderRowsPageSize !== null
+    && (!Number.isInteger(scenario.host.orderRowsPageSize) || scenario.host.orderRowsPageSize <= 0)) {
+    throw new Error('Native row page size must be a positive integer or null');
+  }
+  if (!scenario.host.rowCancelModesById || Array.isArray(scenario.host.rowCancelModesById)
+    || typeof scenario.host.rowCancelModesById !== 'object') {
+    throw new Error('Native row outcomes require an explicit order-ID map');
+  }
+  for (const [orderId, mode] of Object.entries(scenario.host.rowCancelModesById)) {
+    if (!scenario.orders.some(order => order.id === orderId) || !['clear', 'unchanged', 'dialog'].includes(mode)) {
+      throw new Error('Native row outcomes require existing order IDs and declared modes');
+    }
+  }
   if (!scenario.host.precisionOptions.includes(scenario.ui.orderbookPrecision)) {
     throw new Error('Current orderbook precision must be one of the native options');
   }
@@ -100,6 +137,9 @@ export function createCancelScenario(overrides = {}) {
     throw new Error(
       `Unsupported chart-orders popover close mode: ${scenario.host.chartOrdersPopoverCloseMode}`,
     );
+  }
+  if (typeof scenario.host.orderDrawingEvents !== 'boolean') {
+    throw new Error('Native order drawing events must be explicitly enabled or disabled');
   }
   for (const key of ['submitFeedbackDelayMs', 'submitButtonBusyMs']) {
     if (!Number.isInteger(scenario.host[key]) || scenario.host[key] < 0) {

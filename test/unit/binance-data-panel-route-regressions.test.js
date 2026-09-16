@@ -1,53 +1,35 @@
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createDataPanelHost, activateTradingData, completeCmcData, cmcDetail, tradingDataset } from '../helpers/data-media-migration-host.js';
 
-const scripts = [
-  {
-    name: 'CoinMarketCap data panel',
-    path: '../../scripts/binance-coinmarketcap-data.user.js',
-  },
-  {
-    name: 'trading data panel',
-    path: '../../scripts/binance-trading-data.user.js',
-  },
-];
-
-async function readScript(path) {
-  return readFile(new URL(path, import.meta.url), 'utf8');
-}
-
-function readFunctionBody(source, name) {
-  const start = source.indexOf(`function ${name}`);
-  assert.notEqual(start, -1, `${name} should exist`);
-  const braceStart = source.indexOf('{', start);
-  let depth = 0;
-  for (let index = braceStart; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === '{') depth += 1;
-    if (char === '}') depth -= 1;
-    if (depth === 0) return source.slice(braceStart + 1, index);
-  }
-  assert.fail(`${name} body should be closed`);
-}
-
-for (const script of scripts) {
-  test(`${script.name} excludes Binance wallet futures paths`, async () => {
-    const source = await readScript(script.path);
+for (const kind of ['cmc', 'trading']) {
+  test(`user excludes wallet futures pages when installing the ${kind} data panel`, async () => {
+    // Given the script is installed through its public generated artifact
+    const artifact = new URL(`../../scripts/binance-${kind === 'trading' ? 'trading' : 'coinmarketcap'}-data.user.js`, import.meta.url);
+    // When the install metadata is read
+    const source = await readFile(artifact, 'utf8');
+    // Then both localized and root wallet routes have explicit exclusions
     assert.match(source, /\/\/ @exclude\s+https:\/\/www\.binance\.com\/\*\/my\/wallet\/futures\/\*/);
     assert.match(source, /\/\/ @exclude\s+https:\/\/www\.binance\.com\/my\/wallet\/futures\/\*/);
   });
 
-  test(`${script.name} parses only actual futures trading page symbols`, async () => {
-    const source = await readScript(script.path);
-    assert.match(source, /\b(?:const|var) FUTURES_TRADING_PATH_RE = \/\^\\\/\(\?:\[a-z\]\{2\}/);
-    assert.match(source, /function isFuturesTradingPage\(\)/);
-    const startupPrefix = source.slice(0, source.indexOf('const PANEL_ID'));
-    assert.doesNotMatch(startupPrefix, /if \(!isFuturesTradingPage\(\)\) return;/);
+  test(`user sees only the route symbol in the ${kind} panel despite an unrelated page title`, { timeout: 5_000 }, async t => {
+    // Given a matched futures landing page carries a stale Bitcoin title
+    const host = createDataPanelHost(t, kind, { path: '/zh-CN/futures' });
+    host.document.title = 'BTCUSDT futures';
+    await host.start();
+    assert.equal(host.panel(), null);
+    assert.equal(host.network.requests.length, 0);
 
-    const getSymbolBody = readFunctionBody(source, 'getCurrentSymbol');
-    assert.match(getSymbolBody, /parseFuturesTradingSymbolFromPathname\(location\.pathname\)/);
-    assert.doesNotMatch(getSymbolBody, /document\.title/);
-    assert.doesNotMatch(getSymbolBody, /\/\\\/futures\\\/\(\[A-Z0-9_\]\+\)/);
+    // When SPA navigation enters a Unicode futures trading route
+    host.navigate('/zh-CN/futures/龙虾USDT');
+    if (kind === 'trading') await activateTradingData(host, tradingDataset(Date.now()), { symbol: '龙虾USDT' });
+    else await completeCmcData(host, cmcDetail({ id: 42, symbol: '龙虾' }), { symbol: '龙虾', slug: 'lobster' });
+
+    // Then the route controls the visible identity and the outbound symbol parameters
+    assert.match(host.element('symbol').textContent, /^龙虾/);
+    assert.equal(host.network.requests.some(request => request.url.searchParams.get('symbol')?.includes('BTC')), false);
+    assert.equal(host.document.title, 'BTCUSDT futures');
   });
 }

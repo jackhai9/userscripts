@@ -66,29 +66,38 @@ function harness() {
   return { context, geometryReads, painted, view, setHeight: height => { nextHeight = height; } };
 }
 
-test('depth synchronization measures geometry once and paints that exact snapshot', () => {
+test("user sees that depth synchronization measures geometry once and paints that exact snapshot", () => {
+  // Given the chart frame and depth view are mounted
   const h = harness();
+  // When the depth render cycle executes
   h.context.syncDepthProfile();
+  // Then sees that depth synchronization measures geometry once and paints that exact snapshot
   assert.equal(h.geometryReads.length, 1);
   assert.equal(h.painted.length, 1);
   assert.equal(h.painted[0], h.geometryReads[0]);
   assert.equal(h.painted[0].height, 400);
 });
 
-test('the next independent depth render samples changed geometry again', () => {
+test("user sees that the next independent depth render samples changed geometry again", () => {
+  // Given the chart frame and depth view are mounted
   const h = harness();
   h.context.syncDepthProfile();
   h.setHeight(600);
+  // When the depth render cycle executes
   h.context.renderDepthProfileUi();
+  // Then sees that the next independent depth render samples changed geometry again
   assert.equal(h.geometryReads.length, 2);
   assert.deepEqual(h.painted.map(geometry => geometry.height), [400, 600]);
   assert.equal(h.painted[1], h.geometryReads[1]);
 });
 
-test('unavailable geometry, detached view and hidden documents do not paint', () => {
+test("user sees that unavailable geometry, detached view and hidden documents do not paint", () => {
+  // Given the chart frame and depth view are mounted
   const h = harness();
   h.setHeight(null);
+  // When the depth render cycle executes
   h.context.syncDepthProfile();
+  // Then sees that unavailable geometry, detached view and hidden documents do not paint
   assert.equal(h.geometryReads.length, 1);
   assert.equal(h.context.depthProfileView, null);
   assert.equal(h.painted.length, 0);

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { captureStrategyError } from '../../helpers/strategy-migration-boundaries.js';
 
 import {
   applyBollingerAlertTaskFailure,
@@ -88,30 +89,39 @@ function mirrorIndicatorBars(indicatorBars) {
   }));
 }
 
-test('calculates SMA20 Bollinger 2σ and SMA60 from closes through the current bar only', () => {
-  const indicatorBars = calculateBearishBollingerIndicatorBars(createOhlcBars(60));
+test('user calculates SMA20 Bollinger 2σ and SMA60 from closes through the current bar only', () => {
+  // Given sixty increasing closes with independently calculable rolling averages
+  const bars = createOhlcBars(60);
+  // When the real detector calculates its twenty- and sixty-bar indicators
+  const indicatorBars = calculateBearishBollingerIndicatorBars(bars);
   const last = indicatorBars[59];
-
+  // Then the exact SMA and population-variance Bollinger values are retained
   assert.equal(last.middle, 50.5);
   assert.equal(last.ma60, 30.5);
   assert.equal(Number(last.upper.toFixed(12)), 62.032562594671);
   assert.equal(Number(last.lower.toFixed(12)), 38.967437405329);
 });
 
-test('keeps bullish indicator values on the original price axis', () => {
+test('user keeps bullish indicator values on the original price axis', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const bars = createOhlcBars(60);
+  // When calculateBullishBollingerIndicatorBars processes the configured inputs
+  const observedResult = calculateBullishBollingerIndicatorBars(bars);
+  // Then user keeps bullish indicator values on the original price axis
   assert.deepEqual(
-    calculateBullishBollingerIndicatorBars(bars),
+    observedResult,
     calculateBearishBollingerIndicatorBars(bars),
   );
 });
 
-test('preserves exact indicator arithmetic without allocating sliced close windows', () => {
-  for (const scale of [0.000001, 1, 100000000]) {
+for (const scale of [0.000001, 1, 100000000]) {
+  test(`user preserves exact indicator arithmetic without allocating sliced close windows (scale=${JSON.stringify(scale)})`, () => {
+    // Given the loaded OHLC bars and Bollinger detector inputs
     const bars = createOhlcBars(512).map((bar, index) => {
       const close = scale * (3 + Math.sin(index / 7) + Math.cos(index / 31));
       return { ...bar, open: close, high: close + scale, low: close - scale, close };
     });
+    // When bars.map processes the configured inputs
     const expected = bars.map((bar, index) => {
       if (index < 59) return { ...bar, middle: null, upper: null, lower: null, ma60: null };
       const closes = bars.slice(index - 19, index + 1).map(item => item.close);
@@ -122,18 +132,23 @@ test('preserves exact indicator arithmetic without allocating sliced close windo
     });
     let slices = 0;
     bars.slice = (...args) => { slices += 1; return Array.prototype.slice.apply(bars, args); };
+    // Then user preserves exact indicator arithmetic without allocating sliced close windows (scale=the selected case)
     assert.deepEqual(calculateBearishBollingerIndicatorBars(bars), expected);
     assert.equal(slices, 0);
-  }
-});
 
-test('implements bullish detection as the strict price-axis mirror of bearish detection', () => {
+  });
+}
+
+test('user sees bullish detection mirror bearish detection across the price axis', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const bearishPattern = createIndicatorPattern();
+  // When mirrorIndicatorBars processes the configured inputs
   const bullishBars = mirrorIndicatorBars(bearishPattern.bars);
   const originalBullishBars = structuredClone(bullishBars);
   const bearishSignals = detectBearishBollingerSignalsFromIndicatorBars(bearishPattern.bars);
   const bullishSignals = detectBullishBollingerSignalsFromIndicatorBars(bullishBars);
 
+  // Then user sees bullish detection mirror bearish detection across the price axis
   assert.deepEqual(
     bullishSignals.map(({ type, setupTime, time, markerPrice, direction }) => ({
       type,
@@ -161,9 +176,11 @@ test('implements bullish detection as the strict price-axis mirror of bearish de
   assert.deepEqual(bullishBars, originalBullishBars);
 });
 
-test('combined detection keeps opposite-direction setups and distinct signal IDs', () => {
+test('user observes that combined detection keeps opposite-direction setups and distinct signal IDs', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const bearishPattern = createIndicatorPattern();
   const secondPattern = createIndicatorPattern();
+  // When mirrorIndicatorBars(secondPattern.bars).map processes the configured inputs
   const bullishBars = mirrorIndicatorBars(secondPattern.bars).map((bar) => ({
     ...bar,
     time: bar.time + (200 * 60),
@@ -173,17 +190,23 @@ test('combined detection keeps opposite-direction setups and distinct signal IDs
     ...bullishBars,
   ]);
 
+  // Then user observes that combined detection keeps opposite-direction setups and distinct signal IDs
   assert.deepEqual(new Set(signals.map((signal) => signal.direction)), new Set(['bearish', 'bullish']));
   assert.equal(new Set(signals.map((signal) => signal.id)).size, signals.length);
   assert.ok(signals.some((signal) => signal.direction === 'bearish'));
   assert.ok(signals.some((signal) => signal.direction === 'bullish'));
 });
 
-test('classifies only snapshot ordering and OHLC range races as recoverable', () => {
+test('user classifies only snapshot ordering and OHLC range races as recoverable', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
+  const scenarioInput = new TradingViewBarSnapshotInconsistentError('race');
+  // When isTradingViewBarSnapshotInconsistentError processes the configured inputs
+  const observedResult = isTradingViewBarSnapshotInconsistentError(
+      scenarioInput,
+    );
+  // Then user classifies only snapshot ordering and OHLC range races as recoverable
   assert.equal(
-    isTradingViewBarSnapshotInconsistentError(
-      new TradingViewBarSnapshotInconsistentError('race'),
-    ),
+    observedResult,
     true,
   );
   assert.equal(isTradingViewBarSnapshotInconsistentError(new Error('race')), false);
@@ -203,22 +226,27 @@ test('classifies only snapshot ordering and OHLC range races as recoverable', ()
   );
 });
 
-test('rejects incomplete indicator bars instead of mirroring undefined values', () => {
+test('user rejects incomplete indicator bars instead of mirroring undefined values', () => {
+  // Given a bullish detector input missing a required upper band
   const bars = createIndicatorPattern().bars;
   bars[80] = { ...bars[80], upper: undefined };
-  assert.throws(
-    () => detectBullishBollingerSignalsFromIndicatorBars(bars),
-    /indicator bar 80 upper is invalid/,
-  );
+  // When the mirrored detector validates its input indicators
+  const failure = captureStrategyError(() => detectBullishBollingerSignalsFromIndicatorBars(bars));
+  // Then the missing band is rejected at the exact offending bar
+  assert.match(failure.message, /indicator bar 80 upper is invalid/);
 });
 
-test('keeps snapshot task failures retryable and marks contract failures fatal', () => {
+test('user keeps snapshot task failures retryable and marks contract failures fatal', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const context = { failed: false, cleanupPending: false };
-  assert.equal(
-    applyBollingerAlertTaskFailure(
+  // When applyBollingerAlertTaskFailure processes the configured inputs
+  const observedResult = applyBollingerAlertTaskFailure(
       context,
       new TradingViewBarSnapshotInconsistentError('race'),
-    ),
+    );
+  // Then user keeps snapshot task failures retryable and marks contract failures fatal
+  assert.equal(
+    observedResult,
     'retry',
   );
   assert.deepEqual(context, { failed: false, cleanupPending: false });
@@ -227,10 +255,13 @@ test('keeps snapshot task failures retryable and marks contract failures fatal',
   assert.deepEqual(context, { failed: true, cleanupPending: true });
 });
 
-test('emits one warning and one later bearish lower-band confirmation', () => {
+test('user emits one warning and one later bearish lower-band confirmation', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const { bars, crossIndex, warningIndex, confirmationIndex } = createIndicatorPattern();
+  // When detectBearishBollingerSignalsFromIndicatorBars processes the configured inputs
   const signals = detectBearishBollingerSignalsFromIndicatorBars(bars);
 
+  // Then user emits one warning and one later bearish lower-band confirmation
   assert.deepEqual(signals.map(({ id, type, setupTime, time }) => ({ id, type, setupTime, time })), [
     {
       id: `${bars[crossIndex].time}:warning`,
@@ -247,12 +278,16 @@ test('emits one warning and one later bearish lower-band confirmation', () => {
   ]);
 });
 
-test('uses bar counts rather than wall-clock duration across one-minute and one-hour charts', () => {
+test('user uses bar counts rather than wall-clock duration across one-minute and one-hour charts', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const minute = createIndicatorPattern(60);
   const hour = createIndicatorPattern(60 * 60);
 
+  // When detectBearishBollingerSignalsFromIndicatorBars(minute.bars).map processes the configured inputs
+  const observedResult = detectBearishBollingerSignalsFromIndicatorBars(minute.bars).map((signal) => signal.type);
+  // Then user uses bar counts rather than wall-clock duration across one-minute and one-hour charts
   assert.deepEqual(
-    detectBearishBollingerSignalsFromIndicatorBars(minute.bars).map((signal) => signal.type),
+    observedResult,
     ['warning', 'confirmed'],
   );
   assert.deepEqual(
@@ -261,7 +296,8 @@ test('uses bar counts rather than wall-clock duration across one-minute and one-
   );
 });
 
-test('allows one middle close only when the next bar rejects it bearishly', () => {
+test('user allows one middle close only when the next bar rejects it bearishly', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const accepted = createIndicatorPattern();
   const breachIndex = accepted.crossIndex + 1;
   accepted.bars[breachIndex] = {
@@ -276,8 +312,11 @@ test('allows one middle close only when the next bar rejects it bearishly', () =
     high: accepted.bars[breachIndex + 1].middle + 0.3,
     close: accepted.bars[breachIndex + 1].middle - 1,
   };
+  // When detectBearishBollingerSignalsFromIndicatorBars(accepted.bars).map processes the configured inputs
+  const observedResult = detectBearishBollingerSignalsFromIndicatorBars(accepted.bars).map((signal) => signal.type);
+  // Then user allows one middle close only when the next bar rejects it bearishly
   assert.deepEqual(
-    detectBearishBollingerSignalsFromIndicatorBars(accepted.bars).map((signal) => signal.type),
+    observedResult,
     ['warning', 'confirmed'],
   );
 
@@ -295,7 +334,8 @@ test('allows one middle close only when the next bar rejects it bearishly', () =
   );
 });
 
-test('requires the one allowed pre-cross middle close to be rejected by the next bar', () => {
+test('user requires the one allowed pre-cross middle close to be rejected by the next bar', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const accepted = createIndicatorPattern();
   const aboveIndex = accepted.crossIndex - 3;
   accepted.bars[aboveIndex] = {
@@ -310,8 +350,11 @@ test('requires the one allowed pre-cross middle close to be rejected by the next
     high: accepted.bars[aboveIndex + 1].middle + 0.3,
     close: accepted.bars[aboveIndex + 1].middle - 1,
   };
+  // When detectBearishBollingerSignalsFromIndicatorBars(accepted.bars).map processes the configured inputs
+  const observedResult = detectBearishBollingerSignalsFromIndicatorBars(accepted.bars).map((signal) => signal.type);
+  // Then user requires the one allowed pre-cross middle close to be rejected by the next bar
   assert.deepEqual(
-    detectBearishBollingerSignalsFromIndicatorBars(accepted.bars).map((signal) => signal.type),
+    observedResult,
     ['warning', 'confirmed'],
   );
 
@@ -326,7 +369,8 @@ test('requires the one allowed pre-cross middle close to be rejected by the next
   assert.deepEqual(detectBearishBollingerSignalsFromIndicatorBars(notRejected.bars), []);
 });
 
-test('accepts four channel closes when the remaining pre-cross bars stay within explicit bounds', () => {
+test('user accepts four channel closes when the remaining pre-cross bars stay within explicit bounds', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const pattern = createIndicatorPattern();
   const start = pattern.crossIndex - 8;
   pattern.bars[start] = {
@@ -345,20 +389,26 @@ test('accepts four channel closes when the remaining pre-cross bars stay within 
     };
   }
 
+  // When detectBearishBollingerSignalsFromIndicatorBars(pattern.bars).map processes the configured inputs
+  const observedResult = detectBearishBollingerSignalsFromIndicatorBars(pattern.bars).map((signal) => signal.type);
+  // Then user accepts four channel closes when the remaining pre-cross bars stay within explicit bounds
   assert.deepEqual(
-    detectBearishBollingerSignalsFromIndicatorBars(pattern.bars).map((signal) => signal.type),
+    observedResult,
     ['warning', 'confirmed'],
   );
 });
 
-test('adds the first strict reversal breakout after confirmation without rewriting prior signals', () => {
+test('user sees the first strict reversal breakout added after confirmation without rewriting prior signals', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const pattern = createIndicatorPattern();
+  // When pattern.bars.slice processes the configured inputs
   const throughConfirmation = pattern.bars.slice(0, pattern.confirmationIndex + 1);
   const original = detectBearishBollingerSignalsFromIndicatorBars(throughConfirmation);
   const reversalIndex = pattern.warningIndex + 30;
   setReversalBreakout(pattern, reversalIndex);
   const updated = detectBearishBollingerSignalsFromIndicatorBars(pattern.bars);
 
+  // Then user sees the first strict reversal breakout added after confirmation without rewriting prior signals
   assert.deepEqual(updated.slice(0, 2), original);
   assert.deepEqual(
     updated.map(({ id, type, setupTime, time }) => ({ id, type, setupTime, time })),
@@ -386,22 +436,28 @@ test('adds the first strict reversal breakout after confirmation without rewriti
   assert.ok(updated[2].markerPrice < pattern.bars[reversalIndex].low);
 });
 
-test('requires a close strictly above the warning candle high', () => {
+test('user requires a close strictly above the warning candle high', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const pattern = createIndicatorPattern();
   const equalIndex = pattern.warningIndex + 5;
   const breakoutIndex = equalIndex + 1;
+  // When setReversalBreakout processes the configured inputs
   setReversalBreakout(pattern, equalIndex, pattern.bars[pattern.warningIndex].high);
   setReversalBreakout(pattern, breakoutIndex);
 
   const reversal = detectBearishBollingerSignalsFromIndicatorBars(pattern.bars)
     .find((signal) => signal.type === 'reversal');
+  // Then user requires a close strictly above the warning candle high
   assert.equal(reversal.time, pattern.bars[breakoutIndex].time);
 });
 
-test('includes the sixtieth closed bar after warning and excludes the sixty-first', () => {
+test('user receives signals through the sixtieth closed bar after warning and excludes the sixty-first', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const included = createIndicatorPattern();
   const includedIndex = included.warningIndex + 60;
+  // When setReversalBreakout processes the configured inputs
   setReversalBreakout(included, includedIndex);
+  // Then user receives signals through the sixtieth closed bar after warning and excludes the sixty-first
   assert.equal(
     detectBearishBollingerSignalsFromIndicatorBars(included.bars)
       .find((signal) => signal.type === 'reversal')?.time,
@@ -418,7 +474,8 @@ test('includes the sixtieth closed bar after warning and excludes the sixty-firs
   );
 });
 
-test('deduplicates one shared reversal candle in favor of the newest overlapping setup', () => {
+test('user deduplicates one shared reversal candle in favor of the newest overlapping setup', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const pattern = createIndicatorPattern();
   const secondCrossIndex = 90;
   const secondWarningIndex = 92;
@@ -438,6 +495,7 @@ test('deduplicates one shared reversal candle in favor of the newest overlapping
     close: pattern.bars[secondWarningIndex].middle - 2,
   };
   const sharedBreakoutIndex = secondWarningIndex + 5;
+  // When setReversalBreakout processes the configured inputs
   setReversalBreakout(
     pattern,
     sharedBreakoutIndex,
@@ -447,6 +505,7 @@ test('deduplicates one shared reversal candle in favor of the newest overlapping
   const signals = detectBearishBollingerSignalsFromIndicatorBars(pattern.bars);
   const sharedReversals = signals
     .filter((signal) => signal.type === 'reversal' && signal.time === pattern.bars[sharedBreakoutIndex].time);
+  // Then user deduplicates one shared reversal candle in favor of the newest overlapping setup
   assert.equal(sharedReversals.length, 1);
   assert.equal(sharedReversals[0].setupTime, pattern.bars[secondCrossIndex].time);
   assert.deepEqual(
@@ -455,7 +514,8 @@ test('deduplicates one shared reversal candle in favor of the newest overlapping
   );
 });
 
-test('defers marker mutation for every existing TradingView save owner', () => {
+test('user defers marker mutation for every existing TradingView save owner', () => {
+  // Given the loaded OHLC bars and Bollinger detector inputs
   const idle = {
     ladderTask: null,
     continuousLadderTask: null,
@@ -464,7 +524,10 @@ test('defers marker mutation for every existing TradingView save owner', () => {
     chartOrdersRecoveryTask: null,
     continuousChartSaveController: null,
   };
-  assert.equal(isBearishBollingerDrawingMutationBlocked(idle), false);
+  // When isBearishBollingerDrawingMutationBlocked processes the configured inputs
+  const observedResult = isBearishBollingerDrawingMutationBlocked(idle);
+  // Then user defers marker mutation for every existing TradingView save owner
+  assert.equal(observedResult, false);
 
   for (const key of Object.keys(idle)) {
     assert.equal(

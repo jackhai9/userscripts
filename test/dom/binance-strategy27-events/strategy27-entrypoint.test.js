@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInThisContext } from 'node:vm';
 import test from 'node:test';
 import { loadFixtureDom } from '../../helpers/dom.js';
+import { createStrategyPromptBoundary, installStrategyClock, observeStrategyQueries } from '../../helpers/strategy-migration-boundaries.js';
 
 const fixtures = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-compound-candidates.json', import.meta.url), 'utf8'));
 let importNumber = 0;
@@ -19,6 +20,10 @@ async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN', m
   const dom = loadFixtureDom('<div class="chart-widget-root"><iframe></iframe></div>');
   dom.reconfigure({ url: `https://www.binance.com/${locale}/futures/${routeSymbol}` });
   const page = dom.window;
+  const clock = installStrategyClock(t, page);
+  const queries = observeStrategyQueries(page.document);
+  const promptBoundary = createStrategyPromptBoundary();
+  page.prompt = promptBoundary.pagePrompt;
   if (migrationRecord !== undefined) Object.defineProperty(page, Symbol.for('jh-userscripts.strategy29-preferences-migration'), { value: migrationRecord });
   const shapes = new Map([['user-owned', {}]]);
   let resolution = '1S';
@@ -45,18 +50,14 @@ async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN', m
     }) }) },
   };
   page.document.querySelector('iframe').contentWindow.tradingViewApi = { activeChart: () => chart };
-  const timers = new Map();
+  const timers = clock.intervals;
   const menus = new Map();
   const menuIds = new Map();
   const requests = [];
-  const prompts = [];
-  let now = 7000;
-  t.mock.method(Date, 'now', () => now);
-  t.mock.method(page, 'setInterval', (callback, delay) => { assert.equal(delay, 1000); timers.set(1, callback); return 1; });
-  t.mock.method(page, 'clearInterval', (id) => timers.delete(id));
+  const prompts = promptBoundary.messages;
   const globals = {
     unsafeWindow: page,
-    prompt: (...args) => { prompts.push(args[0]); return null; },
+    prompt: promptBoundary.sandboxPrompt,
     GM_getValue: (key, initial) => key === 'strategy27GatewayAuthSecret' ? 'synthetic-test-value' : initial,
     GM_setValue: () => { throw new Error('Unexpected settings write'); },
     GM_registerMenuCommand: (name, callback, options = {}) => {
@@ -106,24 +107,27 @@ async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN', m
     await until(() => pending('compound').length === 1);
   }
   return {
-    page, chart, shapes, requests, pending, respond, candidate, timers, menus, prompts,
+    page, chart, shapes, requests, pending, respond, candidate, timers, menus, prompts, queries, promptBoundary,
     reset: () => respond('compound', { schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     ordinaryBootstrap: () => respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     rows: () => page.document.querySelectorAll('[data-role="compound-row"]').length,
-    tick: () => timers.get(1)(),
+    tick: () => clock.advance(1000),
     clear: () => menus.get('清除 Strategy 27 图表标注')(),
     restart: () => menus.get('重新连接 Strategy 27 并恢复历史')(),
-    setNow: (value) => { now = value; },
+    setNow: value => clock.setTime(value),
     setResolution: (value) => { resolution = value; },
   };
 }
 
-test('real entrypoint starts independent clients and manual clear preserves compound replay identity', async (t) => {
+test('user observes that real entrypoint starts independent clients and manual clear preserves compound replay identity', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t);
   assert.equal(h.timers.size, 1);
   assert.equal(h.pending('ordinary').length, 1);
+  // When h.reset processes the configured inputs
   await h.reset();
   await h.candidate();
+  // Then user observes that real entrypoint starts independent clients and manual clear preserves compound replay identity
   assert.equal(h.rows(), 1);
   assert.equal(h.shapes.size, 3);
   h.clear();
@@ -135,25 +139,26 @@ test('real entrypoint starts independent clients and manual clear preserves comp
   assert.equal(h.pending('ordinary').length, 1);
 });
 
-test('each context tick discovers the chart root once without restarting healthy clients', async (t) => {
+test('user observes that each context tick discovers the chart root once without restarting healthy clients', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t);
-  let chartRootQueries = 0;
-  const query = h.page.document.querySelectorAll.bind(h.page.document);
-  t.mock.method(h.page.document, 'querySelectorAll', selector => {
-    if (selector === '.chart-widget-root') chartRootQueries += 1;
-    return query(selector);
-  });
+  // When h.queries.reset processes the configured inputs
+  h.queries.reset();
   for (let index = 0; index < 10; index += 1) h.tick();
-  assert.equal(chartRootQueries, 10);
+  // Then user observes that each context tick discovers the chart root once without restarting healthy clients
+  assert.equal(h.queries.count('.chart-widget-root'), 10);
   assert.equal(h.pending('ordinary').length, 1);
   assert.equal(h.pending('compound').length, 1);
 });
 
-test('ordinary failure does not stop compound; the existing timer expires candidates and interval changes abort both', async (t) => {
+test('user observes that ordinary failure does not stop compound; the existing timer expires candidates and interval changes abort both', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t);
+  // When h.respond processes the configured inputs
   await h.respond('ordinary', 'invalid JSON');
   await h.reset();
   await h.candidate();
+  // Then user observes that ordinary failure does not stop compound; the existing timer expires candidates and interval changes abort both
   assert.equal(h.rows(), 1);
   h.setNow(7207001);
   h.tick();
@@ -168,12 +173,15 @@ test('ordinary failure does not stop compound; the existing timer expires candid
   assert.equal(h.shapes.size, 1);
 });
 
-test('an unsupported compound route leaves ordinary polling alive without restarting on each context tick', async (t) => {
+test('user observes that an unsupported compound route leaves ordinary polling alive without restarting on each context tick', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t);
+  // When h.respond processes the configured inputs
   await h.respond('compound', '<html>missing route</html>', 404);
   await until(() => h.page.document.querySelector('[data-role="compound-status"]')?.textContent === '网关尚未启用复合候选');
   h.tick();
   h.tick();
+  // Then user observes that an unsupported compound route leaves ordinary polling alive without restarting on each context tick
   assert.equal(h.requests.filter((request) => request.kind === 'compound').length, 1);
   assert.equal(h.pending('ordinary').length, 1);
   h.page.history.pushState({}, '', '/zh-CN/markets');
@@ -182,22 +190,28 @@ test('an unsupported compound route leaves ordinary polling alive without restar
   assert.equal(h.shapes.size, 1);
 });
 
-test('a disappearing chart root retires both clients and removes only owned entities', async (t) => {
+test('user observes that a disappearing chart root retires both clients and removes only owned entities', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t);
+  // When h.reset processes the configured inputs
   await h.reset();
   await h.candidate();
   h.page.document.querySelector('.chart-widget-root').setAttribute('data-hidden', '');
   h.tick();
+  // Then user observes that a disappearing chart root retires both clients and removes only owned entities
   assert.equal(h.pending('ordinary').length, 0);
   assert.equal(h.pending('compound').length, 0);
   assert.equal(h.rows(), 0);
   assert.deepEqual([...h.shapes.keys()], ['user-owned']);
 });
 
-test('generated install artifact receives a candidate and cleans up its paired entities without affecting ordinary polling', async (t) => {
+test('user observes that generated install artifact receives a candidate and cleans up its paired entities without affecting ordinary polling', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t, { generated: true });
+  // When h.reset processes the configured inputs
   await h.reset();
   await h.candidate();
+  // Then user observes that generated install artifact receives a candidate and cleans up its paired entities without affecting ordinary polling
   assert.equal(h.rows(), 1);
   assert.equal(h.shapes.size, 3);
   const properties = [...h.shapes.entries()].filter(([id]) => id !== 'user-owned').map(([, shape]) => shape.getProperties());
@@ -216,14 +230,17 @@ test('generated install artifact receives a candidate and cleans up its paired e
 });
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} context timer restores externally evicted candidates without gateway traffic`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} context timer restores externally evicted candidates without gateway traffic`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.reset processes the configured inputs
     await h.reset();
     await h.candidate();
     const oldIds = [...h.shapes.keys()].filter((id) => id !== 'user-owned');
     for (const id of oldIds) h.shapes.delete(id);
     h.tick();
     await until(() => h.shapes.size === 3);
+    // Then user observes that the selected case context timer restores externally evicted candidates without gateway traffic
     assert.equal(h.rows(), 1);
     assert.equal(oldIds.some((id) => h.shapes.has(id)), false);
     const repairedIds = [...h.shapes.keys()];
@@ -319,8 +336,10 @@ function compoundMessage(payload = fixtures[0], sequence = 2, epoch = 'a'.repeat
 }
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} compound recovery retains exact paired entities across epochs, stale cursors and 503`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} compound recovery retains exact paired entities across epochs, stale cursors and 503`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
     await until(() => h.pending('ordinary').length === 1);
@@ -329,6 +348,7 @@ for (const generated of [false, true]) {
     await until(() => h.pending('compound').length === 1);
     const ids = [...h.shapes.keys()];
     const points = ids.slice(1).map((id) => h.shapes.get(id).getPoints());
+    // Then user observes that the selected case compound recovery retains exact paired entities across epochs, stale cursors and 503
     assert.equal(ids.length, 6);
     assert.equal(h.rows(), 2);
     const epoch = 'b'.repeat(32);
@@ -347,7 +367,6 @@ for (const generated of [false, true]) {
     await until(() => h.pending('compound').length === 1);
     assert.deepEqual([...h.shapes.keys()], ids);
     assert.equal(h.rows(), 2, 'the candidate absent from the new snapshot remains visible');
-    t.mock.timers.enable({ apis: ['setTimeout'] });
     await h.respond('compound', { schema_version: 1, status: 'error', error_code: 'redis_unavailable' }, 503);
     await until(() => h.page.document.querySelector('[data-role="compound-status"]').dataset.state === 'inactive');
     assert.deepEqual([...h.shapes.keys()], ids);
@@ -367,12 +386,15 @@ for (const generated of [false, true]) {
     assert.equal(h.rows(), 0);
   });
 
-  test(`${generated ? 'generated' : 'source'} compound repair failure freezes surviving pairs until clear or context retirement`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} compound repair failure freezes surviving pairs until clear or context retirement`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.reset processes the configured inputs
     await h.reset();
     await h.respond('compound', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [compoundMessage(fixtures[0], 2), compoundMessage(fixtures[1], 3)] });
     await until(() => h.pending('compound').length === 1);
     const ids = [...h.shapes.keys()];
+    // Then user observes that the selected case compound repair failure freezes surviving pairs until clear or context retirement
     assert.equal(ids.length, 5);
     h.shapes.delete(ids[1]);
     const create = h.chart.createShape;
@@ -407,8 +429,10 @@ for (const generated of [false, true]) {
     assert.equal(h.pending('compound').length, 0);
   });
 
-  test(`${generated ? 'generated' : 'source'} refresh bootstrap rebuilds ordinary and compound markers before live polling`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} refresh bootstrap rebuilds ordinary and compound markers before live polling`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When ordinaryMessage processes the configured inputs
     const ordinary = ordinaryMessage();
     const outcome = ordinaryOutcomeMessage();
     await h.respond('ordinary', {
@@ -444,6 +468,7 @@ for (const generated of [false, true]) {
       records: [compoundMessage()],
     });
     await until(() => h.shapes.size === 4);
+    // Then user observes that the selected case refresh bootstrap rebuilds ordinary and compound markers before live polling
     assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
     assert.equal(h.rows(), 1);
     assert.equal(h.pending('ordinary').length, 1);
@@ -456,11 +481,14 @@ for (const generated of [false, true]) {
 }
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} timer restores ordinary drawings and prunes both lifecycles before repair`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} timer restores ordinary drawings and prunes both lifecycles before repair`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
     await until(() => h.shapes.size === 2 || h.page.document.getElementById('jh-strategy27-event-status')?.dataset.state === 'error');
+    // Then user observes that the selected case timer restores ordinary drawings and prunes both lifecycles before repair
     assert.equal(h.shapes.size, 2, h.page.document.getElementById('jh-strategy27-event-status')?.textContent);
     const oldOrdinary = [...h.shapes.keys()].find((id) => id !== 'user-owned');
     h.shapes.delete(oldOrdinary);
@@ -481,10 +509,12 @@ for (const generated of [false, true]) {
   });
 }
 
-test('timer expiry cancels an ordinary first creation that is still awaiting TradingView', async (t) => {
+test('user observes that timer expiry cancels an ordinary first creation that is still awaiting TradingView', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const entered = Promise.withResolvers();
   const release = Promise.withResolvers();
   const h = await harness(t, { beforeCreate: async () => { entered.resolve(); await release.promise; } });
+  // When h.ordinaryBootstrap processes the configured inputs
   await h.ordinaryBootstrap();
   await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
   await entered.promise;
@@ -492,26 +522,29 @@ test('timer expiry cancels an ordinary first creation that is still awaiting Tra
   h.tick();
   release.resolve();
   await until(() => h.pending('ordinary').length === 1);
+  // Then user observes that timer expiry cancels an ordinary first creation that is still awaiting TradingView
   assert.deepEqual([...h.shapes.keys()], ['user-owned']);
   assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
 });
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} live 503 retains ordinary history and resumes at the same cursor`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} live 503 retains ordinary history and resumes at the same cursor`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
     await until(() => h.pending('ordinary').length === 1);
     const ids = [...h.shapes.keys()];
+    // Then user observes that the selected case live 503 retains ordinary history and resumes at the same cursor
     assert.equal(ids.length, 2);
-    t.mock.timers.enable({ apis: ['setTimeout'] });
     await h.respond('ordinary', { schema_version: 1, status: 'error', error_code: 'redis_unavailable' }, 503);
     await until(() => h.page.document.getElementById('jh-strategy27-event-status') !== null);
     assert.equal(h.page.document.getElementById('jh-strategy27-event-status').dataset.state, 'inactive');
     h.tick();
     assert.deepEqual([...h.shapes.keys()], ids);
     assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
-    t.mock.timers.tick(1999);
+    t.mock.timers.tick(999);
     assert.equal(h.pending('ordinary').length, 0);
     t.mock.timers.tick(1);
     await until(() => h.pending('ordinary').length === 1);
@@ -523,13 +556,16 @@ for (const generated of [false, true]) {
     assert.equal(h.page.document.getElementById('jh-strategy27-event-status'), null);
   });
 
-  test(`${generated ? 'generated' : 'source'} fatal repair preserves surviving history until expiry or explicit restart`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} fatal repair preserves surviving history until expiry or explicit restart`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     const first = ordinaryMessage();
     const second = { ...ordinaryMessage(), event_id: 'c'.repeat(64), sequence: 3 };
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '3-0', messages: [first, second] });
     await until(() => h.pending('ordinary').length === 1);
+    // Then user observes that the selected case fatal repair preserves surviving history until expiry or explicit restart
     assert.equal(h.shapes.size, 3);
     const ids = [...h.shapes.keys()].filter((id) => id !== 'user-owned');
     h.shapes.delete(ids[0]);
@@ -569,12 +605,15 @@ function ordinaryStreamReset(epoch = 'c'.repeat(32)) {
 }
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} transport epoch reset retains historical arrows and rehydrates without duplication`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} transport epoch reset retains historical arrows and rehydrates without duplication`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
     await until(() => h.pending('ordinary').length === 1);
     const ids = [...h.shapes.keys()];
+    // Then user observes that the selected case transport epoch reset retains historical arrows and rehydrates without duplication
     assert.equal(ids.length, 2);
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '2-0', next_cursor: '3-0', messages: [ordinaryStreamReset()] });
     await until(() => h.pending('ordinary').length === 1);
@@ -598,8 +637,10 @@ for (const generated of [false, true]) {
 }
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} stale cursor bootstrap merges retained history and context exit removes it`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} stale cursor bootstrap merges retained history and context exit removes it`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     const ordinary = ordinaryMessage();
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinary] });
@@ -607,6 +648,7 @@ for (const generated of [false, true]) {
     const ids = [...h.shapes.keys()];
     await h.respond('ordinary', { schema_version: 1, status: 'reset', reason: 'stale_cursor', requested_cursor: '2-0', next_cursor: '5-0', messages: [] }, 409);
     await until(() => h.pending('ordinary').length === 1);
+    // Then user observes that the selected case stale cursor bootstrap merges retained history and context exit removes it
     assert.deepEqual([...h.shapes.keys()], ids);
     await h.respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null,
       next_cursor: '6-0', runtime_epoch: ordinary.runtime_epoch, last_sequence: 2, bootstrap_observed_at_ms: 7000,
@@ -620,12 +662,15 @@ for (const generated of [false, true]) {
     assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 0);
   });
 
-  test(`${generated ? 'generated' : 'source'} retained display history stays bounded across epochs and manual clear removes it`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} retained display history stays bounded across epochs and manual clear removes it`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     const messages = Array.from({ length: 80 }, (_, i) => ({ ...ordinaryMessage(), sequence: i + 2, event_id: i.toString(16).padStart(64, '0') }));
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '81-0', messages });
     await until(() => h.pending('ordinary').length === 1);
+    // Then user observes that the selected case retained display history stays bounded across epochs and manual clear removes it
     assert.equal(h.shapes.size, 81);
     const firstId = [...h.shapes.keys()][1];
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '81-0', next_cursor: '82-0', messages: [ordinaryStreamReset()] });
@@ -645,8 +690,10 @@ for (const generated of [false, true]) {
   });
 }
 
-test('display capacity uses last observation rather than insertion order after epoch rehydration', async (t) => {
+test('user observes that display capacity uses last observation rather than insertion order after epoch rehydration', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t);
+  // When h.ordinaryBootstrap processes the configured inputs
   await h.ordinaryBootstrap();
   const events = Array.from({ length: 80 }, (_, i) => ({ ...ordinaryMessage(), sequence: i + 2, event_id: i.toString(16).padStart(64, '0') }));
   await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '81-0', messages: events });
@@ -656,6 +703,7 @@ test('display capacity uses last observation rather than insertion order after e
   await until(() => h.pending('ordinary').length === 1);
   await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '82-0', next_cursor: '83-0', messages: [{ ...ordinaryMessage(), runtime_epoch: 'c'.repeat(32), sequence: 3, observed_at_ms: 7000 }] });
   await until(() => h.pending('ordinary').length === 1);
+  // Then user observes that display capacity uses last observation rather than insertion order after epoch rehydration
   assert.equal(h.shapes.size, 81);
   assert.equal(h.shapes.has(ids[1]), true);
   assert.equal(h.shapes.has(ids[2]), false);
@@ -666,8 +714,10 @@ test('display capacity uses last observation rather than insertion order after e
   assert.equal(h.shapes.has(ids[1]), true);
 });
 
-test('older bootstrap replay cannot shorten the retained display lifetime', async (t) => {
+test('user observes that older bootstrap replay cannot shorten the retained display lifetime', async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t);
+  // When h.ordinaryBootstrap processes the configured inputs
   await h.ordinaryBootstrap();
   await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [{ ...ordinaryMessage(), observed_at_ms: 7000 }] });
   await until(() => h.pending('ordinary').length === 1);
@@ -682,6 +732,7 @@ test('older bootstrap replay cannot shorten the retained display lifetime', asyn
   h.setNow(7202001);
   h.tick();
   await new Promise(setImmediate);
+  // Then user observes that older bootstrap replay cannot shorten the retained display lifetime
   assert.deepEqual([...h.shapes.keys()], ids);
   assert.equal(h.page.document.querySelectorAll('[data-role="event-row"]').length, 1);
   h.setNow(7207001);
@@ -692,15 +743,18 @@ test('older bootstrap replay cannot shorten the retained display lifetime', asyn
 });
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} removed-symbol bootstrap exposes monitoring status across stream reset`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} removed-symbol bootstrap exposes monitoring status across stream reset`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
     const removed = { ...ordinaryMessage(), message_kind: 'event_closed', data_status: 'incomplete',
       payload: { event: { ...ordinaryOutcomeMessage().payload.event, event_status: 'incomplete', close_reason: 'universe_removed' } } };
+    // When h.respond processes the configured inputs
     await h.respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null,
       next_cursor: '2-0', runtime_epoch: removed.runtime_epoch, last_sequence: 2, bootstrap_observed_at_ms: 7000,
       records: [{ event_id: removed.event_id, event_envelope: removed, marker_envelope: removed, outcome_envelope: null }] });
     await until(() => h.pending('ordinary').length === 1);
     const status = h.page.document.querySelector('[data-role="ordinary-monitoring-status"]');
+    // Then user observes that the selected case removed-symbol bootstrap exposes monitoring status across stream reset
     assert.equal(status?.dataset.state, 'removed');
     assert.match(status.textContent, /已移出监控范围/);
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '2-0', next_cursor: '3-0', messages: [ordinaryStreamReset()] });
@@ -715,8 +769,10 @@ for (const generated of [false, true]) {
 }
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} outcome-only bootstrap restores removed-symbol status`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} outcome-only bootstrap restores removed-symbol status`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated });
+    // When ordinaryOutcomeMessage processes the configured inputs
     const outcome = ordinaryOutcomeMessage();
     outcome.data_status = 'terminated';
     outcome.payload.event.event_status = 'incomplete';
@@ -726,19 +782,23 @@ for (const generated of [false, true]) {
       next_cursor: '3-0', runtime_epoch: outcome.runtime_epoch, last_sequence: 3, bootstrap_observed_at_ms: 7000,
       records: [{ event_id: outcome.event_id, event_envelope: outcome, marker_envelope: null, outcome_envelope: outcome }] });
     await until(() => h.pending('ordinary').length === 1);
+    // Then user observes that the selected case outcome-only bootstrap restores removed-symbol status
     assert.equal(h.page.document.querySelector('[data-role="ordinary-monitoring-status"]').dataset.state, 'removed');
     assert.equal(h.page.document.querySelector('[data-role="ordinary-connection-status"]').dataset.state, 'connected');
   });
 }
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} English route localizes ordinary and compound content and language switching updates menus`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} English route localizes ordinary and compound content and language switching updates menus`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated, locale: 'en' });
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     await h.respond('ordinary', { schema_version: 1, status: 'ok', requested_cursor: '1-0', next_cursor: '2-0', messages: [ordinaryMessage()] });
     await until(() => h.pending('ordinary').length === 1);
     await h.reset(); await h.candidate();
     const panel = () => h.page.document.getElementById('jh-strategy27-event-panel');
+    // Then user observes that the selected case English route localizes ordinary and compound content and language switching updates menus
     assert.doesNotMatch(panel().textContent, /\p{Script=Han}/u);
     assert.match(panel().textContent, /Compound|candidate/i);
     h.page.document.querySelector('[data-role="event-row"]').click();
@@ -774,24 +834,29 @@ for (const generated of [false, true]) {
 }
 
 for (const generated of [false, true]) {
-  test(`${generated ? 'generated' : 'source'} ignores retired preference records and provides only the shared transport`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} ignores retired preference records and provides only the shared transport`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated, migrationRecord: { version: 1, enabled: true, position: null, secret: 'synthetic-rejected-value' } });
     assert.equal(h.page[Symbol.for('jh-userscripts.signal-gateway')].version, 1);
     assert.equal(h.page.__TM_SIGNAL_CLIENT_DEBUG__, undefined);
     assert.equal(h.pending('ordinary').length, 1);
     assert.equal(h.pending('compound').length, 1);
+    // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     await until(() => h.pending('ordinary').length === 1);
+    // Then user observes that the selected case ignores retired preference records and provides only the shared transport
     assert.equal(h.pending('ordinary').length, 1);
     assert.equal(h.page.document.querySelectorAll('#jh-strategy29-summary-panel').length, 0);
   });
 
-  test(`${generated ? 'generated' : 'source'} locale switch updates stopped status and prompts without reconnecting`, async (t) => {
+  test(`user observes that ${generated ? 'generated' : 'source'} locale switch updates stopped status and prompts without reconnecting`, async (t) => {
+    // Given the Binance page, gateway requests and Strategy 27 installation
     const h = await harness(t, { generated, locale: 'en' });
     const prompts = h.prompts;
-    t.mock.method(h.page, 'prompt', () => { throw new Error('Page prompt must not receive private input'); });
+    // When h.menus.get('Set CorsairQuant gateway secret') processes the configured inputs
     h.menus.get('Set CorsairQuant gateway secret')();
     h.menus.get('Set CorsairQuant local gateway URL')();
+    // Then user observes that the selected case locale switch updates stopped status and prompts without reconnecting
     assert.equal(prompts.length, 2);
     assert.doesNotMatch(prompts.join(' '), /\p{Script=Han}/u);
     await h.respond('ordinary', 'invalid JSON');
@@ -808,18 +873,22 @@ for (const generated of [false, true]) {
     assert.match(prompts[2], /输入 CorsairQuant/);
     assert.match(prompts[3], /输入 SSH/);
     assert.equal(h.menus.size, 4);
+    assert.deepEqual(h.promptBoundary.pageAttempts, []);
   });
 }
 
 
 for (const generated of [false, true]) {
-test(`${generated ? 'generated' : 'source'} Unicode URL and chart symbol start both clients and draw the Python candidate`, async (t) => {
+test(`user observes that ${generated ? 'generated' : 'source'} Unicode URL and chart symbol start both clients and draw the Python candidate`, async (t) => {
+  // Given the Binance page, gateway requests and Strategy 27 installation
   const candidateFixture = JSON.parse(readFileSync(new URL('../../fixtures/strategy27-unicode-candidate.json', import.meta.url), 'utf8'));
   const h = await harness(t, {generated, routeSymbol: '币安人生USDT', candidateFixture});
   assert.equal(h.pending('ordinary').length, 1);
   assert.equal(h.pending('compound').length, 1);
+  // When h.reset processes the configured inputs
   await h.reset();
   await h.candidate();
+  // Then user observes that the selected case Unicode URL and chart symbol start both clients and draw the Python candidate
   assert.equal(h.rows(), 1);
   assert.equal(h.shapes.size, 3);
   assert.ok(h.requests.every((request) => new URL(request.options.url).searchParams.get('symbol') === candidateFixture.symbol));

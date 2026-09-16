@@ -38,6 +38,7 @@
     "test:ui:debug": "playwright test --debug"
   },
   "devDependencies": {
+    "@bcoe/v8-coverage": "1.0.2",
     "@jridgewell/sourcemap-codec": "1.6.0",
     "@playwright/test": "^1.62.1",
     "acorn": "8.18.0",

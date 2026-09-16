@@ -9,8 +9,15 @@ import {
   getUnavailableLadderQuantityMessage,
 } from '../../../src/binance-orderbook-trade/core/ladder-plan.js';
 
-test('maps open and close ladder actions to order direction specs', () => {
-  assert.deepEqual(getLadderActionSpec('OPEN_LONG'), {
+test("user maps open and close ladder actions to order direction specs", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = ['OPEN_LONG'];
+
+  // When the requested ladder plan is evaluated
+  const observed = getLadderActionSpec(...scenarioInputs);
+
+  // Then maps open and close ladder actions to order direction specs
+  assert.deepEqual(observed, {
     mode: 'OPEN',
     label: '阶梯开多',
     priceSide: 'BID',
@@ -40,15 +47,29 @@ test('maps open and close ladder actions to order direction specs', () => {
   });
 });
 
-test('rejects unknown ladder actions and resolves percent source by mode', () => {
-  assert.equal(getLadderActionSpec('BAD_ACTION'), null);
+test("user rejects unknown ladder actions and resolves percent source by mode", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = ['BAD_ACTION'];
+
+  // When the requested ladder plan is evaluated
+  const observed = getLadderActionSpec(...scenarioInputs);
+
+  // Then rejects unknown ladder actions and resolves percent source by mode
+  assert.equal(observed, null);
   assert.equal(getLadderPercentForMode('OPEN', 30, 50), 30);
   assert.equal(getLadderPercentForMode('CLOSE', 30, 50), 50);
   assert.equal(getLadderPercentForMode('UNKNOWN', 30, 50), null);
 });
 
-test('unavailable ladder quantity messages preserve the observed failure reason', () => {
-  assert.equal(getUnavailableLadderQuantityMessage('OPEN', null), '未读取到可开数量');
+test("user sees that unavailable ladder quantity messages preserve the observed failure reason", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = ['OPEN', null];
+
+  // When the requested ladder plan is evaluated
+  const observed = getUnavailableLadderQuantityMessage(...scenarioInputs);
+
+  // Then sees that unavailable ladder quantity messages preserve the observed failure reason
+  assert.equal(observed, '未读取到可开数量');
   assert.equal(getUnavailableLadderQuantityMessage('OPEN', '0'), '当前可开数量为 0');
   assert.equal(
     getUnavailableLadderQuantityMessage('OPEN', 0, true),
@@ -64,29 +85,43 @@ test('unavailable ladder quantity messages preserve the observed failure reason'
   );
 });
 
-test('auto-fits ladder percent before reducing requested levels', () => {
-  const fit = fitLadderPlanForMinimumQty({
+test("user auto-fits ladder percent before reducing requested levels", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = [{
     baseQty: '10',
     minRequiredQty: '1',
     percent: 30,
     levels: 5,
     stepSize: '0.1',
-  });
+  }];
 
+  // When the requested ladder plan is evaluated
+  const fit = fitLadderPlanForMinimumQty(...scenarioInputs);
+
+
+
+  // Then auto-fits ladder percent before reducing requested levels
   assert.equal(fit.percent, '50');
   assert.equal(fit.levels, 5);
   assert.deepEqual(fit.allocation.quantities, ['1', '1', '1', '1', '1']);
 });
 
-test('auto-fits up to 100 percent without depending on panel percent presets', () => {
-  const fit = fitLadderPlanForMinimumQty({
+test("user auto-fits up to 100 percent without depending on panel percent presets", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = [{
     baseQty: '9',
     minRequiredQty: '0.8',
     percent: 30,
     levels: 9,
     stepSize: '0.01',
-  });
+  }];
 
+  // When the requested ladder plan is evaluated
+  const fit = fitLadderPlanForMinimumQty(...scenarioInputs);
+
+
+
+  // Then auto-fits up to 100 percent without depending on panel percent presets
   assert.equal(MAX_AUTO_FIT_LADDER_PERCENT, '100');
   assert.equal(fit.maxPercent, '100');
   assert.equal(fit.percent, '80');
@@ -94,57 +129,85 @@ test('auto-fits up to 100 percent without depending on panel percent presets', (
   assert.deepEqual(fit.allocation.quantities, Array(9).fill('0.8'));
 });
 
-test('reduces requested levels only when they need more than 100 percent', () => {
-  const fit = fitLadderPlanForMinimumQty({
+test("user reduces requested levels only when they need more than 100 percent", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = [{
     baseQty: '10',
     minRequiredQty: '2.1',
     percent: 30,
     levels: 9,
     stepSize: '0.1',
-  });
+  }];
 
+  // When the requested ladder plan is evaluated
+  const fit = fitLadderPlanForMinimumQty(...scenarioInputs);
+
+
+
+  // Then reduces requested levels only when they need more than 100 percent
   assert.equal(fit.percent, '84');
   assert.equal(fit.levels, 4);
   assert.deepEqual(fit.allocation.quantities, ['2.1', '2.1', '2.1', '2.1']);
 });
 
-test('never lowers the saved percent while auto-reducing levels', () => {
-  const fit = fitLadderPlanForMinimumQty({
+test("user never lowers the saved percent while auto-reducing levels", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = [{
     baseQty: '10',
     minRequiredQty: '2.1',
     percent: 90,
     levels: 9,
     stepSize: '0.1',
-  });
+  }];
 
+  // When the requested ladder plan is evaluated
+  const fit = fitLadderPlanForMinimumQty(...scenarioInputs);
+
+
+
+  // Then never lowers the saved percent while auto-reducing levels
   assert.equal(fit.percent, '90');
   assert.equal(fit.levels, 4);
   assert.deepEqual(fit.allocation.quantities, ['2.2', '2.2', '2.2', '2.4']);
 });
 
-test('rejects the ladder only when even one order needs more than 100 percent', () => {
-  const fit = fitLadderPlanForMinimumQty({
+test("user rejects the ladder only when even one order needs more than 100 percent", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = [{
     baseQty: '10',
     minRequiredQty: '10.1',
     percent: 30,
     levels: 3,
     stepSize: '0.1',
-  });
+  }];
 
+  // When the requested ladder plan is evaluated
+  const fit = fitLadderPlanForMinimumQty(...scenarioInputs);
+
+
+
+  // Then rejects the ladder only when even one order needs more than 100 percent
   assert.equal(fit.allocation, null);
   assert.equal(fit.maxPercent, '100');
 });
 
-test('auto-fit recomputes the minimum quantity for retained open ladder levels', () => {
-  const fit = fitLadderPlanForMinimumQty({
+test("user sees that auto-fit recomputes the minimum quantity for retained open ladder levels", () => {
+  // Given the requested ladder action and quantity constraints are available
+  const scenarioInputs = [{
     baseQty: '10',
     minRequiredQty: '3',
     minRequiredQtyByLevel: ['2', '2', '2', '3', '3'],
     percent: 30,
     levels: 5,
     stepSize: '1',
-  });
+  }];
 
+  // When the requested ladder plan is evaluated
+  const fit = fitLadderPlanForMinimumQty(...scenarioInputs);
+
+
+
+  // Then sees that auto-fit recomputes the minimum quantity for retained open ladder levels
   assert.equal(fit.percent, '60');
   assert.equal(fit.levels, 3);
   assert.equal(fit.minRequiredQty, '2');

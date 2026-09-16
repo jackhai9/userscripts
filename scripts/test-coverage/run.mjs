@@ -82,7 +82,7 @@ export async function runCoverage(mode, { reportOnly = false, requireTarget = fa
     if (!result.summary.gate.passed) {
       throw new Error('Coverage gate failed:\n' + result.summary.gate.failures.join('\n'));
     }
-    process.stdout.write('Staged coverage gate passed. Final target met: ' + result.summary.gate.targetMet + '\n');
+    process.stdout.write('Coverage gate passed. Repository target met: ' + result.summary.gate.targetMet + '\n');
   } else {
     process.stdout.write('Diagnostic report: thresholds were not enforced.\n');
   }

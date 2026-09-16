@@ -26,14 +26,17 @@ function metadataValue(source, key) {
   return match?.[1]?.trim() ?? '';
 }
 
-test('userscript dashboard icons are embedded and do not depend on GitHub avatar loading', async () => {
-  for (const path of iconSources) {
-    const source = await readFile(new URL(`../../${path}`, import.meta.url), 'utf8');
+for (const path of iconSources) {
+  test(`user sees the embedded dashboard icon when installing ${path}`, async () => {
+    // Given the source or public installer associated with this dashboard entry.
+    const entry = new URL(`../../${path}`, import.meta.url);
+    // When its icon metadata is read from the actual file.
+    const source = await readFile(entry, 'utf8');
     const icon = metadataValue(source, 'icon');
     const icon64 = metadataValue(source, 'icon64');
-
+    // Then both icon sizes use the embedded project asset without a remote avatar.
     assert.equal(icon, expectedDashboardIcon, `${path} @icon should use the agreed J dashboard SVG`);
     assert.equal(icon64, icon, `${path} @icon64 should match @icon for Tampermonkey dashboard use`);
     assert.equal(source.includes('avatars.githubusercontent.com'), false, `${path} should not depend on a remote avatar icon`);
-  }
-});
+  });
+}
