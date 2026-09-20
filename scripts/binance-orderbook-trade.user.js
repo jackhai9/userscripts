@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.211
+// @version      2.7.212
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2703,97 +2703,116 @@
       check();
     });
   }
-  function waitForTradeFormFrameState(observationRoot, readState, timeoutMs, requiredStableFrames = 2) {
-    const view = observationRoot?.ownerDocument?.defaultView;
+  function waitForStableTradeControl(observationRoot, readCandidate, isSameCandidate, timeoutMs, requiredStableFrames, abortSignal, missingSchedulerMessage) {
+    const document2 = observationRoot?.ownerDocument || observationRoot;
+    const view = document2?.defaultView;
     if (!view || typeof view.requestAnimationFrame !== "function" || typeof view.cancelAnimationFrame !== "function") {
-      throw new Error("交易表单帧调度器不可用");
+      throw new Error(missingSchedulerMessage);
     }
     if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
       throw new Error("稳定帧数必须为正整数");
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let settled = false;
       let frameHandle = 0;
-      let timer = 0;
+      let observationTimer = 0;
+      let deadlineTimer = 0;
       let stableFrames = 0;
-      let stableState = null;
-      const finish = (value) => {
+      let stableCandidate = null;
+      let hiddenObservations = 0;
+      const maxHiddenObservations = Math.max(requiredStableFrames, Math.ceil(timeoutMs / 100));
+      const finish = (value, error = null) => {
         if (settled) return;
         settled = true;
         if (frameHandle) view.cancelAnimationFrame(frameHandle);
-        view.clearTimeout(timer);
-        resolve(value);
+        view.clearTimeout(observationTimer);
+        view.clearTimeout(deadlineTimer);
+        document2.removeEventListener("visibilitychange", onVisibilityChange);
+        abortSignal?.removeEventListener("abort", onAbort);
+        if (error) reject(error);
+        else resolve(value);
+      };
+      const onAbort = () => finish(null, abortSignal.reason);
+      const scheduleObservation = () => {
+        if (document2.hidden) {
+          observationTimer = view.setTimeout(check, 100);
+        } else {
+          frameHandle = view.requestAnimationFrame(check);
+        }
       };
       const check = () => {
         frameHandle = 0;
-        const state = readState();
-        if (state) {
-          stableFrames += 1;
-          stableState = state;
+        observationTimer = 0;
+        const candidate = readCandidate();
+        if (candidate) {
+          stableFrames = isSameCandidate(candidate, stableCandidate) ? stableFrames + 1 : 1;
+          stableCandidate = candidate;
           if (stableFrames >= requiredStableFrames) {
-            finish(stableState);
+            finish(candidate);
             return;
           }
         } else {
           stableFrames = 0;
-          stableState = null;
+          stableCandidate = null;
         }
-        frameHandle = view.requestAnimationFrame(check);
+        if (document2.hidden) {
+          hiddenObservations += 1;
+          if (hiddenObservations >= maxHiddenObservations) {
+            finish(null);
+            return;
+          }
+        }
+        scheduleObservation();
       };
-      timer = view.setTimeout(() => finish(null), timeoutMs);
-      frameHandle = view.requestAnimationFrame(check);
+      const onVisibilityChange = () => {
+        if (frameHandle) view.cancelAnimationFrame(frameHandle);
+        view.clearTimeout(observationTimer);
+        view.clearTimeout(deadlineTimer);
+        frameHandle = 0;
+        observationTimer = 0;
+        if (!document2.hidden) deadlineTimer = view.setTimeout(() => finish(null), timeoutMs);
+        scheduleObservation();
+      };
+      document2.addEventListener("visibilitychange", onVisibilityChange);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
+      if (!document2.hidden) deadlineTimer = view.setTimeout(() => finish(null), timeoutMs);
+      scheduleObservation();
     });
   }
-  function waitForTradeActionButtonFrameState(observationRoot, findButton, isVisibleElement, timeoutMs, requiredStableFrames = 2) {
-    const view = observationRoot?.ownerDocument?.defaultView || observationRoot?.defaultView;
-    if (!view || typeof view.requestAnimationFrame !== "function" || typeof view.cancelAnimationFrame !== "function") {
-      throw new Error("下单按钮帧调度器不可用");
-    }
+  function waitForTradeFormFrameState(observationRoot, readState, timeoutMs, requiredStableFrames = 2, abortSignal = null) {
+    return waitForStableTradeControl(
+      observationRoot,
+      readState,
+      () => true,
+      timeoutMs,
+      requiredStableFrames,
+      abortSignal,
+      "交易表单帧调度器不可用"
+    );
+  }
+  function waitForTradeActionButtonFrameState(observationRoot, findButton, isVisibleElement, timeoutMs, requiredStableFrames = 2, abortSignal = null) {
     if (typeof findButton !== "function" || typeof isVisibleElement !== "function") {
       throw new Error("下单按钮定位器不可用");
     }
-    if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
-      throw new Error("稳定帧数必须为正整数");
-    }
-    return new Promise((resolve) => {
-      let settled = false;
-      let frameHandle = 0;
-      let timer = 0;
-      let stableFrames = 0;
-      let stableButton = null;
-      const finish = (value) => {
-        if (settled) return;
-        settled = true;
-        if (frameHandle) view.cancelAnimationFrame(frameHandle);
-        view.clearTimeout(timer);
-        resolve(value);
-      };
-      const check = () => {
-        frameHandle = 0;
+    return waitForStableTradeControl(
+      observationRoot,
+      () => {
         const button = findButton();
         const actionable = Boolean(
           button && button.isConnected && isVisibleElement(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true"
         );
-        if (actionable) {
-          if (button === stableButton) {
-            stableFrames += 1;
-          } else {
-            stableButton = button;
-            stableFrames = 1;
-          }
-          if (stableFrames >= requiredStableFrames) {
-            finish(button);
-            return;
-          }
-        } else {
-          stableButton = null;
-          stableFrames = 0;
-        }
-        frameHandle = view.requestAnimationFrame(check);
-      };
-      timer = view.setTimeout(() => finish(null), timeoutMs);
-      frameHandle = view.requestAnimationFrame(check);
-    });
+        return actionable ? button : null;
+      },
+      (button, previousButton) => button === previousButton,
+      timeoutMs,
+      requiredStableFrames,
+      abortSignal,
+      "下单按钮帧调度器不可用"
+    );
   }
   function isTradeModeTab(node, { panelId }) {
     if (!node?.matches?.('[role="tab"]')) return false;
@@ -5225,6 +5244,7 @@
     const USDT_REBALANCE_BALANCE_POLL_MS = 1e3;
     const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
     const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
+    const SINGLE_ORDER_DRAFT_MAX_AGE_MS = 15e3;
     const TRADE_INPUT_SYNC_STABLE_FRAMES = 2;
     const LADDER_INPUT_SETTLE_TIMEOUT_MS = 1200;
     const LADDER_INPUT_SETTLE_STABLE_MS = 180;
@@ -7470,7 +7490,8 @@
         observationRoot,
         readTradeState,
         syncTimeoutMs,
-        TRADE_INPUT_SYNC_STABLE_FRAMES
+        TRADE_INPUT_SYNC_STABLE_FRAMES,
+        options?.abortSignal
       );
       if (synchronized) return synchronized;
       assertSubmittedPriceMatchesExpectedPrice(
@@ -7490,7 +7511,7 @@
       const cls = String(button.className || "").toLowerCase();
       return button.disabled || button.getAttribute("aria-disabled") === "true" || button.getAttribute("aria-busy") === "true" || button.getAttribute("data-loading") === "true" || includesBinancePageText(text, BINANCE_PAGE_TEXT.submitBusy) || cls.includes("loading") || !!button.querySelector('[class*="loading"], [class*="spinner"], [aria-busy="true"]');
     }
-    async function waitForReadyLadderSubmitButton(plan) {
+    async function waitForReadyLadderSubmitButton(plan, abortSignal) {
       const resolveReadyButton = () => {
         const candidate = plan.spec.buttonGetter();
         return candidate && !isSubmitButtonBusy(candidate) ? candidate : null;
@@ -7499,7 +7520,9 @@
         document,
         resolveReadyButton,
         isVisibleElement,
-        TRADE_ACTION_BUTTON_READY_TIMEOUT_MS
+        TRADE_ACTION_BUTTON_READY_TIMEOUT_MS,
+        2,
+        abortSignal
       );
       if (button) return button;
       const currentButton = plan.spec.buttonGetter();
@@ -7734,7 +7757,7 @@
           throwIfAborted(abortSignal);
           assertLadderExecutionContext(plan);
           assertLadderMakerPrice(plan, order.price);
-          await waitForReadyLadderSubmitButton(plan);
+          await waitForReadyLadderSubmitButton(plan, abortSignal);
           throwIfAborted(abortSignal);
           assertLadderExecutionContext(plan);
           assertLadderMakerPrice(plan, order.price);
@@ -7756,13 +7779,14 @@
             priceLabel: "计划价",
             qtyLabel: "计划量",
             settleControlledForm: true,
-            previousSubmittedInputs: previousAcknowledgedInputs
+            previousSubmittedInputs: previousAcknowledgedInputs,
+            abortSignal
           });
           throwIfAborted(abortSignal);
           const submittedPrice = synchronizedInputs.submittedPrice;
           assertLadderExecutionContext(plan);
           assertLadderMakerPrice(plan, submittedPrice);
-          const button = await waitForReadyLadderSubmitButton(plan);
+          const button = await waitForReadyLadderSubmitButton(plan, abortSignal);
           throwIfAborted(abortSignal);
           assertLadderExecutionContext(plan);
           assertSubmittedPriceMatchesExpectedPrice(
@@ -8164,7 +8188,7 @@
       if (getActiveTradeMode() !== spec.mode) {
         return { status: "stopped", reason: "mode_changed" };
       }
-      if (document.hidden || ladderTask || singleOrderTask || cancelCurrentSymbolOpenOrdersTask || !readCurrentOrderbookPrecisionValue()) {
+      if (ladderTask || singleOrderTask || cancelCurrentSymbolOpenOrdersTask || !readCurrentOrderbookPrecisionValue()) {
         return { status: "waiting" };
       }
       const button = spec.buttonGetter();
@@ -10157,8 +10181,8 @@
             readReadiness: async () => {
               assertLadderExecutionContext(plan);
               const button = plan.spec.buttonGetter();
-              const ready = !document.hidden && isCloseSnapshotReady(plan.symbol) && button && button.isConnected && isVisibleElement(button) && !isSubmitButtonBusy(button);
-              if (!ready && !document.hidden && Date.now() >= nextPositionCheckAt) {
+              const ready = isCloseSnapshotReady(plan.symbol) && button && button.isConnected && isVisibleElement(button) && !isSubmitButtonBusy(button);
+              if (!ready && Date.now() >= nextPositionCheckAt) {
                 await throwIfClosePositionCompleted(plan, abortSignal);
                 nextPositionCheckAt = Date.now() + CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS;
                 assertLadderExecutionContext(plan);
@@ -10554,8 +10578,10 @@
         futuresPayload
       );
     }
-    async function assertUsdtRebalanceTradingState() {
-      if (!isFuturesTradingPage() || document.hidden) throw new Error("当前不在可操作的合约页面");
+    async function assertUsdtRebalanceTradingState({ allowHidden = false } = {}) {
+      if (!isFuturesTradingPage() || !allowHidden && document.hidden) {
+        throw new Error("当前不在可操作的合约页面");
+      }
       if (ladderTask || continuousLadderTask || singleOrderTask || cancelCurrentSymbolOpenOrdersTask) {
         throw new Error("当前仍有交易任务运行");
       }
@@ -10640,7 +10666,7 @@
         }
         let expectedBalances = initialBalances;
         for (const transfer of plan.transfers) {
-          await assertUsdtRebalanceTradingState();
+          await assertUsdtRebalanceTradingState({ allowHidden: true });
           const currentBalances = await readCurrentUsdtRebalanceBalances();
           if (!areUsdtBalancesEqual(currentBalances, expectedBalances)) {
             throw new Error("账户余额已变化，已停止账户再平衡");
@@ -12236,6 +12262,7 @@
           });
         }
         const now = Date.now();
+        const clickedAt = performance.now();
         if (CFG.COOLDOWN_MS > 0 && now - lastTs < CFG.COOLDOWN_MS) {
           if (CFG.DEBUG) warn("跳过：cooldown");
           return;
@@ -12330,6 +12357,9 @@
           }
           if (!isCurrentObservedSymbol(qtyPlan.symbol)) {
             throw new Error("提交前交易对已变化，已停止");
+          }
+          if (Math.max(Date.now() - now, performance.now() - clickedAt) > SINGLE_ORDER_DRAFT_MAX_AGE_MS) {
+            throw new Error("点击后等待过久，已停止提交");
           }
           const previousFeedback = takeOrderFeedbackSnapshot();
           const submitCaptureId = beginLadderSubmitResponseCapture();
@@ -12428,13 +12458,13 @@
       ensureDepthProfileObserver();
       scheduleDepthProfileSync();
     }
-    function stopTradingTimers() {
+    function stopTradingTimers({ preserveTradeUiMutationWait = false } = {}) {
       stopTradeModeTabObserver();
       stopAccountPositionObserver();
       stopOrderbookPrecisionObserver();
       stopDepthProfileObserver();
       stopDepthProfileSession();
-      clearTradeUiMutationWait();
+      if (!preserveTradeUiMutationWait) clearTradeUiMutationWait();
     }
     function syncRouteState() {
       if (document.hidden) return;
@@ -12504,7 +12534,11 @@
         } catch (error) {
           err("页面隐藏前图表保存刷新失败:", error);
         }
-        stopTradingTimers();
+        stopTradingTimers({
+          preserveTradeUiMutationWait: Boolean(
+            ladderTask || continuousLadderTask || singleOrderTask || cancelCurrentSymbolOpenOrdersTask
+          )
+        });
         stopRouteWatcher();
         return;
       }

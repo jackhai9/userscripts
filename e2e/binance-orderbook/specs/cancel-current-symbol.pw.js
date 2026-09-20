@@ -11,6 +11,7 @@ import {
   readFixtureState,
 } from '../helpers/userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
+import { installSimulatedVisibility, setSimulatedVisibility } from '../helpers/simulated-visibility.js';
 import {
   assertResponsiveInteraction,
   assertStableGeometry,
@@ -212,6 +213,35 @@ test('user confirms cancellation for the current symbol while other-symbol order
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(otherSymbolOrders(scenario));
   expect(state.events.filter((event) => event.type === 'cancel-requested')).toHaveLength(1);
+  await expectRestoredState(page, scenario);
+  expect(errors).toEqual([]);
+});
+
+test('user finishes confirmed current-symbol cancellation after the tab becomes hidden', async ({ page }) => {
+  // Given a native confirmation is open for current and other-symbol Basic orders.
+  const scenario = createCancelScenario({
+    positions: POSITION_SETS.both,
+    orders: ORDER_SETS.both,
+    ui: { hideOtherSymbols: false, accountTab: 'positions', showOrders: true },
+  });
+  const { errors } = await openUserscriptScenario(page, scenario);
+  await installSimulatedVisibility(page);
+  await page.getByRole('button', { name: '撤单' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+
+  // When the user confirms, then moves the page to a background tab.
+  await dialog.getByRole('button', { name: '确认' }).evaluate(button => {
+    button.click();
+    window.__SIMULATED_VISIBILITY__.setHidden(true);
+  });
+
+  // Then only the captured current-symbol order is cancelled and UI state is restored.
+  await expect.poll(async () => (await readFixtureState(page)).events
+    .filter(({ type }) => type === 'cancel-requested')).toHaveLength(1);
+  await setSimulatedVisibility(page, false);
+  await expect(page.getByText('撤单已完成')).toBeVisible();
+  expect((await readFixtureState(page)).orders).toEqual(otherSymbolOrders(scenario));
   await expectRestoredState(page, scenario);
   expect(errors).toEqual([]);
 });

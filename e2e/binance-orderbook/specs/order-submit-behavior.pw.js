@@ -2,6 +2,7 @@ import { test, expect } from '../test.js';
 import { CURRENT_SYMBOL, createCancelScenario } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
+import { installSimulatedVisibility, setSimulatedVisibility } from '../helpers/simulated-visibility.js';
 
 const PLACE_ORDER = '**/bapi/futures/v1/private/future/order/place-order';
 const STATUS = '#jh-binance-ladder-status';
@@ -11,6 +12,122 @@ const DIRECTIONS = [
   { action: 'CLOSE_LONG', mode: 'CLOSE', side: 'LONG', label: '平多', qty: '0.06', prices: ['81.03', '81.08', '81.13', '82.03', '82.08', '82.13'] },
   { action: 'CLOSE_SHORT', mode: 'CLOSE', side: 'SHORT', label: '平空', qty: '0.06', prices: ['80.9', '80.4', '79.9', '81.9', '81.4', '80.9'] },
 ];
+
+for (const direction of [
+  { action: 'OPEN_LONG', mode: 'OPEN', label: '开多' },
+  { action: 'CLOSE_SHORT', mode: 'CLOSE', label: '平空' },
+]) {
+  test(`user completes a clicked ${direction.action} ladder after its tab becomes hidden`, async ({ page }) => {
+    // Given the first native order request is held after the visible button click.
+    const host = await openUserscriptScenario(page, createCancelScenario({
+      positions: [{ symbol: CURRENT_SYMBOL, side: 'SHORT', quantity: '100' }],
+      ui: { tradeMode: direction.mode },
+      host: { submitApiResponses: [
+        { outcome: 'success', delivery: 'manual' },
+        ...Array.from({ length: 4 }, () => ({ outcome: 'success', delivery: 'immediate' })),
+      ] },
+    }));
+    await installSimulatedVisibility(page);
+    await page.locator(`[data-ladder-action="${direction.action}"]`).click();
+    await expect.poll(host.pendingSubmitSequences).toEqual([1]);
+
+    // When the tab becomes hidden before the first response arrives.
+    await setSimulatedVisibility(page, true);
+    await host.releaseSubmitResponse(1);
+
+    // Then the original task submits each remaining order in the captured direction.
+    await expect.poll(async () => (await readFixtureState(page)).events
+      .filter(({ type }) => type === 'order-submitted'), { timeout: 10_000 }).toHaveLength(5);
+    await setSimulatedVisibility(page, false);
+    await expect(page.locator(STATUS)).toContainText('已完成');
+    const submitted = (await readFixtureState(page)).events.filter(({ type }) => type === 'order-submitted');
+    expect(submitted.map(({ action }) => action)).toEqual(Array(5).fill(direction.label));
+    expect(host.errors).toEqual([]);
+  });
+}
+
+test('user completes one orderbook click after the tab becomes hidden before input settlement', async ({ page }) => {
+  // Given the native orderbook click starts the actual single-order input workflow.
+  const host = await openUserscriptScenario(page, createCancelScenario({ host: {
+    submitApiResponses: [{ outcome: 'success', delivery: 'manual' }],
+  } }));
+  await installSimulatedVisibility(page);
+
+  // When a trusted click reaches the page and the same event turn hides the tab.
+  await page.evaluate(() => {
+    document.addEventListener('click', event => {
+      if (event.target.closest('#futuresOrderbook .bid-light.emit-price')) {
+        queueMicrotask(() => window.__SIMULATED_VISIBILITY__.setHidden(true));
+      }
+    }, { capture: true, once: true });
+  });
+  await page.locator('#futuresOrderbook .bid-light.emit-price').first().click();
+  expect(await page.evaluate(() => document.hidden)).toBe(true);
+
+  // Then one native request is made and the acknowledgement completes that task.
+  await expect.poll(host.pendingSubmitSequences, { timeout: 10_000 }).toEqual([1]);
+  await host.releaseSubmitResponse(1);
+  await setSimulatedVisibility(page, false);
+  await expect(page.locator(STATUS)).toHaveText('单击开多已提交 · 81.0 × 0.07');
+  expect((await readFixtureState(page)).events.filter(({ type }) => type === 'order-submitted'))
+    .toEqual([expect.objectContaining({ action: '开多', price: '81.0', quantity: '0.07' })]);
+  expect(host.errors).toEqual([]);
+});
+
+test('user does not submit an old orderbook click after a long hidden-page stall', async ({ page }) => {
+  // Given a trusted single-order click starts before Chrome hides the page.
+  await installScenarioClock(page);
+  const host = await openUserscriptScenario(page, createCancelScenario());
+  await installSimulatedVisibility(page);
+  await page.evaluate(() => {
+    document.addEventListener('click', event => {
+      if (event.target.closest('#futuresOrderbook .bid-light.emit-price')) {
+        queueMicrotask(() => window.__SIMULATED_VISIBILITY__.setHidden(true));
+      }
+    }, { capture: true, once: true });
+  });
+  await page.locator('#futuresOrderbook .bid-light.emit-price').first().click();
+  expect(await page.evaluate(() => document.hidden)).toBe(true);
+
+  // When a long frozen-style time jump passes before background checks can settle.
+  await pauseScenarioClock(page);
+  await page.clock.fastForward(30_000);
+  await page.clock.runFor(500);
+  await setSimulatedVisibility(page, false);
+
+  // Then the original clicked price is expired and cannot become a native order.
+  await expect(page.locator(STATUS)).toContainText('点击后等待过久');
+  expect((await readFixtureState(page)).events.filter(({ type }) => type === 'order-submitted'))
+    .toEqual([]);
+  expect(host.errors).toEqual([]);
+});
+
+test('user stops a hidden ladder before its pending control check can submit', async ({ page }) => {
+  // Given a trusted ladder click starts while the foreground form is ready.
+  await installScenarioClock(page);
+  const host = await openUserscriptScenario(page, createCancelScenario());
+  await installSimulatedVisibility(page);
+  await page.evaluate(() => {
+    document.addEventListener('click', event => {
+      if (event.target.closest('[data-ladder-action="OPEN_LONG"]')) {
+        queueMicrotask(() => window.__SIMULATED_VISIBILITY__.setHidden(true));
+      }
+    }, { capture: true, once: true });
+  });
+
+  // When the tab hides in that click turn and Stop cancels the pending wait.
+  await page.locator('[data-ladder-action="OPEN_LONG"]').click();
+  await page.evaluate(() => window.__TM_CLOSE_LONG_DEBUG__.stopLadder());
+  await setSimulatedVisibility(page, false);
+
+  // Then no native submit is made after the cancelled wait receives more time.
+  await pauseScenarioClock(page);
+  await page.clock.runFor(400);
+  await expect(page.locator(STATUS)).toContainText('已停止');
+  expect((await readFixtureState(page)).events.filter(({ type }) => type === 'order-submitted'))
+    .toEqual([]);
+  expect(host.errors).toEqual([]);
+});
 
 for (const direction of DIRECTIONS) {
   test(`user reprices only the three remaining ${direction.action} orders after a native maker rejection`, async ({ page }) => {

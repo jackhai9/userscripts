@@ -50,6 +50,16 @@ not a latency or throughput measurement. The ordinary single-round unknown
 submission scenario must not be generalized to continuous mode, whose existing
 `submit_unconfirmed` policy deliberately permits a later recovery round.
 
+Background-tab L2 scenarios override `document.hidden`, dispatch
+`visibilitychange`, and pause paint-frame callbacks after the real generated
+userscript is loaded. They verify that already clicked open/close ladders,
+continuous close, single-order submission, confirmed cancellation, and confirmed
+rebalance continue through the fixture's native request and response boundaries.
+This harness does not model Chrome timer throttling, page freeze, discard, or
+Tampermonkey injection. Those require a separate L3/L4 observation in an actual
+background or minimized Chrome tab; record elapsed time and authoritative
+exchange/account state before claiming that the live task completed.
+
 `npm run test:coverage` additionally collects V8 execution and maps it to the
 complete production source set. The collector's own browser proof uses virtual
 code and remains separate from production coverage. See [Source Coverage](test-coverage.md)

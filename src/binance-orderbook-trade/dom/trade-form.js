@@ -554,7 +554,105 @@ export function waitForTradeFormMutationState(observationRoot, readState, timeou
 }
 
 /**
- * Confirm property-based controlled-input state across consecutive paint frames.
+ * Observe live trade controls on paint frames while visible and separate timer
+ * tasks while hidden. Chrome pauses paint frames in background tabs; a wall
+ * timeout there could expire before the second independent observation.
+ */
+function waitForStableTradeControl(
+  observationRoot,
+  readCandidate,
+  isSameCandidate,
+  timeoutMs,
+  requiredStableFrames,
+  abortSignal,
+  missingSchedulerMessage,
+) {
+  const document = observationRoot?.ownerDocument || observationRoot;
+  const view = document?.defaultView;
+  if (
+    !view
+    || typeof view.requestAnimationFrame !== 'function'
+    || typeof view.cancelAnimationFrame !== 'function'
+  ) {
+    throw new Error(missingSchedulerMessage);
+  }
+  if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
+    throw new Error('稳定帧数必须为正整数');
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let frameHandle = 0;
+    let observationTimer = 0;
+    let deadlineTimer = 0;
+    let stableFrames = 0;
+    let stableCandidate = null;
+    let hiddenObservations = 0;
+    const maxHiddenObservations = Math.max(requiredStableFrames, Math.ceil(timeoutMs / 100));
+    const finish = (value, error = null) => {
+      if (settled) return;
+      settled = true;
+      if (frameHandle) view.cancelAnimationFrame(frameHandle);
+      view.clearTimeout(observationTimer);
+      view.clearTimeout(deadlineTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      abortSignal?.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onAbort = () => finish(null, abortSignal.reason);
+    const scheduleObservation = () => {
+      if (document.hidden) {
+        observationTimer = view.setTimeout(check, 100);
+      } else {
+        frameHandle = view.requestAnimationFrame(check);
+      }
+    };
+    const check = () => {
+      frameHandle = 0;
+      observationTimer = 0;
+      const candidate = readCandidate();
+      if (candidate) {
+        stableFrames = isSameCandidate(candidate, stableCandidate) ? stableFrames + 1 : 1;
+        stableCandidate = candidate;
+        if (stableFrames >= requiredStableFrames) {
+          finish(candidate);
+          return;
+        }
+      } else {
+        stableFrames = 0;
+        stableCandidate = null;
+      }
+      if (document.hidden) {
+        hiddenObservations += 1;
+        if (hiddenObservations >= maxHiddenObservations) {
+          finish(null);
+          return;
+        }
+      }
+      scheduleObservation();
+    };
+    const onVisibilityChange = () => {
+      if (frameHandle) view.cancelAnimationFrame(frameHandle);
+      view.clearTimeout(observationTimer);
+      view.clearTimeout(deadlineTimer);
+      frameHandle = 0;
+      observationTimer = 0;
+      if (!document.hidden) deadlineTimer = view.setTimeout(() => finish(null), timeoutMs);
+      scheduleObservation();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    abortSignal?.addEventListener('abort', onAbort, { once: true });
+    if (abortSignal?.aborted) {
+      onAbort();
+      return;
+    }
+    if (!document.hidden) deadlineTimer = view.setTimeout(() => finish(null), timeoutMs);
+    scheduleObservation();
+  });
+}
+
+/**
  * MutationObserver cannot observe React restoring an input's value property, so
  * trade submission must read the current live inputs after React has settled.
  */
@@ -563,57 +661,23 @@ export function waitForTradeFormFrameState(
   readState,
   timeoutMs,
   requiredStableFrames = 2,
+  abortSignal = null,
 ) {
-  const view = observationRoot?.ownerDocument?.defaultView;
-  if (
-    !view
-    || typeof view.requestAnimationFrame !== 'function'
-    || typeof view.cancelAnimationFrame !== 'function'
-  ) {
-    throw new Error('交易表单帧调度器不可用');
-  }
-  if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
-    throw new Error('稳定帧数必须为正整数');
-  }
-
-  return new Promise((resolve) => {
-    let settled = false;
-    let frameHandle = 0;
-    let timer = 0;
-    let stableFrames = 0;
-    let stableState = null;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      if (frameHandle) view.cancelAnimationFrame(frameHandle);
-      view.clearTimeout(timer);
-      resolve(value);
-    };
-    const check = () => {
-      frameHandle = 0;
-      const state = readState();
-      if (state) {
-        stableFrames += 1;
-        stableState = state;
-        if (stableFrames >= requiredStableFrames) {
-          finish(stableState);
-          return;
-        }
-      } else {
-        stableFrames = 0;
-        stableState = null;
-      }
-      frameHandle = view.requestAnimationFrame(check);
-    };
-    timer = view.setTimeout(() => finish(null), timeoutMs);
-    frameHandle = view.requestAnimationFrame(check);
-  });
+  return waitForStableTradeControl(
+    observationRoot,
+    readState,
+    () => true,
+    timeoutMs,
+    requiredStableFrames,
+    abortSignal,
+    '交易表单帧调度器不可用',
+  );
 }
 
 /**
  * Binance can mark the requested trade mode active before React replaces the
  * native action buttons. Require one live button identity to remain actionable
- * across consecutive paint frames so callers never click the outgoing node.
+ * across independent observations so callers never click the outgoing node.
  */
 export function waitForTradeActionButtonFrameState(
   observationRoot,
@@ -621,37 +685,14 @@ export function waitForTradeActionButtonFrameState(
   isVisibleElement,
   timeoutMs,
   requiredStableFrames = 2,
+  abortSignal = null,
 ) {
-  const view = observationRoot?.ownerDocument?.defaultView || observationRoot?.defaultView;
-  if (
-    !view
-    || typeof view.requestAnimationFrame !== 'function'
-    || typeof view.cancelAnimationFrame !== 'function'
-  ) {
-    throw new Error('下单按钮帧调度器不可用');
-  }
   if (typeof findButton !== 'function' || typeof isVisibleElement !== 'function') {
     throw new Error('下单按钮定位器不可用');
   }
-  if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
-    throw new Error('稳定帧数必须为正整数');
-  }
-
-  return new Promise((resolve) => {
-    let settled = false;
-    let frameHandle = 0;
-    let timer = 0;
-    let stableFrames = 0;
-    let stableButton = null;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      if (frameHandle) view.cancelAnimationFrame(frameHandle);
-      view.clearTimeout(timer);
-      resolve(value);
-    };
-    const check = () => {
-      frameHandle = 0;
+  return waitForStableTradeControl(
+    observationRoot,
+    () => {
       const button = findButton();
       const actionable = Boolean(
         button
@@ -660,26 +701,14 @@ export function waitForTradeActionButtonFrameState(
         && !button.disabled
         && button.getAttribute('aria-disabled') !== 'true'
       );
-      if (actionable) {
-        if (button === stableButton) {
-          stableFrames += 1;
-        } else {
-          stableButton = button;
-          stableFrames = 1;
-        }
-        if (stableFrames >= requiredStableFrames) {
-          finish(button);
-          return;
-        }
-      } else {
-        stableButton = null;
-        stableFrames = 0;
-      }
-      frameHandle = view.requestAnimationFrame(check);
-    };
-    timer = view.setTimeout(() => finish(null), timeoutMs);
-    frameHandle = view.requestAnimationFrame(check);
-  });
+      return actionable ? button : null;
+    },
+    (button, previousButton) => button === previousButton,
+    timeoutMs,
+    requiredStableFrames,
+    abortSignal,
+    '下单按钮帧调度器不可用',
+  );
 }
 
 export function isTradeModeTab(node, { panelId }) {

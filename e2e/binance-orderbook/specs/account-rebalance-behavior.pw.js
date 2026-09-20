@@ -3,6 +3,7 @@ import { ACCOUNT_PATHS, createAccountRebalanceApi } from '../fixtures/account-re
 import { createCancelScenario } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
+import { installSimulatedVisibility, setSimulatedVisibility } from '../helpers/simulated-visibility.js';
 
 async function openRebalance(page, balances, options) {
   await installScenarioClock(page);
@@ -50,6 +51,33 @@ test('user completes exactly two USDT transfers only after confirming the comple
     ]);
   expect(api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '40', UMFUTURE: '10' });
   expect((await readFixtureState(page)).events.filter(({ type }) => /order-submitted|cancel-requested/.test(type))).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('user completes a confirmed account rebalance after the tab becomes hidden', async ({ page }) => {
+  // Given the user has reviewed a two-transfer plan while the trading page is visible.
+  const { api, errors, action, status } = await openRebalance(page, {
+    FUNDING: '100', MAIN: '0', UMFUTURE: '0',
+  });
+  await installSimulatedVisibility(page);
+  await action.evaluate(button => button.click());
+  const dialog = page.getByRole('dialog', { name: '账户再平衡' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('40 USDT');
+  await expect(dialog).toContainText('10 USDT');
+
+  // When confirmation is clicked and the tab hides in the same event turn.
+  await dialog.getByRole('button', { name: '确认再平衡', exact: true }).evaluate(button => {
+    button.click();
+    window.__SIMULATED_VISIBILITY__.setHidden(true);
+  });
+
+  // Then each transfer still requires fresh account checks and reaches the reviewed target.
+  await expect.poll(() => api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.transfer))
+    .toHaveLength(2);
+  await setSimulatedVisibility(page, false);
+  await expect(status).toHaveText('账户再平衡已完成 · 2/2 笔');
+  expect(api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '40', UMFUTURE: '10' });
   expect(errors).toEqual([]);
 });
 
