@@ -3,6 +3,7 @@ import { JSDOM } from 'jsdom';
 export function loadFixtureDom(html) {
   const dom = new JSDOM(html);
   const { window } = dom;
+  Object.defineProperty(window.document, 'hidden', { configurable: true, value: false });
 
   window.HTMLElement.prototype.getClientRects = function getClientRects() {
     return this.hasAttribute('data-hidden') ? [] : [{ width: 100, height: 24 }];

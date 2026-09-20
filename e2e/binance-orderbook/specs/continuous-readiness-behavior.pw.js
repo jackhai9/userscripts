@@ -2,6 +2,7 @@ import { test, expect } from '../test.js';
 import { CURRENT_SYMBOL, createCancelScenario } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
+import { installSimulatedVisibility, setSimulatedVisibility } from '../helpers/simulated-visibility.js';
 
 const PANEL = '#jh-binance-close-qty-multiplier-panel';
 const STATUS = '#jh-binance-ladder-status';
@@ -171,6 +172,31 @@ test('user completes two close-short rounds with a full cooldown and exact cumul
     { action: '平空', price: '80.4', quantity: '0.1' },
     { action: '平空', price: '79.9', quantity: '0.1' },
   ]);
+  expect(host.errors).toEqual([]);
+});
+
+test('user continues a confirmed close round while hidden and can stop the next hidden round', async ({ page }) => {
+  // Given the first round's final native acknowledgement is held after a visible user click.
+  const host = await openPendingFirstRound(page);
+  await installSimulatedVisibility(page);
+
+  // When the tab becomes hidden and the held acknowledgement completes.
+  await setSimulatedVisibility(page, true);
+  await host.releaseSubmitResponse(3);
+  await page.clock.resume();
+
+  // Then the next round begins after its readiness check without a foreground frame.
+  await expect.poll(host.pendingSubmitSequences, { timeout: 10_000 }).toEqual([4]);
+  expect((await readSubmissions(page)).map(({ action }) => action)).toEqual(Array(4).fill('平空'));
+
+  // When Stop is clicked while that fourth native response remains held.
+  await host.panel.locator('[data-ladder-stop]').evaluate(button => button.click());
+  await host.releaseSubmitResponse(4);
+  await setSimulatedVisibility(page, false);
+
+  // Then no later order starts and the acknowledged progress remains exact.
+  await expect(host.status).toContainText('已停止');
+  expect(await readSubmissions(page)).toHaveLength(4);
   expect(host.errors).toEqual([]);
 });
 

@@ -316,6 +316,111 @@ test('user confirms controlled trade inputs only after consecutive stable frames
   assert.equal(frames.pendingCount, 0);
 });
 
+test('user confirms stable trade inputs while the tab is hidden and paint frames are paused', async (t) => {
+  // Given native inputs are ready but Chrome has hidden the document and paused paint frames
+  const dom = loadFixtureDom('<section><input id="price" value="81.9"><input id="qty" value="0.01"></section>');
+  const root = dom.window.document.querySelector('section');
+  const frames = createAnimationFrameBoundary(dom.window);
+  Object.defineProperty(dom.window.document, 'hidden', { configurable: true, value: true });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pending = waitForTradeFormFrameState(root, () => ({
+    price: root.querySelector('#price').value,
+    qty: root.querySelector('#qty').value,
+  }), 1200, 2);
+
+  // When background task opportunities advance without any animation frame
+  t.mock.timers.tick(100);
+  t.mock.timers.tick(100);
+  const observed = await pending;
+
+  // Then the exact stable inputs are accepted without depending on a paint frame
+  assert.deepEqual(observed, { price: '81.9', qty: '0.01' });
+  assert.equal(frames.pendingCount, 0);
+});
+
+test('user confirms one connected action button while the tab is hidden', async (t) => {
+  // Given the native action button is ready but background paint frames are paused
+  const dom = loadFixtureDom('<section><button>平空</button></section>');
+  const { document } = dom.window;
+  const button = document.querySelector('button');
+  const frames = createAnimationFrameBoundary(dom.window);
+  Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pending = waitForTradeActionButtonFrameState(document, () => button, () => true, 3000, 2);
+
+  // When background task opportunities advance without any animation frame
+  t.mock.timers.tick(100);
+  t.mock.timers.tick(100);
+  const observed = await pending;
+
+  // Then the exact current button is accepted without depending on a paint frame
+  assert.equal(observed, button);
+  assert.equal(frames.pendingCount, 0);
+});
+
+test('user follows a replacement native button when the page hides before its next paint frame', async (t) => {
+  // Given a visible trade form has scheduled its first paint observation.
+  const dom = loadFixtureDom('<section><button>平空</button></section>');
+  const { document } = dom.window;
+  const root = document.querySelector('section');
+  const frames = createAnimationFrameBoundary(dom.window);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pending = waitForTradeActionButtonFrameState(document, () => root.querySelector('button'), () => true, 3000, 2);
+  assert.equal(frames.pendingCount, 1);
+
+  // When Chrome hides the page and React replaces the native action button.
+  Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+  document.dispatchEvent(new dom.window.Event('visibilitychange'));
+  assert.equal(frames.pendingCount, 0);
+  t.mock.timers.tick(100);
+  root.innerHTML = '<button>平空</button>';
+  const replacement = root.querySelector('button');
+  t.mock.timers.tick(100);
+  t.mock.timers.tick(100);
+
+  // Then the later connected identity, not the removed node, is accepted.
+  assert.equal(await pending, replacement);
+  assert.equal(frames.pendingCount, 0);
+});
+
+test('user rejects a hidden trade form that never reaches a stable input state', async (t) => {
+  // Given React keeps the native quantity at a wrong value in the hidden tab.
+  const dom = loadFixtureDom('<section><input value="0"></section>');
+  const root = dom.window.document.querySelector('section');
+  const frames = createAnimationFrameBoundary(dom.window);
+  Object.defineProperty(dom.window.document, 'hidden', { configurable: true, value: true });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pending = waitForTradeFormFrameState(root, () => null, 1200, 2);
+
+  // When every allowed independent background observation still finds invalid inputs.
+  for (let observation = 0; observation < 12; observation += 1) t.mock.timers.tick(100);
+
+  // Then the task refuses to accept a form state and leaves no paint callback.
+  assert.equal(await pending, null);
+  assert.equal(frames.pendingCount, 0);
+});
+
+test('user stops a hidden trade-input wait before it can accept a later button click', async (t) => {
+  // Given the hidden tab has no stable input state and a stop signal owns the pending wait
+  const dom = loadFixtureDom('<section><input value="0"></section>');
+  const root = dom.window.document.querySelector('section');
+  const frames = createAnimationFrameBoundary(dom.window);
+  Object.defineProperty(dom.window.document, 'hidden', { configurable: true, value: true });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const stop = new AbortController();
+  const stoppedError = new Error('Stopped');
+  stoppedError.name = 'LadderStoppedError';
+  const pending = waitForTradeFormFrameState(root, () => null, 1200, 2, stop.signal);
+
+  // When the user stops while hidden and browser task time advances
+  stop.abort(stoppedError);
+  t.mock.timers.tick(1200);
+
+  // Then the wait ends with the stop reason and does not retain a paint callback
+  await assert.rejects(pending, { name: 'LadderStoppedError', message: 'Stopped' });
+  assert.equal(frames.pendingCount, 0);
+});
+
 test('user rejects trade inputs that keep rolling back before their virtual deadline', async (t) => {
   // Given a real native quantity input alternates between the expected and rolled-back values
   const dom = loadFixtureDom('<section><input value="0.01"></section>');
