@@ -65,9 +65,14 @@ function parseUpdate(payload, symbol) {
   if (payload.st !== undefined && payload.st !== 1) {
     throw new Error(`Depth profile received non-USD-M data: ${payload.st}`);
   }
+  const firstUpdateId = assertUpdateId(payload.U, 'first update id');
+  const finalUpdateId = assertUpdateId(payload.u, 'final update id');
+  if (firstUpdateId > finalUpdateId) {
+    throw new Error('Invalid depth profile update id range');
+  }
   return {
-    firstUpdateId: assertUpdateId(payload.U, 'first update id'),
-    finalUpdateId: assertUpdateId(payload.u, 'final update id'),
+    firstUpdateId,
+    finalUpdateId,
     previousFinalUpdateId: assertUpdateId(payload.pu, 'previous final update id'),
     bids: parseLevels(payload.b, 'bid updates'),
     asks: parseLevels(payload.a, 'ask updates'),
@@ -138,8 +143,12 @@ function applyBufferedUpdates(book) {
 
   const firstIndex = eligibleUpdates.findIndex(
     (update) => (
-      update.firstUpdateId <= book.snapshotUpdateId
-      && update.finalUpdateId >= book.snapshotUpdateId
+      (
+        update.firstUpdateId <= book.snapshotUpdateId
+        && update.finalUpdateId >= book.snapshotUpdateId
+      )
+      // RPI can skip internal IDs in U while pu still proves direct stream continuity.
+      || update.previousFinalUpdateId === book.snapshotUpdateId
     ),
   );
   if (firstIndex < 0) {

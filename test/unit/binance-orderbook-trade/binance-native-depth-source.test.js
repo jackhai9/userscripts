@@ -467,6 +467,27 @@ test('user observes a Request-based native snapshot and waits for its first cove
   source.restore();
 });
 
+test('user receives a ready RPI profile when the first event directly follows the snapshot', { timeout: 2000 }, async () => {
+  // Given the native snapshot has synchronized through update 101
+  const { globalObject, source } = createHarness();
+  const events = recordDepthEvents(source);
+  const response = await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+  await events.waitFor(({ statuses }) => statuses.length === 3);
+
+  // When the first RPI event starts later but names the snapshot as its predecessor
+  const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+  socket.message(rpiMessage(update({ U: 103, u: 104, pu: 101 })));
+  await events.waitFor(({ profiles }) => profiles.length === 1);
+
+  // Then the native source publishes one ready profile without entering resynchronization
+  assert.equal(response.ok, true);
+  assert.equal(events.profiles.length, 1);
+  assert.equal(events.profiles[0].bids[0].quantity, 2);
+  assert.equal(events.statuses.at(-1).status, 'ready');
+  assert.equal(events.statuses.some(({ status }) => status === 'resyncing'), false);
+  source.restore();
+});
+
 test('user sees reconnection only for symbols observed on the native socket that closes', { timeout: 2000 }, async () => {
   // Given a synchronized native BTC stream and an unrelated ETH subscription
   const { globalObject, source } = createHarness();
