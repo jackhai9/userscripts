@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -62,6 +62,9 @@ test('user observes that Brooks media index import moves the latest completed ex
     const latestPath = join(downloadsDir, 'brooks-media-index-2026-06-03 (1).json');
     await writeFile(oldPath, JSON.stringify(createIndex('2026-06-03T09:00:00.000Z'), null, 2));
     await writeFile(latestPath, JSON.stringify(createIndex('2026-06-03T10:42:15.123Z'), null, 2));
+    // Filesystems can coalesce sequential write mtimes, so model the browser download order explicitly.
+    await utimes(oldPath, new Date('2026-06-03T09:00:00.000Z'), new Date('2026-06-03T09:00:00.000Z'));
+    await utimes(latestPath, new Date('2026-06-03T10:42:15.123Z'), new Date('2026-06-03T10:42:15.123Z'));
 
     // When the importer resolves the appropriate report destination
     const result = await importLatestBrooksMediaIndex({ downloadsDir, reportsDir });
