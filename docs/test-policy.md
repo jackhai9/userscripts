@@ -5,6 +5,13 @@ describe an observable outcome, execute the real behavior being checked, and fai
 when that outcome changes. A new runner or a large mocking framework is not
 required for this policy.
 
+These principles also apply to backend services, workers, CLIs, and libraries.
+This file defines their userscripts implementation: Node/JSDOM/Playwright tools,
+the `user ` title prefix, source coverage scope, critical modules, and browser
+validation are repository contracts. Other repositories define equivalent checks
+for their own entrypoints and infrastructure. Shared agent guidance alone does
+not establish that another repository's existing tests or CI already comply.
+
 Use the Node version pinned by `.nvmrc`. The relevant commands are:
 
 | Command | Evidence |
@@ -23,6 +30,12 @@ Browser fixture tests establish the controlled host contract. They do not prove
 the current live Binance DOM or grant permission for financial actions.
 
 ## Behavior Names and Stages
+
+Before changing production behavior, write or identify its Given/When/Then
+acceptance scenario with executable setup, an action, and an observable expected
+result. For a regression, first add or identify a test that fails for the observed
+problem, then make the same scenario pass. Review checks the business meaning;
+lint checks the stage structure and cannot prove test-first development order.
 
 All Node test files and `e2e/**/specs/**/*.pw.js` scenarios use a title beginning with
 `user `. Describe the observable behavior in the rest of the title. A
