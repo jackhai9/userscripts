@@ -206,6 +206,60 @@ test('user synchronizes a snapshot that arrives before its first covering stream
   assert.equal(profile.asks[0].quantity, 4);
 });
 
+test('user synchronizes a buffered RPI update from its snapshot predecessor', () => {
+  // Given the first buffered RPI event names the coming snapshot as its predecessor
+  const book = createDepthProfileBook('BTCUSDT');
+  pushDepthProfileUpdate(book, update({
+    U: 103,
+    u: 104,
+    pu: 101,
+    b: [['100', '7']],
+    a: [['101', '8']],
+  }));
+
+  // When the snapshot arrives behind that event's first update id
+  const ready = applyDepthProfileSnapshot(book, snapshot());
+  const profile = buildDepthProfile(book);
+
+  // Then the predecessor bridge synchronizes the exact event quantities
+  assert.equal(ready, true);
+  assert.equal(book.previousFinalUpdateId, 104);
+  assert.deepEqual(book.bufferedUpdates, []);
+  assert.equal(profile.bids[0].quantity, 7);
+  assert.equal(profile.asks[0].quantity, 8);
+});
+
+test('user keeps strict update sequencing after an RPI snapshot predecessor bridge', () => {
+  // Given the snapshot arrives before an RPI event that directly follows it
+  const book = createDepthProfileBook('BTCUSDT');
+  const snapshotReady = applyDepthProfileSnapshot(book, snapshot());
+
+  // When the first event advances beyond the snapshot while naming it as the predecessor
+  const bridgeReady = pushDepthProfileUpdate(book, update({ U: 103, u: 104, pu: 101 }));
+
+  // Then the snapshot waits and the direct predecessor bridge becomes ready
+  assert.equal(snapshotReady, false);
+  assert.equal(bridgeReady, true);
+  assert.equal(book.previousFinalUpdateId, 104);
+
+  // When a consecutive event names the bridged final update id
+  const nextReady = pushDepthProfileUpdate(book, update({ U: 105, u: 106, pu: 104 }));
+
+  // Then the synchronized sequence advances normally
+  assert.equal(nextReady, true);
+  assert.equal(book.previousFinalUpdateId, 106);
+
+  // When a later new event skips that synchronized predecessor
+  const failure = captureThrownError(() => pushDepthProfileUpdate(
+    book,
+    update({ U: 107, u: 108, pu: 107 }),
+  ));
+
+  // Then the ordinary strict predecessor guard still rejects the gap
+  assert.equal(failure instanceof DepthProfileSequenceError, true);
+  assert.equal(failure.message, 'Depth update sequence gap: expected pu 106, received 107');
+});
+
 test('user drains consecutive buffered events while ignoring a duplicate final update', () => {
   // Given the native stream queued a covering event, its duplicate, and the next update
   const book = createDepthProfileBook('BTCUSDT');
@@ -341,6 +395,7 @@ for (const { label, payload, expected } of [
   { label: 'negative first id', payload: update({ U: -1 }), expected: 'Invalid depth profile first update id' },
   { label: 'fractional final id', payload: update({ u: 102.5 }), expected: 'Invalid depth profile final update id' },
   { label: 'unsafe predecessor id', payload: update({ pu: Number.MAX_SAFE_INTEGER + 1 }), expected: 'Invalid depth profile previous final update id' },
+  { label: 'descending update id range', payload: update({ U: 103, u: 102 }), expected: 'Invalid depth profile update id range' },
 ]) {
   test(`user rejects a native depth update with ${label}`, () => {
     // Given a new book and an invalid native stream event
