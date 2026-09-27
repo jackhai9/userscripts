@@ -243,14 +243,14 @@ test('user preserves the existing leverage after an HTTP rejection and can retry
   await host.expectNoTradingActions();
 });
 
-test('user qualifies for account rebalance only after the full three-second flat window and its API response', async ({ page }) => {
+test('user qualifies for account rebalance only after the full two-second flat window and its API response', async ({ page }) => {
   // Given a settled flat account still has one native open order.
   const host = await openSettledAccount(page);
   const sequence = host.holdPositionResponse();
   const startedAt = await host.setNativeOrders([]);
 
   // When the stable no-order window advances to one millisecond before its deadline.
-  await page.clock.runFor(2999);
+  await page.clock.runFor(1999);
 
   // Then no qualification request or rebalance action is exposed early.
   expect(host.pendingPositionResponses()).toEqual([]);
@@ -262,7 +262,7 @@ test('user qualifies for account rebalance only after the full three-second flat
 
   // Then exactly the full window precedes the API request and HTTP completion is still required.
   const latest = (await host.snapshot()).requests.filter(request => request.pathname === ACCOUNT_PATHS.positions).at(-1);
-  expect(latest.at).toBe(startedAt + 3000);
+  expect(latest.at).toBe(startedAt + 2000);
   await expect(page.locator(ACTION)).toBeHidden();
 
   // When the explicit flat response arrives.
@@ -276,10 +276,10 @@ test('user qualifies for account rebalance only after the full three-second flat
 
 for (const changed of ['position', 'open order']) {
   test(`user restarts the full rebalance window when a native ${changed} reappears`, async ({ page }) => {
-    // Given the account has already spent fifteen hundred milliseconds with no positions or orders.
+    // Given the account has already spent one thousand milliseconds with no positions or orders.
     const host = await openSettledAccount(page);
     await host.setNativeOrders([]);
-    await page.clock.runFor(1500);
+    await page.clock.runFor(1000);
 
     // When an account activity arrives and clears again before the original deadline.
     if (changed === 'position') {
@@ -291,12 +291,12 @@ for (const changed of ['position', 'open order']) {
       await host.setNativeOrders(ORDER_SETS.other);
       await host.setNativeOrders([]);
     }
-    await page.clock.runFor(2999);
+    await page.clock.runFor(1999);
 
     // Then the original flat time is discarded and the new window remains incomplete.
     await expect(page.locator(ACTION)).toBeHidden();
 
-    // When the new activity-free window reaches three full seconds.
+    // When the new activity-free window reaches two full seconds.
     await page.clock.runFor(1);
     await host.waitForPositionResponses(3);
 
@@ -312,7 +312,7 @@ for (const changed of ['position', 'open order']) {
     const host = await openSettledAccount(page);
     const sequence = host.holdPositionResponse();
     await host.setNativeOrders([]);
-    await page.clock.runFor(3000);
+    await page.clock.runFor(2000);
     await expect.poll(host.pendingPositionResponses).toEqual([sequence]);
 
     // When native account activity invalidates qualification before the captured flat response returns.
@@ -345,7 +345,7 @@ for (const [name, response] of [
 
     // When the empty account completes its window and receives non-flat or invalid authoritative evidence.
     await host.setNativeOrders([]);
-    await page.clock.runFor(3000);
+    await page.clock.runFor(2000);
     await host.waitForPositionResponses(3);
     await page.clock.runFor(32);
 
@@ -361,11 +361,11 @@ test('user previews balances published during qualification instead of an earlie
   // Given the account begins its flat window with one hundred USDT in Funding.
   const host = await openSettledAccount(page);
   await host.setNativeOrders([]);
-  await page.clock.runFor(1500);
+  await page.clock.runFor(1000);
 
   // When a native wallet update moves twenty USDT to Spot before qualification completes.
   host.api.setBalances({ FUNDING: '80', MAIN: '20', UMFUTURE: '0' });
-  await page.clock.runFor(1500);
+  await page.clock.runFor(1000);
   await host.waitForPositionResponses(3);
   await expectEligible(page);
 
@@ -384,5 +384,47 @@ test('user previews balances published during qualification instead of an earlie
   await expect(dialog).not.toContainText('40 USDT');
   expect(host.api.snapshot().balances).toEqual({ FUNDING: '80', MAIN: '20', UMFUTURE: '0' });
   await dialog.getByRole('button', { name: '取消', exact: true }).evaluate(button => button.click());
+  await host.expectNoTradingActions();
+});
+
+test('user regains account rebalance eligibility after cancelling with no orders', async ({ page }) => {
+  // Given a flat account has completed qualification with no positions or open orders.
+  const host = await openSettledAccount(page);
+  await host.setNativeOrders([]);
+  await page.clock.runFor(2000);
+  await host.waitForPositionResponses(3);
+  await expectEligible(page);
+  const sequence = host.holdPositionResponse();
+
+  // When the user clicks cancellation even though the current symbol has no orders.
+  await page.locator('[data-ladder-cancel-symbol]').evaluate(button => button.click());
+  await expect(page.locator('#jh-binance-ladder-status')).toHaveText('当前交易对无挂单');
+  await page.clock.runFor(32);
+
+  // Then qualification is withdrawn without opening a native dialog or sending a trading request.
+  await expect(page.locator(ACTION)).toBeHidden();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await host.expectNoTradingActions();
+
+  // When the renewed flat window advances to one millisecond before its deadline.
+  await page.clock.runFor(1967);
+
+  // Then no authoritative qualification request starts early.
+  expect(host.pendingPositionResponses()).toEqual([]);
+  await expect(page.locator(ACTION)).toBeHidden();
+
+  // When the last millisecond expires while the fresh flat response remains held.
+  await page.clock.runFor(1);
+  await expect.poll(host.pendingPositionResponses).toEqual([sequence]);
+
+  // Then the action stays hidden until the current response is accepted.
+  await expect(page.locator(ACTION)).toBeHidden();
+
+  // When the explicit fresh flat response arrives.
+  await host.releasePositionResponse(sequence);
+  await host.waitForPositionResponses(sequence);
+
+  // Then the account action returns without any order, cancellation, or transfer request.
+  await expectEligible(page);
   await host.expectNoTradingActions();
 });

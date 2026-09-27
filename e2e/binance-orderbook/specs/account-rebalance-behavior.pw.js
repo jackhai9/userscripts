@@ -17,7 +17,7 @@ async function openRebalance(page, balances, options) {
     const response = api.handle({ pathname, method: request.method(), body });
     await route.fulfill({ status: response.status, contentType: 'application/json', body: JSON.stringify(response.body) });
   });
-  await page.clock.runFor(3000);
+  await page.clock.runFor(2000);
   const action = page.locator('[data-usdt-rebalance]');
   await expect(action).toBeVisible();
   await expect(action).toBeEnabled();
