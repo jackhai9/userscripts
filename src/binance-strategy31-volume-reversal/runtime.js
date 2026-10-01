@@ -2,6 +2,8 @@ import { SIGNAL_GATEWAY_BRIDGE } from '../shared/signal-gateway-bridge.js';
 import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 import { isChartMutationBlocked } from '../shared/chart-mutation-owners.js';
 import { findBinanceTradingViewTarget } from '../shared/tradingview-target.js';
+import { usdtRouteToCanonical } from '../shared/canonical-symbol.js';
+import { TradingViewBarSnapshotInconsistentError } from '../binance-strategy29-bollinger/core/bearish-bollinger-pattern.js';
 import { createBollingerIntervalSession, createBollingerMarkerLayer, isBearishBollingerChartTargetCurrent,
   exportClosedTradingViewBars, tradingViewResolutionToSeconds } from '../binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
 import { parseStrategy31Events, STRATEGY31_PERIODS } from './event-contract.js';
@@ -50,6 +52,8 @@ export function installStrategy31(view) {
     cleanup();
     if (disposed || failed || document.hidden || inflight) return;
     const route = parseFuturesTradingSymbolFromPathname(view.location.pathname);
+    if (!route?.endsWith('USDT')) { releaseChart(); cleanup(); notice('Strategy31: unsupported market'); return; }
+    const symbol = usdtRouteToCanonical(route);
     const base = findBinanceTradingViewTarget(document);
     const chart = base?.tradingViewApi.activeChart?.();
     if (!route || !chart?.hasModel() || String(chart.symbol()).split('@')[0] !== route) { releaseChart(); cleanup(); return; }
@@ -80,7 +84,6 @@ export function installStrategy31(view) {
     if (!provider?.capabilities?.includes('strategy31')) { notice('Strategy31: update CorsairQuant signal client'); return; }
     const state = provider.getState();
     if (!state.configured || !state.available) { notice('Strategy31: configure CorsairQuant signal client'); return; }
-    const symbol = `${route.slice(0, -4)}/USDT:USDT`;
     const controller = new AbortController();
     const requestCurrent = () => current(candidate) && view[SIGNAL_GATEWAY_BRIDGE] === provider
       && provider.getState().settingsRevision === state.settingsRevision;
@@ -92,7 +95,14 @@ export function installStrategy31(view) {
       if (response.kind !== 'response' || response.status !== 200) { notice('Strategy31: signal service unavailable'); return; }
       const signals = parseStrategy31Events(JSON.parse(response.responseText), symbol, timeframe);
       // Native drawings snap missing times to loaded bars; server history must be projected onto exact times.
-      const bars = await exportClosedTradingViewBars(candidate.target, candidate.session);
+      let bars;
+      try {
+        bars = await exportClosedTradingViewBars(candidate.target, candidate.session);
+      } catch (error) {
+        // A native feed update can expose inconsistent rows for one sample; retain the existing arrows.
+        if (error instanceof TradingViewBarSnapshotInconsistentError) return;
+        throw error;
+      }
       if (!bars || !requestCurrent()) return;
       const loadedTimes = new Set(bars.map(bar => bar.time));
       const visible = signals.filter(signal => loadedTimes.has(signal.time));

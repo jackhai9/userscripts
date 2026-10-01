@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createStrategy29ChartHost } from '../helpers/strategy29-runtime-boundary-host.js';
+import { createStrategy29ChartHost, exportStrategyBars } from '../helpers/strategy29-runtime-boundary-host.js';
 import { installStrategy31 } from '../../src/binance-strategy31-volume-reversal/runtime.js';
 import { SIGNAL_GATEWAY_BRIDGE } from '../../src/shared/signal-gateway-bridge.js';
 import { registerChartMutationOwner } from '../../src/shared/chart-mutation-owners.js';
@@ -99,6 +99,39 @@ test('user sees retained signals only after their exact chart candles load', asy
   assert.equal(f.shapes.size, 1);
   f.runtime.dispose();
   f.close();
+});
+
+test('user sees no USDT signals on a USDC chart and can resume a supported market', async (t) => {
+  // Given the observer on a USDC chart, outside its market contract
+  const f = fixture();
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/BTRUSDC' });
+  f.setSymbol('BTRUSDC@PRICETYPE=LAST');
+  // When the observer samples and later returns to its supported market
+  await f.runtime.sample();
+  // Then no USDT event is drawn on the unsupported market
+  assert.equal(f.created.length, 0);
+  assert.equal(f.exports.length, 0);
+  f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/BTRUSDT' });
+  f.setSymbol('BTRUSDT@PRICETYPE=LAST');
+  await f.runtime.sample();
+  assert.equal(f.shapes.size, 1);
+});
+
+test('user keeps arrows through one transient native candle update', async (t) => {
+  // Given a drawn signal followed by an inconsistent native feed snapshot
+  const f = fixture();
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  await f.runtime.sample();
+  const bar = { time: 300, open: 10, high: 13, low: 9, close: 12 };
+  f.exportNext(exportStrategyBars([bar, bar]));
+  // When one sample races the native feed update
+  await f.runtime.sample();
+  // Then the existing arrow remains and valid subsequent data resumes sampling
+  assert.equal(f.shapes.size, 1);
+  await f.runtime.sample();
+  assert.equal(f.exports.length, 3);
+  assert.equal(f.shapes.size, 1);
 });
 
 test('user never receives a late arrow from the previous chart interval', async () => {

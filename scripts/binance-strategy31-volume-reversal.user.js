@@ -16,6 +16,16 @@
 // @grant        unsafeWindow
 // ==/UserScript==
 (() => {
+  // src/shared/canonical-symbol.js
+  var ROUTE_SYMBOL_PATTERN = /^([\p{L}\p{N}]+)USDT$/u;
+  function usdtRouteToCanonical(value) {
+    const match = typeof value === "string" && value.match(ROUTE_SYMBOL_PATTERN);
+    if (!match || match[0] !== value || match[1] !== match[1].toUpperCase()) {
+      throw new TypeError("Invalid Binance futures route symbol");
+    }
+    return `${match[1]}/USDT:USDT`;
+  }
+
   // src/shared/signal-gateway-bridge.js
   var SIGNAL_GATEWAY_BRIDGE = Symbol.for("jh-userscripts.signal-gateway");
   var MAX_RESPONSE_LENGTH = 2 * 1024 * 1024;
@@ -85,6 +95,30 @@
     }
     return { chartRoot, tradingViewApi: tradingViewApis[0] };
   }
+
+  // src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js
+  var BOLLINGER_PATTERN = Object.freeze({
+    bollingerPeriod: 20,
+    bollingerStdDev: 2,
+    maPeriod: 60,
+    preCrossBars: 8,
+    minPreCrossChannelCloses: 4,
+    maxPreCrossAboveMiddleCloses: 1,
+    maxPreCrossBelowLowerCloses: 3,
+    trendLookbackBars: 3,
+    minMiddleDeclineBandFraction: 0.01,
+    postCrossBars: 20,
+    middleApproachBandFraction: 0.12,
+    maxPostCrossCloseAboveMiddleBandFraction: 0.05,
+    lowerTouchBandFraction: 0.05,
+    reversalFollowBars: 60
+  });
+  var TradingViewBarSnapshotInconsistentError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "TradingViewBarSnapshotInconsistentError";
+    }
+  };
 
   // src/shared/abort.js
   function getAbortReason(signal) {
@@ -280,30 +314,6 @@
     Object.defineProperty(api, CONTROLLER_SLOT, { value: Object.freeze({ version: PROTOCOL_VERSION, controller }) });
     return controller;
   }
-
-  // src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js
-  var BOLLINGER_PATTERN = Object.freeze({
-    bollingerPeriod: 20,
-    bollingerStdDev: 2,
-    maPeriod: 60,
-    preCrossBars: 8,
-    minPreCrossChannelCloses: 4,
-    maxPreCrossAboveMiddleCloses: 1,
-    maxPreCrossBelowLowerCloses: 3,
-    trendLookbackBars: 3,
-    minMiddleDeclineBandFraction: 0.01,
-    postCrossBars: 20,
-    middleApproachBandFraction: 0.12,
-    maxPostCrossCloseAboveMiddleBandFraction: 0.05,
-    lowerTouchBandFraction: 0.05,
-    reversalFollowBars: 60
-  });
-  var TradingViewBarSnapshotInconsistentError = class extends Error {
-    constructor(message) {
-      super(message);
-      this.name = "TradingViewBarSnapshotInconsistentError";
-    }
-  };
 
   // src/binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js
   var MAX_BOLLINGER_MARKERS_PER_DIRECTION = 1e3;
@@ -831,6 +841,13 @@
       cleanup();
       if (disposed || failed || document.hidden || inflight) return;
       const route = parseFuturesTradingSymbolFromPathname(view.location.pathname);
+      if (!route?.endsWith("USDT")) {
+        releaseChart();
+        cleanup();
+        notice("Strategy31: unsupported market");
+        return;
+      }
+      const symbol = usdtRouteToCanonical(route);
       const base = findBinanceTradingViewTarget(document);
       const chart = base?.tradingViewApi.activeChart?.();
       if (!route || !chart?.hasModel() || String(chart.symbol()).split("@")[0] !== route) {
@@ -882,7 +899,6 @@
         notice("Strategy31: configure CorsairQuant signal client");
         return;
       }
-      const symbol = `${route.slice(0, -4)}/USDT:USDT`;
       const controller = new AbortController();
       const requestCurrent = () => current(candidate) && view[SIGNAL_GATEWAY_BRIDGE] === provider && provider.getState().settingsRevision === state.settingsRevision;
       inflight = controller;
@@ -895,7 +911,13 @@
           return;
         }
         const signals = parseStrategy31Events(JSON.parse(response.responseText), symbol, timeframe);
-        const bars = await exportClosedTradingViewBars(candidate.target, candidate.session);
+        let bars;
+        try {
+          bars = await exportClosedTradingViewBars(candidate.target, candidate.session);
+        } catch (error) {
+          if (error instanceof TradingViewBarSnapshotInconsistentError) return;
+          throw error;
+        }
         if (!bars || !requestCurrent()) return;
         const loadedTimes = new Set(bars.map((bar) => bar.time));
         const visible = signals.filter((signal) => loadedTimes.has(signal.time));

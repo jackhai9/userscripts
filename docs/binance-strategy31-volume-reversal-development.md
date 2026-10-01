@@ -13,7 +13,10 @@ events for the current canonical symbol and native timeframe every five seconds.
 Hidden documents suspend requests; navigation and settings revisions invalidate
 late responses. Repeated snapshots reconcile one arrow per stable event ID.
 Interval changes preserve the native data-completion subscription. Unsupported
-periods pause observation until a supported interval is selected. Loading earlier
+periods and non-USDT markets pause observation until a supported chart is selected.
+A transient native candle snapshot inconsistency retains existing arrows and
+waits for the next sample; malformed signal contracts still stop the observer.
+Loading earlier
 chart history makes matching retained server events eligible for rendering.
 
 The client uses the existing native marker layer, exact interval visibility,
