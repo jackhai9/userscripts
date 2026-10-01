@@ -21,6 +21,7 @@
 | src/binance-coinmarketcap-data/ | scripts/binance-coinmarketcap-data.user.js |
 | src/binance-strategy27-events/ | scripts/binance-strategy27-events.user.js |
 | src/binance-strategy29-bollinger/ | scripts/binance-strategy29-bollinger.user.js |
+| src/binance-strategy31-volume-reversal/ | scripts/binance-strategy31-volume-reversal.user.js |
 | src/m3u8-downloader/ | scripts/m3u8-downloader.user.js |
 
 - Other scripts remain hand-maintained under scripts/*.user.js until migrated.
@@ -37,6 +38,7 @@
 | Orderbook browser, Tampermonkey, CDP, performance, or live evidence | docs/binance-orderbook-trade-ui-automation.md |
 | Strategy 27 gateway, chart, or entity contract | docs/binance-strategy27-events-development.md |
 | Strategy 29 observer or cross-script chart coordination | docs/binance-strategy29-bollinger-development.md |
+| Strategy 31 server signals or chart annotations | docs/binance-strategy31-volume-reversal-development.md |
 | Brooks/m3u8 indexing, export state, timing, or captions | docs/brooks-media-sync-workflow.md |
 | Trading-data, CoinMarketCap-data, auto-refresh, or cross-script validation | docs/userscript-validation.md |
 | Behavioral tests, test lint, affected selection, or source coverage | docs/test-policy.md |
@@ -58,6 +60,7 @@
   | src/binance-trading-data/**, src/binance-coinmarketcap-data/**, or src/shared/** | npm run build:binance-userscripts or the affected single-script build |
   | src/binance-strategy27-events/** | npm run build:binance-strategy27-events |
   | src/binance-strategy29-bollinger/** | npm run build:binance-strategy29-bollinger |
+  | src/binance-strategy31-volume-reversal/** | npm run build:binance-strategy31-volume-reversal |
   | src/m3u8-downloader/** | npm run build:m3u8-downloader |
 
 - Publish, ship, or merge to main only through a GitHub PR when the current

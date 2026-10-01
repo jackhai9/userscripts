@@ -4,6 +4,8 @@ Gateway（网关）是 **CorsairQuant 服务端的只读 HTTP 数据入口**。�
 
 用户电脑通过 SSH 本地转发访问这个入口。Strategy27 脚本保存一份网关地址和认证配置，Strategy29 复用这条连接，并管理自己的汇总面板。网关不负责下单，也不需要 Binance API Key。
 
+Strategy31 也复用这份连接，读取 `/v1/strategy31/events`，并在当前币种、周期的绿 K 下方画上涨箭头。它只展示服务端确认的前红后绿放量形态，不在浏览器采集成交量。每次读取最多 200 条近期信号，仅对图表已加载的 K 线绘制。服务端启用状态以部署配置为准。需要 CorsairQuant 信号客户端 0.6.6；详见 [Strategy31 开发说明](binance-strategy31-volume-reversal-development.md)。下文原有组件图描述 Strategy27/29 链路。
+
 本文说明当前源码的组件关系和使用方式。图中的服务存在于代码中，不代表某台 VPS 已启动它们；服务端启用状态、浏览器安装状态和实时连通性需要分别确认。
 
 ## 哪些脚本使用它

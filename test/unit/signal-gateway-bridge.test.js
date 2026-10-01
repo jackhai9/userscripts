@@ -57,7 +57,8 @@ test('user observes that only provider headers receive private authentication; p
   assert.equal(request.anonymous, true);
   request.onload({ status: 200, responseText: '{}', responseHeaders: 'synthetic-private-header', context: 'private' });
   assert.deepEqual(await pending, { status: 200, responseText: '{}' });
-  assert.deepEqual(Object.keys(f.api).sort(), ['getState', 'request', 'version']);
+  assert.deepEqual(Object.keys(f.api).sort(), ['capabilities', 'getState', 'request', 'version']);
+  assert.deepEqual(f.api.capabilities, ['strategy29', 'strategy31']);
   assert.deepEqual(f.api.getState(), { available: true, configured: true, settingsRevision: 0 });
   assert.equal(f.timers.size, 0);
   f.owner.dispose();

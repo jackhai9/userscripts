@@ -38,10 +38,11 @@ This repository is the source of truth and distribution point for the scripts. G
 | Script | Target | Description | Source of truth | Install |
 | --- | --- | --- | --- | --- |
 | Binance Strategy 29 Bollinger signals | Binance Futures | Annotate native loaded candles and show cross-timeframe server summaries through the shared gateway | This repository | [Install][install-binance-strategy29-bollinger] |
+| Binance Strategy 31 volume reversal | Binance Futures | Show server-confirmed red-to-green higher-volume candles as upward arrows | This repository | [Install](https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy31-volume-reversal.user.js) |
 | Binance orderbook one-click order entry | Binance Futures | Click an orderbook price, infer the current open/close tab, fill quantity, and submit an order with a multiplier panel | This repository | [Install][install-binance-orderbook-trade] |
 | Binance Futures data panel | Binance Futures | Overlay open interest, long/short ratios, funding rate, basis, and directional signals | This repository | [Install][install-binance-trading-data] |
 | Binance CoinMarketCap data panel | Binance Futures | Show CoinMarketCap valuation, supply, and liquidity data for the current symbol | This repository | [Install][install-binance-coinmarketcap-data] |
-| Binance CorsairQuant signal client | Binance Futures | Annotate Strategy27 events and provide the shared private gateway connection for Strategy29 | This repository | [Install][install-binance-strategy27-events] |
+| Binance CorsairQuant signal client | Binance Futures | Annotate Strategy27 events and provide the shared private gateway connection for Strategy29 and Strategy31 | This repository | [Install][install-binance-strategy27-events] |
 | Auto refresh | Any page | Refresh selected pages on a configurable schedule | This repository | [Install][install-auto-refresh] |
 | CoinMarketCap valuation labels | CoinMarketCap | Label and highlight circulating market cap and FDV / total valuation in the Chinese UI | This repository | [Install][install-coinmarketcap-valuation-helper] |
 | m3u8 downloader | Video pages | Enhanced m3u8 detection and export workflow for allowlisted video sites | This repository | [Install][install-m3u8] |
@@ -99,7 +100,7 @@ npm run build:binance-userscripts
 ## Maintenance Rules
 
 1. Each script has exactly one source of truth.
-2. `src/binance-orderbook-trade/`, `src/binance-trading-data/`, `src/binance-coinmarketcap-data/`, `src/binance-strategy27-events/`, `src/binance-strategy29-bollinger/`, and `src/m3u8-downloader/` are source directories for the corresponding generated scripts.
+2. `src/binance-orderbook-trade/`, `src/binance-trading-data/`, `src/binance-coinmarketcap-data/`, `src/binance-strategy27-events/`, `src/binance-strategy29-bollinger/`, `src/binance-strategy31-volume-reversal/`, and `src/m3u8-downloader/` are source directories for the corresponding generated scripts.
 3. Public install entry points remain generated files under `scripts/*.user.js`.
 4. Do not copy script source into secondary repositories.
 5. Bump `@version` when behavior changes.
