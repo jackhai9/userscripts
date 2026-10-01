@@ -36,10 +36,11 @@
 | 脚本 | 适用场景 | 说明 | 源码真源 | 安装 |
 |---|---|---|---|---|
 | 【自写】Binance Strategy 29 布林带信号 | Binance Futures | 标注本地图表信号，并通过共享网关显示服务端跨周期汇总 | 本仓库 | [安装][install-binance-strategy29-bollinger] |
+| Binance Strategy 31 放量信号 | Binance Futures | 在服务端确认的前红后绿、绿 K 放量形态下方画上涨箭头 | 本仓库 | [安装](https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy31-volume-reversal.user.js) |
 | 【自写】Binance 订单簿单击下单 | Binance Futures | 单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
 | 【自写】Binance 合约交易数据面板 | Binance Futures | 在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号 | 本仓库 | [`点击安装`][install-binance-trading-data] |
 | 【自写】Binance CoinMarketCap 数据面板 | Binance Futures | 在 Binance 合约页面显示当前币种的 CoinMarketCap 估值、供应量和流动性数据 | 本仓库 | [`点击安装`][install-binance-coinmarketcap-data] |
-| 【自写】Binance Strategy 27 事件标注（CorsairQuant 信号客户端） | Binance Futures | 标注 Strategy27 事件，保存共享网关配置并为 Strategy29 提供只读连接 | 本仓库 | [`点击安装`][install-binance-strategy27-events] |
+| 【自写】Binance Strategy 27 事件标注（CorsairQuant 信号客户端） | Binance Futures | 标注 Strategy27 事件，保存共享网关配置并为 Strategy29 和 Strategy31 提供只读连接 | 本仓库 | [`点击安装`][install-binance-strategy27-events] |
 | 【自写】定时刷新指定页面 | Any page | 指定页面按设定时间自动刷新 | 本仓库 | [`点击安装`][install-auto-refresh] |
 | 【自写】CoinMarketCap 估值口径命名 | CoinMarketCap | 在中文币种页面左上角统计区标注并高亮流通市值和 FDV / 总估值 | 本仓库 | [`点击安装`][install-coinmarketcap-valuation-helper] |
 | 【改写】m3u8-downloader | Video pages | m3u8 下载增强脚本，仅在白名单视频站启用 | 本仓库 | [`点击安装`][install-m3u8] |
@@ -96,7 +97,7 @@ npm run build:binance-userscripts
 ## 维护规则
 
 1. 同一脚本只允许一个真源仓库改代码。
-2. `src/binance-orderbook-trade/`、`src/binance-trading-data/`、`src/binance-coinmarketcap-data/`、`src/binance-strategy27-events/`、`src/binance-strategy29-bollinger/`、`src/m3u8-downloader/` 是对应脚本的开发真源。
+2. `src/binance-orderbook-trade/`、`src/binance-trading-data/`、`src/binance-coinmarketcap-data/`、`src/binance-strategy27-events/`、`src/binance-strategy29-bollinger/`、`src/binance-strategy31-volume-reversal/`、`src/m3u8-downloader/` 是对应脚本的开发真源。
 3. 公开安装入口仍是生成后的 `scripts/*.user.js`；修改对应 `src/` 后运行 `npm run build:binance-userscripts` 或单脚本 build 命令。
 4. 非真源仓库只放安装链接，不复制脚本源码。
 5. 行为变更时递增 `@version`；纯文档变更不需要 bump，并保留 `@updateURL/@downloadURL` 指向真源 raw 地址。

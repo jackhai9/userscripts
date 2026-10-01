@@ -31,6 +31,7 @@ remote repository, Tampermonkey, a browser page, or a trading account.
 | `src/binance-trading-data/**`, `src/binance-coinmarketcap-data/**`, or `src/shared/**` | the metadata header of every affected generated artifact | `npm run build:binance-userscripts` (or the affected single-script build) |
 | `src/binance-strategy27-events/**` | `src/binance-strategy27-events/index.user.js` | `npm run build:binance-strategy27-events` |
 | `src/binance-strategy29-bollinger/**` | `src/binance-strategy29-bollinger/index.user.js` | `npm run build:binance-strategy29-bollinger` |
+| `src/binance-strategy31-volume-reversal/**` | `src/binance-strategy31-volume-reversal/index.user.js` | `npm run build:binance-strategy31-volume-reversal` |
 | `src/m3u8-downloader/**` | `src/m3u8-downloader/index.user.js` | `npm run build:m3u8-downloader` |
 | An unmigrated `scripts/*.user.js` | that userscript file | no build; bump its header directly |
 

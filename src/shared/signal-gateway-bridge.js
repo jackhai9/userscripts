@@ -6,7 +6,7 @@ const MAX_RESPONSE_LENGTH = 2 * 1024 * 1024;
 
 /** Public read capability: the page may request these projections, never arbitrary authenticated URLs. */
 export function validateSignalGatewayPath(path) {
-  if (typeof path !== 'string' || path.length > 2048 || !path.startsWith('/v1/strategy29/')) {
+  if (typeof path !== 'string' || path.length > 2048 || !/^\/v1\/strategy(29|31)\//.test(path)) {
     throw new TypeError('Signal gateway route is not allowed');
   }
   const url = new URL(path, 'https://gateway.invalid');
@@ -16,6 +16,14 @@ export function validateSignalGatewayPath(path) {
   const query = url.searchParams;
   const keys = [...query.keys()];
   if (new Set(keys).size !== keys.length) throw new TypeError('Signal gateway query contains duplicates');
+  if (url.pathname === '/v1/strategy31/events') {
+    if (keys.length !== 3 || !keys.every(key => ['symbol', 'timeframe', 'limit'].includes(key))
+      || !isCanonicalUsdtSymbol(query.get('symbol')) || query.get('limit') !== '200'
+      || !['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w'].includes(query.get('timeframe'))) {
+      throw new TypeError('Signal gateway Strategy31 query is invalid');
+    }
+    return path;
+  }
   if (url.pathname === '/v1/strategy29/status' && keys.length === 0) return path;
   if (url.pathname !== '/v1/strategy29/events' || !isCanonicalUsdtSymbol(query.get('symbol'))) {
     throw new TypeError('Signal gateway route or symbol is invalid');
@@ -38,6 +46,7 @@ export function installSignalGatewayBridge(view, { getValue, gmXmlHttpRequest })
   const pending = new Set();
   const api = Object.freeze({
     version: 1,
+    capabilities: Object.freeze(['strategy29', 'strategy31']),
     getState() {
       const value = getValue(SIGNAL_GATEWAY_SECRET_KEY, '');
       if (typeof value !== 'string') throw new TypeError('Signal gateway configuration is invalid');
