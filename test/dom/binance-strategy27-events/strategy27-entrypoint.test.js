@@ -119,6 +119,19 @@ async function harness(t, { generated = false, beforeCreate, locale = 'zh-CN', m
   };
 }
 
+for (const generated of [false, true]) {
+  test(`user gets no Strategy27 panel or requests on home from the ${generated ? 'generated' : 'source'} entrypoint`, async t => {
+    // Given a non-trading home route still contains stale native chart markup
+    const h = await harness(t, { generated, routeSymbol: 'home' });
+    // When retained route observation samples the page again
+    h.tick();
+    // Then neither strategy status nor clients nor drawings are created
+    assert.equal(h.page.document.getElementById('jh-strategy27-event-status'), null);
+    assert.equal(h.requests.length, 0);
+    assert.deepEqual([...h.shapes.keys()], ['user-owned']);
+  });
+}
+
 test('user observes that real entrypoint starts independent clients and manual clear preserves compound replay identity', async (t) => {
   // Given the Binance page, gateway requests and Strategy 27 installation
   const h = await harness(t);

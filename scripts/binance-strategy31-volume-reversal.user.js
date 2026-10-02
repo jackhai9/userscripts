@@ -3,7 +3,7 @@
 // @namespace    binance.strategy31.volume-reversal
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.1.0
+// @version      0.1.1
 // @author       jackhai9
 // @description  Confirmed red-to-green volume signals from CorsairQuant
 // @match        https://www.binance.com/*/futures/*
@@ -36,7 +36,7 @@
 
   // src/shared/binance-futures-route.js
   var FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([^/]+)\/?$/;
-  var TRADING_SYMBOL_RE = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]{3,}$`, "u");
+  var TRADING_SYMBOL_RE = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]+(?:USDT|USDC)$`, "iu");
   function parseFuturesTradingSymbolFromPathname(pathname) {
     const normalized = String(pathname || "").split(/[?#]/, 1)[0];
     const match = normalized.match(FUTURES_TRADING_PATH_RE);
@@ -50,6 +50,52 @@
     }
     const symbolMatch = symbol.match(TRADING_SYMBOL_RE);
     return symbolMatch && symbolMatch[0] === symbol ? symbol.toUpperCase() : null;
+  }
+
+  // src/shared/spa-route-change.js
+  var ROUTE_CHANGE_EVENT = "jh-userscripts:spa-route-change";
+  var ROUTE_PATCH_MARKER = Symbol.for("jh-userscripts.spa-route-change-patched");
+  var ROUTE_DISPATCH_STATE = Symbol.for("jh-userscripts.spa-route-change-dispatch");
+  function dispatchRouteChange(view) {
+    const href = view.location.href;
+    if (view[ROUTE_DISPATCH_STATE]?.href === href) return;
+    const state = { href };
+    view[ROUTE_DISPATCH_STATE] = state;
+    view.dispatchEvent(new view.Event(ROUTE_CHANGE_EVENT));
+    view.queueMicrotask(() => {
+      if (view[ROUTE_DISPATCH_STATE] === state) delete view[ROUTE_DISPATCH_STATE];
+    });
+  }
+  function patchHistoryMethod(view, methodName) {
+    const current = view.history[methodName];
+    if (current[ROUTE_PATCH_MARKER]) return;
+    function routeAwareHistoryMethod(...args) {
+      const previousHref = view.location.href;
+      const result = Reflect.apply(current, this, args);
+      if (view.location.href !== previousHref) dispatchRouteChange(view);
+      return result;
+    }
+    Object.defineProperty(routeAwareHistoryMethod, ROUTE_PATCH_MARKER, { value: true });
+    view.history[methodName] = routeAwareHistoryMethod;
+  }
+  function ensureSpaRouteChangePatched(view) {
+    if (!view?.history) throw new Error("SPA route patch requires a window");
+    patchHistoryMethod(view, "pushState");
+    patchHistoryMethod(view, "replaceState");
+  }
+  function installSpaRouteChangeListener(view, listener) {
+    if (!view?.history || typeof listener !== "function") {
+      throw new Error("SPA route listener requires a window and callback");
+    }
+    ensureSpaRouteChangePatched(view);
+    view.addEventListener(ROUTE_CHANGE_EVENT, listener);
+    view.addEventListener("popstate", listener);
+    view.addEventListener("hashchange", listener);
+    return () => {
+      view.removeEventListener(ROUTE_CHANGE_EVENT, listener);
+      view.removeEventListener("popstate", listener);
+      view.removeEventListener("hashchange", listener);
+    };
   }
 
   // src/shared/chart-mutation-owners.js
@@ -806,7 +852,7 @@
     const retired = /* @__PURE__ */ new Set();
     const document = view.document;
     function notice(text) {
-      if (!document.body) return;
+      if (!document.body || !parseFuturesTradingSymbolFromPathname(view.location.pathname)) return;
       let node = document.getElementById("jh-strategy31-status");
       if (!node) {
         node = document.createElement("div");
@@ -839,9 +885,16 @@
     }
     async function sample() {
       cleanup();
-      if (disposed || failed || document.hidden || inflight) return;
+      if (disposed) return;
       const route = parseFuturesTradingSymbolFromPathname(view.location.pathname);
-      if (!route?.endsWith("USDT")) {
+      if (!route) {
+        releaseChart();
+        cleanup();
+        document.getElementById("jh-strategy31-status")?.remove();
+        return;
+      }
+      if (failed || document.hidden || inflight) return;
+      if (!route.endsWith("USDT")) {
         releaseChart();
         cleanup();
         notice("Strategy31: unsupported market");
@@ -850,7 +903,7 @@
       const symbol = usdtRouteToCanonical(route);
       const base = findBinanceTradingViewTarget(document);
       const chart = base?.tradingViewApi.activeChart?.();
-      if (!route || !chart?.hasModel() || String(chart.symbol()).split("@")[0] !== route) {
+      if (!chart?.hasModel() || String(chart.symbol()).split("@")[0] !== route) {
         releaseChart();
         cleanup();
         return;
@@ -943,10 +996,14 @@
       void tick();
     }, 5e3);
     document.addEventListener("visibilitychange", visibility);
+    const removeRouteListener = installSpaRouteChangeListener(view, () => {
+      if (!parseFuturesTradingSymbolFromPathname(view.location.pathname)) void tick();
+    });
     const runtime = Object.freeze({ sample: tick, dispose() {
       disposed = true;
       releaseChart();
       cleanup();
+      removeRouteListener();
       document.removeEventListener("visibilitychange", visibility);
       document.getElementById("jh-strategy31-status")?.remove();
     } });

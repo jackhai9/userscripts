@@ -1,8 +1,8 @@
 # Strategy31 volume reversal signals
 
 Source: `src/binance-strategy31-volume-reversal/`. Installer:
-`scripts/binance-strategy31-volume-reversal.user.js` (0.1.0).
-Install alongside CorsairQuant signal client 0.6.6, which owns private gateway
+`scripts/binance-strategy31-volume-reversal.user.js` (0.1.1).
+Install alongside CorsairQuant signal client 0.6.7, which owns private gateway
 authentication. The shared bridge explicitly advertises the `strategy31` capability.
 
 CorsairQuant confirms consecutive closed red/green candles when green base volume
@@ -14,6 +14,9 @@ Hidden documents suspend requests; navigation and settings revisions invalidate
 late responses. Repeated snapshots reconcile one arrow per stable event ID.
 Interval changes preserve the native data-completion subscription. Unsupported
 periods and non-USDT markets pause observation until a supported chart is selected.
+Non-trading routes remove the status and retire pending requests and chart
+ownership. Route observation remains available after a terminal failure solely
+to remove presentation on departure; it does not restart failed business work.
 A transient native candle snapshot inconsistency retains existing arrows and
 waits for the next sample; malformed signal contracts still stop the observer.
 Loading earlier

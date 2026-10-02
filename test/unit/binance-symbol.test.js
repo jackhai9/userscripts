@@ -21,14 +21,13 @@ test('user observes that Binance identifiers support Unicode letters, numbers, a
   }
 });
 
-test('user observes that route length remains a Unicode code-point contract', () => {
-  // Given the supplied input retains its original contract values
-  const scenarioInput = '/futures/𐐀𐐀';
-  // When the real operation processes that input
-  const observed = parseFuturesTradingSymbolFromPathname(scenarioInput);
-  // Then route length remains a Unicode code-point contract
-  assert.equal(observed, null);
-  assert.equal(parseFuturesTradingSymbolFromPathname('/futures/𐐀𐐀𐐀'), '𐐀𐐀𐐀');
+test('user needs a supported quote suffix even for Unicode asset routes', () => {
+  // Given Unicode assets with and without a perpetual quote suffix
+  const paths = ['/futures/𐐀𐐀', '/futures/𐐀𐐀𐐀', '/futures/𐐀USDT', '/futures/𐐀USDC'];
+  // When the shared route parser evaluates each complete pathname
+  const observed = paths.map(parseFuturesTradingSymbolFromPathname);
+  // Then only complete supported contracts activate scripts
+  assert.deepEqual(observed, [null, null, '𐐀USDT', '𐐀USDC']);
 });
 
 test('user observes that shared gateway symbol conversion preserves Chinese and numeric asset identity', () => {

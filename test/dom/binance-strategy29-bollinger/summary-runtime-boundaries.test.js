@@ -133,7 +133,7 @@ test('user removes the remote panel after leaving futures and rejects a late nat
   const oldSignal = fixture.gateway.requests.at(-1).signal;
 
   // When browser navigation leaves futures before the response completes.
-  fixture.host.view.history.pushState({}, '', '/en/markets');
+  fixture.host.view.history.pushState({}, '', '/en/futures/home');
   await fixture.remote.sample(status.observed_at_ms + 10_000);
   late.respond({ ...events, events: [{ ...events.events[0], sequence: 80, event_id: 'd'.repeat(64) }], next_cursor: 80 });
   await pending;

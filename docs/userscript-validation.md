@@ -54,6 +54,16 @@ read the Node version from `.nvmrc`.
   `scripts/*.user.js` file and checked directly.
 - Route and symbol identity come from the documented pathname/route contract.
   Do not infer a symbol from a page title, stale DOM, or a neighboring panel.
+- The shared route parser activates scripts only for
+  `/[locale/]futures/<asset>USDT` and `<asset>USDC` perpetual routes, with an
+  optional trailing slash. The asset must be nonempty; Unicode letters, numbers,
+  and underscores retain their exchange identity. This is the scripts' supported
+  route syntax, not a live exchange listing check. Individual strategies retain
+  their narrower USDT market and timeframe requirements. Other quote assets,
+  dated contracts, landing pages, `home`, `quiz`, multi-chart pages, calculators,
+  and wallet routes do not activate panels or business requests.
+  Keep the broad metadata match and lightweight route watcher so SPA navigation
+  from a landing page can activate a supported contract and remove it on return.
 - Binance identifiers share the Unicode letter/number/underscore character
   contract in `src/shared/binance-symbol.js`. Include Chinese, one-character,
   numeric-only, and numeric-prefixed assets when validating route, depth, order

@@ -1,8 +1,9 @@
 import { BINANCE_SYMBOL_CHARACTERS } from './binance-symbol.js';
 
 const FUTURES_TRADING_PATH_RE = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?futures\/([^/]+)\/?$/;
-const TRADING_SYMBOL_RE = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]{3,}$`, 'u');
+const TRADING_SYMBOL_RE = new RegExp(`^[${BINANCE_SYMBOL_CHARACTERS}]+(?:USDT|USDC)$`, 'iu');
 
+/** Match the scripts' supported perpetual routes, not arbitrary futures subpages. */
 export function parseFuturesTradingSymbolFromPathname(pathname) {
   const normalized = String(pathname || '').split(/[?#]/, 1)[0];
   const match = normalized.match(FUTURES_TRADING_PATH_RE);

@@ -60,3 +60,20 @@ test("user parses Unicode futures symbols from actual URL pathnames", () => {
   assert.deepEqual(encoded, symbols);
   assert.deepEqual(invalid, [null, null, null, null]);
 });
+
+test('user activates scripts only for supported perpetual contract routes', () => {
+  // Given supported contract identities and non-trading or unsupported routes
+  const accepted = ['USUSDT', 'HOMEUSDT', 'BTCUSDC', '4USDT', 'WUSDC', '𐐀USDT', 'A_BUSDT'];
+  const rejected = [
+    '', 'home', 'HOME', 'quiz', 'multipleChart', 'multi-symbols', 'funding-history',
+    'USDT', 'USDC', 'BTC', '币安人生', 'BTCUSD_PERP', 'BTCUSDT_261225',
+    'BTCUSD1', 'BTCU', 'ETHBTC', 'BTCBUSD', 'USUSDT/calculator',
+    'multi-symbols/USUSDT',
+  ];
+  // When localized and unlocalized paths pass through the shared route contract
+  const valid = accepted.map(symbol => parseFuturesTradingSymbolFromPathname(`/zh-CN/futures/${symbol}/`));
+  const invalid = rejected.map(segment => isFuturesTradingPathname(`/futures/${segment}`));
+  // Then supported identities survive and every other path remains inactive
+  assert.deepEqual(valid, accepted);
+  assert.deepEqual(invalid, rejected.map(() => false));
+});

@@ -24,7 +24,7 @@ test('user installs Strategy29 with its independent observation-only identity', 
   // Then the installer retains its pinned identity and declared observation boundary.
   assert.equal(contract.name, '【自写】Binance Strategy 29 布林带信号');
   assert.equal(contract.namespace, 'binance.strategy29.bollinger');
-  assert.equal(contract.version, '0.5.6');
+  assert.equal(contract.version, '0.5.7');
   assert.equal(contract.runAt, 'document-start');
   assert.equal(contract.updateURL, 'https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy29-bollinger.user.js');
   assert.equal(contract.downloadURL, contract.updateURL);
@@ -70,7 +70,7 @@ test('user identifies Strategy27 and its declared local gateway capabilities', (
   // Then the installer retains its identity and exact gateway capability boundary.
   assert.equal(contract.name, '【自写】Binance Strategy 27 事件标注');
   assert.equal(contract.namespace, 'binance.strategy27.events');
-  assert.equal(contract.version, '0.6.6');
+  assert.equal(contract.version, '0.6.7');
   assert.equal(contract.runAt, 'document-idle');
   assert.equal(contract.updateURL, contract.downloadURL);
   assert.deepEqual(contract.matches, [

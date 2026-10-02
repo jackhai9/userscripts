@@ -5,25 +5,173 @@ import { installStrategy31 } from '../../src/binance-strategy31-volume-reversal/
 import { SIGNAL_GATEWAY_BRIDGE } from '../../src/shared/signal-gateway-bridge.js';
 import { registerChartMutationOwner } from '../../src/shared/chart-mutation-owners.js';
 
-function fixture() {
+function fixture({ pathname = '/en/futures/BTRUSDT', hiddenDuringInstall = true } = {}) {
   const host = createStrategy29ChartHost({ resolution: '5', bars: [
     { time: 300, open: 10, high: 13, low: 9, close: 12 },
   ] });
-  host.dom.reconfigure({ url: 'https://www.binance.com/en/futures/BTRUSDT' });
+  host.dom.reconfigure({ url: `https://www.binance.com${pathname}` });
   const symbol = 'BTR/USDT:USDT';
   const event = { id: `31_2_spec_v1:${symbol}:5m:300000`, symbol, timeframe: '5m', bar_open_ms: 300000,
     bar_close_ms: 600000, open: 10, high: 13, low: 9, close: 12, volume: 101, previous_volume: 100 };
   const payload = { schema_version: 1, strategy_id: '31', spec_version: '31_2_spec_v1', symbol,
     timeframe: '5m', observed_at_ms: 600000, events: [event] };
   let nextResponse = null, revision = 0;
+  const requests = [];
   host.view[SIGNAL_GATEWAY_BRIDGE] = { version: 1, capabilities: ['strategy31'],
     getState: () => ({ available: true, configured: true, settingsRevision: revision }),
-    request: () => nextResponse ?? Promise.resolve({ kind: 'response', status: 200, responseText: JSON.stringify(payload) }) };
-  host.setHidden(true);
+    request: (path, signal) => {
+      requests.push({ path, signal });
+      return nextResponse ?? Promise.resolve({ kind: 'response', status: 200, responseText: JSON.stringify(payload) });
+    } };
+  host.setHidden(hiddenDuringInstall);
   const runtime = installStrategy31(host.view);
   host.setHidden(false);
-  return { ...host, runtime, hold(promise) { nextResponse = promise; }, changeSettings() { revision += 1; }, payload };
+  return { ...host, runtime, requests, hold(promise) { nextResponse = promise; }, changeSettings() { revision += 1; }, payload };
 }
+
+test('user sees no Strategy31 status or signal requests on a non-trading page', async (t) => {
+  // Given the observer starts on a visible futures landing page
+  const f = fixture({ pathname: '/en/futures/', hiddenDuringInstall: false });
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  // When the observer samples the non-trading route again
+  await f.runtime.sample();
+  // Then it stays absent without acquiring the native chart or requesting signals
+  assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.shapes.size, 0);
+  assert.equal(f.intervalChanged.size, 0);
+  assert.equal(f.dataLoaded.size, 0);
+});
+
+test('user clears a stopped Strategy31 notice after SPA navigation without restarting signals', async (t) => {
+  // Given invalid server data has stopped the observer and exposed its failure status
+  const f = fixture();
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  f.payload.schema_version = 0;
+  await f.runtime.sample();
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31 stopped: invalid chart or signal data');
+  assert.equal(f.requests.length, 1);
+  // When SPA navigation leaves the trading page after the sampling timer has stopped
+  f.view.history.pushState({}, '', '/en/futures/');
+  // Then route observation removes the failure status without another sample or request
+  assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+  assert.equal(f.shapes.size, 0);
+  assert.equal(f.requests.length, 1);
+  // When valid data becomes available and navigation returns to a supported chart
+  f.payload.schema_version = 1;
+  f.view.history.pushState({}, '', '/en/futures/BTRUSDT');
+  await f.runtime.sample();
+  // Then the failed observer remains stopped instead of implicitly retrying
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.shapes.size, 0);
+});
+
+test('user sees no late failure notice when native chart export fails after leaving the trading page', async (t) => {
+  // Given a native candle export remains pending after a valid signal response
+  const f = fixture();
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  await f.runtime.sample();
+  const gate = f.holdNextExport();
+  const sample = f.runtime.sample();
+  await gate.entered;
+  // When navigation leaves the chart before the native export rejects
+  f.view.history.pushState({}, '', '/en/futures/');
+  gate.reject(new TypeError('Invalid native chart export'));
+  await sample;
+  // Then the late failure keeps all Strategy31 UI absent on the landing page
+  assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+  assert.equal(f.shapes.size, 0);
+  assert.equal(f.requests.length, 2);
+  // When navigation returns to the supported trading page
+  f.view.history.pushState({}, '', '/en/futures/BTRUSDT');
+  await f.runtime.sample();
+  // Then the invalid native contract has stopped further signal requests
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.shapes.size, 0);
+});
+
+test('user clears Strategy31 from the futures landing page and resumes on a trading page', async (t) => {
+  // Given one native signal and a visible observer status on a supported market
+  const f = fixture();
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  await f.runtime.sample();
+  assert.equal(f.shapes.size, 1);
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 5m');
+  // When navigation leaves the trading route while its native chart remains mounted
+  f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/' });
+  await f.runtime.sample();
+  // Then the observer clears its UI and subscriptions without another gateway request
+  assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+  assert.equal(f.shapes.size, 0);
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.intervalChanged.size, 0);
+  assert.equal(f.dataLoaded.size, 0);
+  // When navigation returns to the supported trading route
+  f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/BTRUSDT' });
+  await f.runtime.sample();
+  // Then the observer acquires fresh signals and restores its native arrow
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.shapes.size, 1);
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 5m');
+});
+
+test('user aborts pending signals on leaving a trading page without late UI resurrection', async (t) => {
+  // Given an existing arrow and a second gateway response still pending
+  const f = fixture();
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  await f.runtime.sample();
+  const response = Promise.withResolvers();
+  f.hold(response.promise);
+  const sample = f.runtime.sample();
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.requests[1].signal.aborted, false);
+  // When the observer samples navigation away before the response completes
+  f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/' });
+  await f.runtime.sample();
+  // Then the pending transport is cancelled and previous UI is removed immediately
+  assert.equal(f.requests[1].signal.aborted, true);
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.shapes.size, 0);
+  assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+  // When the cancelled request still delivers its old response
+  response.resolve({ kind: 'response', status: 200, responseText: JSON.stringify(f.payload) });
+  await sample;
+  // Then neither drawings nor status return on the non-trading route
+  assert.equal(f.shapes.size, 0);
+  assert.equal(f.created.length, 1);
+  assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+  // When the user returns to a supported route after the old request finishes
+  f.hold(null);
+  f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/BTRUSDT' });
+  await f.runtime.sample();
+  // Then a new request restores observation without restarting the script
+  assert.equal(f.requests.length, 3);
+  assert.equal(f.requests[2].signal.aborted, false);
+  assert.equal(f.shapes.size, 1);
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 5m');
+});
+
+test('user clears the landing-page status while native arrow cleanup waits for the chart owner', async (t) => {
+  // Given an existing signal and another script holding chart mutation ownership
+  const f = fixture();
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  await f.runtime.sample();
+  const release = registerChartMutationOwner(f.view, 'fixture-trading-owner', () => true);
+  t.after(release);
+  // When navigation leaves the trading route before ownership is released
+  f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/' });
+  await f.runtime.sample();
+  // Then status disappears while the observer waits to mutate the native chart
+  assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+  assert.equal(f.shapes.size, 1);
+  assert.equal(f.requests.length, 1);
+  // When the chart owner releases its mutation reservation
+  release();
+  await f.runtime.sample();
+  // Then deferred cleanup removes the observer arrow without a new request
+  assert.equal(f.shapes.size, 0);
+  assert.equal(f.requests.length, 1);
+});
 
 test('user sees one native green arrow across repeated server snapshots', async () => {
   // Given the existing native-chart fixture and one confirmed server event
@@ -112,6 +260,8 @@ test('user sees no USDT signals on a USDC chart and can resume a supported marke
   // Then no USDT event is drawn on the unsupported market
   assert.equal(f.created.length, 0);
   assert.equal(f.exports.length, 0);
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: unsupported market');
   f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/BTRUSDT' });
   f.setSymbol('BTRUSDT@PRICETYPE=LAST');
   await f.runtime.sample();
