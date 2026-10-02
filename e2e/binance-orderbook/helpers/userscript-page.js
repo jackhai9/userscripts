@@ -29,7 +29,7 @@ export function readScenarioEvidence(page) {
   return evidenceByPage.get(page) || null;
 }
 
-export async function openUserscriptScenario(page, scenario, { beforeOrderbook = '', afterOrderbook = '' } = {}) {
+export async function openUserscriptScenario(page, scenario, { beforeOrderbook = '', afterOrderbook = '', afterNavigation } = {}) {
   const errors = [];
   page.on('pageerror', (error) => errors.push(String(error?.stack || error)));
   const userscriptSource = await readFile(USERSCRIPT_PATH, 'utf8');
@@ -128,6 +128,7 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
   });
 
   await page.goto(`https://www.binance.com/zh-CN/futures/${scenario.currentSymbol}`);
+  if (afterNavigation) await afterNavigation(page);
   await page.locator('#jh-binance-close-qty-multiplier-panel').waitFor({ state: 'visible' });
   await page.locator('#jh-binance-ladder-body').waitFor({ state: 'visible' });
   await page.evaluate(() => new Promise((resolve) => {

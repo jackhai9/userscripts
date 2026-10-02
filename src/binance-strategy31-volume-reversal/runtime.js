@@ -1,5 +1,6 @@
 import { SIGNAL_GATEWAY_BRIDGE } from '../shared/signal-gateway-bridge.js';
 import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
+import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 import { isChartMutationBlocked } from '../shared/chart-mutation-owners.js';
 import { findBinanceTradingViewTarget } from '../shared/tradingview-target.js';
 import { usdtRouteToCanonical } from '../shared/canonical-symbol.js';
@@ -16,7 +17,7 @@ export function installStrategy31(view) {
   const retired = new Set();
   const document = view.document;
   function notice(text) {
-    if (!document.body) return;
+    if (!document.body || !parseFuturesTradingSymbolFromPathname(view.location.pathname)) return;
     let node = document.getElementById('jh-strategy31-status');
     if (!node) {
       node = document.createElement('div');
@@ -50,13 +51,20 @@ export function installStrategy31(view) {
   }
   async function sample() {
     cleanup();
-    if (disposed || failed || document.hidden || inflight) return;
+    if (disposed) return;
     const route = parseFuturesTradingSymbolFromPathname(view.location.pathname);
-    if (!route?.endsWith('USDT')) { releaseChart(); cleanup(); notice('Strategy31: unsupported market'); return; }
+    // Leaving the chart must retire pending work before request or visibility gates can defer cleanup.
+    if (!route) {
+      releaseChart(); cleanup();
+      document.getElementById('jh-strategy31-status')?.remove();
+      return;
+    }
+    if (failed || document.hidden || inflight) return;
+    if (!route.endsWith('USDT')) { releaseChart(); cleanup(); notice('Strategy31: unsupported market'); return; }
     const symbol = usdtRouteToCanonical(route);
     const base = findBinanceTradingViewTarget(document);
     const chart = base?.tradingViewApi.activeChart?.();
-    if (!route || !chart?.hasModel() || String(chart.symbol()).split('@')[0] !== route) { releaseChart(); cleanup(); return; }
+    if (!chart?.hasModel() || String(chart.symbol()).split('@')[0] !== route) { releaseChart(); cleanup(); return; }
     // Keep the readiness subscription across interval changes: dataReady can still describe old bars.
     if (!intervalOwner || intervalOwner.chart !== chart || intervalOwner.route !== route) {
       releaseChart();
@@ -117,8 +125,13 @@ export function installStrategy31(view) {
   function visibility() { if (document.hidden) retire(); else void tick(); }
   const timer = view.setInterval(() => { void tick(); }, 5000);
   document.addEventListener('visibilitychange', visibility);
+  // Route cleanup must remain active after invalid contracts stop the sampling timer.
+  const removeRouteListener = installSpaRouteChangeListener(view, () => {
+    if (!parseFuturesTradingSymbolFromPathname(view.location.pathname)) void tick();
+  });
   const runtime = Object.freeze({ sample: tick, dispose() {
     disposed = true; releaseChart(); cleanup();
+    removeRouteListener();
     document.removeEventListener('visibilitychange', visibility);
     document.getElementById('jh-strategy31-status')?.remove();
   } });

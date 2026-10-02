@@ -19,7 +19,7 @@ test('user installs Strategy29 with only the reviewed sandbox capabilities', asy
   const [entrySource, remoteSource] = await Promise.all(paths.map(path => readFile(path, 'utf8')));
 
   // Then metadata and page coordination keep the exact reviewed grants and transport boundary.
-  assert.equal(readUserscriptVersion(entrySource), '0.5.6');
+  assert.equal(readUserscriptVersion(entrySource), '0.5.7');
   assert.deepEqual(
     [...entrySource.matchAll(/^\/\/ @grant\s+(\S+)\s*$/gm)].map(match => match[1]),
     ['unsafeWindow', 'GM_getValue', 'GM_setValue'],

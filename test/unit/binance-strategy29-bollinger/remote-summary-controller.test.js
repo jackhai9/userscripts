@@ -225,7 +225,7 @@ test('user observes that unsupported futures route is classified once without a 
   const f = fixture();
   let warnings = 0;
   f.view.console.warn = () => { warnings += 1; };
-  f.view.location.pathname = '/en/futures/BTCUSD_PERP';
+  f.view.location.pathname = '/en/futures/BTCUSDC';
   // When f.summary.sample processes the configured inputs
   await f.summary.sample(0);
   await f.summary.sample(1_000);
