@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.216
+// @version      2.7.217
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3022,6 +3022,26 @@
 
   // src/binance-orderbook-trade/core/chart-save-coalescer.js
   var IGNORED_DRAWING_EVENT_TYPES = /* @__PURE__ */ new Set(["click", "move"]);
+  function isDefaultSaveCall(api, receiver, args) {
+    return receiver === api && args.length >= 1 && args.length <= 2 && typeof args[0] === "function" && args[1] === void 0;
+  }
+  function deliverSaveCallbacks(api, saveChart, callbacks, onCallbackError, setTimeoutFn) {
+    if (callbacks.length === 0) return;
+    saveChart.call(api, (snapshot) => {
+      const json = JSON.stringify(snapshot);
+      const errors = [];
+      for (const callback of callbacks) {
+        try {
+          callback(JSON.parse(json));
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (errors.length) {
+        setTimeoutFn(() => onCallbackError(new AggregateError(errors, "TradingView chart save callbacks failed")), 0);
+      }
+    });
+  }
   function validateTradingViewApi(api) {
     if (!api || typeof api !== "object") {
       throw new Error("图表接口不可用");
@@ -3056,7 +3076,10 @@
     submitEventDiscoveryMs = 250,
     getDrawingToolName = readTradingViewDrawingToolName,
     setTimeoutFn = setTimeout,
-    clearTimeoutFn = clearTimeout
+    clearTimeoutFn = clearTimeout,
+    onCallbackError = (error) => {
+      throw error;
+    }
   } = {}) {
     validateTradingViewApi(api);
     if (!Number.isFinite(settleQuietMs) || settleQuietMs <= 0) {
@@ -3119,26 +3142,18 @@
         );
       }
       try {
-        if (!burst.pendingSave) return void 0;
-        if (saveChartWasReplaced) {
-          if (activeRound?.pendingSave) activeRound.pendingSave = null;
-          fullSaveCount += 1;
-          return burst.originalSaveChart.apply(
-            burst.pendingSave.thisValue,
-            burst.pendingSave.args
-          );
-        }
-        if (burst.deferToRound && activeRound) {
-          activeRound.pendingSave = burst.pendingSave;
+        const callbacks = burst.callbacks;
+        burst.callbacks = [];
+        if (callbacks.length === 0) return void 0;
+        if (!saveChartWasReplaced && burst.deferToRound && activeRound) {
+          activeRound.callbacks.push(...callbacks);
           deferredSubmitSaveCount += 1;
           return void 0;
         }
-        if (activeRound?.pendingSave) activeRound.pendingSave = null;
+        const pending = activeRound ? activeRound.callbacks.splice(0) : [];
+        pending.push(...callbacks);
         fullSaveCount += 1;
-        return burst.originalSaveChart.apply(
-          burst.pendingSave.thisValue,
-          burst.pendingSave.args
-        );
+        return deliverSaveCallbacks(api, burst.originalSaveChart, pending, onCallbackError, setTimeoutFn);
       } finally {
         if (burst.submitCapture) {
           finishSubmitCapture(
@@ -3161,14 +3176,20 @@
         deferToRound: false,
         originalDescriptor,
         originalSaveChart,
-        pendingSave: null,
+        callbacks: [],
         settleTimer: null,
         submitCapture: null,
         wrapper: null
       };
       burst.wrapper = function continuousSaveBurstWrapper(...args) {
+        if (activeBurst !== burst) return originalSaveChart.apply(this, args);
         saveRequestCount += 1;
-        burst.pendingSave = { thisValue: this, args };
+        if (!isDefaultSaveCall(api, this, args)) {
+          flushActiveBurst();
+          flushRoundPendingSave();
+          return originalSaveChart.apply(this, args);
+        }
+        burst.callbacks.push(args[0]);
         return void 0;
       };
       api.saveChart = burst.wrapper;
@@ -3180,11 +3201,10 @@
       return burst;
     };
     const flushRoundPendingSave = () => {
-      const pendingSave = activeRound?.pendingSave || null;
-      if (!pendingSave) return void 0;
-      activeRound.pendingSave = null;
+      if (!activeRound || activeRound.callbacks.length === 0) return void 0;
+      const callbacks = activeRound.callbacks.splice(0);
       fullSaveCount += 1;
-      return api.saveChart.apply(pendingSave.thisValue, pendingSave.args);
+      return deliverSaveCallbacks(api, sessionSaveChart, callbacks, onCallbackError, setTimeoutFn);
     };
     const handleDrawingEvent = (drawingId, eventType) => {
       if (stopped || IGNORED_DRAWING_EVENT_TYPES.has(eventType)) return;
@@ -3227,7 +3247,7 @@
         if (activeSubmitCapture) throw new Error("上一笔订单线捕获尚未结束");
         flushActiveBurst();
         sequence += 1;
-        activeRound = { id: sequence, pendingSave: null };
+        activeRound = { id: sequence, callbacks: [] };
         return activeRound;
       },
       beginSubmitCapture(round) {
@@ -3272,11 +3292,11 @@
           throw new Error("结束图表保存轮次时仍有订单线捕获");
         }
         flushActiveBurst();
-        const pendingSave = activeRound.pendingSave;
+        const callbacks = activeRound.callbacks;
         activeRound = null;
-        if (pendingSave) {
+        if (callbacks.length) {
           fullSaveCount += 1;
-          api.saveChart.apply(pendingSave.thisValue, pendingSave.args);
+          deliverSaveCallbacks(api, sessionSaveChart, callbacks, onCallbackError, setTimeoutFn);
         }
         return getStats();
       },
@@ -3312,7 +3332,10 @@
     maxWaitMs = 600,
     eventDiscoveryMs = 250,
     setTimeoutFn = setTimeout,
-    clearTimeoutFn = clearTimeout
+    clearTimeoutFn = clearTimeout,
+    onCallbackError = (error) => {
+      throw error;
+    }
   } = {}) {
     validateTradingViewApi(api);
     if (!Number.isFinite(settleQuietMs) || settleQuietMs <= 0) {
@@ -3331,7 +3354,7 @@
     let discoveryTimer = null;
     let finished = false;
     let fullSaveCount = 0;
-    let pendingFinalSave = null;
+    let pendingFinalCallbacks = [];
     let removeEventCount = 0;
     let saveRequestCount = 0;
     let synchronousSaveCount = 0;
@@ -3345,9 +3368,16 @@
       saveRequestCount,
       synchronousSaveCount
     });
+    const flushFinalCallbacks = () => {
+      if (pendingFinalCallbacks.length === 0) return;
+      const callbacks = pendingFinalCallbacks;
+      pendingFinalCallbacks = [];
+      fullSaveCount += 1;
+      deliverSaveCallbacks(api, sessionSaveChart, callbacks, onCallbackError, setTimeoutFn);
+    };
     const monitoredSaveChart = function monitoredRemovalSessionSaveChart(...args) {
       synchronousSaveCount += 1;
-      pendingFinalSave = null;
+      flushFinalCallbacks();
       return sessionSaveChart.apply(this, args);
     };
     const clearBurstTimers = (burst) => {
@@ -3363,7 +3393,8 @@
       activeBurst = null;
       if (api.saveChart !== burst.wrapper) {
         controllerError || (controllerError = new Error("图表保存接口在删除事件合并期间发生变化"));
-        pendingFinalSave = null;
+        pendingFinalCallbacks.push(...burst.callbacks);
+        burst.callbacks = [];
         burst.resolve();
         return;
       }
@@ -3373,7 +3404,8 @@
         burst.originalSaveChart,
         burst.originalDescriptor
       );
-      if (burst.pendingSave) pendingFinalSave = burst.pendingSave;
+      pendingFinalCallbacks.push(...burst.callbacks);
+      burst.callbacks = [];
       burst.resolve();
     };
     const scheduleBurstSettle = (burst) => {
@@ -3394,15 +3426,21 @@
         maxWaitTimer: null,
         originalDescriptor: Object.getOwnPropertyDescriptor(api, "saveChart"),
         originalSaveChart: api.saveChart,
-        pendingSave: null,
+        callbacks: [],
         resolve,
         settleTimer: null,
         settled,
         wrapper: null
       };
       burst.wrapper = function removalSaveBurstWrapper(...args) {
+        if (activeBurst !== burst) return sessionSaveChart.apply(this, args);
         saveRequestCount += 1;
-        burst.pendingSave = { thisValue: this, args };
+        if (!isDefaultSaveCall(api, this, args)) {
+          finishBurst();
+          flushFinalCallbacks();
+          return monitoredSaveChart.apply(this, args);
+        }
+        burst.callbacks.push(args[0]);
       };
       api.saveChart = burst.wrapper;
       if (api.saveChart !== burst.wrapper) {
@@ -3459,12 +3497,8 @@
           );
         } else {
           controllerError || (controllerError = new Error("图表保存接口在删除事件监视期间发生变化"));
-          pendingFinalSave = null;
         }
-        if (pendingFinalSave) {
-          fullSaveCount += 1;
-          sessionSaveChart.apply(pendingFinalSave.thisValue, pendingFinalSave.args);
-        }
+        flushFinalCallbacks();
         if (controllerError) throw controllerError;
         return getStats();
       }
@@ -3475,7 +3509,10 @@
     settleQuietMs = 50,
     timeoutMs = 1800,
     setTimeoutFn = setTimeout,
-    clearTimeoutFn = clearTimeout
+    clearTimeoutFn = clearTimeout,
+    onCallbackError = (error) => {
+      throw error;
+    }
   } = {}) {
     validateTradingViewApi(api);
     if (typeof action !== "function") throw new Error("图表操作不可用");
@@ -3492,8 +3529,11 @@
     const originalDescriptor = Object.getOwnPropertyDescriptor(api, "saveChart");
     let drawingEventCount = 0;
     let saveRequestCount = 0;
-    let pendingSave = null;
+    let pendingCallbacks = [];
+    let fullSaveCount = 0;
     let actionFinished = false;
+    let interceptionFinished = false;
+    const failures = [];
     let eventStartResolve;
     let settleResolve;
     let settleReject;
@@ -3527,9 +3567,28 @@
       if (drawingEventCount === 1) eventStartResolve();
       scheduleSettleIfReady();
     };
+    const flushPendingCallbacks = () => {
+      if (pendingCallbacks.length === 0) return;
+      const callbacks = pendingCallbacks;
+      pendingCallbacks = [];
+      fullSaveCount += 1;
+      deliverSaveCallbacks(api, originalSaveChart, callbacks, onCallbackError, setTimeoutFn);
+    };
     const saveChartWrapper = function coalescedSaveChart(...args) {
+      if (interceptionFinished) return originalSaveChart.apply(this, args);
       saveRequestCount += 1;
-      pendingSave = { thisValue: this, args };
+      if (!isDefaultSaveCall(api, this, args)) {
+        const ownsWrapper = api.saveChart === saveChartWrapper;
+        if (ownsWrapper) restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
+        try {
+          flushPendingCallbacks();
+          return originalSaveChart.apply(this, args);
+        } finally {
+          if (ownsWrapper && api.saveChart === originalSaveChart) api.saveChart = saveChartWrapper;
+          scheduleSettleIfReady();
+        }
+      }
+      pendingCallbacks.push(args[0]);
       scheduleSettleIfReady();
     };
     api.subscribe("drawing_event", handleDrawingEvent);
@@ -3572,21 +3631,36 @@
       }
       api.unsubscribe("drawing_event", handleDrawingEvent);
       subscribed = false;
-      if (pendingSave) {
-        originalSaveChart.apply(pendingSave.thisValue, pendingSave.args);
-      }
       return {
         actionResult,
         drawingEventCount,
         saveRequestCount,
-        fullSaveCount: pendingSave ? 1 : 0
+        fullSaveCount: fullSaveCount + (pendingCallbacks.length > 0 ? 1 : 0)
       };
+    } catch (error) {
+      failures.push(error);
     } finally {
       if (eventDiscoveryTimeout !== null) clearTimeoutFn(eventDiscoveryTimeout);
       if (settleQuietTimeout !== null) clearTimeoutFn(settleQuietTimeout);
       if (waitTimeout !== null) clearTimeoutFn(waitTimeout);
       if (subscribed) api.unsubscribe("drawing_event", handleDrawingEvent);
-      restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
+      interceptionFinished = true;
+      const ownershipChanged = api.saveChart !== saveChartWrapper;
+      if (!ownershipChanged) {
+        try {
+          restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      try {
+        flushPendingCallbacks();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (ownershipChanged) failures.push(new Error("图表保存接口在操作期间发生变化"));
+      if (failures.length > 1) throw new AggregateError(failures, "TradingView drawing action and save cleanup failed");
+      if (failures.length === 1) throw failures[0];
     }
   }
 

@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.6.7
+// @version      0.6.8
 // @author       jackhai9
 // @description  Display Strategy 27 events and provide the shared private CorsairQuant gateway connection
 // @match        https://www.binance.com/*/futures/*
@@ -79,6 +79,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
 
   function stopActive(resetReason) {
     if (!active) return;
+    active.intervalEvent.unsubscribe(active.intervalOwner, active.onIntervalChanged);
     active.controller.abort();
     active.compound.stop(resetReason);
     active.lifecycle.reset(resetReason);
@@ -129,7 +130,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
   }
 
   function failOrdinary(context, error) {
-    if (error.name === 'AbortError' || active !== context || context.failed) return;
+    if (error.name === 'AbortError' || active !== context || context.failed || context.intervalRevision !== 0) return;
     context.failed = true;
     context.controller.abort();
     context.layer.suspend();
@@ -151,7 +152,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
   }
 
   async function renderGatewayResponse(context, response) {
-    if (active !== context || context.failed) return;
+    if (active !== context || context.failed || context.intervalRevision !== 0) return;
     context.panel.setOrdinaryConnection('connected');
     pruneOrdinaryEvents(context);
     if (response.status === 'reset') {
@@ -183,7 +184,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
     }
 
     for (const message of messages) {
-      if (active !== context || context.failed) return;
+      if (active !== context || context.failed || context.intervalRevision !== 0) return;
       const action = context.lifecycle.apply(message);
       if (action.type === 'stream_reset') {
         context.panel.retainHistory();
@@ -210,11 +211,11 @@ const promptUser = globalThis.prompt.bind(globalThis);
         event_outcome: 'renderOutcome',
       }[action.messageKind];
       const rendered = await context.layer[renderMethod](action.eventId, annotation, retainedAtMs);
-      if (!rendered || active !== context || context.failed || !context.ordinaryHistory.has(action.eventId)) continue;
+      if (!rendered || active !== context || context.failed || context.intervalRevision !== 0 || !context.ordinaryHistory.has(action.eventId)) continue;
       context.panel.upsert(action.eventId, localizeAnnotation(annotation, context.locale), retainedAtMs);
       hideStatus();
     }
-    if (response.status === 'bootstrap') {
+    if (response.status === 'bootstrap' && active === context && context.intervalRevision === 0) {
       context.lifecycle.finishBootstrap(response.last_sequence);
       hideStatus();
     }
@@ -235,6 +236,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
       layer: createTradingViewEventLayer(target, {
         maxEvents: MAX_RETAINED_EVENTS,
         maxAgeMs: MAX_EVENT_AGE_MS,
+        onRenderError: error => failOrdinary(context, error),
       }),
       panel: createStrategy27EventPanel(pageDocument, target.chartRoot, {
         locale: uiLocale,
@@ -246,15 +248,30 @@ const promptUser = globalThis.prompt.bind(globalThis);
       candidatePresentations: new Map(),
       ordinaryHistory: new Map(),
       reconciliation: null,
+      intervalOwner: {},
+      intervalEvent: target.chart.onIntervalChanged(),
+      intervalRevision: 0,
+      onIntervalChanged: null,
       failed: false,
     };
     active = context;
     context.compound = createCompoundCandidateController({
       locale: context.locale, request, gatewayBaseUrl: gatewayOrigin, authSecret, canonicalSymbol,
-      panel: context.panel, isCurrent: () => active === context,
+      panel: context.panel, isCurrent: () => active === context && context.intervalRevision === 0,
       maxCandidates: MAX_RETAINED_EVENTS, maxAgeMs: MAX_EVENT_AGE_MS,
-      createLayer: () => createTradingViewCompoundLayer(target, { maxCandidates: MAX_RETAINED_EVENTS, locale: context.locale }),
+      createLayer: ({ onRenderError }) => createTradingViewCompoundLayer(target, {
+        maxCandidates: MAX_RETAINED_EVENTS, locale: context.locale, onRenderError,
+      }),
     });
+    // Invalidate even before the first marker exists: a candle wait must not
+    // survive a complete interval round trip between context polls.
+    context.onIntervalChanged = () => {
+      context.intervalRevision += 1;
+      context.controller.abort();
+      context.layer.suspend();
+      context.compound.stop('interval_changed');
+    };
+    context.intervalEvent.subscribe(context.intervalOwner, context.onIntervalChanged);
     void context.compound.run();
     showStatus(target.chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 正在连接', 'Strategy 27 connecting'));
     const client = createLiveEventClient({
@@ -263,7 +280,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
       authSecret,
       canonicalSymbol,
       onConnectionStateChange: (state) => {
-        if (active !== context || context.failed) return;
+        if (active !== context || context.failed || context.intervalRevision !== 0) return;
         context.panel.setOrdinaryConnection(state);
         if (state === 'reconnecting') {
           showStatus(context.target.chartRoot, (locale) => createStrategy27Translator(locale)('Strategy 27 网关连接中断，正在重连', 'Strategy 27 gateway disconnected; reconnecting'), 'inactive');
@@ -335,6 +352,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
 
     if (
       active
+      && active.intervalRevision === 0
       && active.routeSymbol === routeSymbol
       && active.target.chart === target.chart
       && active.target.chartRoot === target.chartRoot

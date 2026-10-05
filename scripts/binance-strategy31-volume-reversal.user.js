@@ -3,7 +3,7 @@
 // @namespace    binance.strategy31.volume-reversal
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.1.1
+// @version      0.1.2
 // @author       jackhai9
 // @description  Confirmed red-to-green volume signals from CorsairQuant
 // @match        https://www.binance.com/*/futures/*
@@ -166,199 +166,281 @@
     }
   };
 
-  // src/shared/abort.js
-  function getAbortReason(signal) {
-    if (signal?.reason instanceof Error) return signal.reason;
-    const error = new Error("Operation aborted");
-    error.name = "AbortError";
-    return error;
-  }
-  function throwIfAborted(signal) {
-    if (signal?.aborted) throw getAbortReason(signal);
-  }
-  function waitForPromiseOrAbort(task, signal) {
-    if (!signal) return Promise.resolve(task);
-    throwIfAborted(signal);
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = (callback, value) => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener("abort", onAbort);
-        callback(value);
-      };
-      const onAbort = () => finish(reject, getAbortReason(signal));
-      signal.addEventListener("abort", onAbort, { once: true });
-      Promise.resolve(task).then(
-        (value) => finish(resolve, value),
-        (error) => finish(reject, error)
-      );
-    });
-  }
-
-  // src/shared/chart-marker-save-controller.js
-  var CONTROLLER_SLOT = Symbol.for("jh-userscripts.chart-marker-save-controller");
-  var PROTOCOL_VERSION = 1;
-  function readController(api) {
-    const record = api[CONTROLLER_SLOT];
-    if (record === void 0) return null;
-    if (record.version !== PROTOCOL_VERSION || typeof record.controller?.runAfterIdle !== "function") {
-      throw new Error("Incompatible TradingView marker save protocol; update both scripts and reload");
-    }
-    return record.controller;
-  }
-  var QUIET_MS = 150;
-  var MAX_BURST_MS = 1e3;
-  var DRAIN_TIMEOUT_MS = 2e3;
-  function installTradingViewMarkerSaveController(api, {
-    onError = (error) => {
-      throw error;
-    },
-    setTimeoutFn = setTimeout,
-    clearTimeoutFn = clearTimeout
+  // src/shared/chart-marker-overlay.js
+  function createChartMarkerOverlay(target, {
+    maxMarkers,
+    canMutate = () => true,
+    onRenderError
   } = {}) {
-    const existing = readController(api);
-    if (existing) return existing;
-    if (typeof api?.saveChart !== "function") {
-      throw new Error("TradingView marker save API is unavailable");
+    if (!Number.isSafeInteger(maxMarkers) || maxMarkers < 1) throw new Error("TradingView overlay marker limit is invalid");
+    const { chart } = target;
+    const document = target.chartRoot.ownerDocument;
+    const owner = {};
+    const subscriptions = [];
+    const nodes = /* @__PURE__ */ new Map();
+    let svg = null, host = null, frame = null, observer = null, projection = null;
+    let signals = [], validateCurrent = null, invalidated = false;
+    let renderedFrames = 0, visibleMarkers = 0, generation = 0;
+    function hide() {
+      if (svg && svg.style.visibility !== "hidden") svg.style.visibility = "hidden";
+      visibleMarkers = 0;
     }
-    const originalSaveChart = api.saveChart;
-    let burst = null;
-    let tailTimer = null;
-    let mutations = 0;
-    let draining = 0;
-    let saveRequests = 0;
-    let serializations = 0;
-    let callbackCount = 0;
-    let failureCount = 0;
-    const idleWaiters = /* @__PURE__ */ new Set();
-    const busy = () => burst !== null || mutations !== 0 || tailTimer !== null;
-    function notifyIdle() {
-      if (busy()) return;
-      for (const resolve of idleWaiters) resolve();
-      idleWaiters.clear();
+    function cancelFrame() {
+      if (frame !== null) host.ownerDocument.defaultView.cancelAnimationFrame(frame);
+      frame = null;
     }
-    function reportErrors(errors) {
-      if (errors.length === 0) return;
-      failureCount += errors.length;
-      setTimeoutFn(() => onError(new AggregateError(errors, "TradingView marker save burst failed")), 0);
+    function clear() {
+      generation += 1;
+      hide();
+      cancelFrame();
+      observer?.disconnect();
+      observer = null;
+      for (const [event, callback] of subscriptions) event.unsubscribe(owner, callback);
+      subscriptions.length = 0;
+      document.removeEventListener("visibilitychange", visibilityChanged);
+      svg?.remove();
+      svg = null;
+      host = null;
+      projection = null;
+      signals = [];
+      nodes.clear();
+      validateCurrent = null;
+      invalidated = false;
+      return true;
     }
-    function flush() {
-      const pending = burst;
-      if (!pending) return;
-      burst = null;
-      clearTimeoutFn(pending.quietTimer);
-      clearTimeoutFn(pending.maxTimer);
-      const errors = [];
-      try {
-        if (pending.callbacks.length > 0) {
-          serializations += 1;
-          originalSaveChart.call(api, (snapshot) => {
-            const json = JSON.stringify(snapshot);
-            for (const callback of pending.callbacks) {
-              try {
-                callbackCount += 1;
-                callback(JSON.parse(json));
-              } catch (error) {
-                errors.push(error);
-              }
-            }
-          });
+    function readProjection() {
+      const widget = chart._chartWidget;
+      const model = widget.model().model();
+      const series = model.mainSeries();
+      const time = model.timeScale();
+      const price = series.priceScale();
+      const pane = widget.paneByState(model.paneForSource(series));
+      const container = pane.canvasElement().parentElement;
+      if (!container || !container.classList.contains("chart-gui-wrapper")) {
+        throw new Error("TradingView marker main-pane container is unavailable");
+      }
+      return { model, series, time, price, pane, container };
+    }
+    function current() {
+      return !invalidated && validateCurrent() && !document.hidden && target.chartRoot.isConnected && chart.hasModel() && chart.dataReady() && target.tradingViewApi.activeChart() === chart && chart.resolution() === target.resolution && String(chart.symbol()).split("@", 1)[0] === target.routeSymbol;
+    }
+    function draw() {
+      if (!current() || !canMutate()) {
+        hide();
+        return false;
+      }
+      const next = readProjection();
+      for (const key of ["model", "series", "time", "price", "pane", "container"]) {
+        if (next[key] !== projection[key]) {
+          throw new Error(`TradingView marker projection changed: ${key}`);
         }
-      } catch (error) {
-        errors.push(error);
-      } finally {
-        pending.callbacks.length = 0;
-        notifyIdle();
-        reportErrors(errors);
       }
-    }
-    function scheduleQuiet() {
-      clearTimeoutFn(burst.quietTimer);
-      burst.quietTimer = setTimeoutFn(flush, QUIET_MS);
-    }
-    function markMutation() {
-      if (tailTimer !== null) clearTimeoutFn(tailTimer);
-      tailTimer = setTimeoutFn(() => {
-        tailTimer = null;
-        notifyIdle();
-      }, QUIET_MS);
-      if (!burst) {
-        burst = { callbacks: [], quietTimer: null, maxTimer: setTimeoutFn(flush, MAX_BURST_MS) };
+      if (!host.isConnected) throw new Error("TradingView marker pane is detached");
+      const { width, height } = host.getBoundingClientRect();
+      if (!Number.isFinite(width) || !Number.isFinite(height)) {
+        throw new Error("TradingView marker pane dimensions are invalid");
       }
-      scheduleQuiet();
-    }
-    function markerSaveChart(...args) {
-      const defaultCall = this === api && args.length <= 2 && typeof args[0] === "function" && args[1] === void 0;
-      if (api.saveChart !== markerSaveChart || !defaultCall) {
-        flush();
-        return originalSaveChart.apply(this, args);
-      }
-      if (!burst) return originalSaveChart.apply(this, args);
-      saveRequests += 1;
-      burst.callbacks.push(args[0]);
-      scheduleQuiet();
-      return void 0;
-    }
-    api.saveChart = markerSaveChart;
-    if (api.saveChart !== markerSaveChart) {
-      throw new Error("TradingView marker save wrapper could not be installed");
-    }
-    const controller = Object.freeze({
-      canMutate: () => draining === 0 && api.saveChart === markerSaveChart,
-      beginMutation() {
-        if (!controller.canMutate()) {
-          throw new Error("TradingView marker mutation overlaps a chart save owner");
+      const projected = [];
+      const visibleIds = /* @__PURE__ */ new Set();
+      const { series, time, price } = projection;
+      const data = chart.getSeries().data();
+      for (const signal of signals) {
+        const index = time.timePointToIndex(signal.time, 0);
+        if (index === null) continue;
+        if (!Number.isFinite(index)) throw new Error("TradingView marker bar index is invalid");
+        const row = data.valueAt(index);
+        if (!row || row[0] !== signal.time) continue;
+        const x = time.indexToCoordinate(index);
+        if (!Number.isFinite(x)) throw new Error("TradingView marker coordinates are invalid");
+        if (width <= 0 || height <= 0 || x < 0 || x > width) continue;
+        const y = price.priceToCoordinate(signal.price, series.firstValue());
+        if (!Number.isFinite(y)) {
+          throw new Error("TradingView marker coordinates are invalid");
         }
-        mutations += 1;
-        markMutation();
-        let finished = false;
-        return () => {
-          if (finished) throw new Error("TradingView marker mutation finished twice");
-          finished = true;
-          mutations -= 1;
-          markMutation();
-        };
-      },
-      async runAfterIdle(action, { signal } = {}) {
-        throwIfAborted(signal);
-        draining += 1;
-        let timeout = null;
-        let wake = null;
+        if (y < 0 || y > height) continue;
+        projected.push({ signal, x, y });
+        visibleIds.add(signal.id);
+      }
+      function setAttribute(node, name, value) {
+        if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+      }
+      setAttribute(svg, "width", String(width));
+      setAttribute(svg, "height", String(height));
+      setAttribute(svg, "viewBox", `0 0 ${width} ${height}`);
+      for (const [id, node] of nodes) {
+        if (!visibleIds.has(id)) {
+          node.remove();
+          nodes.delete(id);
+        }
+      }
+      for (const { signal, x, y } of projected) {
+        const tag = signal.shape === "circle" ? "circle" : signal.shape === "text" ? "text" : "path";
+        let node = nodes.get(signal.id);
+        if (node && node.localName !== tag) {
+          node.remove();
+          nodes.delete(signal.id);
+          node = null;
+        }
+        if (!node) {
+          node = host.ownerDocument.createElementNS("http://www.w3.org/2000/svg", tag);
+          nodes.set(signal.id, node);
+          svg.append(node);
+        }
+        setAttribute(node, "data-marker-id", signal.id);
+        setAttribute(node, "data-marker-type", signal.type);
+        setAttribute(node, "data-marker-direction", signal.direction);
+        setAttribute(node, "transform", `translate(${x} ${y})`);
+        setAttribute(node, "fill", signal.color);
+        if (signal.shape === "circle") setAttribute(node, "r", String(signal.size / 2));
+        else if (signal.shape === "text") {
+          setAttribute(node, "font-size", String(signal.size));
+          setAttribute(node, "font-weight", "700");
+          setAttribute(node, "font-family", "Arial, sans-serif");
+          setAttribute(node, "text-anchor", "middle");
+          setAttribute(node, "dominant-baseline", "hanging");
+          if (node.textContent !== signal.text) node.textContent = signal.text;
+        } else {
+          setAttribute(node, "d", signal.pathData);
+        }
+      }
+      if (svg.style.visibility !== "visible") svg.style.visibility = "visible";
+      visibleMarkers = projected.length;
+      renderedFrames += 1;
+      return true;
+    }
+    function schedule() {
+      if (!svg || frame !== null || invalidated || document.hidden) return;
+      const scheduledGeneration = generation;
+      frame = host.ownerDocument.defaultView.requestAnimationFrame(() => {
+        if (!svg || scheduledGeneration !== generation) return;
+        frame = null;
         try {
-          if (busy()) {
-            await waitForPromiseOrAbort(new Promise((resolve, reject) => {
-              wake = resolve;
-              idleWaiters.add(wake);
-              timeout = setTimeoutFn(() => {
-                const error = new Error("TradingView marker saves did not finish before the chart operation");
-                error.name = "TradingViewMarkerSaveDrainTimeoutError";
-                reject(error);
-              }, DRAIN_TIMEOUT_MS);
-            }), signal);
+          draw();
+        } catch (error) {
+          clear();
+          if (onRenderError) onRenderError(error);
+          else throw error;
+        }
+      });
+    }
+    function invalidate() {
+      invalidated = true;
+      hide();
+      cancelFrame();
+    }
+    function dataChanged() {
+      hide();
+      schedule();
+    }
+    function visibilityChanged() {
+      if (document.hidden) {
+        hide();
+        cancelFrame();
+      } else schedule();
+    }
+    function subscribe(event, callback) {
+      event.subscribe(owner, callback);
+      subscriptions.push([event, callback]);
+    }
+    function install() {
+      projection = readProjection();
+      host = projection.container;
+      svg = host.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("data-strategy-marker-overlay", "");
+      svg.setAttribute("aria-hidden", "true");
+      svg.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden;visibility:hidden";
+      host.append(svg);
+      const { series, time, price } = projection;
+      for (const event of [
+        time.logicalRangeChanged(),
+        time.barSpacingChanged(),
+        time.rightOffsetChanged(),
+        price.priceRangeChanged(),
+        price.modeChanged(),
+        price.internalHeightChanged()
+      ]) {
+        subscribe(event, schedule);
+      }
+      subscribe(series.dataUpdated(), dataChanged);
+      subscribe(chart.onIntervalChanged(), invalidate);
+      subscribe(chart.onDataLoaded(), dataChanged);
+      observer = new host.ownerDocument.defaultView.ResizeObserver(schedule);
+      observer.observe(host);
+      document.addEventListener("visibilitychange", visibilityChanged);
+    }
+    return Object.freeze({
+      render(nextSignals, { isCurrent }) {
+        try {
+          if (!Array.isArray(nextSignals) || nextSignals.length > maxMarkers) {
+            throw new Error("TradingView overlay marker collection is invalid");
           }
-          if (busy()) throw new Error("TradingView marker save drain was invalidated");
-          throwIfAborted(signal);
-          return await action();
-        } finally {
-          if (timeout !== null) clearTimeoutFn(timeout);
-          if (wake !== null) idleWaiters.delete(wake);
-          draining -= 1;
+          if (typeof isCurrent !== "function") throw new Error("TradingView overlay current-target validator is unavailable");
+          const ids = /* @__PURE__ */ new Set();
+          for (const marker of nextSignals) {
+            if (!marker || typeof marker.id !== "string" || !marker.id || ids.has(marker.id) || !Number.isInteger(marker.time) || !Number.isFinite(marker.price) || !["circle", "arrow_up", "arrow_down", "text"].includes(marker.shape) || typeof marker.color !== "string" || !/^#[0-9a-f]{6}$/i.test(marker.color) || !Number.isFinite(marker.size) || marker.size <= 0 || typeof marker.type !== "string" || !marker.type || !["bearish", "bullish"].includes(marker.direction)) {
+              throw new Error("TradingView overlay marker contract is invalid");
+            }
+            if (marker.shape === "text" ? marker.anchor !== "top" || typeof marker.text !== "string" || !marker.text : marker.shape === "circle" ? marker.anchor !== "center" : !["tip", "center"].includes(marker.anchor)) {
+              throw new Error("TradingView overlay marker style is invalid");
+            }
+            ids.add(marker.id);
+          }
+          validateCurrent = isCurrent;
+          if (!current() || !canMutate()) {
+            hide();
+            return false;
+          }
+          if (!svg) install();
+          signals = nextSignals.map((marker) => {
+            if (marker.shape !== "arrow_up" && marker.shape !== "arrow_down") return { ...marker };
+            const sign = marker.shape === "arrow_up" ? 1 : -1;
+            const scale = marker.size / 18;
+            const centerShift = marker.anchor === "center" ? -sign * marker.size / 2 : 0;
+            const points = [[0, 0], [-6, 8], [-2, 8], [-2, 18], [2, 18], [2, 8], [6, 8]];
+            const path = points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x * scale} ${sign * y * scale + centerShift}`).join(" ");
+            return { ...marker, pathData: `${path} Z` };
+          });
+          return draw();
+        } catch (error) {
+          clear();
+          throw error;
         }
       },
-      getStats: () => ({
-        busy: busy(),
-        mutations,
-        draining,
-        saveRequests,
-        serializations,
-        callbackCount,
-        failureCount,
-        pendingCallbacks: burst?.callbacks.length || 0
-      })
+      clear,
+      updateText(id, text) {
+        if (typeof id !== "string" || typeof text !== "string" || !text) throw new Error("TradingView overlay text update is invalid");
+        const marker = signals.find((candidate) => candidate.id === id);
+        if (!marker) return false;
+        if (marker.shape !== "text") throw new Error("TradingView overlay text target is invalid");
+        marker.text = text;
+        const node = nodes.get(id);
+        if (node && node.textContent !== text) node.textContent = text;
+        return true;
+      },
+      remove(ids) {
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) throw new Error("TradingView overlay removal IDs are invalid");
+        const removed = new Set(ids);
+        signals = signals.filter((signal) => !removed.has(signal.id));
+        for (const id of removed) {
+          nodes.get(id)?.remove();
+          nodes.delete(id);
+        }
+        visibleMarkers = svg?.style.visibility === "visible" ? nodes.size : 0;
+      },
+      get size() {
+        return signals.length;
+      },
+      get overlayStats() {
+        return {
+          renderedFrames,
+          visibleMarkers,
+          signalCount: signals.length,
+          attached: svg !== null,
+          pendingFrame: frame !== null,
+          subscriptions: subscriptions.length
+        };
+      }
     });
-    Object.defineProperty(api, CONTROLLER_SLOT, { value: Object.freeze({ version: PROTOCOL_VERSION, controller }) });
-    return controller;
   }
 
   // src/binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js
@@ -369,15 +451,11 @@
   }
   function assertChartContract(chart) {
     for (const method of [
-      "createShape",
       "dataReady",
       "exportData",
-      "getAllShapes",
-      "getShapeById",
       "hasModel",
       "onDataLoaded",
       "onIntervalChanged",
-      "removeEntity",
       "resolution",
       "symbol"
     ]) {
@@ -385,20 +463,6 @@
         throw new Error(`TradingView Bollinger alert method is unavailable: ${method}`);
       }
     }
-  }
-  function readLiveShapes(chart) {
-    const shapes = chart.getAllShapes();
-    if (!Array.isArray(shapes)) {
-      throw new Error("TradingView Bollinger alert shape list is invalid");
-    }
-    const ids = /* @__PURE__ */ new Map();
-    for (const [index, shape] of shapes.entries()) {
-      if (typeof shape?.id !== "string" || shape.id.length === 0 || typeof shape.name !== "string") {
-        throw new Error(`TradingView Bollinger alert shape ${index} id is invalid`);
-      }
-      ids.set(shape.id, shape.name);
-    }
-    return ids;
   }
   function tradingViewResolutionToSeconds(resolution) {
     const value = String(resolution || "").toUpperCase();
@@ -416,42 +480,6 @@
       if (Number.isSafeInteger(count) && count > 0) return count * seconds;
     }
     throw new Error(`TradingView Bollinger alert resolution is unsupported: ${resolution}`);
-  }
-  function bollingerIntervalVisibility(resolution) {
-    const seconds = tradingViewResolutionToSeconds(resolution);
-    const value = String(resolution).toUpperCase();
-    const visibility = {
-      ticks: false,
-      seconds: false,
-      minutes: false,
-      hours: false,
-      days: false,
-      weeks: false,
-      months: false,
-      ranges: false
-    };
-    let unit;
-    let count;
-    if (value.endsWith("W")) {
-      unit = "weeks";
-      count = seconds / 604800;
-    } else if (value.endsWith("D")) {
-      unit = "days";
-      count = seconds / 86400;
-    } else if (seconds < 60) {
-      unit = "seconds";
-      count = seconds;
-    } else if (value.endsWith("S") || seconds < 3600) {
-      unit = "minutes";
-      count = Math.floor(seconds / 60);
-    } else {
-      unit = "hours";
-      count = Math.floor(seconds / 3600);
-    }
-    visibility[unit] = true;
-    visibility[`${unit}From`] = count;
-    visibility[`${unit}To`] = count;
-    return visibility;
   }
   function createBollingerIntervalSession(chart) {
     const intervalChanged = chart.onIntervalChanged();
@@ -574,78 +602,6 @@
       observedAtSeconds: observedAtMs / 1e3
     });
   }
-  function markerOptions(signal, resolution) {
-    const direction = signal.direction;
-    if (direction !== "bearish" && direction !== "bullish") {
-      throw new Error(`TradingView Bollinger alert signal direction is invalid: ${direction}`);
-    }
-    const isBullish = direction === "bullish";
-    const common = {
-      lock: true,
-      disableSave: true,
-      disableSelection: true,
-      disableUndo: true,
-      showInObjectsTree: false
-    };
-    if (signal.type === "warning") {
-      return {
-        ...common,
-        shape: "icon",
-        icon: 61713,
-        overrides: {
-          visible: true,
-          intervalsVisibilities: bollingerIntervalVisibility(resolution),
-          color: isBullish ? "#0ECB81" : "#F6465D",
-          size: 10
-        }
-      };
-    }
-    if (signal.type === "confirmed") {
-      return {
-        ...common,
-        shape: isBullish ? "arrow_up" : "arrow_down",
-        overrides: {
-          visible: true,
-          intervalsVisibilities: bollingerIntervalVisibility(resolution),
-          color: isBullish ? "#0ECB81" : "#F6465D",
-          arrowColor: isBullish ? "#0ECB81" : "#F6465D"
-        }
-      };
-    }
-    if (signal.type === "reversal") {
-      return {
-        ...common,
-        shape: isBullish ? "arrow_down" : "arrow_up",
-        overrides: {
-          visible: true,
-          intervalsVisibilities: bollingerIntervalVisibility(resolution),
-          color: isBullish ? "#F6465D" : "#0ECB81",
-          arrowColor: isBullish ? "#F6465D" : "#0ECB81"
-        }
-      };
-    }
-    throw new Error(`TradingView Bollinger alert signal type is invalid: ${signal.type}`);
-  }
-  function readMarkerPoint(shape) {
-    const points = shape?.getPoints?.();
-    if (!Array.isArray(points) || points.length !== 1 || !Number.isInteger(points[0].time) || !Number.isFinite(points[0].price)) {
-      throw new Error("TradingView Bollinger alert marker point is invalid");
-    }
-    return points[0];
-  }
-  function markerPropertiesMatch(shape, options) {
-    const properties = shape.getProperties();
-    if (!properties || typeof properties !== "object") {
-      throw new Error("TradingView Bollinger alert marker properties are invalid");
-    }
-    if (options.icon !== void 0 && properties.icon !== options.icon) return false;
-    for (const [key, expected] of Object.entries(options.overrides)) {
-      if (key === "intervalsVisibilities") {
-        if (!properties[key] || Object.entries(expected).some(([unit, value]) => properties[key][unit] !== value)) return false;
-      } else if (properties[key] !== expected) return false;
-    }
-    return true;
-  }
   function normalizeSignal(signal, index, defaultDirection) {
     if (!signal || typeof signal !== "object") {
       throw new Error(`TradingView Bollinger alert signal ${index} is invalid`);
@@ -659,151 +615,62 @@
     }
     return signal.direction === direction ? signal : { ...signal, direction };
   }
-  function createMarkerLayer(target, defaultDirection, {
-    canMutate: canMutateExternally = () => true,
-    onSaveError,
-    yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0))
-  } = {}) {
-    const { chart } = target;
-    const saveController = installTradingViewMarkerSaveController(target.tradingViewApi, { onError: onSaveError });
-    const canMutate = () => canMutateExternally() && saveController.canMutate();
-    const registry = /* @__PURE__ */ new Map();
-    const pendingMarkers = /* @__PURE__ */ new Set();
-    let generation = 0;
-    let creating = 0;
-    function mutate(action) {
-      const finish = saveController.beginMutation();
-      try {
-        return action();
-      } finally {
-        finish();
-      }
-    }
-    function removePendingMarkers() {
-      if (pendingMarkers.size === 0 || !canMutate()) return;
-      const liveShapeIds = readLiveShapes(chart);
-      for (const id of pendingMarkers) {
-        if (liveShapeIds.has(id)) mutate(() => chart.removeEntity(id));
-        pendingMarkers.delete(id);
-      }
-    }
-    function discardMissingSignals(liveShapeIds) {
-      for (const [signalId, record] of registry) {
-        if (!liveShapeIds.has(record.markerId)) registry.delete(signalId);
-      }
-    }
-    function removeSignal(signalId, liveShapeIds) {
-      const record = registry.get(signalId);
-      if (!record) return;
-      if (liveShapeIds.has(record.markerId)) {
-        mutate(() => chart.removeEntity(record.markerId));
-        liveShapeIds.delete(record.markerId);
-      }
-      registry.delete(signalId);
-    }
+  function createMarkerLayer(target, defaultDirection, options) {
+    const overlay = createChartMarkerOverlay(target, { ...options, maxMarkers: MAX_BOLLINGER_MARKERS });
     return Object.freeze({
-      async render(signals, { isCurrent }) {
-        if (!Array.isArray(signals)) throw new Error("TradingView Bollinger alert signals are invalid");
-        if (signals.length > MAX_BOLLINGER_MARKERS) {
-          throw new Error(
-            `TradingView Bollinger alert marker limit exceeded: ${signals.length}`
-          );
-        }
-        if (typeof isCurrent !== "function") {
-          throw new Error("TradingView Bollinger alert current-target validator is unavailable");
-        }
-        const normalizedSignals = signals.map((signal, index) => normalizeSignal(signal, index, defaultDirection));
-        const directionCounts = { bearish: 0, bullish: 0 };
-        for (const signal of normalizedSignals) {
-          directionCounts[signal.direction] += 1;
-          if (directionCounts[signal.direction] > MAX_BOLLINGER_MARKERS_PER_DIRECTION) {
-            throw new Error(
-              `TradingView Bollinger alert ${signal.direction} marker limit exceeded: ` + directionCounts[signal.direction]
-            );
+      async render(nextSignals, { isCurrent }) {
+        try {
+          if (!Array.isArray(nextSignals)) throw new Error("TradingView Bollinger alert signals are invalid");
+          if (nextSignals.length > MAX_BOLLINGER_MARKERS) {
+            throw new Error(`TradingView Bollinger alert marker limit exceeded: ${nextSignals.length}`);
           }
-        }
-        const requestedGeneration = generation;
-        if (!isCurrent() || !canMutate()) return false;
-        removePendingMarkers();
-        let liveShapeIds = readLiveShapes(chart);
-        discardMissingSignals(liveShapeIds);
-        const nextIds = new Set(normalizedSignals.map((signal) => signal.id));
-        for (const signalId of [...registry.keys()]) {
-          if (!nextIds.has(signalId)) removeSignal(signalId, liveShapeIds);
-        }
-        let batchStartedAt = performance.now();
-        let batchOps = 0;
-        for (const signal of normalizedSignals) {
-          if (batchOps > 0 && (batchOps >= 32 || performance.now() - batchStartedAt >= 8)) {
-            await yieldToBrowser();
-            if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
-            liveShapeIds = readLiveShapes(chart);
-            discardMissingSignals(liveShapeIds);
-            batchStartedAt = performance.now();
-            batchOps = 0;
+          if (typeof isCurrent !== "function") {
+            throw new Error("TradingView Bollinger alert current-target validator is unavailable");
           }
-          if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
-          batchOps += 1;
-          const options = markerOptions(signal, target.resolution);
-          const existing = registry.get(signal.id);
-          if (existing) {
-            const shape = chart.getShapeById(existing.markerId);
-            const point = readMarkerPoint(shape);
-            if (point.time === signal.time && point.price === existing.resolvedPrice && existing.markerPrice === signal.markerPrice && existing.type === signal.type && existing.direction === signal.direction && liveShapeIds.get(existing.markerId) === options.shape && markerPropertiesMatch(shape, options)) continue;
-            removeSignal(signal.id, liveShapeIds);
+          const normalized = nextSignals.map((signal, index) => normalizeSignal(signal, index, defaultDirection));
+          const counts = { bearish: 0, bullish: 0 }, ids = /* @__PURE__ */ new Set();
+          for (const signal of normalized) {
+            if (!Number.isInteger(signal.time) || !Number.isFinite(signal.markerPrice)) {
+              throw new Error("TradingView Bollinger alert signal point is invalid");
+            }
+            if (!["warning", "confirmed", "reversal"].includes(signal.type)) {
+              throw new Error(`TradingView Bollinger alert signal type is invalid: ${signal.type}`);
+            }
+            if (ids.has(signal.id)) throw new Error(`TradingView Bollinger alert duplicate signal id: ${signal.id}`);
+            ids.add(signal.id);
+            counts[signal.direction] += 1;
+            if (counts[signal.direction] > MAX_BOLLINGER_MARKERS_PER_DIRECTION) {
+              throw new Error(`TradingView Bollinger alert ${signal.direction} marker limit exceeded: ${counts[signal.direction]}`);
+            }
           }
-          const finishCreation = saveController.beginMutation();
-          creating += 1;
-          try {
-            const markerId = await chart.createShape({ time: signal.time, price: signal.markerPrice }, {
-              ...options,
-              overrides: { ...options.overrides, visible: false }
-            });
-            if (typeof markerId !== "string" || markerId.length === 0) {
-              throw new Error("TradingView returned an invalid Bollinger alert shape id");
-            }
-            pendingMarkers.add(markerId);
-            if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
-            const shape = chart.getShapeById(markerId);
-            const point = readMarkerPoint(shape);
-            if (point.time !== signal.time) {
-              throw new Error(`TradingView Bollinger alert time alignment failed: expected ${signal.time}, received ${point.time}`);
-            }
-            if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
-            mutate(() => shape.setProperties(options.overrides, false));
-            if (!markerPropertiesMatch(shape, options)) {
-              throw new Error("TradingView Bollinger alert marker properties were not applied");
-            }
-            registry.set(signal.id, {
-              markerId,
-              resolvedPrice: point.price,
-              markerPrice: signal.markerPrice,
+          const markers = normalized.map((signal) => {
+            const bullish = signal.direction === "bullish";
+            const up = signal.type === "reversal" ? !bullish : bullish;
+            const circle = signal.type === "warning";
+            return {
+              id: signal.id,
+              time: signal.time,
+              price: signal.markerPrice,
+              shape: circle ? "circle" : up ? "arrow_up" : "arrow_down",
+              color: (circle ? bullish : up) ? "#0ECB81" : "#F6465D",
+              size: circle ? 10 : 18,
+              anchor: circle ? "center" : "tip",
               type: signal.type,
               direction: signal.direction
-            });
-            pendingMarkers.delete(markerId);
-          } finally {
-            finishCreation();
-            creating -= 1;
-            removePendingMarkers();
-          }
+            };
+          });
+          return overlay.render(markers, { isCurrent });
+        } catch (error) {
+          overlay.clear();
+          throw error;
         }
-        return true;
       },
-      clear() {
-        generation += 1;
-        if (!canMutate()) return false;
-        removePendingMarkers();
-        const liveShapeIds = readLiveShapes(chart);
-        discardMissingSignals(liveShapeIds);
-        for (const signalId of [...registry.keys()]) removeSignal(signalId, liveShapeIds);
-        return creating === 0 && pendingMarkers.size === 0;
-      },
+      clear: overlay.clear,
       get size() {
-        return registry.size;
+        return overlay.size;
       },
-      get saveStats() {
-        return saveController.getStats();
+      get overlayStats() {
+        return overlay.overlayStats;
       }
     });
   }
@@ -865,6 +732,7 @@
     }
     function retire() {
       if (context) {
+        context.layer.clear();
         retired.add(context.layer);
         context = null;
       }
@@ -876,12 +744,11 @@
       intervalOwner = null;
     }
     function cleanup() {
-      if (isChartMutationBlocked(view)) return;
       for (const layer of retired) if (layer.clear()) retired.delete(layer);
       if ((disposed || failed) && retired.size === 0) view.clearInterval(timer);
     }
     function current(candidate) {
-      return !disposed && !document.hidden && context === candidate && candidate.session.isCurrent(candidate.revision) && parseFuturesTradingSymbolFromPathname(view.location.pathname) === candidate.target.routeSymbol && isBearishBollingerChartTargetCurrent(document, candidate.target) && !isChartMutationBlocked(view);
+      return !disposed && !failed && !document.hidden && context === candidate && candidate.session.isCurrent(candidate.revision) && parseFuturesTradingSymbolFromPathname(view.location.pathname) === candidate.target.routeSymbol && isBearishBollingerChartTargetCurrent(document, candidate.target) && !isChartMutationBlocked(view);
     }
     async function sample() {
       cleanup();
@@ -937,7 +804,10 @@
           target,
           session,
           revision: session.revision,
-          layer: createBollingerMarkerLayer(target, { canMutate: () => !isChartMutationBlocked(view) })
+          layer: createBollingerMarkerLayer(target, {
+            canMutate: () => !isChartMutationBlocked(view),
+            onRenderError: stopAfterFailure
+          })
         };
       }
       const candidate = context;
@@ -980,13 +850,14 @@
         if (inflight === controller) inflight = null;
       }
     }
+    function stopAfterFailure() {
+      failed = true;
+      releaseChart();
+      cleanup();
+      if (!disposed) notice("Strategy31 stopped: invalid chart or signal data");
+    }
     function tick() {
-      return sample().catch(() => {
-        failed = true;
-        releaseChart();
-        cleanup();
-        if (!disposed) notice("Strategy31 stopped: invalid chart or signal data");
-      });
+      return sample().catch(stopAfterFailure);
     }
     function visibility() {
       if (document.hidden) retire();

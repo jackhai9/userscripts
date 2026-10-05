@@ -1,5 +1,5 @@
+import { createChartMarkerOverlay } from '../../shared/chart-marker-overlay.js';
 import { findBinanceTradingViewTarget } from '../../shared/tradingview-target.js';
-import { installTradingViewMarkerSaveController } from '../../shared/chart-marker-save-controller.js';
 import {
   TradingViewBarSnapshotInconsistentError,
 } from '../core/bearish-bollinger-pattern.js';
@@ -14,15 +14,11 @@ function routeSymbolFromChartSymbol(value) {
 
 function assertChartContract(chart) {
   for (const method of [
-    'createShape',
     'dataReady',
     'exportData',
-    'getAllShapes',
-    'getShapeById',
     'hasModel',
     'onDataLoaded',
     'onIntervalChanged',
-    'removeEntity',
     'resolution',
     'symbol',
   ]) {
@@ -30,21 +26,6 @@ function assertChartContract(chart) {
       throw new Error(`TradingView Bollinger alert method is unavailable: ${method}`);
     }
   }
-}
-
-function readLiveShapes(chart) {
-  const shapes = chart.getAllShapes();
-  if (!Array.isArray(shapes)) {
-    throw new Error('TradingView Bollinger alert shape list is invalid');
-  }
-  const ids = new Map();
-  for (const [index, shape] of shapes.entries()) {
-    if (typeof shape?.id !== 'string' || shape.id.length === 0 || typeof shape.name !== 'string') {
-      throw new Error(`TradingView Bollinger alert shape ${index} id is invalid`);
-    }
-    ids.set(shape.id, shape.name);
-  }
-  return ids;
 }
 
 export function tradingViewResolutionToSeconds(resolution) {
@@ -63,28 +44,6 @@ export function tradingViewResolutionToSeconds(resolution) {
     if (Number.isSafeInteger(count) && count > 0) return count * seconds;
   }
   throw new Error(`TradingView Bollinger alert resolution is unsupported: ${resolution}`);
-}
-
-/** Native drawings must stay hidden outside their originating interval, including while saves defer removal. */
-export function bollingerIntervalVisibility(resolution) {
-  const seconds = tradingViewResolutionToSeconds(resolution);
-  const value = String(resolution).toUpperCase();
-  const visibility = {
-    ticks: false, seconds: false, minutes: false, hours: false,
-    days: false, weeks: false, months: false, ranges: false,
-  };
-  let unit;
-  let count;
-  if (value.endsWith('W')) { unit = 'weeks'; count = seconds / 604800; }
-  else if (value.endsWith('D')) { unit = 'days'; count = seconds / 86400; }
-  else if (seconds < 60) { unit = 'seconds'; count = seconds; }
-  else if (value.endsWith('S') || seconds < 3600) { unit = 'minutes'; count = Math.floor(seconds / 60); }
-  else { unit = 'hours'; count = Math.floor(seconds / 3600); }
-  // TradingView groups 60+ minute intervals into integer-hour visibility buckets.
-  visibility[unit] = true;
-  visibility[`${unit}From`] = count;
-  visibility[`${unit}To`] = count;
-  return visibility;
 }
 
 /**
@@ -365,81 +324,6 @@ export async function exportClosedTradingViewBars(target, session, observedAtMs 
   });
 }
 
-function markerOptions(signal, resolution) {
-  const direction = signal.direction;
-  if (direction !== 'bearish' && direction !== 'bullish') {
-    throw new Error(`TradingView Bollinger alert signal direction is invalid: ${direction}`);
-  }
-  const isBullish = direction === 'bullish';
-  const common = {
-    lock: true,
-    disableSave: true,
-    disableSelection: true,
-    disableUndo: true,
-    showInObjectsTree: false,
-  };
-  if (signal.type === 'warning') {
-    return {
-      ...common,
-      shape: 'icon',
-      icon: 0xf111,
-      overrides: {
-        visible: true,
-        intervalsVisibilities: bollingerIntervalVisibility(resolution),
-        color: isBullish ? '#0ECB81' : '#F6465D',
-        size: 10,
-      },
-    };
-  }
-  if (signal.type === 'confirmed') {
-    return {
-      ...common,
-      shape: isBullish ? 'arrow_up' : 'arrow_down',
-      overrides: {
-        visible: true,
-        intervalsVisibilities: bollingerIntervalVisibility(resolution),
-        color: isBullish ? '#0ECB81' : '#F6465D',
-        arrowColor: isBullish ? '#0ECB81' : '#F6465D',
-      },
-    };
-  }
-  if (signal.type === 'reversal') {
-    return {
-      ...common,
-      shape: isBullish ? 'arrow_down' : 'arrow_up',
-      overrides: {
-        visible: true,
-        intervalsVisibilities: bollingerIntervalVisibility(resolution),
-        color: isBullish ? '#F6465D' : '#0ECB81',
-        arrowColor: isBullish ? '#F6465D' : '#0ECB81',
-      },
-    };
-  }
-  throw new Error(`TradingView Bollinger alert signal type is invalid: ${signal.type}`);
-}
-
-function readMarkerPoint(shape) {
-  const points = shape?.getPoints?.();
-  if (!Array.isArray(points) || points.length !== 1 || !Number.isInteger(points[0].time) || !Number.isFinite(points[0].price)) {
-    throw new Error('TradingView Bollinger alert marker point is invalid');
-  }
-  return points[0];
-}
-
-function markerPropertiesMatch(shape, options) {
-  const properties = shape.getProperties();
-  if (!properties || typeof properties !== 'object') {
-    throw new Error('TradingView Bollinger alert marker properties are invalid');
-  }
-  if (options.icon !== undefined && properties.icon !== options.icon) return false;
-  for (const [key, expected] of Object.entries(options.overrides)) {
-    if (key === 'intervalsVisibilities') {
-      if (!properties[key] || Object.entries(expected).some(([unit, value]) => properties[key][unit] !== value)) return false;
-    } else if (properties[key] !== expected) return false;
-  }
-  return true;
-}
-
 function normalizeSignal(signal, index, defaultDirection) {
   if (!signal || typeof signal !== 'object') {
     throw new Error(`TradingView Bollinger alert signal ${index} is invalid`);
@@ -454,165 +338,51 @@ function normalizeSignal(signal, index, defaultDirection) {
   return signal.direction === direction ? signal : { ...signal, direction };
 }
 
-function createMarkerLayer(target, defaultDirection, {
-  canMutate: canMutateExternally = () => true,
-  onSaveError,
-  yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0)),
-} = {}) {
-  const { chart } = target;
-  const saveController = installTradingViewMarkerSaveController(target.tradingViewApi, { onError: onSaveError });
-  const canMutate = () => canMutateExternally() && saveController.canMutate();
-  const registry = new Map();
-  const pendingMarkers = new Set();
-  let generation = 0;
-  let creating = 0;
-
-  function mutate(action) {
-    const finish = saveController.beginMutation();
-    try { return action(); } finally { finish(); }
-  }
-
-  function removePendingMarkers() {
-    if (pendingMarkers.size === 0 || !canMutate()) return;
-    const liveShapeIds = readLiveShapes(chart);
-    for (const id of pendingMarkers) {
-      if (liveShapeIds.has(id)) mutate(() => chart.removeEntity(id));
-      pendingMarkers.delete(id);
-    }
-  }
-
-  function discardMissingSignals(liveShapeIds) {
-    for (const [signalId, record] of registry) {
-      if (!liveShapeIds.has(record.markerId)) registry.delete(signalId);
-    }
-  }
-
-  function removeSignal(signalId, liveShapeIds) {
-    const record = registry.get(signalId);
-    if (!record) return;
-    if (liveShapeIds.has(record.markerId)) {
-      mutate(() => chart.removeEntity(record.markerId));
-      liveShapeIds.delete(record.markerId);
-    }
-    registry.delete(signalId);
-  }
-
+/** Map strategy output onto the shared read-only chart presentation contract. */
+function createMarkerLayer(target, defaultDirection, options) {
+  const overlay = createChartMarkerOverlay(target, { ...options, maxMarkers: MAX_BOLLINGER_MARKERS });
   return Object.freeze({
-    async render(signals, { isCurrent }) {
-      if (!Array.isArray(signals)) throw new Error('TradingView Bollinger alert signals are invalid');
-      if (signals.length > MAX_BOLLINGER_MARKERS) {
-        throw new Error(
-          `TradingView Bollinger alert marker limit exceeded: ${signals.length}`,
-        );
-      }
-      if (typeof isCurrent !== 'function') {
-        throw new Error('TradingView Bollinger alert current-target validator is unavailable');
-      }
-      const normalizedSignals = signals.map((signal, index) => (
-        normalizeSignal(signal, index, defaultDirection)
-      ));
-      const directionCounts = { bearish: 0, bullish: 0 };
-      for (const signal of normalizedSignals) {
-        directionCounts[signal.direction] += 1;
-        if (directionCounts[signal.direction] > MAX_BOLLINGER_MARKERS_PER_DIRECTION) {
-          throw new Error(
-            `TradingView Bollinger alert ${signal.direction} marker limit exceeded: `
-            + directionCounts[signal.direction],
-          );
+    async render(nextSignals, { isCurrent }) {
+      try {
+        if (!Array.isArray(nextSignals)) throw new Error('TradingView Bollinger alert signals are invalid');
+        if (nextSignals.length > MAX_BOLLINGER_MARKERS) {
+          throw new Error(`TradingView Bollinger alert marker limit exceeded: ${nextSignals.length}`);
         }
-      }
-      const requestedGeneration = generation;
-      if (!isCurrent() || !canMutate()) return false;
-      removePendingMarkers();
-      let liveShapeIds = readLiveShapes(chart);
-      discardMissingSignals(liveShapeIds);
-      const nextIds = new Set(normalizedSignals.map((signal) => signal.id));
-      for (const signalId of [...registry.keys()]) {
-        if (!nextIds.has(signalId)) removeSignal(signalId, liveShapeIds);
-      }
-      let batchStartedAt = performance.now();
-      let batchOps = 0;
-      for (const signal of normalizedSignals) {
-        // Awaiting native shape creation may resolve as a microtask. Explicitly
-        // yield large audits/rebuilds so input and paint can run between batches.
-        if (batchOps > 0 && (batchOps >= 32 || performance.now() - batchStartedAt >= 8)) {
-          await yieldToBrowser();
-          if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
-          liveShapeIds = readLiveShapes(chart);
-          discardMissingSignals(liveShapeIds);
-          batchStartedAt = performance.now();
-          batchOps = 0;
+        if (typeof isCurrent !== 'function') {
+          throw new Error('TradingView Bollinger alert current-target validator is unavailable');
         }
-        if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
-        batchOps += 1;
-        const options = markerOptions(signal, target.resolution);
-        const existing = registry.get(signal.id);
-        if (existing) {
-          const shape = chart.getShapeById(existing.markerId);
-          const point = readMarkerPoint(shape);
-          if (
-            point.time === signal.time && point.price === existing.resolvedPrice
-            && existing.markerPrice === signal.markerPrice
-            && existing.type === signal.type && existing.direction === signal.direction
-            && liveShapeIds.get(existing.markerId) === options.shape
-            && markerPropertiesMatch(shape, options)
-          ) continue;
-          removeSignal(signal.id, liveShapeIds);
-        }
-        const finishCreation = saveController.beginMutation();
-        creating += 1;
-        try {
-          // Native creation enables the interval active after its async loader.
-          // Keep pending drawings hidden until the originating session can publish.
-          const markerId = await chart.createShape({ time: signal.time, price: signal.markerPrice }, {
-            ...options,
-            overrides: { ...options.overrides, visible: false },
-          });
-          if (typeof markerId !== 'string' || markerId.length === 0) {
-            throw new Error('TradingView returned an invalid Bollinger alert shape id');
+        const normalized = nextSignals.map((signal, index) => normalizeSignal(signal, index, defaultDirection));
+        const counts = { bearish: 0, bullish: 0 }, ids = new Set();
+        for (const signal of normalized) {
+          if (!Number.isInteger(signal.time) || !Number.isFinite(signal.markerPrice)) {
+            throw new Error('TradingView Bollinger alert signal point is invalid');
           }
-          // Own the result before checking the epoch. Late results may need to wait
-          // for a trade/save owner, and must never become untracked foreign drawings.
-          pendingMarkers.add(markerId);
-          if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
-          const shape = chart.getShapeById(markerId);
-          const point = readMarkerPoint(shape);
-          if (point.time !== signal.time) {
-            throw new Error(`TradingView Bollinger alert time alignment failed: expected ${signal.time}, received ${point.time}`);
+          if (!['warning', 'confirmed', 'reversal'].includes(signal.type)) {
+            throw new Error(`TradingView Bollinger alert signal type is invalid: ${signal.type}`);
           }
-          if (requestedGeneration !== generation || !isCurrent() || !canMutate()) return false;
-          mutate(() => shape.setProperties(options.overrides, false));
-          if (!markerPropertiesMatch(shape, options)) {
-            throw new Error('TradingView Bollinger alert marker properties were not applied');
+          if (ids.has(signal.id)) throw new Error(`TradingView Bollinger alert duplicate signal id: ${signal.id}`);
+          ids.add(signal.id);
+          counts[signal.direction] += 1;
+          if (counts[signal.direction] > MAX_BOLLINGER_MARKERS_PER_DIRECTION) {
+            throw new Error(`TradingView Bollinger alert ${signal.direction} marker limit exceeded: ${counts[signal.direction]}`);
           }
-          registry.set(signal.id, {
-            markerId, resolvedPrice: point.price, markerPrice: signal.markerPrice,
-            type: signal.type, direction: signal.direction,
-          });
-          pendingMarkers.delete(markerId);
-        } finally {
-          finishCreation();
-          creating -= 1;
-          removePendingMarkers();
         }
-      }
-      return true;
+        const markers = normalized.map(signal => {
+          const bullish = signal.direction === 'bullish';
+          const up = signal.type === 'reversal' ? !bullish : bullish;
+          const circle = signal.type === 'warning';
+          return { id: signal.id, time: signal.time, price: signal.markerPrice,
+            shape: circle ? 'circle' : up ? 'arrow_up' : 'arrow_down',
+            color: (circle ? bullish : up) ? '#0ECB81' : '#F6465D',
+            size: circle ? 10 : 18, anchor: circle ? 'center' : 'tip',
+            type: signal.type, direction: signal.direction };
+        });
+        return overlay.render(markers, { isCurrent });
+      } catch (error) { overlay.clear(); throw error; }
     },
-    clear() {
-      generation += 1;
-      if (!canMutate()) return false;
-      removePendingMarkers();
-      const liveShapeIds = readLiveShapes(chart);
-      discardMissingSignals(liveShapeIds);
-      for (const signalId of [...registry.keys()]) removeSignal(signalId, liveShapeIds);
-      return creating === 0 && pendingMarkers.size === 0;
-    },
-    get size() {
-      return registry.size;
-    },
-    get saveStats() {
-      return saveController.getStats();
-    },
+    clear: overlay.clear,
+    get size() { return overlay.size; },
+    get overlayStats() { return overlay.overlayStats; },
   });
 }
 

@@ -13,8 +13,19 @@ async function eventsOfType(page, type) {
   return (await readFixtureState(page)).events.filter(event => event.type === type);
 }
 
-async function savedSnapshots(page) {
-  return (await eventsOfType(page, 'chart-saved')).map(({ snapshot }) => snapshot);
+async function serializedSnapshots(page) {
+  return (await eventsOfType(page, 'chart-serialized')).map(({ snapshot }) => snapshot);
+}
+
+async function expectAllSaveCallbacks(page) {
+  const requested = await eventsOfType(page, 'chart-save-requested');
+  const delivered = await eventsOfType(page, 'chart-saved');
+  expect(delivered.map(({ requestId }) => requestId)).toEqual(requested.map(({ requestId }) => requestId));
+  let serializedSnapshot = null;
+  for (const event of (await readFixtureState(page)).events) {
+    if (event.type === 'chart-serialized') serializedSnapshot = event.snapshot;
+    if (event.type === 'chart-saved') expect(event.snapshot).toEqual(serializedSnapshot);
+  }
 }
 
 async function saveMethodIsNative(nativeSave) {
@@ -81,11 +92,11 @@ async function openContinuousDrawingHost(page, {
   return { ...host, nativeSave };
 }
 
-test('user saves one complete chart per continuous round after every accepted order drawing settles', async ({ page }) => {
+test('user serializes once and delivers every save callback per continuous round', async ({ page }) => {
   // Given the first native request is pending in a three-order continuous close round.
   const host = await openContinuousDrawingHost(page);
   expect(await saveMethodIsNative(host.nativeSave)).toBe(true);
-  expect(await savedSnapshots(page)).toEqual([]);
+  expect(await serializedSnapshots(page)).toEqual([]);
 
   // When the first accepted order creates its native drawing and approaches the 120 ms quiet deadline.
   await releaseAcceptedDrawing(page, host, 1);
@@ -96,7 +107,7 @@ test('user saves one complete chart per continuous round after every accepted or
   expect((await eventsOfType(page, 'chart-save-requested')).map(({ snapshot }) => snapshot)).toEqual([
     { checked: true, drawingIds: ['order-submitted-1'] },
   ]);
-  expect(await savedSnapshots(page)).toEqual([]);
+  expect(await serializedSnapshots(page)).toEqual([]);
   await expect(page.locator(STATUS)).toHaveText('连续阶梯平空 · 第 1 笔确认中 · 0/1 轮 · 本轮 0/3 笔 · 累计 0 笔');
 
   // When the first two drawing bursts finish and the third native order is submitted.
@@ -108,7 +119,7 @@ test('user saves one complete chart per continuous round after every accepted or
   await advanceToSubmission(page, host, 3);
 
   // Then no partial full-chart save escaped before the round's final order.
-  expect(await savedSnapshots(page)).toEqual([]);
+  expect(await serializedSnapshots(page)).toEqual([]);
   expect((await eventsOfType(page, 'chart-save-requested')).map(({ snapshot }) => snapshot)).toEqual([
     { checked: true, drawingIds: ['order-submitted-1'] },
     { checked: true, drawingIds: ['order-submitted-1', 'order-submitted-2'] },
@@ -118,12 +129,12 @@ test('user saves one complete chart per continuous round after every accepted or
   // When the last order is accepted and its own quiet period completes.
   await releaseAcceptedDrawing(page, host, 3);
   await advanceFromDrawing(page, 'order-submitted-3', 'create', 119);
-  expect(await savedSnapshots(page)).toEqual([]);
+  expect(await serializedSnapshots(page)).toEqual([]);
   await page.clock.runFor(1);
 
-  // Then the round saves only its final three-drawing snapshot and restores the native save method.
+  // Then one serialization supplies the final three-drawing snapshot to every callback and restores the native save method.
   await expect(page.locator(STATUS)).toHaveText('连续阶梯平空 · 1s 后继续 · 1/1 轮 · 本轮 3/3 笔 · 累计 3 笔');
-  expect(await savedSnapshots(page)).toEqual([
+  expect(await serializedSnapshots(page)).toEqual([
     { checked: true, drawingIds: ['order-submitted-1', 'order-submitted-2', 'order-submitted-3'] },
   ]);
   expect(await eventsOfType(page, 'chart-save-requested')).toHaveLength(3);
@@ -133,11 +144,12 @@ test('user saves one complete chart per continuous round after every accepted or
   await page.getByRole('button', { name: '停止平空', exact: true }).click();
   await page.clock.runFor(5_000);
 
-  // Then the same saved snapshot remains final and no fourth order can begin.
+  // Then all three callbacks stay delivered without another serialization or a fourth order.
   await expect(page.locator(STATUS)).toContainText('已停止');
   expect(await eventsOfType(page, 'order-submitted')).toHaveLength(3);
-  expect(await eventsOfType(page, 'chart-saved')).toHaveLength(1);
+  expect(await eventsOfType(page, 'chart-saved')).toHaveLength(3);
   expect(await saveMethodIsNative(host.nativeSave)).toBe(true);
+  await expectAllSaveCallbacks(page);
   await host.nativeSave.dispose();
   expect(host.errors).toEqual([]);
 });
@@ -159,7 +171,7 @@ test('user stopping inside a drawing burst preserves the partial round and resto
   await advanceFromDrawing(page, 'order-submitted-2', 'create', 119);
 
   // Then Stop has not discarded the pending snapshot or falsely advanced the last confirmation.
-  expect(await savedSnapshots(page)).toEqual([]);
+  expect(await serializedSnapshots(page)).toEqual([]);
   expect(await saveMethodIsNative(host.nativeSave)).toBe(false);
   await expect(page.locator(STATUS)).toContainText('停止中');
   await expect(page.locator(STATUS)).toContainText('本轮 1/3 笔 · 累计 1 笔');
@@ -167,9 +179,9 @@ test('user stopping inside a drawing burst preserves the partial round and resto
   // When the final millisecond completes the active drawing burst and stopped-round cleanup.
   await page.clock.runFor(1);
 
-  // Then exactly the confirmed partial round is persisted and the native save function is restored.
+  // Then the confirmed partial round is serialized once and the native save function is restored.
   await expect(page.locator(STATUS)).toHaveText('连续阶梯平空 · 已停止 · 0/1 轮 · 本轮 2/3 笔 · 累计 2 笔');
-  expect(await savedSnapshots(page)).toEqual([
+  expect(await serializedSnapshots(page)).toEqual([
     { checked: true, drawingIds: ['order-original-1', 'order-original-2', 'order-submitted-1', 'order-submitted-2'] },
   ]);
   expect(await saveMethodIsNative(host.nativeSave)).toBe(true);
@@ -180,14 +192,15 @@ test('user stopping inside a drawing burst preserves the partial round and resto
   await advanceFromDrawing(page, 'order-original-1', 'remove', 100);
 
   // Then its native save runs at 100 ms without a leaked continuous listener retaining it until 120 ms.
-  expect(await savedSnapshots(page)).toEqual([
+  expect(await serializedSnapshots(page)).toEqual([
     { checked: true, drawingIds: ['order-original-1', 'order-original-2', 'order-submitted-1', 'order-submitted-2'] },
     { checked: true, drawingIds: ['order-original-2', 'order-submitted-1', 'order-submitted-2'] },
   ]);
   expect(await saveMethodIsNative(host.nativeSave)).toBe(true);
   await page.clock.runFor(5_000);
   expect(await eventsOfType(page, 'order-submitted')).toHaveLength(2);
-  expect(await eventsOfType(page, 'chart-saved')).toHaveLength(2);
+  expect(await eventsOfType(page, 'chart-saved')).toHaveLength(3);
+  await expectAllSaveCallbacks(page);
   await host.nativeSave.dispose();
   expect(host.errors).toEqual([]);
 });
@@ -201,7 +214,7 @@ test('user retains the last accepted chart snapshot when a later order ends the 
   await releaseAcceptedDrawing(page, host, 1);
   await advanceFromDrawing(page, 'order-submitted-1', 'create', 120);
   await advanceToSubmission(page, host, 2);
-  expect(await savedSnapshots(page)).toEqual([]);
+  expect(await serializedSnapshots(page)).toEqual([]);
 
   // When the rejection arrives and the unmatched drawing-discovery deadline completes.
   await host.releaseSubmitResponse(2);
@@ -212,7 +225,7 @@ test('user retains the last accepted chart snapshot when a later order ends the 
   await expect(page.locator(STATUS)).toContainText('失败');
   await expect(page.locator(STATUS)).toContainText('错误码 400123');
   await expect(page.locator(STATUS)).toContainText('本轮 1/3 笔 · 累计 1 笔');
-  expect(await savedSnapshots(page)).toEqual([{ checked: true, drawingIds: ['order-submitted-1'] }]);
+  expect(await serializedSnapshots(page)).toEqual([{ checked: true, drawingIds: ['order-submitted-1'] }]);
   expect((await eventsOfType(page, 'chart-drawing-event')).map(({ drawingId, eventType }) => ({ drawingId, eventType })))
     .toEqual([{ drawingId: 'order-submitted-1', eventType: 'create' }]);
   expect(await saveMethodIsNative(host.nativeSave)).toBe(true);
@@ -230,11 +243,12 @@ test('user retains the last accepted chart snapshot when a later order ends the 
   // Then neither a duplicate snapshot nor a third order is created.
   expect(await eventsOfType(page, 'chart-saved')).toHaveLength(1);
   expect(await eventsOfType(page, 'order-submitted')).toHaveLength(2);
+  await expectAllSaveCallbacks(page);
   await host.nativeSave.dispose();
   expect(host.errors).toEqual([]);
 });
 
-test('user coalesces native order-removal saves while a continuous submit is pending', async ({ page }) => {
+test('user shares one native serialization across removal callbacks while a continuous submit is pending', async ({ page }) => {
   // Given the first submit remains unanswered while two original native orders are visible.
   const host = await openContinuousDrawingHost(page, { orders: EXISTING_ORDERS });
 
@@ -252,24 +266,25 @@ test('user coalesces native order-removal saves while a continuous submit is pen
       { drawingId: 'order-original-2', eventType: 'remove' },
     ]);
   expect(await eventsOfType(page, 'chart-save-requested')).toHaveLength(2);
-  expect(await savedSnapshots(page)).toEqual([]);
+  expect(await serializedSnapshots(page)).toEqual([]);
   expect(await saveMethodIsNative(host.nativeSave)).toBe(false);
 
   // When the final removal settles and the user stops the still pending submit.
   await page.clock.runFor(1);
-  expect(await savedSnapshots(page)).toEqual([{ checked: true, drawingIds: [] }]);
+  expect(await serializedSnapshots(page)).toEqual([{ checked: true, drawingIds: [] }]);
   await page.getByRole('button', { name: '停止平空', exact: true }).click();
   await page.clock.runFor(300);
   await host.releaseSubmitResponse(1, { outcome: 'rejected', code: '400123', message: 'Account restricted' });
   await expect.poll(async () => (await eventsOfType(page, 'order-submit-api-rejected')).length).toBe(1);
   await page.clock.runFor(5_000);
 
-  // Then the final empty chart was saved once and stopped cleanup leaves the native method intact.
+  // Then both removal callbacks share the empty serialization and cleanup leaves the native method intact.
   await expect(page.locator(STATUS)).toContainText('已停止');
-  expect(await savedSnapshots(page)).toEqual([{ checked: true, drawingIds: [] }]);
+  expect(await serializedSnapshots(page)).toEqual([{ checked: true, drawingIds: [] }]);
   expect(await saveMethodIsNative(host.nativeSave)).toBe(true);
   expect(await eventsOfType(page, 'order-submitted')).toHaveLength(1);
   expect((await readFixtureState(page)).orders).toEqual([]);
+  await expectAllSaveCallbacks(page);
   await host.nativeSave.dispose();
   expect(host.errors).toEqual([]);
 });

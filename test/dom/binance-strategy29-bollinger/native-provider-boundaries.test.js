@@ -176,29 +176,23 @@ for (const [label, options, change, expected] of [
   });
 }
 
-for (const [label, list, expected] of [
-  ['non-array shape list', null, 'TradingView Bollinger alert shape list is invalid'],
-  ['nonnative shape identifier', [{ id: 7, name: 'icon' }], 'TradingView Bollinger alert shape 0 id is invalid'],
-]) {
-  test(`user stops marker publication after a native ${label} and keeps unrelated drawings`, async (t) => {
-    // Given real signal candles and a malformed list supplied by the native chart API.
-    const fixture = monitorFixture(t);
-    fixture.host.addForeignShape('user-line');
-    fixture.host.listShapesNext(list);
+test('user renders overlay signals without consulting or mutating foreign native drawings', async (t) => {
+  // Given a host whose native drawing list is unavailable but candle projection is healthy.
+  const fixture = monitorFixture(t);
+  fixture.host.addForeignShape('user-line');
+  fixture.host.listShapesNext(null);
 
-    // When the real detector completes and the marker layer audits native ownership.
-    await sample(fixture);
+  // When the monitor renders signals from native candle data.
+  await sample(fixture);
 
-    // Then the render contract failure is retained without creating or deleting any drawing.
-    assert.equal(fixture.monitor.diagnostics.failed, true);
-    assert.equal(fixture.monitor.diagnostics.lastLocalFailure.stage, 'render');
-    assert.equal(fixture.monitor.diagnostics.lastLocalFailure.message, expected);
-    assert.equal(fixture.monitor.diagnostics.cachedSignalCount, null);
-    assert.deepEqual(fixture.host.created, []);
-    assert.deepEqual(fixture.host.removed, []);
-    assert.deepEqual(fixture.host.chart.getAllShapes(), [{ id: 'user-line', name: 'trend_line' }]);
-  });
-}
+  // Then SVG signals render and native drawing ownership is never consulted or changed.
+  assert.equal(fixture.monitor.diagnostics.failed, false);
+  assert.equal(fixture.host.overlay.markers().length, 5);
+  assert.deepEqual(fixture.host.created, []);
+  assert.deepEqual(fixture.host.removed, []);
+  assert.equal(fixture.host.chart.getAllShapes(), null);
+  assert.deepEqual(fixture.host.chart.getAllShapes(), [{ id: 'user-line', name: 'trend_line' }]);
+});
 
 test('user rejects an unavailable interval subscription without attaching half a readiness session', (t) => {
   // Given a native chart that has not exposed its interval subscription interface.

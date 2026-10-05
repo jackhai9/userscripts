@@ -1,219 +1,106 @@
 import { createStrategy27Translator } from '../core/ui-copy.js';
-import { createAlignedShape, createTradingViewMarkerPlacement, pinMarkerChartContext, readLiveShapeIds } from './tradingview-event-layer.js';
+import { createChartMarkerOverlay } from '../../shared/chart-marker-overlay.js';
+import { createTradingViewMarkerPlacement, pinMarkerChartContext } from './tradingview-event-layer.js';
 
 const ICON_SIZE_PX = 36;
 const CANDLE_GAP_PX = 8;
 const SLOT_STEP_PX = 64;
-const ICONS = Object.freeze({ arrow_down: 0xf063, arrow_up: 0xf062 });
 
-function drawingOptions(color) {
-  return {
-    lock: true, disableSave: true, disableSelection: true,
-    disableUndo: true, showInObjectsTree: false,
-    overrides: { color },
-  };
-}
-
-/** Two native entities per candidate; ordinary/user entity IDs never enter here.
- *
- * Native icon arrows support an explicit size and a centered anchor, unlike
- * fixed-size arrow marks or font-dependent text glyphs. Slots belong to the
- * resolved candle/side, not the decision timestamp: no-trade seconds can share
- * a prior candle. Eviction frees a slot without repositioning any survivor.
+/**
+ * Each immutable candidate owns one SVG arrow and label. Slots belong to its
+ * resolved candle/side; eviction frees a slot without moving surviving records.
+ * Pixel gaps are converted to prices once, preserving the existing placement contract.
  */
-export function createTradingViewCompoundLayer(target, { maxCandidates, candleWaitMs = 3000, locale = 'zh-CN' }) {
+export function createTradingViewCompoundLayer(target, {
+  maxCandidates, candleWaitMs = 3000, locale = 'zh-CN', onRenderError,
+}) {
   if (!Number.isSafeInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 80) throw new Error('Compound chart capacity must be 1..80');
   let t = createStrategy27Translator(locale);
-  const markerLabel = (shape) => shape === 'arrow_down' ? t('候选高', 'High candidate') : t('候选低', 'Low candidate');
-  const { chart } = target;
-  const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
-  const isChartCurrent = pinMarkerChartContext(chart);
+  const markerLabel = shape => shape === 'arrow_down' ? t('候选高', 'High candidate') : t('候选低', 'Low candidate');
+  const placement = createTradingViewMarkerPlacement(target.chart, { candleWaitMs });
+  const isChartCurrent = pinMarkerChartContext(target.chart);
   const records = new Map();
   let pending = null;
-  let reconciliation = null;
   let suspended = false;
+  const overlay = createChartMarkerOverlay(target, {
+    maxMarkers: maxCandidates * 2,
+    onRenderError(error) {
+      suspend();
+      if (onRenderError) onRenderError(error);
+      else throw error;
+    },
+  });
+  const markers = () => [...records.values()].flatMap(record => record.markers);
 
-  function dispose(recordsToRemove) {
-    const errors = [];
-    const liveIds = readLiveShapeIds(chart);
-    for (const record of recordsToRemove) {
-      // A thrown removal has an unknown outcome. Do not automatically retry it.
-      for (const id of record.ids.splice(0)) {
-        if (!liveIds.has(id)) continue;
-        try {
-          chart.removeEntity(id);
-        } catch (error) {
-          errors.push(error);
-        }
-      }
-    }
-    if (errors.length) throw new AggregateError(errors, `Compound chart cleanup failed: ${errors.map((error) => error.message).join('; ')}`);
-  }
-
-  async function createDrawing(point, options) {
-    const drawing = { ...options };
-    const entityId = await createAlignedShape(chart, point, drawing);
-    try {
-      const properties = chart.getShapeById(entityId).getProperties();
-      const matched = properties.color === drawing.overrides.color && (drawing.shape === 'icon'
-        ? properties.icon === drawing.icon && properties.size === ICON_SIZE_PX
-        : properties.text === drawing.text && properties.fontsize === 12);
-      if (!matched) throw new Error('Compound chart drawing properties did not match the requested icon/label');
-    } catch (error) {
-      try {
-        dispose([{ ids: [entityId] }]);
-      } catch (cleanupError) {
-        throw new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
-      }
-      throw error;
-    }
-    return entityId;
-  }
-
-  /** Retain slots and surviving parts; concurrent callers share one repair. */
-  function restoreCandidate(id, record, liveIds) {
-    if (record.restoring) return record.restoring;
-    const current = () => !suspended && records.get(id) === record && isChartCurrent();
-    if (!current()) return Promise.resolve(false);
-    if (record.ids.every((entityId) => liveIds.has(entityId))) return Promise.resolve(true);
-    record.restoring = (async () => {
-      for (let index = 0; index < record.drawings.length; index += 1) {
-        if (!current()) return false;
-        if (liveIds.has(record.ids[index])) continue;
-        const [point, drawing] = record.drawings[index];
-        const entityId = await createDrawing(point, drawing);
-        if (!current()) {
-          dispose([{ ids: [entityId] }]);
-          return false;
-        }
-        record.ids[index] = entityId;
-        if (drawing.shape === 'text') updateLabel(entityId, drawing, record.markerShape);
-        liveIds = readLiveShapeIds(chart);
-      }
-      return true;
-    })().finally(() => { record.restoring = null; });
-    return record.restoring;
-  }
-
-  function reconcile() {
-    if (suspended) return Promise.resolve();
-    if (reconciliation) return reconciliation;
-    reconciliation = (async () => {
-      let liveIds = readLiveShapeIds(chart);
-      for (const [id, record] of [...records]) {
-        if (suspended || records.get(id) !== record || !isChartCurrent()) continue;
-        if (!record.restoring && record.ids.every((entityId) => liveIds.has(entityId))) continue;
-        await restoreCandidate(id, record, liveIds);
-        liveIds = readLiveShapeIds(chart);
-      }
-    })().finally(() => { reconciliation = null; });
-    return reconciliation;
+  async function reconcile() {
+    if (!suspended) overlay.render(markers(), { isCurrent: isChartCurrent });
   }
 
   function remove(id) {
-    const removals = [];
-    if (pending?.id === id) {
-      pending.controller.abort();
-      removals.push(pending);
-    }
+    if (pending?.id === id) pending.controller.abort();
     const record = records.get(id);
-    if (record) {
-      records.delete(id);
-      removals.push(record);
-    }
-    dispose(removals);
+    if (!record) return;
+    records.delete(id);
+    overlay.remove(record.markers.map(marker => marker.id));
   }
 
   function clear() {
-    if (pending) pending.controller.abort();
-    const removals = [...records.values()];
+    pending?.controller.abort();
     records.clear();
-    if (pending) removals.push(pending);
-    dispose(removals);
+    overlay.clear();
   }
 
   async function renderCandidate(id, annotation, decisionAtMs) {
     if (suspended) return false;
-    const existing = records.get(id);
-    if (existing) return restoreCandidate(id, existing, readLiveShapeIds(chart));
+    if (records.has(id)) return overlay.render(markers(), { isCurrent: isChartCurrent });
     if (pending !== null) throw new Error('Compound chart rendering must be serial');
     if (records.size >= maxCandidates) throw new Error('Compound chart capacity exceeded before eviction');
     if (typeof id !== 'string' || id.length === 0 || !Number.isSafeInteger(decisionAtMs) || decisionAtMs < 1) throw new Error('Compound chart candidate identity/time is invalid');
-    const icon = ICONS[annotation.markerShape];
     const labels = annotation.markerShape === 'arrow_down' ? ['候选高', 'High candidate'] : ['候选低', 'Low candidate'];
-    if (icon === undefined || !labels.includes(annotation.markerLabel)) throw new Error('Compound chart direction/label is invalid');
-    const operation = { id, markerShape: annotation.markerShape, controller: new AbortController(), ids: [] };
+    if (!['arrow_down', 'arrow_up'].includes(annotation.markerShape) || !labels.includes(annotation.markerLabel)) throw new Error('Compound chart direction/label is invalid');
+    const operation = { id, controller: new AbortController() };
     pending = operation;
     try {
       const base = await placement.wait(annotation, {
         signal: operation.controller.signal, gapPx: CANDLE_GAP_PX + ICON_SIZE_PX / 2,
       });
-      if (!base || operation.controller.signal.aborted || !isChartCurrent()) return false;
+      if (!base || suspended || operation.controller.signal.aborted || !isChartCurrent()) return false;
       const group = `${base.time}/${annotation.markerShape}`;
-      const occupied = new Set([...records.values()].filter((record) => record.group === group).map((record) => record.slot));
+      const occupied = new Set([...records.values()].filter(record => record.group === group).map(record => record.slot));
       let slot = 0;
       while (occupied.has(slot)) slot += 1;
       const sign = annotation.markerShape === 'arrow_up' ? 1 : -1;
       const point = placement.shift(base, sign * slot * SLOT_STEP_PX);
       const labelPoint = placement.shift(point, sign > 0 ? 18 : -40);
-      const options = drawingOptions(annotation.markerColor);
-      const drawings = [
-        [point, { ...options, shape: 'icon', icon, overrides: { ...options.overrides, size: ICON_SIZE_PX } }],
-        [labelPoint, { ...options, shape: 'text', text: markerLabel(annotation.markerShape), overrides: { ...options.overrides, fontsize: 12, bold: true, fillBackground: false, drawBorder: false } }],
+      const style = { color: annotation.markerColor, direction: sign > 0 ? 'bullish' : 'bearish' };
+      const candidateMarkers = [
+        { ...style, id: `candidate:${id}:icon`, ...point, shape: annotation.markerShape,
+          size: ICON_SIZE_PX, anchor: 'center', type: 'compound-icon' },
+        { ...style, id: `candidate:${id}:label`, ...labelPoint, shape: 'text',
+          size: 12, anchor: 'top', type: 'compound-label', text: markerLabel(annotation.markerShape) },
       ];
-      operation.drawings = drawings;
-      for (const [drawingPoint, drawing] of drawings) {
-        const entityId = await createDrawing(drawingPoint, drawing);
-        operation.ids.push(entityId);
-        if (operation.controller.signal.aborted || !isChartCurrent()) {
-          dispose([operation]);
-          return false;
-        }
-        if (drawing.shape === 'text') updateLabel(entityId, drawing, annotation.markerShape);
-      }
-      records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, markerShape: annotation.markerShape, drawings, restoring: null });
+      if (!overlay.render([...markers(), ...candidateMarkers], { isCurrent: isChartCurrent })) return false;
+      records.set(id, { group, slot, decisionAtMs, markerShape: annotation.markerShape, markers: candidateMarkers });
       return true;
-    } catch (error) {
-      try {
-        dispose([operation]);
-      } catch (cleanupError) {
-        throw new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
-      }
-      throw error;
     } finally {
-      pending = null;
+      if (pending === operation) pending = null;
     }
   }
 
-  function updateLabel(entityId, drawing, shape) {
-    const text = markerLabel(shape);
-    drawing.text = text;
-    const entity = chart.getShapeById(entityId);
-    if (entity.getProperties().text !== text) {
-      entity.setProperties({ text }, false);
-      if (entity.getProperties().text !== text) throw new Error('Compound chart label did not match the selected language');
-    }
-  }
-
-  /** Update only owned text entities; preserve arrow IDs, slots and restoration ownership. */
+  /** Language changes update owned labels without moving immutable anchors or slots. */
   function setLocale(nextLocale) {
     t = createStrategy27Translator(nextLocale);
-    const liveIds = readLiveShapeIds(chart);
-    for (const record of [...records.values(), ...(pending ? [pending] : [])]) {
-      if (!record.drawings) continue;
-      const drawing = record.drawings[1][1];
-      drawing.text = markerLabel(record.markerShape);
-      if (liveIds.has(record.ids[1])) updateLabel(record.ids[1], drawing, record.markerShape);
+    for (const record of records.values()) {
+      const label = record.markers[1];
+      label.text = markerLabel(record.markerShape);
+      overlay.updateText(label.id, label.text);
     }
   }
 
-  /** Freeze verified pairs while cancelling unfinished presentation and repair. */
+  /** Freeze verified evidence while cancelling unfinished candle placement. */
   function suspend() {
     suspended = true;
-    if (pending) {
-      pending.controller.abort();
-      dispose([pending]);
-    }
+    pending?.controller.abort();
   }
 
   return Object.freeze({ setLocale, renderCandidate, reconcile, remove, clear, suspend, get size() { return records.size; } });

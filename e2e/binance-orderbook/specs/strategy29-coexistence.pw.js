@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { test, expect } from '../test.js';
 import { createCancelScenario, CURRENT_SYMBOL } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario } from '../helpers/userscript-page.js';
+import { installMarkerOverlayHost } from '../helpers/marker-overlay-host.js';
 
 const strategy29 = await readFile(new URL('../../../scripts/binance-strategy29-bollinger.user.js', import.meta.url), 'utf8');
 
@@ -22,6 +23,7 @@ for (const first of [true, false]) {
     const sandboxedStrategy29 = strategy29Sandbox(strategy29);
     const { errors } = await openUserscriptScenario(page, createCancelScenario(), first
       ? { beforeOrderbook: sandboxedStrategy29 } : { afterOrderbook: sandboxedStrategy29 });
+    await page.addScriptTag({ content: `window.installMarkerOverlayHost = ${installMarkerOverlayHost.toString()};` });
     // When the host exposes a ready chart with deterministic candles and drawing operations.
     await page.evaluate(symbol => {
       const api = document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi;
@@ -57,15 +59,16 @@ for (const first of [true, false]) {
       };
       api.activeChart = () => chart;
       api.saveChart = callback => callback({ drawings: ['foreign-channel'] });
+      window.installMarkerOverlayHost({ document: document.querySelector('.chart-widget-root iframe').contentDocument,
+        chart, rows: rows.map(row => [row[0], row[1], row[2], row[3], row[4]]) });
     }, CURRENT_SYMBOL);
     // Then Strategy29 draws nine markers and shares the existing orderbook coordination owner without embedding its detector.
     await expect.poll(() => page.evaluate(() => window.__TM_STRATEGY29_DEBUG__.diagnostics.layerSize)).toBe(9);
     expect(await page.evaluate(() => ({
       embedded: Object.hasOwn(window.__TM_CLOSE_LONG_DEBUG__, 'bollingerAlertState'),
-      controller: document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi[
-        Symbol.for('jh-userscripts.chart-marker-save-controller')].version,
+      nativeShapes: document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi.activeChart().getAllShapes().length,
       owners: [...window[Symbol.for('jh-userscripts.chart-mutation-owners')].predicates.keys()],
-    }))).toEqual({ embedded: false, controller: 1, owners: ['orderbook'] });
+    }))).toEqual({ embedded: false, nativeShapes: 0, owners: ['orderbook'] });
     // When the same complete Strategy29 artifact is injected again.
     await page.addScriptTag({ content: sandboxedStrategy29 });
 

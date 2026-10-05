@@ -118,30 +118,3 @@ export function createStrategyGmBoundary() {
     },
   };
 }
-
-/** Expose raw native shape outputs, including malformed values, without repairing them. */
-export function createStrategyShapeBoundary({
-  shapeId = 'native-shape',
-  points = [{ time: 10, price: 1.25 }],
-  listedShapes = [{ id: shapeId }],
-} = {}) {
-  const created = [];
-  const removed = [];
-  const shape = { getPoints: () => points };
-  return {
-    created,
-    removed,
-    chart: {
-      async createShape(point, options) {
-        created.push({ point, options });
-        return shapeId;
-      },
-      getShapeById(id) {
-        assert.equal(id, shapeId);
-        return shape;
-      },
-      getAllShapes: () => listedShapes,
-      removeEntity: id => removed.push(id),
-    },
-  };
-}

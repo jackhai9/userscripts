@@ -330,7 +330,7 @@ test('user keeps a reload recovery record until the chart is ready and its final
   // Then exactly the final restored snapshot is saved and only now is the recovery record removed.
   await expect.poll(() => readRecoveryRecord(page)).toBe(null);
   expect((await eventsOfType(page, 'chart-saved')).map(({ snapshot }) => snapshot)).toEqual([
-    { checked: true, drawingCount: 1, finalOrderId: 'current-1' },
+    { checked: true, drawingIds: ['order-current-1'] },
   ]);
   await expect(page.locator('#chart-orders-menu')).not.toHaveClass(/active/);
   expect((await readFixtureState(page)).orders).toEqual(ORDER_SETS.current);

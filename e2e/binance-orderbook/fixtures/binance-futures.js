@@ -555,13 +555,21 @@ export function renderBinanceFuturesFixture(scenario) {
       const chartOrdersTrigger = document.querySelector('[data-testid="chart-orders-trigger"]');
       const chartRoot = document.querySelector('.chart-widget-root');
       const chartEventListeners = new Map();
-      const chartOrderDrawings = new Map(currentOrders().map(order => [
+      const chartOrderDrawings = new Map((state.showOrders ? currentOrders() : []).map(order => [
         'order-' + order.id,
         { toolname: 'LineToolOrder', symbol: order.symbol },
       ]));
+      function readChartSnapshot() {
+        return { checked: state.showOrders, drawingIds: [...chartOrderDrawings.keys()] };
+      }
       const tradingViewApi = {
-        saveChart(snapshot) {
-          record('chart-saved', { snapshot });
+        saveChart(callback, options) {
+          if (typeof callback !== 'function') throw new TypeError('Native chart save requires a callback');
+          const snapshot = options?.includeDrawings === false
+            ? { checked: state.showOrders, drawingIds: [] }
+            : readChartSnapshot();
+          record('chart-serialized', { snapshot: JSON.parse(JSON.stringify(snapshot)) });
+          return callback(snapshot);
         },
         subscribe(eventName, listener) {
           const listeners = chartEventListeners.get(eventName) || new Set();
@@ -589,14 +597,19 @@ export function renderBinanceFuturesFixture(scenario) {
         });
       }
 
+      let chartSaveRequestSequence = 0;
+      function requestChartSave(details) {
+        const requestId = ++chartSaveRequestSequence;
+        record('chart-save-requested', { ...details, requestId, snapshot: readChartSnapshot() });
+        tradingViewApi.saveChart(snapshot => record('chart-saved', { requestId, snapshot }));
+      }
+
       /** Native broker events request a complete chart serialization 100 ms later. */
       function publishNativeOrderDrawingEvent(drawingId, eventType) {
         record('chart-drawing-event', { drawingId, eventType, toolname: 'LineToolOrder' });
         tradingViewApi.emit('drawing_event', drawingId, eventType);
         setTimeout(() => {
-          const snapshot = { checked: state.showOrders, drawingIds: [...chartOrderDrawings.keys()] };
-          record('chart-save-requested', { drawingId, eventType, snapshot });
-          tradingViewApi.saveChart(snapshot);
+          requestChartSave({ drawingId, eventType });
         }, 100);
       }
 
@@ -612,24 +625,15 @@ export function renderBinanceFuturesFixture(scenario) {
         if (!state.showOrders) return;
         orders.forEach((order, index) => {
           setTimeout(() => {
+            const drawingId = 'order-' + order.id;
+            // Off-chart order cancellations have no visible drawing to remove.
+            if (!chartOrderDrawings.delete(drawingId)) return;
             if (scenario.host.orderDrawingEvents) {
-              const drawingId = 'order-' + order.id;
-              // Off-chart order cancellations have no visible drawing to remove.
-              if (!chartOrderDrawings.delete(drawingId)) return;
               publishNativeOrderDrawingEvent(drawingId, 'remove');
               return;
             }
             tradingViewApi.emit('drawing_event', 'order-' + order.id, 'remove');
-            record('chart-save-requested', {
-              checked: true,
-              index,
-              orderId: order.id,
-            });
-            tradingViewApi.saveChart({
-              checked: true,
-              drawingCount: Math.max(0, orders.length - index - 1),
-              finalOrderId: order.id,
-            });
+            requestChartSave({ checked: true, index, orderId: order.id });
           }, scenario.host.mutationDelayMs + (index * 2));
         });
       }
@@ -647,21 +651,15 @@ export function renderBinanceFuturesFixture(scenario) {
           record('chart-orders-checked', { value: nextChecked, drawings: drawings.length });
           drawings.forEach((order, index) => {
             setTimeout(() => {
+              const drawingId = 'order-' + order.id;
+              if (nextChecked) chartOrderDrawings.set(drawingId, { toolname: 'LineToolOrder', symbol: order.symbol });
+              else chartOrderDrawings.delete(drawingId);
               tradingViewApi.emit(
                 'drawing_event',
                 'order-' + order.id,
                 nextChecked ? 'properties_changed' : 'remove',
               );
-              record('chart-save-requested', {
-                checked: nextChecked,
-                index,
-                orderId: order.id,
-              });
-              tradingViewApi.saveChart({
-                checked: nextChecked,
-                drawingCount: drawings.length,
-                finalOrderId: order.id,
-              });
+              requestChartSave({ checked: nextChecked, index, orderId: order.id });
             }, scenario.host.mutationDelayMs + (index * 2));
           });
         });

@@ -29,7 +29,7 @@ export function installStrategy31(view) {
     node.textContent = text;
   }
   function retire() {
-    if (context) { retired.add(context.layer); context = null; }
+    if (context) { context.layer.clear(); retired.add(context.layer); context = null; }
     inflight?.abort();
   }
   function releaseChart() {
@@ -38,12 +38,11 @@ export function installStrategy31(view) {
     intervalOwner = null;
   }
   function cleanup() {
-    if (isChartMutationBlocked(view)) return;
     for (const layer of retired) if (layer.clear()) retired.delete(layer);
     if ((disposed || failed) && retired.size === 0) view.clearInterval(timer);
   }
   function current(candidate) {
-    return !disposed && !document.hidden && context === candidate
+    return !disposed && !failed && !document.hidden && context === candidate
       && candidate.session.isCurrent(candidate.revision)
       && parseFuturesTradingSymbolFromPathname(view.location.pathname) === candidate.target.routeSymbol
       && isBearishBollingerChartTargetCurrent(document, candidate.target)
@@ -84,7 +83,9 @@ export function installStrategy31(view) {
     if (!context) {
       const target = { ...base, chart, resolution, resolutionSeconds: seconds, routeSymbol: route };
       context = { target, session, revision: session.revision,
-        layer: createBollingerMarkerLayer(target, { canMutate: () => !isChartMutationBlocked(view) }) };
+        layer: createBollingerMarkerLayer(target, {
+          canMutate: () => !isChartMutationBlocked(view), onRenderError: stopAfterFailure,
+        }) };
     }
     const candidate = context;
     if (!current(candidate)) return;
@@ -102,7 +103,7 @@ export function installStrategy31(view) {
       if (!requestCurrent()) return;
       if (response.kind !== 'response' || response.status !== 200) { notice('Strategy31: signal service unavailable'); return; }
       const signals = parseStrategy31Events(JSON.parse(response.responseText), symbol, timeframe);
-      // Native drawings snap missing times to loaded bars; server history must be projected onto exact times.
+      // Server history is projected only onto exact loaded candle times.
       let bars;
       try {
         bars = await exportClosedTradingViewBars(candidate.target, candidate.session);
@@ -118,9 +119,13 @@ export function installStrategy31(view) {
       if (rendered && requestCurrent()) notice(`Strategy31: ${visible.length} chart signals · ${timeframe}`);
     } finally { if (inflight === controller) inflight = null; }
   }
+  function stopAfterFailure() {
+    failed = true; releaseChart(); cleanup();
+    if (!disposed) notice('Strategy31 stopped: invalid chart or signal data');
+  }
   function tick() {
     // Job boundary: invalid contracts stop this observer and expose a visible failure.
-    return sample().catch(() => { failed = true; releaseChart(); cleanup(); if (!disposed) notice('Strategy31 stopped: invalid chart or signal data'); });
+    return sample().catch(stopAfterFailure);
   }
   function visibility() { if (document.hidden) retire(); else void tick(); }
   const timer = view.setInterval(() => { void tick(); }, 5000);

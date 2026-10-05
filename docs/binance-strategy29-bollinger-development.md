@@ -13,14 +13,14 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.7 with orderbook 2.7.199 or later, or use it alone.
+Install Strategy29 0.5.8 with orderbook 2.7.199 or later, or use it alone.
 Install CorsairQuant signal client 0.6.7 for the remote summary.
 Do not combine it with the embedded observer in orderbook 2.7.198.
 After updating/disabling the old script, reload the page. An embedded observer
 is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
-If the old script loads later, existing markers can remain because its private
-save owner can block safe cleanup. This is not a supported compatibility mode;
-Strategy29 never removes old-script or user drawings.
+If the old script loads later, the observer stops and clears its own overlay.
+This is not a supported compatibility mode; Strategy29 never removes old-script
+or user drawings.
 
 The orderbook runs in page context. Strategy29 runs in a Tampermonkey
 sandbox with read access to its previous non-sensitive preferences, and passes
@@ -30,16 +30,17 @@ synchronous boolean drawing-busy predicate under
 `Symbol.for('jh-userscripts.chart-mutation-owners')`; it unregisters on permanent
 page teardown. A missing owner means there is no coordinated orderbook instance,
 not a guessed order/account state. No task objects or financial actions cross
-this boundary. The exact native API owns the shared marker controller under
-`Symbol.for('jh-userscripts.chart-marker-save-controller')`. Both records validate
-protocol version 1 and reject incompatible versions. These are coordination
+this boundary. The orderbook retains its native save-controller protocol. Strategy27,
+Strategy29 and Strategy31 do not install or arm that controller; their SVG presentation never
+enters the native drawing model. The ownership record validates protocol version 1
+and rejects incompatible versions. These are coordination
 contracts between trusted scripts, not a security boundary against page code.
 
 The standalone entry has a per-page singleton on `unsafeWindow`. One poll
 discovers charts/routes and evaluates the existing monitor. Hidden documents and
 BFCache pagehide pause it; visibility/pageshow resumes it. Permanent disposal
 removes its listeners, aborts an in-flight summary request, and invalidates
-pending drawing work. Non-trading routes perform no candle exports or gateway
+pending overlay work. Non-trading routes perform no candle exports or gateway
 requests.
 The read-only diagnostics retain one `lastLocalFailure` after local fatal cleanup
 or stop. It records the export/reconcile/detect/render stage, thrown value type,
@@ -52,14 +53,14 @@ monitor failure with a property-read failure.
 If a host Proxy throws during rejection classification, the monitor stops that
 context and records `classificationFailed: true`; normal fatal errors record false.
 The frozen detector/core source and its direct invalid-context assertion remain unchanged.
-Time-alignment failure messages include both the requested and native returned
-timestamp. A later healthy context does not clear that historical evidence or
-establish why the native chart shifted the earlier marker.
+A later healthy context does not clear historical failure evidence. Missing
+exact candle timestamps are excluded by the overlay projection rather than
+snapped to another candle.
 It describes the last fatal event, not necessarily the active context. It does not
 store stack traces, candles, requests or gateway credentials, and is never persisted
 or sent to the remote service. Recoverable snapshot races leave it unchanged.
-Independent instances of each bundle share the same controller regardless of
-load order. Strategy27 does not participate in this protocol.
+Each overlay instance owns its DOM and exact event subscriptions independently.
+Strategy27 uses the same SVG renderer with its own event and compound placement policies.
 
 ## Panel Language and Position
 
@@ -232,39 +233,35 @@ does not claim hash-level remote parity.
 
 ## Bidirectional Bollinger Alerts
 
-The chart alert is timeframe-agnostic and evaluates closed bars only. It supports TradingView second, minute, hour, day, and week resolutions; month resolutions are intentionally unsupported because their duration is calendar-dependent. It scans every closed bar already loaded in TradingView and does not issue a separate market-data request or force the chart to load older history. The active-page poll exports the current window once per second. Detection runs again when the `count:firstTime:lastTime` window or any closed-bar OHLC content changes; unchanged content is compared against a compact numeric snapshot instead of serializing the whole history on every poll. The cached signal set is reconciled with live TradingView shape IDs on every poll. Loading older chart history therefore expands the annotated range even when the latest bar is unchanged, and a TradingView chart refresh can no longer leave the alert registry pointing at evicted markers.
+The chart alert is timeframe-agnostic and evaluates closed bars only. It supports TradingView second, minute, hour, day, and week resolutions; month resolutions are intentionally unsupported because their duration is calendar-dependent. It scans every closed bar already loaded in TradingView and does not issue a separate market-data request or force the chart to load older history. The active-page poll exports the current window once per second. Detection runs again when the `count:firstTime:lastTime` window or any closed-bar OHLC content changes; unchanged content is compared against a compact numeric snapshot instead of serializing the whole history on every poll. The cached signal set is projected onto a script-owned SVG layer. Loading older chart history expands the annotated range even when the latest bar is unchanged. Viewport changes reproject visible markers independently of the detector poll.
 
 A bearish setup requires the Bollinger middle line to cross down through SMA60 while the band center is declining. A bullish setup is generated by the exact price-axis mirror: OHLC values are transformed as `open=-open`, `high=-low`, `low=-high`, `close=-close`, and the indicator axes are transformed as `middle=-middle`, `upper=-lower`, `lower=-upper`, `ma60=-ma60`. This yields a middle-line cross up through SMA60, pre-cross closes in the middle/upper channel, and post-cross middle-line support without maintaining a second drifting detector. Both directions use the same warning/confirmation/reversal lifecycle. Bearish warning dots are red and remain above the candle high; bullish warning dots are green and remain below the candle low. Bearish confirmation is a red down arrow and bullish confirmation is a green up arrow. A reversal uses the opposite colored/directional arrow. Mirrored marker prices remain on the corresponding side of the candle (bullish confirmation below the low, bearish confirmation above the high). If overlapping setups in one direction reverse on the same candle, the newest setup owns that direction's visual reversal; opposite-direction signals retain distinct IDs and are both rendered.
 
 The current Binance `trading-platform-30` chart runtime exposes `exportData()` as row-major numeric-keyed OHLC objects. The parser deliberately enforces that observed contract and fails if the schema changes. It validates the entire export before filtering closed bars: intraday timestamps must lie on the UTC interval grid, D/W timestamps must be at UTC midnight, weekly timestamps must be Mondays, and positive timestamp deltas must be multiples of the bar duration. Missing bars remain valid; multi-day and multi-week feeds do not have to share the Unix epoch's phase. Off-grid or incompatible-spacing snapshots are recoverable and never reach detection.
 
-`dataReady()` alone is insufficient: Binance's chart implementation checks whether data is nonempty, not whether an interval switch has completed. A chart-owned interval session subscribes to `onIntervalChanged()` and `onDataLoaded()`. An interval change increments a revision and blocks exports until data completion; callbacks never export or mutate drawings. Every asynchronous export and marker creation revalidates the session identity/revision as well as chart instance, route symbol, and resolution. This rejects stale work even after a rapid `1S -> 1 -> 1S` switch. Stop, page hiding, teardown, and chart replacement dispose the session independently of deferred drawing removal.
+`dataReady()` alone is insufficient: Binance's chart implementation checks whether data is nonempty, not whether an interval switch has completed. A chart-owned interval session subscribes to `onIntervalChanged()` and `onDataLoaded()`. An interval change increments a revision and blocks exports until data completion; callbacks never export or mutate drawings. Every asynchronous export and scheduled overlay redraw revalidates the session identity/revision as well as chart instance, route symbol, and resolution. This rejects stale work even after a rapid `1S -> 1 -> 1S` switch. Stop, page hiding, teardown, and chart replacement dispose the session and remove only the script-owned overlay.
 
 Each interval session uses a private subscription owner token. The observed Binance chart integration calls `unsubscribeAll(null)` on both data-loaded and interval-changed channels when binding its own callbacks. Sharing the null owner lets that native initialization silently remove our callbacks, leaving a running monitor stuck waiting for data that has already arrived. Cleanup uses the same private token and exact callbacks; it never clears native or other-script subscriptions.
 
 The exposed chart API can exist before its internal model during initial loading. Target discovery and current-target validation use the observed Trading Platform 30 `hasModel()` contract before reading `resolution()`. A missing model is an expected not-ready state, not a fatal error; the existing poll resumes when the model exists. Model readiness does not replace the interval/data session guard.
 
-Indicator calculation traverses each fixed window directly instead of allocating sliced/mapped close arrays for every bar. Summation order is preserved exactly, including population variance, to avoid changing threshold decisions through floating-point drift. Stable marker audits read each shape handle once while retaining the full point/property checks. The asynchronous render loop yields a browser task after 32 signals or 8 ms of batch work; each resumed batch refreshes native shape ownership and revalidates generation, chart session, and drawing-mutation ownership. This is a cooperative budget checked between native calls, not a hard limit on an individual native API call. It adds no recurring timer and does not reduce history coverage or audit frequency. Context cleanup and obsolete-marker deletion remain synchronous; host chart loading/rendering and those removal phases are not covered by the batch budget.
+Indicator calculation traverses each fixed window directly without allocating sliced/mapped close arrays for every bar. Summation order and detector thresholds remain unchanged.
 
-`window.__TM_STRATEGY29_DEBUG__.diagnostics` is an on-demand diagnostic snapshot of timer/task presence, context/session readiness, cached/rendered signal counts, the aggregate boolean drawing-mutation state, and non-sensitive remote state. It contains no gateway secret, authorization header, request payload, or order details; it does not export candles or audit drawings and adds no periodic work. Native model/data readiness is reported separately from session readiness so a waiting session is not mistaken for expensive calculation or a zero-signal window.
+Markers use a script-owned SVG inside the main-series pane's canvas container. The overlay is clipped to that pane and has `pointer-events: none`; it does not cover the price/time axes or intercept drawing interactions. Each direction allows 1,000 signals, for 2,000 total. Validation rejects an over-limit or malformed snapshot before publishing it. Offscreen signals remain in the bounded signal set but create no SVG nodes. Keyed nodes are reused, and unchanged attributes are not rewritten.
 
-Alert markers use TradingView's drawing API. Every detected signal in the loaded window is rendered; there is no recent-signal truncation. Each direction allows up to 1,000 simultaneous signals, for a shared maximum of 2,000, and an over-limit window is rejected before any partial marker mutation. Marker ownership is tracked by signal ID, but the live shape list remains authoritative: externally evicted marker IDs are discarded from the registry and recreated without removing or changing foreign drawings. A typed OHLC/time-order snapshot race is treated as recoverable: existing markers and cached signals remain in place and the next poll retries. Schema, nonnumeric data, chart API, band-width, and time-alignment contract failures remain fail-closed and clear the alert layer. Current live evidence shows that removing even a `disableSave` marker emits `drawing_event` and `saveChart`, so alert reconciliation pauses during every existing order-line drawing/save owner. Symbol changes, non-trading routes, hidden documents, and page teardown stop or clear the alert lifecycle.
+Projection uses the inspected TradingView model: exact `timePointToIndex(time, 0)`, candle timestamp readback, `indexToCoordinate`, and the main series' `priceToCoordinate(price, firstValue)`. Missing candle times are omitted rather than snapped to adjacent bars. Scale conversion belongs to TradingView, including logarithmic and inverted axes. The current model, series, scale and pane identities are checked before drawing; a changed projection contract stops the context instead of guessing coordinates.
 
-Existing owned markers are also checked for timestamp, resolved price, current signal price/type/direction, native shape name, color/icon and interval visibility. A changed marker is recreated; an unchanged marker is not rewritten. The price read back at creation is retained separately from the detector's requested price to tolerate host price normalization without perpetual recreation. Native `intervalsVisibilities` overrides restrict each marker to its originating interval bucket, so `1S` drawings cannot appear on a minute chart while physical cleanup is blocked. TradingView groups 60+ minute resolutions into integer-hour buckets: this matches Binance's standard hour intervals but does not provide distinct native visibility for nonstandard intervals such as 60 and 90 minutes. The session revision still invalidates computation on every interval change. Unsupported `fixedSize` overrides are not sent to arrow drawings; the current live arrow API does not expose that property.
+Time-range, bar-spacing, offset, price-range/mode/height, candle-data and pane-resize events coalesce into one animation frame. There is no continuous animation loop or added market-data request. Interval invalidation immediately hides the old layer, even while an orderbook owner is busy. Hiding the document cancels pending redraw work; clear removes the exact instance's SVG, listeners, observer and frame. Cleanup does not need native drawing ownership because it never touches native entities. Rendering still respects the existing orderbook mutation gate. Asynchronous redraw errors clear presentation and enter the existing monitor failure diagnostics or Strategy31 stopped notice.
 
-Retiring a context always invalidates it immediately. Its layer remains in a cleanup set until owned markers and outstanding asynchronous creations have finished; late creations are owned before checking currentness. No late callback removes a drawing while a trade/save owner is busy. The existing poll drains retired layers when safe, without deleting user or other-script drawings or making additional market requests.
+`window.__TM_STRATEGY29_DEBUG__.diagnostics` exposes timer/task presence, readiness, cached/rendered counts, the aggregate mutation gate and non-sensitive remote state. `markerOverlayStats` reports attached state, signal/visible counts, rendered frames, subscriptions and a pending frame. These are rendering counters, not successful database-save counts. Diagnostics contain no secrets, requests, order details or persisted candles and add no periodic work.
 
-### Marker Save Bursts
+### Why overlays do not use native drawings
 
-The observed Binance Trading Platform 30 integration schedules a full `widget.save` 100 ms after every non-click/non-move drawing event. `disableSave` excludes temporary markers from the saved JSON but does not suppress these events. A native CPU profile of timeframe switching attributed the main scripting hotspot to repeated chart serialization, especially unchanged parallel-channel properties; marker audits and indicator detection were not the dominant sampled branch.
+Binance's observed integration schedules `widget.save` 100 ms after non-click/non-move drawing events. `disableSave` excludes temporary entities from saved JSON but does not suppress the events. The previous marker controller coalesced serialization while preserving every callback: a 2026-10-05 snapshot showed 2,000 save requests/callbacks and 102 serializations. Those counters did not establish that asynchronous database writes had completed.
 
-`src/shared/chart-marker-save-controller.js` installs one stable base `saveChart` wrapper per native API in a page-visible symbol slot with protocol version 1. Only actual Bollinger marker creation, publication and deletion arm its burst; unchanged audits do not. Default callback saves during that burst share one complete serialization after 150 ms of quiet, capped at 1,000 ms per burst. Every pending callback receives a separate JSON snapshot, including all saveable user drawings. Callback failures are reported at a separate asynchronous job boundary, without skipping later callbacks or interrupting an unrelated explicit save. No drawings are deleted or excluded to accelerate serialization.
+Strategy27, Strategy29 and Strategy31 therefore create, update and remove no native drawings and do not wrap `saveChart` or IndexedDB. The shared native save controller remains available to the orderbook. Its serialization coalescer delivers every accepted save callback with an independent snapshot; it does not merge downstream database writes. Manual-drawing persistence remains owned by Binance.
 
-This is deliberately not a fully transparent public-API replacement: default `saveChart(callback)` callers during a marker burst receive a deferred callback and no synchronous callback return value. Binance's observed autosave caller does not use that return value, but a third-party default caller in the same window has this limitation. Idle calls, explicit options (including `includeDrawings: false`), unusual arguments and foreign receivers remain synchronous. An outer order-save wrapper remains authoritative; the base never restores over it. This optimization does not cover independent Strategy 27 or manual-drawing bursts outside a Bollinger mutation window.
-
-Before starting a continuous-order save owner, toggling order-line visibility, or opening the native cancellation confirmation, the workflow drains pending marker mutations and their delayed-save tail. Asynchronous native creations remain counted through completion, including stale hidden results. An independent 150 ms mutation tail survives an explicit save interrupting the burst. Draining blocks new marker mutations, has a 2,000 ms timeout that refuses the chart workflow before its next action, and supports immediate continuous-task abort. The cancellation confirmation callback remains synchronous; the script does not delay, repeat or confirm a financial click. `clear()` remains synchronous and save timers settle afterward. The controller has no idle recurring timer or retained serialized snapshot; on-demand `window.__TM_STRATEGY29_DEBUG__.diagnostics.markerSaveStats` exposes aggregate counts only.
-
-Native asynchronous shape creation can automatically enable the interval active when it resolves. Markers therefore start with `visible: false`. Only a current session with drawing mutation ownership may synchronously publish the marker using `setProperties`, restoring its originating interval mask and setting `visible: true`; properties are read back before registration. Stale or busy results remain hidden until safe cleanup. Native visibility normalizes second resolutions of at least 60 seconds into integer-minute buckets as well.
+During the same incident, `chart_futures` database opening succeeded but readonly requests remained pending; `chart_spot` reads completed. Disabling scripts and reloading OPN alone did not recover it. Reloading the remaining old US page allowed OPN to recover without another refresh, browser restart or database deletion. This identifies the chart configuration read as the immediate blocker and demonstrates a lifecycle relationship, but does not prove a particular script held a lock or was the sole underlying browser fault. Removing marker-generated save traffic addresses the independently verified write amplification. Do not describe this as proof that all possible IndexedDB hangs are fixed.
 
 ## Verification
 
@@ -279,9 +276,10 @@ orders. The sandbox entry test proves that Strategy29 installs its singleton on
 the page `unsafeWindow`. Remote contract/controller tests cover strict symbol
 round trips, bounded cursors, spec mismatch, 409 reset, stale response ownership,
 and failure isolation. Independent bundle tests cover controller identity, active
-owners, save drain, protocol conflicts and unregister. Existing marker tests cover
-interval switches, late results, historical coverage, foreign drawings and
-cooperative rendering.
+owners, save drain, protocol conflicts and unregister. Marker tests cover exact candle placement, historical coverage, scale changes,
+interval invalidation, hidden-page cleanup, independent instances and zero native
+drawing/save calls. Browser tests exercise actual SVG rendering and isolated
+cross-page IndexedDB readback; these are not production database tests.
 
 Before a separately authorized installation/release, inspect both real installed
 sources, reload once, and verify both load orders, chart interval switches,
