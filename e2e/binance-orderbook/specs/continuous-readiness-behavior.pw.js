@@ -385,18 +385,32 @@ test('user waits for an invisible close button before starting another round', a
   // When the first round finishes while that button has no rendered geometry.
   await host.releaseSubmitResponse(3);
   await expect(host.status).toContainText('等待按钮恢复');
+  const position = await gatePositionRecheck(page, {
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: [
+      { symbol: CURRENT_SYMBOL, positionSide: 'SHORT', positionAmount: '-100' },
+    ] }),
+  });
   await page.clock.runFor(2_000);
+  await expect.poll(position.requestCount).toBe(1);
 
   // Then the runner holds the next round without fabricating a new submission.
   expect(await readSubmissions(page)).toHaveLength(3);
 
   // When the native host renders its button again.
   await host.nativeButton.evaluate((button) => { button.style.display = ''; });
-  // The native-button lookup caches visible results for 250 milliseconds.
+  // Keep the response pending past the old fixed clock window to exercise the CI race.
   await page.clock.runFor(300);
+  await expect(host.status).toContainText('等待按钮恢复');
+  await position.releaseFirst();
 
-  // Then readiness starts a new full cooldown that the user can still stop.
-  await expect(host.status).toContainText('1s 后继续');
+  // Then response consumption and the next readiness poll start a complete cooldown.
+  // Network completion can schedule that poll after the virtual clock has paused.
+  await expect.poll(async () => {
+    await page.clock.runFor(50);
+    return host.status.textContent();
+  }).toContain('1s 后继续');
   await advanceFromStatus(page, '1s 后继续', 999);
   expect(await readSubmissions(page)).toHaveLength(3);
   await expect(host.panel.getByRole('button', { name: '停止平空', exact: true })).toHaveCount(1);
