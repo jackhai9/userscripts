@@ -1,8 +1,8 @@
+import { attachChartMarkerOverlayHost } from '../../helpers/chart-marker-overlay-host.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import * as alertApi from '../../../src/binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
-import { getTradingViewMarkerSaveController } from '../../../src/shared/chart-marker-save-controller.js';
 import { createBollingerMonitor } from '../../../src/binance-strategy29-bollinger/monitor.js';
 
 import { loadFixtureDom } from '../../helpers/dom.js';
@@ -31,76 +31,30 @@ import {
 
 const monitorSource = await readFile(new URL('../../../src/binance-strategy29-bollinger/monitor.js', import.meta.url), 'utf8');
 
-test('user observes that native marker creation and clear save bursts preserve foreign drawings without arming stable audits', async () => {
-  // Given the chart candles, interval and marker ownership
+test('user renders updates and clears 2000 markers without touching native drawings or chart saves', async () => {
+  // Given a chart with a user drawing and a full marker history
   const fixture = createChartDom();
-  // When fixture.addForeignShape processes the configured inputs
   fixture.addForeignShape('user-channel');
-  const snapshots = [];
-  const scheduleSave = () => setTimeout(() => fixture.tradingViewApi.saveChart((value) => snapshots.push(value)), 100);
-  const create = fixture.chart.createShape;
-  fixture.chart.createShape = async (...args) => {
-    const id = await create(...args);
-    const shape = fixture.chart.getShapeById(id);
-    const update = shape.setProperties.bind(shape);
-    shape.setProperties = (...properties) => { update(...properties); scheduleSave(); };
-    scheduleSave();
-    return id;
-  };
-  const remove = fixture.chart.removeEntity;
-  fixture.chart.removeEntity = (id) => { remove(id); scheduleSave(); };
-  const target = findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  const layer = createBollingerMarkerLayer(target);
-  const controller = getTradingViewMarkerSaveController(fixture.tradingViewApi);
-  const signals = Array.from({ length: 5 }, (_, i) => ({
-    id: `signal-${i}`, direction: 'bearish', type: 'warning', time: 60 * (i + 1), markerPrice: 13,
+  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'));
+  const signals = Array.from({ length: 2000 }, (_, index) => ({
+    id: `overlay-${index}`, direction: index < 1000 ? 'bearish' : 'bullish', type: 'warning',
+    time: 60 * (index + 1), markerPrice: 13,
   }));
-  const observedResult = await layer.render(signals, { isCurrent: () => true });
-  // Then user observes that native marker creation and clear save bursts preserve foreign drawings without arming stable audits
-  assert.equal(observedResult, true);
-  await controller.runAfterIdle(() => {});
-  assert.equal(layer.saveStats.saveRequests, 10);
-  assert.equal(layer.saveStats.serializations, 1);
-  assert.equal(snapshots.length, 10);
-  assert.deepEqual(snapshots[0], { drawings: [{ id: 'user-channel' }] });
+  // When the history is rendered updated and cleared
   assert.equal(await layer.render(signals, { isCurrent: () => true }), true);
-  assert.equal(layer.saveStats.busy, false);
-  assert.equal(layer.saveStats.serializations, 1);
+  assert.equal(layer.size, 2000);
+  assert.equal(fixture.overlay.markers().length, 1000);
+  assert.equal(await layer.render(signals.map(signal => ({ ...signal, markerPrice: 14 })), { isCurrent: () => true }), true);
+  assert.equal(fixture.overlay.markers()[0].getAttribute('transform'), 'translate(1 486)');
   assert.equal(layer.clear(), true);
-  assert.equal(layer.saveStats.busy, true);
-  await controller.runAfterIdle(() => {});
-  assert.equal(layer.saveStats.saveRequests, 15);
-  assert.equal(layer.saveStats.serializations, 2);
-  assert.equal(snapshots.length, 15);
+  // Then native chart persistence and foreign drawings are untouched
+  assert.equal(fixture.createdOptions.length, 0);
+  assert.equal(fixture.removed.length, 0);
+  assert.equal(fixture.saveCalls.length, 0);
   assert.deepEqual([...fixture.shapes.keys()], ['user-channel']);
-  assert.deepEqual(snapshots.at(-1), { drawings: [{ id: 'user-channel' }] });
+  fixture.dom.window.close();
 });
 
-test('user observes that an outer save drain waits for native creation, leaves its late result hidden, and preserves cleanup ownership', async () => {
-  // Given the chart candles, interval and marker ownership
-  const fixture = createChartDom({ deferredCreate: true });
-  // When fixture.addForeignShape processes the configured inputs
-  fixture.addForeignShape('user-channel');
-  const target = findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  const layer = createBollingerMarkerLayer(target);
-  const rendering = layer.render([
-    { id: 'warning', direction: 'bearish', type: 'warning', time: 60, markerPrice: 13 },
-  ], { isCurrent: () => true });
-  const controller = getTradingViewMarkerSaveController(fixture.tradingViewApi);
-  let starts = 0;
-  const drain = controller.runAfterIdle(() => { starts += 1; });
-  // Then user observes that an outer save drain waits for native creation, leaves its late result hidden, and preserves cleanup ownership
-  assert.equal(starts, 0);
-  assert.equal(layer.saveStats.mutations, 1);
-  fixture.releaseCreate();
-  assert.equal(await rendering, false);
-  assert.equal(fixture.shapes.get('shape-1').properties.overrides.visible, false);
-  assert.equal(fixture.propertyUpdates.length, 0);
-  await drain;
-  assert.equal(starts, 1);
-  assert.equal(layer.clear(), true);
-  assert.deepEqual([...fixture.shapes.keys()], ['user-channel']);
-});
 
 /** Execute the production monitor functions, without the unrelated trading/bootstrap side effects. */
 function createMonitorHarness(fixture, dependencyOverrides = {}) {
@@ -170,16 +124,12 @@ function createMonitorHarness(fixture, dependencyOverrides = {}) {
 function createChartDom({
   resolution = '1',
   symbol = 'BTRUSDT@PRICETYPE=LAST',
-  shiftSeconds = 0,
-  deferredCreate = false,
 } = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"><iframe></iframe></div>');
   const shapes = new Map();
   const removed = [];
   const createdOptions = [];
-  const propertyUpdates = [];
-  let nextId = 1;
-  let releaseCreate = null;
+  const saveCalls = [];
   let currentResolution = resolution;
   let currentSymbol = symbol;
   let modelReady = true;
@@ -207,28 +157,7 @@ function createChartDom({
     onIntervalChanged: () => intervalChanged,
     onDataLoaded: () => dataLoaded,
     exportData: async () => ({ schema: [], data: [] }),
-    async createShape(point, properties) {
-      createdOptions.push(structuredClone(properties));
-      if (deferredCreate) await new Promise((resolve) => { releaseCreate = resolve; });
-      const id = `shape-${nextId++}`;
-      const currentVisibility = alertApi.bollingerIntervalVisibility(currentResolution);
-      const nativeVisibility = { ...properties.overrides.intervalsVisibilities };
-      // Native creation enables the interval active when the async loader resolves.
-      for (const [key, value] of Object.entries(currentVisibility)) {
-        if (value !== false) nativeVisibility[key] = value;
-      }
-      shapes.set(id, {
-        point: { ...point, time: point.time + shiftSeconds },
-        properties: { ...properties, overrides: { ...properties.overrides, intervalsVisibilities: nativeVisibility } },
-        getPoints() { return [this.point]; },
-        getProperties() { return { ...this.properties.overrides, icon: this.properties.icon }; },
-        setProperties(overrides, saveDefaults) {
-          propertyUpdates.push({ id, overrides: structuredClone(overrides), saveDefaults });
-          Object.assign(this.properties.overrides, overrides);
-        },
-      });
-      return id;
-    },
+    async createShape(point, properties) { createdOptions.push({ point, properties }); throw new Error('Native markers are forbidden'); },
     getShapeById: (id) => shapes.get(id),
     getAllShapes: () => [...shapes.entries()].map(([id, record]) => ({
       id,
@@ -240,16 +169,18 @@ function createChartDom({
       shapes.delete(id);
     },
   };
+  const overlay = attachChartMarkerOverlayHost({ chart, document: dom.window.document });
   let activeChart = chart;
   const tradingViewApi = {
     activeChart: () => activeChart,
-    saveChart: (callback) => callback({
+    saveChart: (callback) => { saveCalls.push(true); return callback({
       drawings: [...shapes].filter(([, record]) => !record.properties.disableSave).map(([id]) => ({ id })),
-    }),
+    }); },
   };
   dom.window.document.querySelector('iframe').contentWindow.tradingViewApi = tradingViewApi;
   return {
     dom,
+    overlay,
     chart,
     tradingViewApi,
     intervalChanged,
@@ -257,13 +188,11 @@ function createChartDom({
     shapes,
     removed,
     createdOptions,
-    propertyUpdates,
+    saveCalls,
     setModelReady: (value) => { modelReady = value; },
-    releaseCreate: () => releaseCreate(),
     setActiveChart: (value) => { activeChart = value; },
     setResolution: (value) => { currentResolution = value; intervalChanged.fire(value); },
     setSymbol: (value) => { currentSymbol = value; },
-    evictShape: (id) => { shapes.delete(id); },
     addForeignShape(id = 'foreign-shape') {
       assert.equal(shapes.has(id), false, `shape ${id} should not already exist`);
       shapes.set(id, {
@@ -341,7 +270,7 @@ test('user sees older loaded signals added by the real monitor without a new lat
   const fixture = fullMonitorFixture(t);
   fixture.addForeignShape('user-channel');
   await fixture.sample();
-  const recentIds = [...fixture.shapes.keys()].filter(id => id !== 'user-channel');
+  const recentIds = fixture.overlay.markers().map(node => node.dataset.markerId);
   assert.equal(recentIds.length, 12);
   assert.equal(fixture.monitor.diagnostics.cachedSignalCount, 12);
   assert.equal(fixture.source.exported.data.at(-1)[0], 36000);
@@ -353,11 +282,11 @@ test('user sees older loaded signals added by the real monitor without a new lat
   // Then all thirty-nine real detector signals are retained, including the earliest loaded setup
   assert.equal(fixture.monitor.diagnostics.cachedSignalCount, 39);
   assert.equal(fixture.monitor.diagnostics.layerSize, 39);
-  assert.equal(fixture.shapes.size, 40);
+  assert.equal(fixture.overlay.markers().length, 39);
   assert.equal(fixture.source.exported.data.at(-1)[0], 36000);
-  assert.equal(recentIds.every(id => fixture.shapes.has(id)), true);
+  assert.equal(recentIds.every(id => fixture.overlay.markers().some(node => node.dataset.markerId === id)), true);
   assert.deepEqual(fixture.removed, []);
-  assert.deepEqual([...fixture.shapes.values()].filter(shape => shape.point.time > 0).map(shape => shape.point.time).sort((a, b) => a - b).slice(0, 3), [5760, 5820, 6840]);
+  assert.deepEqual(fixture.overlay.markers().map(node => Number(node.getAttribute('transform').match(/translate\(([^ ]+)/)[1]) * 60).sort((a, b) => a - b).slice(0, 3), [5760, 5820, 6840]);
   assert.deepEqual(fixture.errors, []);
 
   // When another unchanged sample audits the full loaded history
@@ -374,7 +303,7 @@ test('user keeps real monitor markers through a snapshot race and resumes the ne
   // Given twelve actual detector markers and the original valid native history
   const fixture = fullMonitorFixture(t);
   await fixture.sample();
-  const ids = [...fixture.shapes.keys()];
+  const ids = fixture.overlay.markers().map(node => node.dataset.markerId);
   const original = fixture.source.exported;
   const malformed = structuredClone(original);
   malformed.data[0][2] = malformed.data[0][3] - 1;
@@ -388,7 +317,7 @@ test('user keeps real monitor markers through a snapshot race and resumes the ne
   assert.equal(fixture.monitor.diagnostics.cleanupPending, false);
   assert.equal(fixture.monitor.diagnostics.lastLocalFailure, null);
   assert.equal(fixture.monitor.diagnostics.cachedSignalCount, 12);
-  assert.deepEqual([...fixture.shapes.keys()], ids);
+  assert.deepEqual(fixture.overlay.markers().map(node => node.dataset.markerId), ids);
   assert.equal(fixture.warnings.length, 1);
   assert.equal(isTradingViewBarSnapshotInconsistentError(fixture.warnings[0][1]), true);
 
@@ -398,12 +327,12 @@ test('user keeps real monitor markers through a snapshot race and resumes the ne
 
   // Then the real monitor resumes sampling without replacing unchanged markers
   assert.equal(fixture.source.requests, 3);
-  assert.deepEqual([...fixture.shapes.keys()], ids);
+  assert.deepEqual(fixture.overlay.markers().map(node => node.dataset.markerId), ids);
   assert.equal(fixture.monitor.diagnostics.failed, false);
   assert.deepEqual(fixture.errors, []);
 });
 
-test('user sees a fatal real monitor schema failure clear only owned markers on the next cleanup sample', async (t) => {
+test('user sees a fatal real monitor schema failure clear only owned markers immediately', async (t) => {
   // Given verified detector markers beside a foreign user drawing
   const fixture = fullMonitorFixture(t);
   fixture.addForeignShape('user-channel');
@@ -413,21 +342,22 @@ test('user sees a fatal real monitor schema failure clear only owned markers on 
   fixture.source.exported = { schema: [], data: [] };
   await fixture.sample();
 
-  // Then the fatal failure records pre-cleanup evidence and schedules owned-layer cleanup
+  // Then the fatal failure records pre-cleanup evidence and clears the owned overlay
   assert.equal(fixture.monitor.diagnostics.failed, true);
-  assert.equal(fixture.monitor.diagnostics.cleanupPending, true);
+  assert.equal(fixture.monitor.diagnostics.cleanupPending, false);
   assert.equal(fixture.monitor.diagnostics.lastLocalFailure.stage, 'export');
   assert.equal(fixture.monitor.diagnostics.lastLocalFailure.cachedSignalCount, 12);
   assert.equal(fixture.monitor.diagnostics.lastLocalFailure.layerSizeBeforeCleanup, 12);
   assert.match(fixture.monitor.diagnostics.lastLocalFailure.message, /schema mismatch/);
-  assert.equal(fixture.shapes.size, 13);
+  assert.equal(fixture.overlay.markers().length, 0);
 
   // When the next sample executes the deferred fatal cleanup
   await fixture.sample();
 
   // Then every owned marker is removed once and the failed context stops exporting
   assert.deepEqual([...fixture.shapes.keys()], ['user-channel']);
-  assert.equal(fixture.removed.length, 12);
+  assert.equal(fixture.removed.length, 0);
+  assert.equal(fixture.overlay.markers().length, 0);
   assert.equal(fixture.source.requests, 2);
   assert.equal(fixture.monitor.diagnostics.cleanupPending, false);
   assert.equal(fixture.monitor.diagnostics.failed, true);
@@ -548,112 +478,6 @@ test('user observes that interval sessions invalidate A-B-A exports and wait for
   assert.equal(dataLoaded.size, 0);
 });
 
-test('user observes that reconciles moved points, changed signal prices and altered owned colors without touching foreign drawings', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes, removed, addForeignShape } = createChartDom();
-  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT'));
-  const signal = { id: 'drift', direction: 'bearish', type: 'warning', time: 120, markerPrice: 10 };
-  // When addForeignShape processes the configured inputs
-  addForeignShape();
-  await layer.render([signal], { isCurrent: () => true });
-  shapes.get('shape-1').point.time = 60;
-  await layer.render([signal], { isCurrent: () => true });
-  // Then user observes that reconciles moved points, changed signal prices and altered owned colors without touching foreign drawings
-  assert.deepEqual(shapes.get('shape-2').point, { time: 120, price: 10 });
-  shapes.get('shape-2').point.price = 12;
-  await layer.render([signal], { isCurrent: () => true });
-  assert.deepEqual(shapes.get('shape-3').point, { time: 120, price: 10 });
-  await layer.render([{ ...signal, markerPrice: 11 }], { isCurrent: () => true });
-  assert.equal(shapes.get('shape-4').point.price, 11);
-  shapes.get('shape-4').properties.overrides.color = '#000000';
-  await layer.render([{ ...signal, markerPrice: 11 }], { isCurrent: () => true });
-  assert.equal(shapes.get('shape-5').properties.overrides.color, '#F6465D');
-  shapes.get('shape-5').properties.shape = 'arrow_down';
-  await layer.render([{ ...signal, markerPrice: 11 }], { isCurrent: () => true });
-  assert.equal(shapes.get('shape-6').properties.shape, 'icon');
-  assert.deepEqual(removed, ['shape-1', 'shape-2', 'shape-3', 'shape-4', 'shape-5']);
-  assert.equal(shapes.has('foreign-shape'), true);
-});
-
-test('user observes that native interval visibility hides second markers on minutes even while cleanup is busy', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes, removed, setResolution } = createChartDom({ resolution: '1S' });
-  let busy = false;
-  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT'), {
-    canMutate: () => !busy,
-  });
-  // When layer.render processes the configured inputs
-  await layer.render([{ id: 'second', direction: 'bearish', type: 'warning', time: 3601, markerPrice: 10 }], {
-    isCurrent: () => true,
-  });
-  const visibility = shapes.get('shape-1').properties.overrides.intervalsVisibilities;
-  // Then user observes that native interval visibility hides second markers on minutes even while cleanup is busy
-  assert.equal(visibility.seconds, true);
-  assert.equal(visibility.secondsFrom, 1);
-  assert.equal(visibility.secondsTo, 1);
-  assert.equal(visibility.minutes, false);
-  busy = true;
-  setResolution('1');
-  assert.equal(layer.clear(), false);
-  assert.deepEqual(removed, []);
-  busy = false;
-  assert.equal(layer.clear(), true);
-  assert.equal(shapes.size, 0);
-});
-
-test('user retains late async marker ownership until a busy chart permits cleanup', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes, removed, releaseCreate, setResolution, createdOptions, propertyUpdates } = createChartDom({ resolution: '1S', deferredCreate: true });
-  let busy = false;
-  let current = true;
-  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT'), {
-    canMutate: () => !busy,
-  });
-  // When layer.render processes the configured inputs
-  const pending = layer.render([{ id: 'late', direction: 'bearish', type: 'warning', time: 3601, markerPrice: 10 }], {
-    isCurrent: () => current,
-  });
-  await Promise.resolve();
-  // Then user retains late async marker ownership until a busy chart permits cleanup
-  assert.equal(layer.clear(), false);
-  current = false;
-  busy = true;
-  setResolution('1');
-  releaseCreate();
-  assert.equal(await pending, false);
-  assert.equal(shapes.size, 1);
-  assert.equal(createdOptions[0].overrides.visible, false);
-  assert.equal(shapes.get('shape-1').getProperties().intervalsVisibilities.minutes, true);
-  assert.equal(shapes.get('shape-1').getProperties().visible, false);
-  assert.deepEqual(propertyUpdates, []);
-  assert.deepEqual(removed, []);
-  busy = false;
-  assert.equal(layer.clear(), true);
-  assert.equal(shapes.size, 0);
-  assert.deepEqual(removed, ['shape-1']);
-});
-
-test('user publishes a current hidden creation only after restoring its exact interval mask', async () => {
-  // Given the chart candles, interval and marker ownership
-  const fixture = createChartDom({ resolution: '1S', deferredCreate: true });
-  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'));
-  // When layer.render processes the configured inputs
-  const pending = layer.render([{ id: 'publish', direction: 'bullish', type: 'confirmed', time: 3601, markerPrice: 10 }], {
-    isCurrent: () => true,
-  });
-  fixture.setResolution('1');
-  fixture.releaseCreate();
-  // Then user publishes a current hidden creation only after restoring its exact interval mask
-  assert.equal(await pending, true);
-  assert.equal(fixture.createdOptions[0].overrides.visible, false);
-  assert.equal(fixture.propertyUpdates.length, 1);
-  assert.equal(fixture.propertyUpdates[0].saveDefaults, false);
-  const properties = fixture.shapes.get('shape-1').getProperties();
-  assert.equal(properties.visible, true);
-  assert.equal(properties.intervalsVisibilities.minutes, false);
-  assert.equal(properties.intervalsVisibilities.seconds, true);
-  assert.equal(properties.arrowColor, '#0ECB81');
-});
 
 test('user observes that production monitor retires old interval before readiness and resumes with minute data', async () => {
   // Given the chart candles, interval and marker ownership
@@ -667,17 +491,17 @@ test('user observes that production monitor retires old interval before readines
   await harness.tick();
   const session = harness.monitor.session.session;
   // Then user observes that production monitor retires old interval before readiness and resumes with minute data
-  assert.equal(fixture.shapes.size, 1);
+  assert.equal(fixture.overlay.markers().length, 1);
   harness.setBusy(true);
   fixture.setResolution('1');
   await harness.tick();
   assert.equal(harness.monitor.context, null);
-  assert.equal(harness.monitor.retiredCount, 1);
+  assert.equal(harness.monitor.retiredCount, 0);
   assert.equal(fixture.removed.length, 0);
   assert.equal(harness.detectorCalls, 1);
   harness.setBusy(false);
   await harness.tick();
-  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.overlay.markers().length, 0);
   assert.equal(harness.monitor.context, null);
   assert.equal(session.isCurrent(session.revision), false);
   fixture.chart.exportData = async () => exportResult([
@@ -687,9 +511,8 @@ test('user observes that production monitor retires old interval before readines
   fixture.dataLoaded.fire();
   await harness.tick();
   assert.equal(harness.monitor.context.resolution, '1');
-  assert.equal(fixture.shapes.size, 1);
-  assert.deepEqual(fixture.shapes.get('shape-2').point, { time: 3600, price: 13 });
-  assert.equal(fixture.shapes.get('shape-2').properties.overrides.intervalsVisibilities.seconds, false);
+  assert.equal(fixture.overlay.markers().length, 1);
+  assert.equal(fixture.overlay.markers()[0].getAttribute('transform'), 'translate(60 487)');
   assert.equal(harness.detectorCalls, 2);
   assert.deepEqual(harness.errors, []);
   harness.monitor.stop();
@@ -716,45 +539,19 @@ test('user observes that production monitor stop disposes subscriptions and inva
   assert.equal(fixture.dataLoaded.size, 0);
   releaseExport(exportResult([{ 0: 3601, 1: 10, 2: 12, 3: 9, 4: 11 }]));
   await oldTask;
-  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.overlay.markers().length, 0);
   assert.equal(harness.detectorCalls, 0);
   harness.setBusy(false);
   harness.setHidden(false);
   fixture.chart.exportData = async () => exportResult([{ 0: 3601, 1: 10, 2: 12, 3: 9, 4: 11 }]);
   await harness.tick();
   assert.equal(harness.monitor.retiredCount, 0);
-  assert.equal(fixture.intervalChanged.size, 1);
-  assert.equal(fixture.shapes.size, 1);
+  assert.equal(fixture.intervalChanged.size, 2);
+  assert.equal(fixture.overlay.markers().length, 1);
   harness.monitor.stop();
   assert.deepEqual(harness.errors, []);
 });
 
-test('user observes that production monitor retains a retired layer until late creation and busy cleanup finish', async () => {
-  // Given the chart candles, interval and marker ownership
-  const fixture = createChartDom({ resolution: '1S', deferredCreate: true });
-  const harness = createMonitorHarness(fixture);
-  fixture.chart.exportData = async () => exportResult([{ 0: 3601, 1: 10, 2: 12, 3: 9, 4: 11 }]);
-  // When harness.monitor.tick processes the configured inputs
-  await harness.monitor.tick();
-  await Promise.resolve();
-  const oldTask = harness.monitor.task;
-  harness.setBusy(true);
-  fixture.setResolution('1');
-  await harness.monitor.tick();
-  // Then user observes that production monitor retains a retired layer until late creation and busy cleanup finish
-  assert.equal(harness.monitor.context, null);
-  fixture.releaseCreate();
-  await oldTask;
-  assert.equal(harness.monitor.retiredCount, 1);
-  assert.equal(fixture.shapes.size, 1);
-  assert.deepEqual(fixture.removed, []);
-  harness.setBusy(false);
-  await harness.tick();
-  assert.equal(harness.monitor.retiredCount, 0);
-  assert.equal(fixture.shapes.size, 0);
-  assert.deepEqual(fixture.removed, ['shape-1']);
-  harness.monitor.stop();
-});
 
 test('user observes that production monitor detects a round-trip interval switch between polls', async () => {
   // Given the chart candles, interval and marker ownership
@@ -769,13 +566,13 @@ test('user observes that production monitor detects a round-trip interval switch
   await harness.tick();
   // Then user observes that production monitor detects a round-trip interval switch between polls
   assert.equal(harness.monitor.context, null);
-  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.overlay.markers().length, 0);
   assert.equal(harness.detectorCalls, 1);
   fixture.dataLoaded.fire();
   await harness.tick();
   assert.notEqual(harness.monitor.context, originalContext);
   assert.equal(harness.monitor.context.intervalRevision, 2);
-  assert.equal(fixture.shapes.size, 1);
+  assert.equal(fixture.overlay.markers().length, 1);
   assert.equal(harness.detectorCalls, 2);
   harness.monitor.stop();
 });
@@ -796,34 +593,16 @@ test('user observes that production monitor disposes old chart subscriptions eve
   assert.equal(fixture.intervalChanged.size, 0);
   assert.equal(fixture.dataLoaded.size, 0);
   assert.equal(harness.monitor.context, null);
-  assert.equal(harness.monitor.retiredCount, 1);
+  assert.equal(harness.monitor.retiredCount, 0);
   assert.deepEqual(fixture.removed, []);
   harness.setBusy(false);
   await harness.tick();
-  assert.equal(fixture.shapes.size, 0);
-  assert.equal(replacement.shapes.size, 1);
+  assert.equal(fixture.overlay.markers().length, 0);
+  assert.equal(replacement.overlay.markers().length, 1);
   assert.equal(harness.monitor.context.target.chart, replacement.chart);
   harness.monitor.stop();
   assert.equal(replacement.intervalChanged.size, 0);
 });
-
-for (const [resolution, unit, count] of [
-    ['1S', 'seconds', 1], ['90S', 'minutes', 1], ['15', 'minutes', 15], ['60', 'hours', 1],
-    ['4H', 'hours', 4], ['1D', 'days', 1], ['1W', 'weeks', 1],
-  ]) {
-  test(`user uses native visibility buckets for Binance seconds, minutes, hours, days and weeks (resolution=${JSON.stringify(resolution)})`, () => {
-    // Given a Binance chart resolution with its native visibility bucket
-    const sourceResolution = resolution;
-    // When the marker visibility mask is constructed
-    const visibility = alertApi.bollingerIntervalVisibility(sourceResolution);
-    // Then only the exact expected bucket is enabled
-    assert.equal(visibility[unit], true);
-    assert.equal(visibility[`${unit}From`], count);
-    assert.equal(visibility[`${unit}To`], count);
-    assert.deepEqual(Object.entries(visibility).filter(([, value]) => value === true).map(([key]) => key), [unit]);
-
-  });
-}
 
 test('user rejects weekly bars off Monday while preserving legitimate multiweek gaps', () => {
   // Given weekly candles on the wrong weekday and legitimate Monday candles
@@ -866,11 +645,11 @@ test('user observes that production monitor waits through first-refresh model cr
   assert.deepEqual(harness.errors, []);
   assert.equal(harness.monitor.context, null);
   assert.equal(fixture.intervalChanged.size, 0);
-  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.overlay.markers().length, 0);
   fixture.setModelReady(true);
   await harness.tick();
   assert.equal(harness.monitor.context.resolution, '1');
-  assert.equal(fixture.shapes.size, 1);
+  assert.equal(fixture.overlay.markers().length, 1);
   assert.deepEqual(harness.errors, []);
   harness.monitor.stop();
 });
@@ -891,8 +670,7 @@ test('user observes that on-demand diagnostics distinguish active, awaiting-data
   assert.deepEqual(harness.monitor.diagnostics, {
     taskPending: false, contextPresent: true, failed: false, lastLocalFailure: null,
     cleanupPending: false, cachedSignalCount: 1, layerSize: 1, retiredCount: 0,
-    markerSaveStats: { busy: true, mutations: 0, draining: 0, saveRequests: 0,
-      serializations: 0, callbackCount: 0, failureCount: 0, pendingCallbacks: 0 },
+    markerOverlayStats: { renderedFrames: 1, visibleMarkers: 1, signalCount: 1, attached: true, pendingFrame: false, subscriptions: 9 },
     sessionPresent: true, sessionRevision: 0, contextIntervalRevision: 0,
     sessionMatchesContext: true, sessionCurrent: true,
     nativeModelReady: true, nativeDataReady: true, mutationBlocked: false,
@@ -909,30 +687,6 @@ test('user observes that on-demand diagnostics distinguish active, awaiting-data
   harness.monitor.stop();
 });
 
-test('user observes that initial one-second alignment failure retains requested and native times after cleanup', async () => {
-  // Given the chart candles, interval and marker ownership
-  const fixture = createChartDom({ resolution: '1S', shiftSeconds: -60 });
-  const harness = createMonitorHarness(fixture);
-  fixture.chart.exportData = async () => exportResult([{ 0: 120, 1: 10, 2: 12, 3: 9, 4: 11 }]);
-  const message = 'TradingView Bollinger alert time alignment failed: expected 120, received 60';
-  // When harness.tick processes the configured inputs
-  const observedResult = harness.tick();
-  // Then user observes that initial one-second alignment failure retains requested and native times after cleanup
-  await assert.rejects(observedResult, { message });
-  await harness.tick();
-  assert.equal(harness.monitor.diagnostics.failed, true);
-  assert.equal(harness.monitor.diagnostics.layerSize, 0);
-  assert.equal(fixture.shapes.size, 0);
-  assert.deepEqual(harness.monitor.diagnostics.lastLocalFailure, {
-    thrownType: 'object', classificationFailed: false, name: 'Error', message,
-    unreadableFields: [], stage: 'render', routeSymbol: 'BTRUSDT', resolution: '1S',
-    cachedSignalCount: null, layerSizeBeforeCleanup: 0,
-    sessionRevision: 0, contextIntervalRevision: 0,
-  });
-  harness.monitor.stop();
-  assert.equal(harness.monitor.diagnostics.lastLocalFailure.message, message);
-  fixture.dom.window.close();
-});
 
 for (const stage of ['export', 'render']) {
   test(`user retains the last local ${stage} failure after clearing the layer and stopping`, async () => {
@@ -953,8 +707,8 @@ for (const stage of ['export', 'render']) {
     assert.equal(harness.monitor.diagnostics.cachedSignalCount, 6);
     assert.equal(harness.monitor.diagnostics.layerSize, 6);
     if (stage === 'export') fixture.chart.exportData = async () => { throw new Error('synthetic export failure'); };
-    else fixture.chart.getShapeById = () => undefined;
-    const message = stage === 'export' ? 'synthetic export failure' : 'TradingView Bollinger alert marker point is invalid';
+    else fixture.overlay.setProjection({ price: () => { throw new Error('synthetic projection failure'); } });
+    const message = stage === 'export' ? 'synthetic export failure' : 'synthetic projection failure';
     await assert.rejects(harness.tick(), { message });
     await harness.tick();
     assert.equal(harness.monitor.diagnostics.failed, true);
@@ -962,7 +716,7 @@ for (const stage of ['export', 'render']) {
     assert.equal(harness.monitor.diagnostics.layerSize, 0);
     const expected = {
       thrownType: 'object', classificationFailed: false, name: 'Error', message, unreadableFields: [], stage, routeSymbol: 'BTRUSDT', resolution: '1',
-      cachedSignalCount: 6, layerSizeBeforeCleanup: 6,
+      cachedSignalCount: 6, layerSizeBeforeCleanup: stage === 'render' ? 0 : 6,
       sessionRevision: 0, contextIntervalRevision: 0,
     };
     assert.deepEqual(harness.monitor.diagnostics.lastLocalFailure, expected);
@@ -1264,112 +1018,6 @@ test('user changes the content key when OHLC changes inside the same closed-bar 
   assert.equal(matchesClosedBarsContentSnapshot(corrected, snapshot), false);
 });
 
-test('user renders warning, bearish confirmation, and bullish reversal markers', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes, removed } = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
-  const isCurrent = () => true;
-
-  const observedResult = await layer.render([
-    { id: 'setup:warning', type: 'warning', time: 120, markerPrice: 10 },
-    { id: 'setup:confirmed', type: 'confirmed', time: 180, markerPrice: 9 },
-    { id: 'setup:reversal', type: 'reversal', time: 240, markerPrice: 8 },
-  ], { isCurrent });
-  // Then user renders warning, bearish confirmation, and bullish reversal markers
-  assert.equal(observedResult, true);
-  assert.equal(shapes.size, 3);
-  const records = [...shapes.values()];
-  assert.equal(records[0].properties.shape, 'icon');
-  assert.equal(records[0].properties.icon, 0xf111);
-  assert.equal(records[0].properties.overrides.color, '#F6465D');
-  assert.equal(records[1].properties.shape, 'arrow_down');
-  assert.equal(records[1].properties.overrides.arrowColor, '#F6465D');
-  assert.equal(records[2].properties.shape, 'arrow_up');
-  assert.equal(records[2].properties.overrides.arrowColor, '#0ECB81');
-  assert.equal(records[2].point.price, 8);
-
-  await layer.render([{ id: 'setup:reversal', type: 'reversal', time: 240, markerPrice: 8 }], {
-    isCurrent,
-  });
-  assert.equal(shapes.size, 1);
-  assert.deepEqual(removed, ['shape-1', 'shape-2']);
-});
-
-test('user renders mirrored bullish marker shapes and colors in the shared layer', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes } = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
-
-  await layer.render([
-    {
-      id: 'setup:bullish:warning',
-      direction: 'bullish',
-      type: 'warning',
-      time: 120,
-      markerPrice: 10,
-    },
-    {
-      id: 'setup:bullish:confirmed',
-      direction: 'bullish',
-      type: 'confirmed',
-      time: 180,
-      markerPrice: 9,
-    },
-    {
-      id: 'setup:bullish:reversal',
-      direction: 'bullish',
-      type: 'reversal',
-      time: 240,
-      markerPrice: 8,
-    },
-  ], { isCurrent: () => true });
-
-  const records = [...shapes.values()];
-  // Then user renders mirrored bullish marker shapes and colors in the shared layer
-  assert.equal(records[0].properties.shape, 'icon');
-  assert.equal(records[0].properties.overrides.color, '#0ECB81');
-  assert.equal(records[1].properties.shape, 'arrow_up');
-  assert.equal(records[1].properties.overrides.arrowColor, '#0ECB81');
-  assert.equal(records[2].properties.shape, 'arrow_down');
-  assert.equal(records[2].properties.overrides.arrowColor, '#F6465D');
-});
-
-test('user keeps opposite-direction signals on the same candle as distinct markers', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes } = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBollingerMarkerLayer(target);
-
-  await layer.render([
-    {
-      id: 'setup:bearish:reversal',
-      direction: 'bearish',
-      type: 'reversal',
-      time: 240,
-      markerPrice: 8,
-    },
-    {
-      id: 'setup:bullish:reversal',
-      direction: 'bullish',
-      type: 'reversal',
-      time: 240,
-      markerPrice: 12,
-    },
-  ], { isCurrent: () => true });
-
-  // Then user keeps opposite-direction signals on the same candle as distinct markers
-  assert.equal(shapes.size, 2);
-  const records = [...shapes.values()];
-  assert.deepEqual(
-    records.map((record) => [record.point.time, record.point.price, record.properties.shape]),
-    [[240, 8, 'arrow_up'], [240, 12, 'arrow_down']],
-  );
-});
 
 test('user requires explicit direction when using the shared marker layer', async () => {
   // Given the chart candles, interval and marker ownership
@@ -1411,7 +1059,7 @@ test('user keeps existing markers through a recoverable snapshot error and retri
   ];
   await layer.render([signal], { isCurrent: () => true });
   // Then user keeps existing markers through a recoverable snapshot error and retries next tick
-  assert.equal(shapes.size, 1);
+  assert.equal(layer.size, 1);
 
   let detectorCalls = 0;
   await assert.rejects(
@@ -1428,7 +1076,7 @@ test('user keeps existing markers through a recoverable snapshot error and retri
     /snapshot race/,
   );
   assert.equal(detectorCalls, 1);
-  assert.equal(shapes.size, 1);
+  assert.equal(layer.size, 1);
 
   await reconcileBearishBollingerAlertWindow({
     bars,
@@ -1446,7 +1094,7 @@ test('user keeps existing markers through a recoverable snapshot error and retri
     ],
     renderSignals: (signals) => layer.render(signals, { isCurrent: () => true }),
   });
-  assert.equal(shapes.size, 2);
+  assert.equal(layer.size, 2);
 });
 
 test('user keeps the task context retryable across malformed-to-valid snapshots', async () => {
@@ -1532,167 +1180,6 @@ test('user keeps the task context retryable across malformed-to-valid snapshots'
   assert.equal(layer.size, 2);
 });
 
-test('user recreates a marker that TradingView evicted outside the alert layer', async () => {
-  // Given the chart candles, interval and marker ownership
-  const {
-    dom,
-    shapes,
-    removed,
-    evictShape,
-  } = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
-  const signals = [{
-    id: 'setup:warning',
-    type: 'warning',
-    time: 120,
-    markerPrice: 10,
-  }];
-
-  const observedResult = await layer.render(signals, { isCurrent: () => true });
-  // Then user recreates a marker that TradingView evicted outside the alert layer
-  assert.equal(observedResult, true);
-  assert.equal(shapes.has('shape-1'), true);
-
-  evictShape('shape-1');
-
-  assert.equal(await layer.render(signals, { isCurrent: () => true }), true);
-  assert.equal(shapes.has('shape-1'), false);
-  assert.equal(shapes.has('shape-2'), true);
-  assert.deepEqual(removed, []);
-});
-
-test('user observes that same closed-bar window reuses detection and still restores an evicted marker', async () => {
-  // Given the chart candles, interval and marker ownership
-  const {
-    dom,
-    shapes,
-    removed,
-    evictShape,
-  } = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
-  const bars = [
-    { time: 60, open: 10, high: 12, low: 9, close: 11 },
-    { time: 120, open: 11, high: 13, low: 10, close: 12 },
-  ];
-  const expectedSignals = [{
-    id: 'setup:warning',
-    type: 'warning',
-    time: 120,
-    markerPrice: 10,
-  }];
-  let detectorCalls = 0;
-  let rendererCalls = 0;
-  let cachedWindowKey = null;
-  let cachedContentSnapshot = null;
-  let cachedSignals = null;
-
-  async function runMonitorTick() {
-    const result = await reconcileBearishBollingerAlertWindow({
-      bars,
-      cachedWindowKey,
-      cachedContentSnapshot,
-      cachedSignals,
-      detectSignals: () => {
-        detectorCalls += 1;
-        return expectedSignals;
-      },
-      renderSignals: (signals) => {
-        rendererCalls += 1;
-        return layer.render(signals, { isCurrent: () => true });
-      },
-    });
-    if (result.rendered) {
-      cachedWindowKey = result.closedBarsWindowKey;
-      cachedContentSnapshot = result.closedBarsContentSnapshot;
-      cachedSignals = result.signals;
-    }
-  }
-
-  await runMonitorTick();
-  // Then user observes that same closed-bar window reuses detection and still restores an evicted marker
-  assert.equal(shapes.has('shape-1'), true);
-  evictShape('shape-1');
-
-  await runMonitorTick();
-
-  assert.equal(detectorCalls, 1);
-  assert.equal(rendererCalls, 2);
-  assert.equal(shapes.has('shape-1'), false);
-  assert.equal(shapes.has('shape-2'), true);
-  assert.deepEqual(removed, []);
-});
-
-test('user observes that reconciliation, signal removal, and clear preserve foreign drawings', async () => {
-  // Given the chart candles, interval and marker ownership
-  const {
-    dom,
-    shapes,
-    removed,
-    evictShape,
-    addForeignShape,
-  } = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
-  const foreignId = addForeignShape();
-  const signal = {
-    id: 'setup:warning',
-    type: 'warning',
-    time: 120,
-    markerPrice: 10,
-  };
-
-  await layer.render([signal], { isCurrent: () => true });
-  evictShape('shape-1');
-  await layer.render([signal], { isCurrent: () => true });
-
-  // Then user observes that reconciliation, signal removal, and clear preserve foreign drawings
-  assert.equal(shapes.has(foreignId), true);
-  assert.deepEqual(removed, []);
-
-  await layer.render([], { isCurrent: () => true });
-  assert.equal(shapes.has(foreignId), true);
-  assert.deepEqual(removed, ['shape-2']);
-
-  await layer.render([signal], { isCurrent: () => true });
-  layer.clear();
-
-  assert.equal(shapes.size, 1);
-  assert.equal(shapes.has(foreignId), true);
-  assert.deepEqual(removed, ['shape-2', 'shape-3']);
-});
-
-test('user observes that clear forgets an externally evicted marker without removing a missing entity', async () => {
-  // Given the chart candles, interval and marker ownership
-  const {
-    dom,
-    shapes,
-    removed,
-    evictShape,
-  } = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
-
-  await layer.render([{
-    id: 'setup:warning',
-    type: 'warning',
-    time: 120,
-    markerPrice: 10,
-  }], { isCurrent: () => true });
-  evictShape('shape-1');
-
-  layer.clear();
-
-  // Then user observes that clear forgets an externally evicted marker without removing a missing entity
-  assert.equal(layer.size, 0);
-  assert.equal(shapes.size, 0);
-  assert.deepEqual(removed, []);
-});
 
 test('user excludes an unclosed reversal breakout bar from detector input', () => {
   // Given the chart candles, interval and marker ownership
@@ -1710,7 +1197,7 @@ test('user excludes an unclosed reversal breakout bar from detector input', () =
   assert.deepEqual(bars, [{ time: 60, open: 10, high: 12, low: 9, close: 11 }]);
 });
 
-test('user rejects an abnormal marker count before mutating the existing layer', async () => {
+test('user rejects an abnormal marker count and clears the invalid overlay', async () => {
   // Given the chart candles, interval and marker ownership
   const { dom, shapes, removed } = createChartDom();
   // When findBearishBollingerChartTarget processes the configured inputs
@@ -1730,186 +1217,15 @@ test('user rejects an abnormal marker count before mutating the existing layer',
     }),
   );
 
-  // Then user rejects an abnormal marker count before mutating the existing layer
+  // Then user rejects an abnormal marker count and clears the invalid overlay
   await assert.rejects(
     layer.render(excessive, { isCurrent }),
     /marker limit exceeded/,
   );
-  assert.equal(shapes.size, 1);
+  assert.equal(layer.size, 0);
   assert.deepEqual(removed, []);
 });
 
-test('user applies the marker limit to the combined bullish and bearish layer', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, chart, shapes, removed, createdOptions, propertyUpdates } = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  let yields = 0;
-  const layer = createBollingerMarkerLayer(target, { yieldToBrowser: async () => { yields += 1; } });
-  const signals = Array.from({ length: MAX_BOLLINGER_MARKERS }, (_, index) => ({
-    id: `combined-${index}`,
-    direction: index % 2 === 0 ? 'bearish' : 'bullish',
-    type: 'warning',
-    time: 120 + index,
-    markerPrice: 10,
-  }));
-
-  const observedResult = await layer.render(signals, { isCurrent: () => true });
-  // Then user applies the marker limit to the combined bullish and bearish layer
-  assert.equal(observedResult, true);
-  assert.equal(shapes.size, MAX_BOLLINGER_MARKERS);
-
-  const reads = { handles: 0, points: 0, properties: 0 };
-  yields = 0;
-  const getShapeById = chart.getShapeById;
-  chart.getShapeById = (id) => { reads.handles += 1; return getShapeById(id); };
-  for (const shape of shapes.values()) {
-    const getPoints = shape.getPoints.bind(shape);
-    const getProperties = shape.getProperties.bind(shape);
-    shape.getPoints = () => { reads.points += 1; return getPoints(); };
-    shape.getProperties = () => { reads.properties += 1; return getProperties(); };
-  }
-  assert.equal(await layer.render(signals, { isCurrent: () => true }), true);
-  assert.ok(yields >= Math.floor((MAX_BOLLINGER_MARKERS - 1) / 32));
-  assert.deepEqual(reads, {
-    handles: MAX_BOLLINGER_MARKERS,
-    points: MAX_BOLLINGER_MARKERS,
-    properties: MAX_BOLLINGER_MARKERS,
-  });
-  assert.equal(createdOptions.length, MAX_BOLLINGER_MARKERS);
-  assert.equal(propertyUpdates.length, MAX_BOLLINGER_MARKERS);
-
-  await assert.rejects(
-    layer.render([
-      ...signals,
-      {
-        id: 'combined-overflow',
-        direction: 'bullish',
-        type: 'warning',
-        time: 120 + MAX_BOLLINGER_MARKERS,
-        markerPrice: 10,
-      },
-    ], { isCurrent: () => true }),
-    /marker limit exceeded/,
-  );
-  assert.equal(shapes.size, MAX_BOLLINGER_MARKERS);
-  assert.deepEqual(removed, []);
-});
-
-function batchSignals() {
-  return Array.from({ length: 64 }, (_, index) => ({
-    id: `batch-${index}`, direction: 'bearish', type: 'warning',
-    time: 120 + index * 60, markerPrice: 10,
-  }));
-}
-
-test('user observes that a real render batch yields a browser task before finishing', async (t) => {
-  // Given the chart candles, interval and marker ownership
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const fixture = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  const layer = createBollingerMarkerLayer(target);
-  let completed = false;
-  const task = layer.render(batchSignals(), { isCurrent: () => true }).then(result => { completed = true; return result; });
-  await observeStrategyCondition(() => fixture.shapes.size > 0, 'first render batch');
-  // Then user observes that a real render batch yields a browser task before finishing
-  assert.ok(fixture.shapes.size > 0 && fixture.shapes.size <= 32);
-  assert.equal(completed, false, 'microtasks alone cannot resume the default browser-task yield');
-  for (let batch = 0; batch < 64 && !completed; batch += 1) {
-    t.mock.timers.tick(0);
-    await new Promise(setImmediate);
-  }
-  assert.equal(completed, true, 'each explicit browser task advances the bounded render');
-  assert.equal(await task, true);
-  assert.equal(fixture.shapes.size, 64);
-});
-
-for (const reason of ['stale', 'busy', 'clear']) {
-  test(`user observes that a ${reason} transition during a render yield stops the old batch`, async () => {
-    // Given the chart candles, interval and marker ownership
-    const fixture = createChartDom();
-    // When findBearishBollingerChartTarget processes the configured inputs
-    const target = findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT');
-    let current = true;
-    let busy = false;
-    let countAtYield = 0;
-    const layer = createBollingerMarkerLayer(target, {
-      canMutate: () => !busy,
-      yieldToBrowser: async () => {
-        countAtYield = fixture.createdOptions.length;
-        if (reason === 'stale') current = false;
-        if (reason === 'busy') busy = true;
-        if (reason === 'clear') assert.equal(layer.clear(), true);
-      },
-    });
-    const result = await reconcileBearishBollingerAlertWindow({
-      bars: [{ time: 120, open: 10, high: 12, low: 9, close: 11 }],
-      cachedWindowKey: null, cachedSignals: null,
-      detectSignals: batchSignals,
-      renderSignals: (signals) => layer.render(signals, { isCurrent: () => current }),
-    });
-    // Then user observes that a the selected case transition during a render yield stops the old batch
-    assert.ok(countAtYield > 0 && countAtYield <= 32);
-    assert.equal(fixture.createdOptions.length, countAtYield);
-    assert.equal(fixture.propertyUpdates.length, countAtYield);
-    assert.equal(result.rendered, false);
-    assert.equal(fixture.shapes.size, reason === 'clear' ? 0 : countAtYield);
-  });
-}
-
-test('user observes that a marker evicted during a yield is recreated from the refreshed shape list', async () => {
-  // Given the chart candles, interval and marker ownership
-  const fixture = createChartDom();
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  let evict = false;
-  let evicted = null;
-  const layer = createBollingerMarkerLayer(target, {
-    yieldToBrowser: async () => {
-      if (!evict) return;
-      evict = false;
-      evicted = [...fixture.shapes.keys()].at(-1);
-      fixture.evictShape(evicted);
-    },
-  });
-  const signals = batchSignals();
-  // Then user observes that a marker evicted during a yield is recreated from the refreshed shape list
-  assert.equal(await layer.render(signals, { isCurrent: () => true }), true);
-  evict = true;
-  assert.equal(await layer.render(signals, { isCurrent: () => true }), true);
-  assert.equal(fixture.shapes.has(evicted), false);
-  assert.equal(fixture.shapes.size, 64);
-  assert.equal(fixture.createdOptions.length, 65);
-  assert.equal(fixture.shapes.get('shape-65').point.time, signals.at(-1).time);
-  assert.deepEqual(fixture.removed, []);
-});
-
-test('user observes that production monitor does not commit a batch interrupted by an interval switch', async () => {
-  // Given the chart candles, interval and marker ownership
-  const fixture = createChartDom();
-  const harness = createMonitorHarness(fixture, {
-    detectBollingerSignals: batchSignals,
-    createBollingerMarkerLayer: (target, options) => createBollingerMarkerLayer(target, {
-      ...options,
-      yieldToBrowser: async () => { fixture.setResolution('5'); },
-    }),
-  });
-  fixture.chart.exportData = async () => exportResult([
-    { 0: 3600, 1: 10, 2: 12, 3: 9, 4: 11 },
-    { 0: 3660, 1: 10, 2: 12, 3: 9, 4: 11 },
-  ]);
-  // When harness.tick processes the configured inputs
-  await harness.tick();
-  // Then user observes that production monitor does not commit a batch interrupted by an interval switch
-  assert.ok(fixture.shapes.size > 0 && fixture.shapes.size <= 32);
-  assert.equal(harness.monitor.context.lastProcessedClosedBarsWindowKey, null);
-  assert.equal(harness.monitor.context.lastProcessedClosedBarsContentSnapshot, null);
-  assert.equal(harness.monitor.context.lastProcessedSignals, null);
-  assert.deepEqual(harness.errors, []);
-  harness.monitor.stop();
-  assert.equal(fixture.shapes.size, 0);
-});
 
 test('user preserves the full per-direction capacity when both directions are present', async () => {
   // Given the chart candles, interval and marker ownership
@@ -1940,66 +1256,253 @@ test('user preserves the full per-direction capacity when both directions are pr
   ], { isCurrent: () => true });
 
   // Then user preserves the full per-direction capacity when both directions are present
-  assert.equal(shapes.size, MAX_BOLLINGER_MARKERS_PER_DIRECTION + 1);
+  assert.equal(layer.size, MAX_BOLLINGER_MARKERS_PER_DIRECTION + 1);
 });
 
-test('user removes a shifted marker and fails the alignment contract', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes, removed } = createChartDom({ shiftSeconds: -60 });
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
 
-  const observedResult = layer.render(
-      [{ id: 'setup:warning', type: 'warning', time: 120, markerPrice: 10 }],
-      { isCurrent: () => true },
-    );
-  // Then user removes a shifted marker and fails the alignment contract
-  await assert.rejects(
-    observedResult,
-    /time alignment failed: expected 120, received 60/,
-  );
-  assert.equal(shapes.size, 0);
-  assert.deepEqual(removed, ['shape-1']);
-});
+function overlaySignals() {
+  return ['bearish', 'bullish'].flatMap(direction => ['warning', 'confirmed', 'reversal'].map((type, index) => ({
+    id: `${direction}:${type}`, direction, type, time: 60 * (index + 1), markerPrice: 10,
+  })));
+}
 
-test('user observes that clear removes a marker whose asynchronous creation finishes late', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes, removed, releaseCreate } = createChartDom({ deferredCreate: true });
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
-  const renderPromise = layer.render([
-    { id: 'setup:warning', type: 'warning', time: 120, markerPrice: 10 },
-  ], { isCurrent: () => true });
-
-  await Promise.resolve();
+test('user sees six directional marker styles anchored to the exact candle and price', async () => {
+  // Given all signal types in both directions beside an untouched user drawing
+  const fixture = createChartDom();
+  fixture.addForeignShape('user-channel');
+  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'));
+  // When the shared layer renders both strategies marker styles
+  await layer.render(overlaySignals(), { isCurrent: () => true });
+  // Then warnings are circles and confirmations and reversals have directional arrow tips
+  assert.deepEqual(fixture.overlay.markers().map(node => [node.dataset.markerId, node.tagName, node.getAttribute('fill'), node.getAttribute('transform')]), [
+    ['bearish:warning', 'circle', '#F6465D', 'translate(1 490)'],
+    ['bearish:confirmed', 'path', '#F6465D', 'translate(2 490)'],
+    ['bearish:reversal', 'path', '#0ECB81', 'translate(3 490)'],
+    ['bullish:warning', 'circle', '#0ECB81', 'translate(1 490)'],
+    ['bullish:confirmed', 'path', '#0ECB81', 'translate(2 490)'],
+    ['bullish:reversal', 'path', '#F6465D', 'translate(3 490)'],
+  ]);
+  const nodes = fixture.overlay.markers();
+  assert.equal(nodes[1].getAttribute('d'), nodes[5].getAttribute('d'));
+  assert.equal(nodes[2].getAttribute('d'), nodes[4].getAttribute('d'));
+  assert.notEqual(nodes[1].getAttribute('d'), nodes[2].getAttribute('d'));
+  const svg = fixture.overlay.pane.querySelector('svg');
+  assert.equal(svg.style.pointerEvents, 'none');
+  assert.equal(svg.style.overflow, 'hidden');
+  assert.deepEqual([...fixture.shapes.keys()], ['user-channel']);
   layer.clear();
-  releaseCreate();
-
-  // Then user observes that clear removes a marker whose asynchronous creation finishes late
-  assert.equal(await renderPromise, false);
-  assert.equal(shapes.size, 0);
-  assert.deepEqual(removed, ['shape-1']);
+  fixture.dom.window.close();
 });
 
-test('user removes a marker whose target changes while asynchronous creation is pending', async () => {
-  // Given the chart candles, interval and marker ownership
-  const { dom, shapes, removed, releaseCreate } = createChartDom({ deferredCreate: true });
-  // When findBearishBollingerChartTarget processes the configured inputs
-  const target = findBearishBollingerChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createBearishBollingerMarkerLayer(target);
-  let current = true;
-  const renderPromise = layer.render([
-    { id: 'setup:warning', type: 'warning', time: 120, markerPrice: 10 },
-  ], { isCurrent: () => current });
-
-  await Promise.resolve();
-  current = false;
-  releaseCreate();
-
-  // Then user removes a marker whose target changes while asynchronous creation is pending
-  assert.equal(await renderPromise, false);
-  assert.equal(shapes.size, 0);
-  assert.deepEqual(removed, ['shape-1']);
+test('user sees viewport zoom resize logarithmic and inverted prices through one coalesced frame', async () => {
+  // Given visible markers using the actual native price projection boundary
+  const fixture = createChartDom();
+  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'));
+  await layer.render(overlaySignals(), { isCurrent: () => true });
+  // When pan zoom price mode and resize delegates fire in the same frame
+  fixture.overlay.setProjection({ time: index => index * 2, price: price => Math.log10(price) * 40 });
+  fixture.overlay.setViewport(300, 100);
+  for (const event of Object.values(fixture.overlay.events)) event.emit();
+  assert.equal(fixture.overlay.pendingFrames, 1);
+  fixture.overlay.flushFrames();
+  // Then only visible candles appear at native nonlinear price coordinates
+  assert.deepEqual(fixture.overlay.markers().map(node => node.getAttribute('transform')), ['translate(120 40)', 'translate(240 40)', 'translate(120 40)', 'translate(240 40)']);
+  assert.equal(layer.overlayStats.renderedFrames, 2);
+  assert.equal(fixture.overlay.pane.querySelector('svg').getAttribute('viewBox'), '0 0 300 100');
+  // When inverse price mode changes and the viewport becomes empty
+  fixture.overlay.setProjection({ price: price => 100 - Math.log10(price) * 40 });
+  fixture.overlay.events.modeChanged.emit();
+  fixture.overlay.flushFrames();
+  // Then the inverse axis moves the markers without touching drawings
+  assert.equal(fixture.overlay.markers()[0].getAttribute('transform'), 'translate(120 60)');
+  fixture.overlay.setViewport(0, 0);
+  fixture.overlay.flushFrames();
+  assert.equal(fixture.overlay.markers().length, 0);
+  assert.equal(layer.size, 6);
+  layer.clear();
+  fixture.dom.window.close();
 });
+
+test('user never sees a marker snapped to a missing neighboring candle', async () => {
+  // Given the time scale resolves a gap to a neighboring index and another time is missing
+  const fixture = createChartDom();
+  fixture.overlay.setTimeLookup({ index: time => time === 180 ? null : time, time: index => index === 120 ? 119 : index });
+  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'));
+  // When markers are projected with exact native time readback
+  await layer.render(overlaySignals(), { isCurrent: () => true });
+  // Then only the exact existing candle is displayed while the signal history is retained
+  assert.deepEqual(fixture.overlay.markers().map(node => node.dataset.markerId), ['bearish:warning', 'bullish:warning']);
+  assert.equal(layer.size, 6);
+  layer.clear();
+  fixture.dom.window.close();
+});
+
+for (const reason of ['hidden', 'interval', 'busy', 'stale']) {
+  test(`user hides the overlay during ${reason} transitions and clears it while drawings are busy`, async () => {
+    // Given an active overlay with a pending coordinate frame
+    const fixture = createChartDom();
+    let busy = false;
+    let current = true;
+    const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'), { canMutate: () => !busy });
+    await layer.render(overlaySignals(), { isCurrent: () => current });
+    const svg = fixture.overlay.pane.querySelector('svg');
+    fixture.overlay.events.logicalRangeChanged.emit();
+    // When the target can no longer publish visible markers
+    if (reason === 'hidden') fixture.overlay.setHidden(true);
+    if (reason === 'interval') fixture.setResolution('5');
+    if (reason === 'busy') busy = true;
+    if (reason === 'stale') current = false;
+    if (reason === 'busy' || reason === 'stale') fixture.overlay.flushFrames();
+    // Then the old overlay is hidden and clear removes every owned resource even while busy
+    assert.equal(svg.style.visibility, 'hidden');
+    busy = true;
+    assert.equal(layer.clear(), true);
+    assert.equal(fixture.overlay.pane.querySelector('svg'), null);
+    assert.equal(fixture.overlay.pendingFrames, 0);
+    assert.equal(fixture.overlay.subscriptions, 0);
+    assert.equal(fixture.intervalChanged.size, 0);
+    assert.equal(fixture.dataLoaded.size, 0);
+    assert.equal(layer.size, 0);
+    fixture.dom.window.close();
+  });
+}
+
+test('user reuses a cleared layer and keeps a second strategies overlay and foreign drawings intact', async () => {
+  // Given independent strategy layers attached to one chart
+  const fixture = createChartDom();
+  fixture.addForeignShape('user-channel');
+  const target = findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT');
+  const first = createBollingerMarkerLayer(target);
+  const second = createBollingerMarkerLayer(target);
+  await first.render(overlaySignals(), { isCurrent: () => true });
+  await second.render([{ ...overlaySignals()[0], id: 'strategy31' }], { isCurrent: () => true });
+  // When one layer clears and is used again
+  first.clear();
+  assert.deepEqual(fixture.overlay.markers().map(node => node.dataset.markerId), ['strategy31']);
+  await first.render([{ ...overlaySignals()[0], id: 'strategy29' }], { isCurrent: () => true });
+  // Then both layers remain independent and no native entity was changed
+  assert.deepEqual(fixture.overlay.markers().map(node => node.dataset.markerId), ['strategy31', 'strategy29']);
+  assert.equal(fixture.overlay.pane.querySelectorAll('svg').length, 2);
+  assert.equal(first.size, 1);
+  assert.equal(second.size, 1);
+  assert.deepEqual([...fixture.shapes.keys()], ['user-channel']);
+  assert.equal(fixture.createdOptions.length, 0);
+  first.clear();
+  second.clear();
+  assert.equal(fixture.overlay.subscriptions, 0);
+  fixture.dom.window.close();
+});
+
+test('user sees an asynchronous projection failure after complete overlay resource cleanup', async () => {
+  // Given a rendered overlay with a consumer failure boundary
+  const fixture = createChartDom();
+  const failures = [];
+  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'), {
+    onRenderError(error) { failures.push({ message: error.message, attached: layer.overlayStats.attached, subscriptions: fixture.overlay.subscriptions }); },
+  });
+  await layer.render(overlaySignals(), { isCurrent: () => true });
+  // When the native coordinate projection fails in a queued frame
+  fixture.overlay.setProjection({ price: () => { throw new Error('price projection failed'); } });
+  fixture.overlay.events.priceRangeChanged.emit();
+  fixture.overlay.flushFrames();
+  // Then the consumer receives the real failure only after all resources are retired
+  assert.deepEqual(failures, [{ message: 'price projection failed', attached: false, subscriptions: 0 }]);
+  assert.equal(layer.size, 0);
+  assert.equal(fixture.overlay.pendingFrames, 0);
+  assert.equal(fixture.overlay.pane.querySelector('svg'), null);
+  assert.equal(fixture.intervalChanged.size, 0);
+  fixture.dom.window.close();
+});
+
+test('user gets a visible thrown frame failure when no consumer error callback is installed', async () => {
+  // Given an overlay without a consumer recovery boundary
+  const fixture = createChartDom();
+  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'));
+  await layer.render(overlaySignals(), { isCurrent: () => true });
+  // When a native scale returns an invalid coordinate asynchronously
+  fixture.overlay.setProjection({ price: () => NaN });
+  fixture.overlay.events.priceRangeChanged.emit();
+  // Then the exception propagates and no stale partial overlay survives
+  assert.throws(() => fixture.overlay.flushFrames(), /coordinates are invalid/);
+  assert.equal(fixture.overlay.subscriptions, 0);
+  assert.equal(fixture.overlay.markers().length, 0);
+  fixture.dom.window.close();
+});
+
+test('user keeps cached detector results and unchanged overlay nodes without DOM writes', async () => {
+  // Given a reconciled candle window and observable overlay subtree
+  const fixture = createChartDom();
+  const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'));
+  const bars = [{ time: 60, open: 10, high: 12, low: 9, close: 11 }];
+  let detections = 0;
+  const detectSignals = () => { detections += 1; return overlaySignals(); };
+  const first = await reconcileBearishBollingerAlertWindow({ bars, cachedWindowKey: null, cachedSignals: null, detectSignals, renderSignals: signals => layer.render(signals, { isCurrent: () => true }) });
+  const initialNodes = fixture.overlay.markers();
+  const observer = new fixture.overlay.pane.ownerDocument.defaultView.MutationObserver(() => {});
+  observer.observe(fixture.overlay.pane, { attributes: true, childList: true, subtree: true });
+  // When the unchanged closed-bar window is reconciled again
+  const next = await reconcileBearishBollingerAlertWindow({ bars, cachedWindowKey: first.closedBarsWindowKey, cachedContentSnapshot: first.closedBarsContentSnapshot, cachedSignals: first.signals, detectSignals, renderSignals: signals => layer.render(signals, { isCurrent: () => true }) });
+  // Then detection is reused and no redraw mutates unchanged DOM
+  assert.equal(next.rendered, true);
+  assert.equal(detections, 1);
+  assert.deepEqual(fixture.overlay.markers(), initialNodes);
+  assert.equal(observer.takeRecords().length, 0);
+  observer.disconnect();
+  layer.clear();
+  fixture.dom.window.close();
+});
+
+test('user receives independent host index price delegate and animation cancellation contracts', () => {
+  // Given a fixture with explicit native candle rows and a private subscription owner
+  const fixture = createChartDom();
+  const owner = {};
+  let notifications = 0;
+  const callback = () => { notifications += 1; };
+  fixture.overlay.setTimeLookup({ index: time => time === 60 ? 3 : null, time: index => index === 3 ? 60 : undefined });
+  fixture.overlay.setProjection({ time: index => index * 12, price: price => Math.log10(price) * 20 });
+  const event = fixture.overlay.events.modeChanged;
+  // When the chart host maps prices and delivers owner-bound notifications
+  event.subscribe(owner, callback);
+  event.emit();
+  event.unsubscribe(owner, callback);
+  event.emit();
+  const view = fixture.overlay.pane.ownerDocument.defaultView;
+  const cancelled = view.requestAnimationFrame(callback);
+  view.cancelAnimationFrame(cancelled);
+  fixture.overlay.flushFrames();
+  // Then exact time readback nonlinear coordinates and cancellation follow the host contract
+  assert.equal(fixture.overlay.timeScale.timePointToIndex(60, 0), 3);
+  assert.equal(fixture.overlay.timeScale.timePointToIndex(120, 0), null);
+  assert.deepEqual(fixture.chart.getSeries().data().valueAt(3), [60, 1, 2, 0, 1]);
+  assert.equal(fixture.chart.getSeries().data().valueAt(4), null);
+  assert.equal(fixture.overlay.timeScale.indexToCoordinate(3), 36);
+  assert.equal(fixture.overlay.priceScale.priceToCoordinate(100, fixture.overlay.series.firstValue()), 40);
+  assert.equal(notifications, 1);
+  assert.equal(event.size, 0);
+  fixture.dom.window.close();
+});
+
+for (const invalid of ['combined-limit', 'duplicate-id', 'invalid-time', 'invalid-price', 'invalid-type']) {
+  test(`user rejects ${invalid} signals and removes a previously valid overlay`, async () => {
+    // Given valid existing markers followed by a malformed marker request
+    const fixture = createChartDom();
+    const layer = createBollingerMarkerLayer(findBearishBollingerChartTarget(fixture.dom.window.document, 'BTRUSDT'));
+    await layer.render(overlaySignals(), { isCurrent: () => true });
+    const invalidRequests = {
+      'combined-limit': Array.from({ length: MAX_BOLLINGER_MARKERS + 1 }, (_, index) => ({ ...overlaySignals()[0], id: String(index) })),
+      'duplicate-id': [overlaySignals()[0], overlaySignals()[0]],
+      'invalid-time': [{ ...overlaySignals()[0], time: 1.5 }],
+      'invalid-price': [{ ...overlaySignals()[0], markerPrice: NaN }],
+      'invalid-type': [{ ...overlaySignals()[0], type: 'unknown' }],
+    };
+    // When the invalid request reaches the public rendering boundary
+    const rendering = layer.render(invalidRequests[invalid], { isCurrent: () => true });
+    // Then a concrete validation failure propagates without stale overlay state
+    await assert.rejects(rendering, /limit exceeded|duplicate signal id|signal point is invalid|signal type is invalid/);
+    assert.equal(layer.size, 0);
+    assert.equal(fixture.overlay.markers().length, 0);
+    assert.equal(fixture.overlay.subscriptions, 0);
+    assert.equal(fixture.createdOptions.length, 0);
+    fixture.dom.window.close();
+  });
+}

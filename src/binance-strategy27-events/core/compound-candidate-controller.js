@@ -8,7 +8,7 @@ import { CompoundCandidateLifecycle } from './compound-candidate-lifecycle.js';
  * The lifecycle accepts immutable records before asynchronous drawing. A view
  * generation separately invalidates pending presentation on manual clear or
  * eviction without erasing sequence/replay bookkeeping. The chart layer must
- * cancel pending owned entities on remove/clear/suspend, including late creates.
+ * cancel pending marker placement on remove/clear/suspend.
  * Polling failure suspends presentation; context retirement alone ends ownership
  * of the bounded history and its existing timer-driven age cleanup.
  */
@@ -62,7 +62,7 @@ export function createCompoundCandidateController({
     for (const id of ids) {
       if (id === pendingCandidateId) viewGeneration += 1;
       // Prune has already retired every ID; attempt each cleanup once even if
-      // one native removal fails, then stop this job with the complete evidence.
+      // one overlay removal fails, then stop this job with the complete evidence.
       try {
         layer?.remove(id);
       } catch (error) {
@@ -142,7 +142,7 @@ export function createCompoundCandidateController({
       const id = action.candidate.candidate_id;
       const annotation = buildCompoundCandidateAnnotation(action.candidate, { locale: currentLocale });
       // Optional chart capabilities are tested inside this job's error boundary.
-      if (layer === null) layer = createLayer();
+      if (layer === null) layer = createLayer({ onRenderError: failJob });
       const renderGeneration = viewGeneration;
       pendingCandidateId = id;
       try {

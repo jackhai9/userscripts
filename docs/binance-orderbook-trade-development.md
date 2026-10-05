@@ -20,6 +20,36 @@ scripts/binance-orderbook-trade.user.js
 
 ## Runtime
 
+### Chart save completion and serialization
+
+`core/chart-save-coalescer.js` batches the observed default
+`saveChart(callback)` calls during native order-drawing bursts. A completed
+batch serializes the current chart once and delivers a separate JSON snapshot
+to every accepted callback, including repeated calls using the same function.
+Never replace the callback queue with only its last element: unrelated callers
+may depend on their own completion to continue.
+
+Explicit options, extra arguments and non-native receivers retain the original
+method's synchronous return and error behavior. Queued batches are detached
+before delivery; callbacks may reenter without overwriting the current batch.
+One callback failure does not suppress later callbacks and is reported at the
+asynchronous callback-error boundary. Stop, action failure, timeout and an
+external wrapper replacing the method still deliver accepted calls while
+preserving method ownership. A retained reference to a retired wrapper forwards
+new calls to its original method instead of creating an orphan queue.
+
+These are serialization and callback guarantees, not database commit guarantees.
+If each callback writes IndexedDB, it still performs its own write. Tests must
+model `saveChart(callback, options)` rather than passing a snapshot as the first
+argument. Browser fixtures report serialization, callback delivery and native
+save requests separately, using request IDs to verify exactly-once delivery.
+
+Strategy27/29/31 transient annotations use the shared SVG overlay and never
+enter the native drawing/save pipeline. Native order lines and manual drawings
+continue to use the host chart APIs. Live verification must measure new calls
+within a defined observation window; accumulated counters alone cannot establish
+causality for an earlier browser database stall.
+
 Use the repository Node version:
 
 ```bash

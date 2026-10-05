@@ -49,8 +49,10 @@ function createNativeChartHost() {
     activeChart() {
       return { getShapeById: id => shapes.get(String(id)) };
     },
-    saveChart(...args) {
-      saved.push({ receiver: this, args });
+    saveChart(callback, options) {
+      saved.push({ receiver: this, args: [...arguments] });
+      if (typeof callback !== 'function') throw new TypeError('Native chart save requires a callback');
+      return callback({ drawingIds: options?.includeDrawings === false ? [] : [...shapes.keys()] });
     },
     subscribe(name, listener) {
       if (!listeners.has(name)) listeners.set(name, new Set());
@@ -124,7 +126,10 @@ test('user receives native chart event, save, metadata, and held-property behavi
   host.api.emit('drawing_event', '42', 'properties_changed');
   host.api.unsubscribe('drawing_event', listener);
   host.api.emit('drawing_event', '42', 'remove');
-  Reflect.apply(host.api.saveChart, receiver, ['snapshot', 2]);
+  const snapshots = [];
+  const saveCallback = snapshot => { snapshots.push(snapshot); return 17; };
+  const options = { includeDrawings: false };
+  const result = Reflect.apply(host.api.saveChart, receiver, [saveCallback, options]);
   const original = host.api.saveChart;
   const attempted = host.holdCurrentSave();
   const replacement = () => 'replacement';
@@ -132,7 +137,9 @@ test('user receives native chart event, save, metadata, and held-property behavi
 
   // Then the boundary preserves each native operation and explicitly refuses held-property replacement.
   assert.deepEqual(received, [['42', 'properties_changed']]);
-  assert.deepEqual(host.saved, [{ receiver, args: ['snapshot', 2] }]);
+  assert.deepEqual(host.saved, [{ receiver, args: [saveCallback, options] }]);
+  assert.deepEqual(snapshots, [{ drawingIds: [] }]);
+  assert.equal(result, 17);
   assert.equal(host.listeners.get('drawing_event').size, 0);
   assert.equal(host.api.activeChart().getShapeById(42).lineDataSource().toolname, 'LineToolOrder');
   assert.equal(host.api.activeChart().getShapeById('absent'), undefined);
@@ -369,26 +376,26 @@ test('user drops an unobserved old depth symbol without reviving it when its nat
   assert.equal(host.sockets.length, 1);
 });
 
-test('user persists the newer burst only when save ownership changes after an older deferred snapshot', async t => {
-  // Given one completed order capture has deferred its older cumulative chart snapshot.
+test('user delivers both deferred callbacks when save ownership changes during a newer burst', async t => {
+  // Given one completed order capture has deferred an accepted native save callback.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const host = createNativeChartHost();
   host.shapes.set('order-1', { lineDataSource: () => ({ toolname: 'LineToolOrder' }) });
-  host.shapes.set('order-2', { lineDataSource: () => ({ toolname: 'LineToolOrder' }) });
+  const snapshots = [];
   const controller = createTradingViewContinuousSaveController(host.api);
   const round = controller.beginRound();
   const first = controller.beginSubmitCapture(round);
   host.api.emit('drawing_event', 'order-1', 'properties_changed');
-  host.api.saveChart('older-snapshot');
+  host.api.saveChart(snapshot => snapshots.push({ request: 'older', snapshot }));
   t.mock.timers.tick(120);
   assert.deepEqual(await controller.completeSubmitCapture(first), { matched: true, status: 'captured' });
   assert.deepEqual(host.saved, []);
 
   // When another owner replaces saving during the newer captured burst.
+  host.shapes.set('order-2', { lineDataSource: () => ({ toolname: 'LineToolOrder' }) });
   const second = controller.beginSubmitCapture(round);
   host.api.emit('drawing_event', 'order-2', 'properties_changed');
-  const receiver = { caller: 'native-chart' };
-  Reflect.apply(host.api.saveChart, receiver, ['newer-snapshot']);
+  host.api.saveChart(snapshot => snapshots.push({ request: 'newer', snapshot }));
   const foreignSaves = [];
   const foreignSave = (...args) => foreignSaves.push(args);
   host.api.saveChart = foreignSave;
@@ -397,9 +404,15 @@ test('user persists the newer burst only when save ownership changes after an ol
   controller.endRound(round);
   const stats = controller.stop();
 
-  // Then only the newer captured snapshot reaches its original owner and stale data is never replayed.
+  // Then one current serialization reaches both accepted callbacks and the foreign owner stays intact.
   assert.deepEqual(captured, { matched: true, status: 'save-chart-replaced' });
-  assert.deepEqual(host.saved, [{ receiver, args: ['newer-snapshot'] }]);
+  assert.equal(host.saved.length, 1);
+  assert.equal(host.saved[0].receiver, host.api);
+  assert.deepEqual(snapshots, [
+    { request: 'older', snapshot: { drawingIds: ['order-1', 'order-2'] } },
+    { request: 'newer', snapshot: { drawingIds: ['order-1', 'order-2'] } },
+  ]);
+  assert.notEqual(snapshots[0].snapshot, snapshots[1].snapshot);
   assert.deepEqual(foreignSaves, []);
   assert.equal(host.api.saveChart, foreignSave);
   assert.equal(host.listeners.get('drawing_event').size, 0);
@@ -420,13 +433,16 @@ test('user leaves saves synchronous when a native shape has no order-tool metada
 
   // When the shape event arrives and discovery has one millisecond left.
   host.api.emit('drawing_event', 'unknown-shape', 'properties_changed');
-  host.api.saveChart('native-unrelated-snapshot');
+  const snapshots = [];
+  const returned = host.api.saveChart(snapshot => { snapshots.push(snapshot); return 19; });
   t.mock.timers.tick(249);
 
   // Then no order event or save wrapper is invented from missing metadata.
   assert.equal(capture.status, null);
   assert.equal(host.api.saveChart, originalSave);
-  assert.deepEqual(host.saved.map(save => save.args), [['native-unrelated-snapshot']]);
+  assert.equal(host.saved.length, 1);
+  assert.deepEqual(snapshots, [{ drawingIds: ['unknown-shape'] }]);
+  assert.equal(returned, 19);
 
   // When the full native event discovery window expires.
   t.mock.timers.tick(1);

@@ -31,6 +31,7 @@ function expectOrdersUntouched(state, scenario) {
   expect(state.events.filter(({ type }) => [
     'chart-orders-checked',
     'chart-save-requested',
+    'chart-serialized',
     'chart-saved',
   ].includes(type))).toEqual([]);
   expect(state.showOrders).toBe(scenario.ui.showOrders);

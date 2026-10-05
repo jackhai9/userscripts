@@ -1,3 +1,5 @@
+import { createChartMarkerOverlay } from '../../shared/chart-marker-overlay.js';
+
 const CHART_ROOT_SELECTOR = '.chart-widget-root';
 const STATUS_ID = 'jh-strategy27-event-status';
 const DIRECTIONAL_MARKER_GAP_PX = 8;
@@ -16,22 +18,12 @@ function routeSymbolFromChartSymbol(value) {
 }
 
 function assertChartContract(chart) {
-  for (const method of ['createShape', 'getAllShapes', 'getShapeById', 'removeEntity', 'resolution', 'symbol']) {
+  for (const method of ['hasModel', 'dataReady', 'onIntervalChanged', 'onDataLoaded', 'resolution', 'symbol']) {
     if (typeof chart?.[method] !== 'function') throw new Error(`TradingView chart method is unavailable: ${method}`);
   }
 }
 
-/** The host can evict transient entities without notifying their owner. */
-export function readLiveShapeIds(chart) {
-  const shapes = chart.getAllShapes();
-  if (!Array.isArray(shapes)) throw new Error('Strategy 27 chart shape list is invalid');
-  return new Set(shapes.map((shape) => {
-    if (typeof shape?.id !== 'string' || shape.id.length === 0) throw new Error('Strategy 27 chart shape id is invalid');
-    return shape.id;
-  }));
-}
-
-/** Check the native context around repair awaits, before the next context tick. */
+/** Check chart identity around candle waits, before the next context tick. */
 export function pinMarkerChartContext(chart) {
   const symbol = chart.symbol();
   const resolution = chart.resolution();
@@ -62,21 +54,6 @@ export function findStrategy27ChartRoot(document) {
   if (!chartRoots.length) return null;
   if (chartRoots.length !== 1) throw new Error(`Visible Strategy 27 chart root count is invalid: ${chartRoots.length}`);
   return chartRoots[0];
-}
-
-function shapeOptions(shape, color) {
-  return {
-    shape,
-    lock: true,
-    disableSave: true,
-    disableSelection: true,
-    disableUndo: true,
-    showInObjectsTree: false,
-    overrides: {
-      color,
-      fixedSize: true,
-    },
-  };
 }
 
 function createMarkerPointResolver(chart) {
@@ -152,31 +129,6 @@ function createMarkerPointResolver(chart) {
     return { time: point.time, price };
   }
   return { dataUpdated, resolve, shift };
-}
-
-function verifyResolvedTime(chart, id, requestedTime) {
-  const shape = chart.getShapeById(id);
-  const points = shape?.getPoints?.();
-  if (!Array.isArray(points) || points.length !== 1 || points[0].time !== requestedTime) {
-    const actualTime = Array.isArray(points) && points.length === 1 ? points[0]?.time : null;
-    const pointCount = Array.isArray(points) ? points.length : null;
-    throw new Error(
-      `Strategy 27 chart time alignment failed: expected ${requestedTime}, received ${actualTime} (point count ${pointCount})`,
-    );
-  }
-  return shape;
-}
-
-export async function createAlignedShape(chart, point, options) {
-  const id = await chart.createShape(point, options);
-  if (typeof id !== 'string' || id.length === 0) throw new Error('TradingView returned an invalid shape id');
-  try {
-    verifyResolvedTime(chart, id, point.time);
-  } catch (error) {
-    chart.removeEntity(id);
-    throw error;
-  }
-  return id;
 }
 
 /** Shared causal candle placement; each caller owns cancellation of its wait. */
@@ -258,24 +210,32 @@ export function createTradingViewEventLayer(target, {
   maxEvents,
   maxAgeMs,
   candleWaitMs = DEFAULT_CANDLE_WAIT_MS,
+  onRenderError,
 }) {
   if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error('Strategy 27 maxEvents is invalid');
   if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error('Strategy 27 maxAgeMs is invalid');
-  const { chart } = target;
-  const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
-  const isChartCurrent = pinMarkerChartContext(chart);
+  const placement = createTradingViewMarkerPlacement(target.chart, { candleWaitMs });
+  const isChartCurrent = pinMarkerChartContext(target.chart);
   const registry = new Map();
   const pendingRenders = new Map();
   let renderGeneration = 0;
-  let reconciliation = null;
   let suspended = false;
+  const overlay = createChartMarkerOverlay(target, {
+    maxMarkers: maxEvents,
+    onRenderError(error) {
+      suspend();
+      if (onRenderError) onRenderError(error);
+      else throw error;
+    },
+  });
+  const markers = () => [...registry.values()].map(record => record.marker);
 
   function removeRecord(eventId) {
     pendingRenders.get(eventId)?.abort();
     const record = registry.get(eventId);
     if (!record) return;
     registry.delete(eventId);
-    if (readLiveShapeIds(chart).has(record.markerId)) chart.removeEntity(record.markerId);
+    overlay.remove([record.marker.id]);
   }
 
   function pruneAge(observedAtMs) {
@@ -288,67 +248,43 @@ export function createTradingViewEventLayer(target, {
     while (registry.size >= maxEvents) removeRecord(registry.keys().next().value);
   }
 
-  function restoreMarker(eventId, record, liveIds) {
-    if (record.restoring) return record.restoring;
-    const current = () => !suspended && registry.get(eventId) === record && isChartCurrent();
-    if (!current()) return Promise.resolve(false);
-    if (liveIds.has(record.markerId)) return Promise.resolve(true);
-    record.restoring = (async () => {
-      const markerId = await createAlignedShape(chart, record.markerPoint, record.options);
-      if (!current()) {
-        if (readLiveShapeIds(chart).has(markerId)) chart.removeEntity(markerId);
-        return false;
-      }
-      record.markerId = markerId;
-      return true;
-    })().finally(() => { record.restoring = null; });
-    return record.restoring;
-  }
-
-  function reconcile() {
-    if (suspended) return Promise.resolve();
-    if (reconciliation) return reconciliation;
-    reconciliation = (async () => {
-      let liveIds = readLiveShapeIds(chart);
-      for (const [eventId, record] of [...registry]) {
-        if (suspended || registry.get(eventId) !== record || !isChartCurrent()) continue;
-        if (!record.restoring && liveIds.has(record.markerId)) continue;
-        await restoreMarker(eventId, record, liveIds);
-        // A native create yields; refresh before examining another record.
-        liveIds = readLiveShapeIds(chart);
-      }
-    })().finally(() => { reconciliation = null; });
-    return reconciliation;
+  async function reconcile() {
+    if (!suspended) overlay.render(markers(), { isCurrent: isChartCurrent });
   }
 
   async function ensureMarker(eventId, annotation, observedAtMs) {
     if (suspended) return false;
-    let record = registry.get(eventId);
-    if (record) {
-      record.observedAtMs = observedAtMs;
-      return restoreMarker(eventId, record, readLiveShapeIds(chart));
+    const existing = registry.get(eventId);
+    if (existing) {
+      existing.observedAtMs = observedAtMs;
+      return overlay.render(markers(), { isCurrent: isChartCurrent });
     }
     if (annotation.markerShape === null) return true;
     const requestedGeneration = renderGeneration;
     const controller = new AbortController();
     pendingRenders.set(eventId, controller);
     try {
-      const markerPoint = await placement.wait(annotation, { signal: controller.signal });
-      if (!markerPoint || controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) return false;
+      const point = await placement.wait(annotation, { signal: controller.signal });
+      if (!point || suspended || controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) return false;
       pruneAge(observedAtMs);
       ensureCapacityForNew();
-      const options = shapeOptions(annotation.markerShape, annotation.markerColor);
-      const markerId = await createAlignedShape(chart, markerPoint, options);
-      if (controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) {
-        if (readLiveShapeIds(chart).has(markerId)) chart.removeEntity(markerId);
-        return false;
-      }
-      record = { markerId, markerPoint, options, observedAtMs, restoring: null };
-      registry.set(eventId, record);
+      const marker = { id: `event:${eventId}`, time: point.time, price: point.price,
+        shape: annotation.markerShape, color: annotation.markerColor, size: 18, anchor: 'tip',
+        type: 'ordinary', direction: annotation.markerShape === 'arrow_up' ? 'bullish' : 'bearish' };
+      if (!overlay.render([...markers(), marker], { isCurrent: isChartCurrent })) return false;
+      // Retain the first accepted point and style; later facts never move it.
+      registry.set(eventId, { marker, observedAtMs });
       return true;
     } finally {
       if (pendingRenders.get(eventId) === controller) pendingRenders.delete(eventId);
     }
+  }
+
+  /** Freeze verified evidence while cancelling unfinished candle placement. */
+  function suspend() {
+    suspended = true;
+    renderGeneration += 1;
+    for (const controller of pendingRenders.values()) controller.abort();
   }
 
   return Object.freeze({
@@ -359,20 +295,14 @@ export function createTradingViewEventLayer(target, {
     remove: removeRecord,
     prune: pruneAge,
     reconcile,
-    /** Stop new presentation without deleting verified history after a job failure. */
-    suspend() {
-      suspended = true;
-      renderGeneration += 1;
-      for (const controller of pendingRenders.values()) controller.abort();
-    },
+    suspend,
     clear() {
       renderGeneration += 1;
       for (const controller of pendingRenders.values()) controller.abort();
-      for (const eventId of [...registry.keys()]) removeRecord(eventId);
+      registry.clear();
+      overlay.clear();
     },
-    get size() {
-      return registry.size;
-    },
+    get size() { return registry.size; },
   });
 }
 

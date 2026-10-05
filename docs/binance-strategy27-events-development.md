@@ -14,7 +14,7 @@ V10 live projection. The VPS remains the only market-data and event-analysis
 authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
-Version 0.6.7 retains this installation's private gateway configuration and
+Version 0.6.8 retains this installation's private gateway configuration and
 provides a shared read-only transport. Strategy29 owns its own summary panel,
 lifecycle and panel position. The existing `strategy27GatewayOrigin` and
 `strategy27GatewayAuthSecret` storage keys remain the single credential source;
@@ -32,7 +32,7 @@ select another origin, set request headers or send a write. Future strategy
 routes require an explicit allowlist extension and contract review.
 
 The script reads an authenticated, loopback-only long-poll endpoint through an
-SSH local forward. It draws transient entities only when the Binance route,
+SSH local forward. It renders independent SVG overlays only when the Binance route,
 TradingView symbol, and `1S` chart interval all match the requested Strategy 27
 symbol.
 
@@ -70,8 +70,7 @@ use the reset/bootstrap protocol while retaining verified display history. Other
 JSON, cursor violations, and rendering contract failures stop immediately.
 
 A terminal ordinary-job failure suspends drawing and polling without deleting
-previously verified markers or panel history. Pending candle waits and late
-creations/repairs lose presentation ownership; late entities are removed.
+previously verified markers or panel history. Pending candle waits lose presentation ownership and cannot publish late markers.
 Retained history is frozen evidence, not a live connection, and the visible
 error remains until explicit recovery or a context change. The existing context
 timer continues two-hour retention pruning but does not repair a suspended
@@ -90,7 +89,8 @@ Manual clear remains available and does not dismiss a terminal error.
   missing timestamp to the nearest available bar. Directional markers use that
   candle for placement instead of the event response midpoint: an up arrow sits
   eight screen pixels below the candle low, and a down arrow sits eight screen
-  pixels above the candle high. Rendering waits on TradingView's `dataUpdated`
+  pixels above the candle high at creation. The resolved price stays immutable
+  when the chart is subsequently zoomed. Rendering waits on TradingView's `dataUpdated`
   event for at most three seconds. Order-book events can occur during a second
   with no trades, in which case Binance never publishes an exact one-second
   candle; after the wait, the marker is anchored to the latest prior candle so
@@ -111,10 +111,12 @@ Manual clear remains available and does not dismiss a terminal error.
 - Incomplete or input-gap facts are marked as incomplete and carry no
   directional conclusion.
 
-Every created entity uses the second obtained by flooring the projection's
-`event_time_ms`. The script reads the entity point back after each create or
-update. If TradingView shifts the point to a different bar, the entity is
-removed and visualization stops with an alignment error.
+Markers retain the resolved causal candle time and price. The shared SVG renderer
+checks each timestamp against the loaded series before converting time and price
+to CSS-pixel coordinates. A missing candle is hidden, never snapped to another
+bar by the renderer. Strategy27 alone owns the three-second exact/prior-candle
+placement policy; Strategy29 and Strategy31 retain their existing exact-time
+projection rules.
 
 `triggered_at_ms` is the trigger bucket's start boundary. The browser requires
 `trigger_snapshot.bucket_start_ms` to equal it; the bucket end remains the
@@ -125,9 +127,9 @@ before closure. `event_closed.event_time_ms` carries `active_end_at_ms` and can
 be later than that snapshot's end when an ineligible bucket advances the event
 to its lifecycle deadline without joining the event.
 
-The script stores only its own returned marker IDs and its bounded in-memory
+The script stores only its own SVG marker records and bounded in-memory
 panel records. Route, symbol, interval and manual clear remove only those
-transient entities. Ordinary stream epochs and cursor resets reset protocol
+overlay elements. Ordinary stream epochs and cursor resets reset protocol
 validation while preserving verified display history in the same chart context.
 The independent ordinary display registry retains at most 80 events (including
 neutral events), evicts by last observation time with event ID as the tie-break,
@@ -145,33 +147,45 @@ ordinary job with an error while retaining its already verified history.
 Marker count and age are bounded on the chart; the panel retains at most eight
 events.
 
-The existing one-second context check also reconciles retained records with
-TradingView's `getAllShapes()` list. A host-evicted ordinary marker is restored
-using its original resolved point and drawing options, even when no new gateway
-message arrives. Compound candidates restore only missing parts of their
-icon/label pair, preserving the original slot and surviving entity IDs. Each
-record shares one in-flight repair across timer and message callbacks. Cleanup
-skips IDs proven absent, while native removal failures still stop the owning job.
-Manual clear, context changes and display retention eviction invalidate owned
-repairs; terminal job failures suspend new presentation and repair;
-late-created entities are removed instead of resurrecting retired records.
-Reconciliation does not refresh retention timestamps. Drawings remain transient
-and use `disableSave: true`, but a full page reload requests a bounded display
-snapshot from the gateway before long polling and rebuilds retained ordinary and
-compound records. The snapshot and its continuation cursor are committed with the
-same Redis operation, so live messages after that cursor cannot be skipped. A
-panel history reset is a separate lifecycle event, not evidence of native entity
-eviction.
+The ordinary and compound adapters use the same
+`src/shared/chart-marker-overlay.js` renderer as Strategy29 and Strategy31.
+It accepts only resolved timestamps, prices and explicit presentation styles;
+it owns no event, retention, placement or slot policy. Each instance owns a
+separate main-pane SVG with `pointer-events: none`. Axis areas are excluded.
+Time/price delegates, data updates and pane resize notifications coalesce into
+one animation frame; hidden pages cancel pending frames. Interval and data
+invalidation hide stale presentation immediately. The Strategy27 context subscribes
+to interval changes before its first marker. Any interval notification invalidates
+that context, cancels pending candle waits and requests, and causes the next poll
+to create a new context even after a `1S → other → 1S` round trip. Context cleanup
+unsubscribes that exact owner. Every frame checks the chart,
+symbol, interval and projection objects. A replaced pane or price scale fails
+closed and reports through the owning job's visible error path.
+
+Only visible markers receive nodes. Stable IDs reuse nodes, and unchanged
+samples cause no DOM writes. The context timer can reconcile active retained
+records without querying or modifying native drawings. Suspend rejects new
+presentation and cancels pending candle waits while preserving verified records
+and their viewport projection. Retention pruning and manual/context cleanup
+remove only owned SVG nodes. Cleanup releases listeners, resize observers and
+scheduled frames; it does not wait for native drawing owners. No Strategy27
+marker calls `createShape`, `removeEntity`, `saveChart`, or wraps chart saving.
+Foreign drawings and the orderbook's native drawing/save controller are separate.
+
+A full page reload still requests a bounded display snapshot before long
+polling. The snapshot and its continuation cursor are committed with the same
+Redis operation, so live messages after that cursor cannot be skipped. A panel
+history reset remains a separate lifecycle event.
 
 ## Compound Candidate Extension
 
 ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
-market evidence. The client, lifecycle, panel, native chart layer and optional-job
+market evidence. The client, lifecycle, panel, SVG chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.6.7 with identical metadata headers.
+generated install artifact are version 0.6.8 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
-checks, including candidate delivery, paired entities, clear and context stop.
+checks, including candidate delivery, paired SVG markers, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
 must precede browser publication. Initial compound publication history is recorded in
 [CorsairQuant PR 324](https://github.com/jackhai9/CorsairQuant/pull/324) and
@@ -222,35 +236,34 @@ Do not treat source unit tests or the panel fixture as deployment evidence.
   boundary. It constructs its chart layer only on the first accepted candidate,
   so a missing compound chart capability cannot fail ordinary startup. A stream
   state accepts the new epoch/sequence without clearing verified candidates.
-  Gateway resets, unavailability and bootstrap also preserve their native entity
+  Gateway resets, unavailability and bootstrap also preserve their SVG record
   IDs, slots and panel history, including candidates absent from a newer snapshot.
   Manual clear preserves replay bookkeeping but invalidates pending presentation.
   Age eviction also invalidates a pending draw, and a second age check runs after
   drawing before publication to the panel. The existing context timer calls
-  `reconcile()`, which prunes before repairing missing entities; there is no
+  `reconcile()`, which prunes before projecting retained records; there is no
   second timer. Route/interval changes and disappearance
   of the visible chart stop both clients before destroying the shared panel.
   The clear menu clears both views without restarting either client.
-- Terminal protocol/render/repair failures stop only the compound job and freeze
-  verified pairs and panel records with an explicit error and reconnect guidance.
-  Pending candle waits and late creates/repairs lose presentation ownership;
-  incomplete pairs are removed, while surviving verified entities remain.
-  The existing context timer continues decision-time age pruning after failure,
-  and manual clear and context retirement remain effective. Native cleanup
-  attempts every retired entity once and aggregates failures without retrying an
-  unknown removal. Cleanup errors do not interrupt ordinary shutdown or discard
-  unrelated retained history. An asynchronous drawing failure after context
-  retirement is retained as `lastError`, without writing into a retired panel.
-- Each candidate owns a 36-pixel native icon arrow and a short text label:
+- Terminal protocol or rendering failures stop only the compound job with an
+  explicit error and reconnect guidance. Previously verified records and panel
+  history remain retained; pending candle waits cannot publish new pairs.
+  The context timer continues decision-time age pruning after failure, and
+  manual clear and context retirement remain effective. A coordinate/projection
+  failure removes the invalid SVG before reporting the error. It does not mutate
+  ordinary or user drawings.
+- Each candidate owns a 36-pixel SVG arrow and a 12-pixel bold text label:
   dark red down/`候选高` above the candle, dark green up/`候选低` below it.
-  Annotation direction remains `arrow_down`/`arrow_up`; native drawing options
-  use `shape: icon` and supported arrow icons. The first icon center is 26 pixels
-  from the candle edge (18-pixel half-size plus an eight-pixel gap).
-  Candidates sharing a resolved candle and direction receive independent slots
-  64 pixels apart. Removing one does not move surviving candidates. The slot
-  key uses the actual prior candle when multiple no-trade seconds resolve there.
-  The budget is 80 compound candidates / 160 native entities, plus 80 ordinary
-  markers: at most 240 owned chart entities in total.
+  English locale shows `High candidate` / `Low candidate`. The first icon center
+  is 26 pixels from the candle edge at creation (18-pixel half-size plus an
+  eight-pixel gap). Candidates sharing a resolved candle and direction receive
+  independent slots 64 pixels apart at creation. All offsets are converted to
+  prices once, preserving the previous placement semantics on later zooms.
+  Removing one candidate does not move surviving candidates; a new candidate
+  can reuse the free slot. The slot key uses the actual prior candle when
+  multiple no-trade seconds resolve there.
+  The budget is 80 compound candidates / 160 SVG elements, plus 80 ordinary
+  markers: at most 240 owned overlay elements, with zero native entities.
 - Compound detail shows the actual background, seed, confirmation and optional
   reinforcement evidence windows. Complete IDs are selectable inside a
   collapsed details section. Low candidates disclose the unvalidated mirror
@@ -266,18 +279,13 @@ node test/manual/strategy27-compound-panel-preview.mjs
 This uses a disposable headless Chromium page without a dev server or access
 to the operator's browser/account. It verifies both directions, eight-row
 retention, selection, collapse, status and viewport bounds, and prints the
-temporary screenshot directory. It does not verify native TradingView entities,
+temporary screenshot directory. It does not verify live TradingView overlay coordinates,
 gateway connectivity, loaded userscript source, or prediction accuracy.
 
-`test/manual/strategy27-native-drawing-probe.mjs` loads the actual compound chart
-module in a disposable official TradingView demo. It draws two independent
-candidates on each side, reads back their points/properties, captures the native
-render after drawing resources finish loading, and verifies that cleanup removes
-all eight owned entities while preserving baseline drawings. Visual inspection
-confirms the arrows and short labels, including distinct same-candle slots.
-This demo runs at its own one-hour resolution; it does not establish Binance
-`1S` compatibility or loaded userscript identity. It uses public market data and
-is never an authenticated operator page.
+The historical `test/manual/strategy27-native-drawing-probe.mjs` describes the
+retired native-drawing implementation. Its earlier demo evidence does not
+validate SVG overlays or current Binance compatibility. Current validation must
+exercise the shared renderer and inspect the actual main-pane SVG output.
 
 ## Development
 
@@ -293,7 +301,7 @@ git diff --check
 ```
 
 Live validation must confirm the current Binance main-world chart API, exact
-`1S` resolution, exact route symbol, successful create/readback/remove behavior,
+`1S` resolution, exact route symbol, exact candle placement, SVG geometry and zero native drawing/save calls,
 Tampermonkey source readback, and the actually loaded source after a hard
 reload. A source-level method name alone is not end-to-end proof.
 
@@ -345,8 +353,8 @@ A language-only route change repaints the same panel and preserves selection,
 collapse state, monitoring evidence, both requests/cursors, history retention
 and marker IDs. Bilingual annotation copies retain the first directional
 candidate presentation in both languages. Compound labels update only owned
-text properties with saving defaults disabled, including labels that finish
-creation or repair after a language change. Changing symbol/chart/interval and
+SVG text content, including labels whose candle wait completes after a language
+change. No chart-save defaults are read or written. Changing symbol/chart/interval and
 explicit reconnect still use their existing context lifecycle.
 
 The menu uses Tampermonkey 5's returned registration IDs to update its four

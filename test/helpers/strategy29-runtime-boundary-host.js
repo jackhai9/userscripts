@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { loadFixtureDom } from './dom.js';
+import { attachChartMarkerOverlayHost } from './chart-marker-overlay-host.js';
 
 /** Positive OHLC candles provide both trend directions without supplying detector decisions. */
 export function createOscillatingStrategyBars(count = 165) {
@@ -107,6 +108,12 @@ export function createStrategy29ChartHost({ bars = createOscillatingStrategyBars
       shapes.delete(id);
     },
   };
+  const overlay = attachChartMarkerOverlayHost({ chart, document });
+  overlay.setProjection({ time: index => index });
+  overlay.setTimeLookup({
+    index: time => { const index = currentBars.findIndex(bar => bar.time === time); return index < 0 ? null : index; },
+    time: index => currentBars[index]?.time,
+  });
   for (const method of omittedMethods) {
     assert.equal(typeof chart[method], 'function', 'Only a declared native chart capability can be omitted');
     delete chart[method];
@@ -120,7 +127,7 @@ export function createStrategy29ChartHost({ bars = createOscillatingStrategyBars
   };
   document.querySelector('iframe').contentWindow.tradingViewApi = tradingViewApi;
   return {
-    dom, view, document, root, chart, tradingViewApi,
+    dom, view, document, root, chart, tradingViewApi, overlay,
     created, removed, propertyWrites, exports, shapes, intervalChanged, dataLoaded,
     setBars(value) { currentBars = value; },
     setSymbol(value) { symbol = value; },

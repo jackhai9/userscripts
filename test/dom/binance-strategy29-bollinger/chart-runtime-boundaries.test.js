@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createBollingerMonitor } from '../../../src/binance-strategy29-bollinger/monitor.js';
 import { detectBollingerSignals } from '../../../src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js';
 import {
-  bollingerIntervalVisibility, buildClosedBarsContentSnapshot, createBollingerIntervalSession,
+  buildClosedBarsContentSnapshot, createBollingerIntervalSession,
   createBollingerMarkerLayer, exportClosedTradingViewBars, findBearishBollingerChartTarget,
   isBearishBollingerChartTargetCurrent, matchesClosedBarsContentSnapshot, parseClosedTradingViewBars,
 } from '../../../src/binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
@@ -36,6 +36,7 @@ async function sample(fixture) {
     fixture.clock.advance(0);
     return !fixture.monitor.diagnostics.taskPending;
   }, 'native export and marker rendering complete');
+  fixture.host.overlay.flushFrames();
 }
 
 test('user sees both directions and reversal markers calculated from native OHLC candles', async (t) => {
@@ -47,13 +48,13 @@ test('user sees both directions and reversal markers calculated from native OHLC
   // When the real monitor exports candles and runs its detector and drawing layer.
   await sample(fixture);
 
-  // Then each calculated event uses its directional shape and the pending shape starts hidden.
-  assert.deepEqual(host.created.map(({ point, options }) => [point.time, options.shape, options.overrides.color]), [
-    [7440, 'icon', '#F6465D'], [7500, 'arrow_down', '#F6465D'], [7740, 'arrow_up', '#0ECB81'],
-    [9360, 'icon', '#0ECB81'], [9900, 'arrow_down', '#F6465D'],
+  // Then each calculated event uses its directional SVG style without native drawing writes.
+  assert.deepEqual(host.overlay.markers().map(node => [node.dataset.markerType, node.dataset.markerDirection, node.getAttribute('fill')]), [
+    ['warning', 'bearish', '#F6465D'], ['confirmed', 'bearish', '#F6465D'], ['reversal', 'bearish', '#0ECB81'],
+    ['warning', 'bullish', '#0ECB81'], ['reversal', 'bullish', '#F6465D'],
   ]);
-  assert.equal(host.created.every(({ options }) => options.overrides.visible === false && options.disableSave === true), true);
-  assert.deepEqual(host.propertyWrites.map(({ properties }) => properties.visible), [true, true, true, true, true]);
+  assert.deepEqual(host.created, []);
+  assert.deepEqual(host.propertyWrites, []);
   assert.equal(monitor.diagnostics.cachedSignalCount, 5);
   assert.equal(monitor.diagnostics.layerSize, 5);
   assert.deepEqual(fixture.errors, []);
@@ -65,7 +66,7 @@ test('user sees both directions and reversal markers calculated from native OHLC
 
   // Then user drawings are saved and unchanged strategy markers are reused.
   assert.deepEqual(saved, { drawings: [{ id: 'user-line' }] });
-  assert.equal(host.created.length, 5);
+  assert.equal(host.overlay.markers().length, 5);
   assert.deepEqual(host.removed, []);
   assert.equal(host.exports.length, 2);
 });
@@ -80,148 +81,13 @@ test('user removes obsolete strategy markers when revised native candles contain
   fixture.host.setBars(createOscillatingStrategyBars().map(bar => ({ ...bar, open: 100, close: 100, high: 101, low: 99 })));
   await sample(fixture);
 
-  // Then only the former strategy drawings are removed and the empty result is cached.
-  assert.deepEqual(fixture.host.removed, ['native-1', 'native-2', 'native-3', 'native-4', 'native-5']);
+  // Then strategy SVG markers disappear and the empty result is cached.
+  assert.deepEqual(fixture.host.removed, []);
+  assert.equal(fixture.host.overlay.markers().length, 0);
   assert.deepEqual(fixture.host.chart.getAllShapes(), [{ id: 'user-line', name: 'trend_line' }]);
   assert.equal(fixture.monitor.diagnostics.cachedSignalCount, 0);
   assert.equal(fixture.monitor.diagnostics.layerSize, 0);
   assert.deepEqual(fixture.errors, []);
-});
-
-for (const [label, properties] of [
-  ['icon', { icon: 0xf110 }],
-  ['interval visibility', { intervalsVisibilities: { minutes: false } }],
-]) {
-  test(`user repairs an externally changed marker ${label} without duplicating other signals`, async (t) => {
-    // Given five real signals whose first native drawing has been edited externally.
-    const fixture = monitorFixture(t);
-    await sample(fixture);
-    fixture.host.editProperties('native-1', properties);
-
-    // When the unchanged candle window is audited again.
-    await sample(fixture);
-
-    // Then the changed drawing is replaced and the complete real marker contract is restored.
-    assert.deepEqual(fixture.host.removed, ['native-1']);
-    assert.equal(fixture.host.created.length, 6);
-    assert.equal(fixture.monitor.diagnostics.layerSize, 5);
-    assert.deepEqual(fixture.host.shapes.get('native-6').getProperties(), {
-      visible: true, intervalsVisibilities: bollingerIntervalVisibility('1'), color: '#F6465D', size: 10, icon: 0xf111,
-    });
-  });
-}
-
-test('user stops publishing markers when native property writes are declined and clears the pending drawing', async (t) => {
-  // Given a native chart that accepts creation but declines property writes.
-  const fixture = monitorFixture(t);
-  fixture.host.addForeignShape('user-line');
-  fixture.host.ignorePropertyWrites(true);
-
-  // When the real monitor tries to reveal its first signal marker.
-  await sample(fixture);
-
-  // Then the unpublished marker is removed and diagnostics identify the fatal render failure.
-  assert.deepEqual(fixture.host.removed, ['native-1']);
-  assert.deepEqual(fixture.host.chart.getAllShapes(), [{ id: 'user-line', name: 'trend_line' }]);
-  assert.equal(fixture.monitor.diagnostics.failed, true);
-  assert.equal(fixture.monitor.diagnostics.cleanupPending, true);
-  assert.equal(fixture.monitor.diagnostics.lastLocalFailure.stage, 'render');
-  assert.equal(fixture.monitor.diagnostics.lastLocalFailure.message, 'TradingView Bollinger alert marker properties were not applied');
-  assert.equal(fixture.monitor.diagnostics.cachedSignalCount, null);
-  assert.equal(fixture.errors.length, 1);
-});
-
-test('user receives a fatal native-property diagnostic before old owned markers are cleaned on the next sample', async (t) => {
-  // Given an established signal layer whose native property readback becomes invalid.
-  const fixture = monitorFixture(t);
-  fixture.host.addForeignShape('user-line');
-  await sample(fixture);
-  fixture.host.setNativeProperties('native-1', null);
-
-  // When the next real audit reads the malformed external properties.
-  await sample(fixture);
-
-  // Then the existing layer is marked for cleanup without losing the original failure stage.
-  assert.equal(fixture.monitor.diagnostics.lastLocalFailure.message, 'TradingView Bollinger alert marker properties are invalid');
-  assert.equal(fixture.monitor.diagnostics.lastLocalFailure.layerSizeBeforeCleanup, 5);
-  assert.equal(fixture.monitor.diagnostics.cleanupPending, true);
-
-  // When another sample applies the queued cleanup.
-  await sample(fixture);
-
-  // Then all owned markers disappear, the foreign line survives, and no export is retried in the failed context.
-  assert.deepEqual(fixture.host.chart.getAllShapes(), [{ id: 'user-line', name: 'trend_line' }]);
-  assert.equal(fixture.monitor.diagnostics.layerSize, 0);
-  assert.equal(fixture.monitor.diagnostics.cleanupPending, false);
-  assert.equal(fixture.host.exports.length, 2);
-});
-
-for (const invalidId of ['', 42]) {
-  test(`user stops after a native marker creation returns ${invalidId === '' ? 'an empty ID' : 'a numeric ID'}`, async (t) => {
-    // Given a native creation response that violates the external chart contract.
-    const fixture = monitorFixture(t);
-    fixture.host.returnNextCreationId(invalidId);
-
-    // When the first detected marker awaits that native response.
-    await sample(fixture);
-
-    // Then no ID is claimed or removed and the render failure is retained.
-    assert.equal(fixture.monitor.diagnostics.lastLocalFailure.message, 'TradingView returned an invalid Bollinger alert shape id');
-    assert.equal(fixture.monitor.diagnostics.failed, true);
-    assert.equal(fixture.monitor.diagnostics.layerSize, 0);
-    assert.equal(fixture.host.created.length, 1);
-    assert.deepEqual(fixture.host.removed, []);
-    assert.equal(fixture.host.shapes.size, 0);
-  });
-}
-
-test('user discards a marker whose native readback races leaving the futures page', async (t) => {
-  // Given a real signal whose native point read occurs as the route is retired.
-  const fixture = monitorFixture(t);
-  fixture.host.onNextPointRead(() => { fixture.state.futures = false; });
-
-  // When marker creation finishes and the layer reads its point.
-  await sample(fixture);
-
-  // Then the pending drawing never becomes visible and is removed without recording a terminal error.
-  assert.equal(fixture.host.created.length, 1);
-  assert.deepEqual(fixture.host.propertyWrites, []);
-  assert.deepEqual(fixture.host.removed, ['native-1']);
-  assert.equal(fixture.monitor.diagnostics.cachedSignalCount, null);
-  assert.equal(fixture.monitor.diagnostics.failed, false);
-  assert.deepEqual(fixture.errors, []);
-});
-
-test('user defers retired drawing cleanup while another drawing owner is busy and resumes afterward', async (t) => {
-  // Given real signal candles whose first native marker creation is still pending.
-  const fixture = monitorFixture(t);
-  const gate = fixture.host.holdNextCreation();
-  await fixture.monitor.tick();
-  await gate.entered;
-
-  // When stop invalidates that context while the host reports a drawing owner as busy.
-  fixture.state.busy = true;
-  fixture.monitor.stop();
-  gate.release();
-  await observeStrategyCondition(() => !fixture.monitor.diagnostics.taskPending, 'retired native creation settles');
-
-  // Then the late result remains owned and hidden while mutation is deferred.
-  assert.equal(fixture.monitor.diagnostics.contextPresent, false);
-  assert.equal(fixture.monitor.diagnostics.retiredCount, 1);
-  assert.equal(fixture.host.shapes.get('native-1').properties.visible, false);
-  assert.deepEqual(fixture.host.removed, []);
-  assert.deepEqual(fixture.host.propertyWrites, []);
-
-  // When the drawing owner releases the page and the monitor samples again.
-  fixture.state.busy = false;
-  await sample(fixture);
-
-  // Then the retired result is removed before one fresh complete layer is published.
-  assert.deepEqual(fixture.host.removed, ['native-1']);
-  assert.equal(fixture.monitor.diagnostics.retiredCount, 0);
-  assert.equal(fixture.monitor.diagnostics.cachedSignalCount, 5);
-  assert.equal(fixture.monitor.diagnostics.layerSize, 5);
-  assert.equal(fixture.host.shapes.size, 5);
 });
 
 test('user ignores a late export error from a retired interval and renders the fresh interval', async (t) => {
@@ -246,8 +112,8 @@ test('user ignores a late export error from a retired interval and renders the f
   assert.equal(fixture.monitor.diagnostics.lastLocalFailure, null);
   assert.equal(fixture.monitor.diagnostics.failed, false);
   assert.equal(fixture.monitor.diagnostics.layerSize, 5);
-  assert.deepEqual(fixture.host.created.map(({ point }) => point.time), [37200, 37500, 38700, 46800, 49500]);
-  assert.equal(fixture.host.created.every(({ options }) => options.overrides.intervalsVisibilities.minutesFrom === 5), true);
+  assert.deepEqual(fixture.host.overlay.markers().map(node => Number(node.getAttribute('transform').split(' ')[0].slice(10))), [123, 124, 128, 155, 164]);
+  assert.deepEqual(fixture.host.created, []);
 });
 
 for (const [label, reason, thrownType, name, message] of [
@@ -306,7 +172,7 @@ test('user waits through hidden pages, missing routes, busy drawings and an inco
 
   // Then the completed interval renders once and an established busy layer remains untouched.
   assert.equal(fixture.host.exports.length, 1);
-  assert.equal(fixture.host.created.length, 5);
+  assert.equal(fixture.host.overlay.markers().length, 5);
   assert.equal(fixture.monitor.diagnostics.layerSize, 5);
 });
 
@@ -377,22 +243,6 @@ test('user stops recognizing a chart target when the native chart or its model d
   // Then only the restored native chart is current.
   assert.deepEqual({ missingChart, missingModel, restored }, { missingChart: false, missingModel: false, restored: true });
 });
-
-for (const [resolution, unit, count] of [['10S', 'seconds', 10], ['1D', 'days', 1], ['2H', 'hours', 2], ['90', 'hours', 1]]) {
-  test(`user keeps ${resolution} markers visible only in their native interval bucket`, () => {
-    // Given an observed native interval that the chart groups into one visibility bucket.
-    const interval = resolution;
-
-    // When the production adapter computes the drawing visibility contract.
-    const visibility = bollingerIntervalVisibility(interval);
-
-    // Then exactly that native unit and count are enabled.
-    assert.deepEqual(visibility, {
-      ticks: false, seconds: false, minutes: false, hours: false, days: false, weeks: false,
-      months: false, ranges: false, [unit]: true, [`${unit}From`]: count, [`${unit}To`]: count,
-    });
-  });
-}
 
 for (const [label, change, expected] of [
   ['schema', value => { value.schema = null; }, /export schema is invalid/],
@@ -475,4 +325,78 @@ test('user leaves markers untouched when direct rendering loses drawing ownershi
   assert.equal(layer.size, 0);
   assert.deepEqual(host.created, []);
   assert.deepEqual(host.removed, []);
+});
+
+
+test('user receives a terminal render diagnostic when an event-driven overlay projection fails', async (t) => {
+  // Given a healthy monitored overlay and an unrelated native drawing.
+  const fixture = monitorFixture(t);
+  fixture.host.addForeignShape('user-line');
+  await sample(fixture);
+  fixture.host.overlay.setProjection({ price: () => NaN });
+
+  // When a price-scale event redraws through the asynchronous frame boundary.
+  fixture.host.overlay.events.priceRangeChanged.emit();
+  fixture.host.overlay.flushFrames();
+
+  // Then the visible layer is cleared and the existing monitor failure boundary records the cause.
+  assert.equal(fixture.monitor.diagnostics.failed, true);
+  assert.equal(fixture.monitor.diagnostics.lastLocalFailure.stage, 'render');
+  assert.equal(fixture.monitor.diagnostics.lastLocalFailure.message, 'TradingView marker coordinates are invalid');
+  assert.equal(fixture.host.overlay.markers().length, 0);
+  assert.equal(fixture.host.overlay.subscriptions, 0);
+  assert.deepEqual(fixture.host.chart.getAllShapes(), [{ id: 'user-line', name: 'trend_line' }]);
+});
+
+test('user immediately hides old interval overlays while a trading drawing owner is busy', async (t) => {
+  // Given a rendered overlay and another script holding native chart mutation ownership.
+  const fixture = monitorFixture(t);
+  await sample(fixture);
+  const svg = fixture.host.overlay.pane.querySelector('svg');
+  fixture.state.busy = true;
+
+  // When the native chart changes intervals before the monitor can resume.
+  fixture.host.changeInterval('5');
+
+  // Then the old overlay is hidden synchronously without any native drawing mutation.
+  assert.equal(svg.style.visibility, 'hidden');
+  assert.equal(fixture.host.overlay.pendingFrames, 0);
+  assert.deepEqual(fixture.host.created, []);
+  assert.deepEqual(fixture.host.removed, []);
+
+  // When the monitor is stopped while trading remains busy.
+  fixture.monitor.stop();
+
+  // Then private overlay resources disappear immediately without waiting for ownership.
+  assert.equal(fixture.host.overlay.markers().length, 0);
+  assert.equal(fixture.host.overlay.subscriptions, 0);
+  assert.equal(fixture.monitor.diagnostics.retiredCount, 0);
+});
+
+
+test('user keeps a failed overlay empty when an older candle export finishes after the render failure', async (t) => {
+  // Given an established overlay and a second candle export still pending.
+  const fixture = monitorFixture(t);
+  await sample(fixture);
+  assert.equal(fixture.host.overlay.markers().length, 5);
+  const gate = fixture.host.holdNextExport();
+  await fixture.monitor.tick();
+  await gate.entered;
+
+  // When a frame fails before the older export completes with valid candles.
+  fixture.host.overlay.setProjection({ price: () => NaN });
+  fixture.host.overlay.events.priceRangeChanged.emit();
+  fixture.host.overlay.flushFrames();
+  assert.equal(fixture.monitor.diagnostics.failed, true);
+  assert.equal(fixture.host.overlay.markers().length, 0);
+  fixture.host.overlay.setProjection({ price: price => 500 - price });
+  gate.resolve(exportStrategyBars(createOscillatingStrategyBars()));
+  await observeStrategyCondition(() => !fixture.monitor.diagnostics.taskPending, 'older export settles after terminal failure');
+
+  // Then terminal failure prevents the earlier request from recreating markers or subscriptions.
+  assert.equal(fixture.monitor.diagnostics.failed, true);
+  assert.equal(fixture.host.overlay.markers().length, 0);
+  assert.equal(fixture.host.overlay.subscriptions, 0);
+  assert.equal(fixture.errors.length, 1);
+  assert.equal(fixture.monitor.diagnostics.lastLocalFailure.message, 'TradingView marker coordinates are invalid');
 });

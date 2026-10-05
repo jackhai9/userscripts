@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { JSDOM } from 'jsdom';
+import { createTradingViewRemovalSaveController } from '../../src/binance-orderbook-trade/core/chart-save-coalescer.js';
 
 import { renderBinanceFuturesFixture } from '../../e2e/binance-orderbook/fixtures/binance-futures.js';
 import {
@@ -520,7 +521,7 @@ for (const changed of ['symbol', 'visibility']) {
     // Then the API success stays visible without drawing an order into the wrong chart.
     assert.equal(host.fixture.snapshot().events.filter(({ type }) => type === 'order-submit-api-success').length, 1);
     assert.deepEqual(host.fixture.snapshot().events.filter(({ type }) => [
-      'chart-drawing-event', 'chart-save-requested', 'chart-saved',
+      'chart-drawing-event', 'chart-save-requested', 'chart-serialized', 'chart-saved',
     ].includes(type)), []);
   });
 }
@@ -578,3 +579,56 @@ for (const enabled of [null, 'true', 1]) {
     assert.throws(construct, /Native order drawing events must be explicitly enabled or disabled/);
   });
 }
+
+
+test('user receives a native callback result while serialization and persistence remain separate fixture events', (t) => {
+  // Given the native fixture owns one visible order drawing.
+  const host = openNativeHost(t, createCancelScenario({ orders: ORDER_SETS.current }));
+  const api = host.document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi;
+  const received = [];
+
+  // When direct callers request current chart state and explicitly omit drawings.
+  const first = api.saveChart(value => { received.push(structuredClone(value)); value.drawingIds.push('caller-only'); return 41; });
+  const second = api.saveChart(value => { received.push(structuredClone(value)); return 42; }, { includeDrawings: false });
+
+  // Then native return values and isolated serialization evidence survive without fabricating persistence callbacks.
+  assert.deepEqual([first, second], [41, 42]);
+  assert.deepEqual(received, [{ checked: true, drawingIds: ['order-current-1'] }, { checked: true, drawingIds: [] }]);
+  const events = host.fixture.snapshot().events;
+  assert.deepEqual(events.filter(({ type }) => type === 'chart-serialized').map(({ snapshot }) => snapshot), received);
+  assert.deepEqual(events.filter(({ type }) => type === 'chart-saved'), []);
+});
+
+test('user receives every fixture persistence callback from one cumulative removal serialization', async (t) => {
+  // Given two visible native drawings and the real removal-save controller.
+  const orders = [ORDER_SETS.current[0], { ...ORDER_SETS.current[0], id: 'current-2' }];
+  const host = openNativeHost(t, createCancelScenario({ orders, ui: { accountTab: 'openOrders' }, host: { orderDrawingEvents: true } }));
+  const api = host.document.querySelector('.chart-widget-root iframe').contentWindow.tradingViewApi;
+  const original = api.saveChart;
+  const controller = createTradingViewRemovalSaveController(api, { eventDiscoveryMs: 0 });
+  t.after(() => { assert.equal(api.saveChart, original); });
+
+  // When both native row cancellations publish delayed requests before the controller finishes.
+  for (const order of orders) {
+    host.document.querySelector('[data-order-id="' + order.id + '"] svg')
+      .dispatchEvent(new host.document.defaultView.MouseEvent('click', { bubbles: true }));
+  }
+  t.mock.timers.tick(0);
+  t.mock.timers.tick(100);
+  const pending = host.fixture.snapshot().events;
+  assert.equal(pending.filter(({ type }) => type === 'chart-save-requested').length, 2);
+  assert.equal(pending.filter(({ type }) => type === 'chart-serialized').length, 0);
+  assert.equal(pending.filter(({ type }) => type === 'chart-saved').length, 0);
+  const completion = controller.finish();
+  t.mock.timers.tick(40);
+  await completion;
+
+  // Then one native serialization supplies the final empty chart to both original persistence callbacks.
+  const events = host.fixture.snapshot().events;
+  assert.equal(events.filter(({ type }) => type === 'chart-serialized').length, 1);
+  assert.deepEqual(events.filter(({ type }) => type === 'chart-saved').map(({ requestId, snapshot }) => ({ requestId, snapshot })), [
+    { requestId: 1, snapshot: { checked: true, drawingIds: [] } },
+    { requestId: 2, snapshot: { checked: true, drawingIds: [] } },
+  ]);
+  assert.equal(api.saveChart, original);
+});

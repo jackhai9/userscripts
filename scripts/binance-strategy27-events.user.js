@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.6.7
+// @version      0.6.8
 // @author       jackhai9
 // @description  Display Strategy 27 events and provide the shared private CorsairQuant gateway connection
 // @match        https://www.binance.com/*/futures/*
@@ -1151,6 +1151,283 @@
     return annotation;
   }
 
+  // src/shared/chart-marker-overlay.js
+  function createChartMarkerOverlay(target, {
+    maxMarkers,
+    canMutate = () => true,
+    onRenderError
+  } = {}) {
+    if (!Number.isSafeInteger(maxMarkers) || maxMarkers < 1) throw new Error("TradingView overlay marker limit is invalid");
+    const { chart } = target;
+    const document = target.chartRoot.ownerDocument;
+    const owner = {};
+    const subscriptions = [];
+    const nodes = /* @__PURE__ */ new Map();
+    let svg = null, host = null, frame = null, observer = null, projection = null;
+    let signals = [], validateCurrent = null, invalidated = false;
+    let renderedFrames = 0, visibleMarkers = 0, generation = 0;
+    function hide() {
+      if (svg && svg.style.visibility !== "hidden") svg.style.visibility = "hidden";
+      visibleMarkers = 0;
+    }
+    function cancelFrame() {
+      if (frame !== null) host.ownerDocument.defaultView.cancelAnimationFrame(frame);
+      frame = null;
+    }
+    function clear() {
+      generation += 1;
+      hide();
+      cancelFrame();
+      observer?.disconnect();
+      observer = null;
+      for (const [event, callback] of subscriptions) event.unsubscribe(owner, callback);
+      subscriptions.length = 0;
+      document.removeEventListener("visibilitychange", visibilityChanged);
+      svg?.remove();
+      svg = null;
+      host = null;
+      projection = null;
+      signals = [];
+      nodes.clear();
+      validateCurrent = null;
+      invalidated = false;
+      return true;
+    }
+    function readProjection() {
+      const widget = chart._chartWidget;
+      const model = widget.model().model();
+      const series = model.mainSeries();
+      const time = model.timeScale();
+      const price = series.priceScale();
+      const pane = widget.paneByState(model.paneForSource(series));
+      const container = pane.canvasElement().parentElement;
+      if (!container || !container.classList.contains("chart-gui-wrapper")) {
+        throw new Error("TradingView marker main-pane container is unavailable");
+      }
+      return { model, series, time, price, pane, container };
+    }
+    function current() {
+      return !invalidated && validateCurrent() && !document.hidden && target.chartRoot.isConnected && chart.hasModel() && chart.dataReady() && target.tradingViewApi.activeChart() === chart && chart.resolution() === target.resolution && String(chart.symbol()).split("@", 1)[0] === target.routeSymbol;
+    }
+    function draw() {
+      if (!current() || !canMutate()) {
+        hide();
+        return false;
+      }
+      const next = readProjection();
+      for (const key of ["model", "series", "time", "price", "pane", "container"]) {
+        if (next[key] !== projection[key]) {
+          throw new Error(`TradingView marker projection changed: ${key}`);
+        }
+      }
+      if (!host.isConnected) throw new Error("TradingView marker pane is detached");
+      const { width, height } = host.getBoundingClientRect();
+      if (!Number.isFinite(width) || !Number.isFinite(height)) {
+        throw new Error("TradingView marker pane dimensions are invalid");
+      }
+      const projected = [];
+      const visibleIds = /* @__PURE__ */ new Set();
+      const { series, time, price } = projection;
+      const data = chart.getSeries().data();
+      for (const signal of signals) {
+        const index = time.timePointToIndex(signal.time, 0);
+        if (index === null) continue;
+        if (!Number.isFinite(index)) throw new Error("TradingView marker bar index is invalid");
+        const row = data.valueAt(index);
+        if (!row || row[0] !== signal.time) continue;
+        const x = time.indexToCoordinate(index);
+        if (!Number.isFinite(x)) throw new Error("TradingView marker coordinates are invalid");
+        if (width <= 0 || height <= 0 || x < 0 || x > width) continue;
+        const y = price.priceToCoordinate(signal.price, series.firstValue());
+        if (!Number.isFinite(y)) {
+          throw new Error("TradingView marker coordinates are invalid");
+        }
+        if (y < 0 || y > height) continue;
+        projected.push({ signal, x, y });
+        visibleIds.add(signal.id);
+      }
+      function setAttribute(node, name, value) {
+        if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+      }
+      setAttribute(svg, "width", String(width));
+      setAttribute(svg, "height", String(height));
+      setAttribute(svg, "viewBox", `0 0 ${width} ${height}`);
+      for (const [id, node] of nodes) {
+        if (!visibleIds.has(id)) {
+          node.remove();
+          nodes.delete(id);
+        }
+      }
+      for (const { signal, x, y } of projected) {
+        const tag = signal.shape === "circle" ? "circle" : signal.shape === "text" ? "text" : "path";
+        let node = nodes.get(signal.id);
+        if (node && node.localName !== tag) {
+          node.remove();
+          nodes.delete(signal.id);
+          node = null;
+        }
+        if (!node) {
+          node = host.ownerDocument.createElementNS("http://www.w3.org/2000/svg", tag);
+          nodes.set(signal.id, node);
+          svg.append(node);
+        }
+        setAttribute(node, "data-marker-id", signal.id);
+        setAttribute(node, "data-marker-type", signal.type);
+        setAttribute(node, "data-marker-direction", signal.direction);
+        setAttribute(node, "transform", `translate(${x} ${y})`);
+        setAttribute(node, "fill", signal.color);
+        if (signal.shape === "circle") setAttribute(node, "r", String(signal.size / 2));
+        else if (signal.shape === "text") {
+          setAttribute(node, "font-size", String(signal.size));
+          setAttribute(node, "font-weight", "700");
+          setAttribute(node, "font-family", "Arial, sans-serif");
+          setAttribute(node, "text-anchor", "middle");
+          setAttribute(node, "dominant-baseline", "hanging");
+          if (node.textContent !== signal.text) node.textContent = signal.text;
+        } else {
+          setAttribute(node, "d", signal.pathData);
+        }
+      }
+      if (svg.style.visibility !== "visible") svg.style.visibility = "visible";
+      visibleMarkers = projected.length;
+      renderedFrames += 1;
+      return true;
+    }
+    function schedule() {
+      if (!svg || frame !== null || invalidated || document.hidden) return;
+      const scheduledGeneration = generation;
+      frame = host.ownerDocument.defaultView.requestAnimationFrame(() => {
+        if (!svg || scheduledGeneration !== generation) return;
+        frame = null;
+        try {
+          draw();
+        } catch (error) {
+          clear();
+          if (onRenderError) onRenderError(error);
+          else throw error;
+        }
+      });
+    }
+    function invalidate() {
+      invalidated = true;
+      hide();
+      cancelFrame();
+    }
+    function dataChanged() {
+      hide();
+      schedule();
+    }
+    function visibilityChanged() {
+      if (document.hidden) {
+        hide();
+        cancelFrame();
+      } else schedule();
+    }
+    function subscribe(event, callback) {
+      event.subscribe(owner, callback);
+      subscriptions.push([event, callback]);
+    }
+    function install() {
+      projection = readProjection();
+      host = projection.container;
+      svg = host.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("data-strategy-marker-overlay", "");
+      svg.setAttribute("aria-hidden", "true");
+      svg.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden;visibility:hidden";
+      host.append(svg);
+      const { series, time, price } = projection;
+      for (const event of [
+        time.logicalRangeChanged(),
+        time.barSpacingChanged(),
+        time.rightOffsetChanged(),
+        price.priceRangeChanged(),
+        price.modeChanged(),
+        price.internalHeightChanged()
+      ]) {
+        subscribe(event, schedule);
+      }
+      subscribe(series.dataUpdated(), dataChanged);
+      subscribe(chart.onIntervalChanged(), invalidate);
+      subscribe(chart.onDataLoaded(), dataChanged);
+      observer = new host.ownerDocument.defaultView.ResizeObserver(schedule);
+      observer.observe(host);
+      document.addEventListener("visibilitychange", visibilityChanged);
+    }
+    return Object.freeze({
+      render(nextSignals, { isCurrent }) {
+        try {
+          if (!Array.isArray(nextSignals) || nextSignals.length > maxMarkers) {
+            throw new Error("TradingView overlay marker collection is invalid");
+          }
+          if (typeof isCurrent !== "function") throw new Error("TradingView overlay current-target validator is unavailable");
+          const ids = /* @__PURE__ */ new Set();
+          for (const marker of nextSignals) {
+            if (!marker || typeof marker.id !== "string" || !marker.id || ids.has(marker.id) || !Number.isInteger(marker.time) || !Number.isFinite(marker.price) || !["circle", "arrow_up", "arrow_down", "text"].includes(marker.shape) || typeof marker.color !== "string" || !/^#[0-9a-f]{6}$/i.test(marker.color) || !Number.isFinite(marker.size) || marker.size <= 0 || typeof marker.type !== "string" || !marker.type || !["bearish", "bullish"].includes(marker.direction)) {
+              throw new Error("TradingView overlay marker contract is invalid");
+            }
+            if (marker.shape === "text" ? marker.anchor !== "top" || typeof marker.text !== "string" || !marker.text : marker.shape === "circle" ? marker.anchor !== "center" : !["tip", "center"].includes(marker.anchor)) {
+              throw new Error("TradingView overlay marker style is invalid");
+            }
+            ids.add(marker.id);
+          }
+          validateCurrent = isCurrent;
+          if (!current() || !canMutate()) {
+            hide();
+            return false;
+          }
+          if (!svg) install();
+          signals = nextSignals.map((marker) => {
+            if (marker.shape !== "arrow_up" && marker.shape !== "arrow_down") return { ...marker };
+            const sign = marker.shape === "arrow_up" ? 1 : -1;
+            const scale = marker.size / 18;
+            const centerShift = marker.anchor === "center" ? -sign * marker.size / 2 : 0;
+            const points = [[0, 0], [-6, 8], [-2, 8], [-2, 18], [2, 18], [2, 8], [6, 8]];
+            const path = points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x * scale} ${sign * y * scale + centerShift}`).join(" ");
+            return { ...marker, pathData: `${path} Z` };
+          });
+          return draw();
+        } catch (error) {
+          clear();
+          throw error;
+        }
+      },
+      clear,
+      updateText(id, text) {
+        if (typeof id !== "string" || typeof text !== "string" || !text) throw new Error("TradingView overlay text update is invalid");
+        const marker = signals.find((candidate) => candidate.id === id);
+        if (!marker) return false;
+        if (marker.shape !== "text") throw new Error("TradingView overlay text target is invalid");
+        marker.text = text;
+        const node = nodes.get(id);
+        if (node && node.textContent !== text) node.textContent = text;
+        return true;
+      },
+      remove(ids) {
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) throw new Error("TradingView overlay removal IDs are invalid");
+        const removed = new Set(ids);
+        signals = signals.filter((signal) => !removed.has(signal.id));
+        for (const id of removed) {
+          nodes.get(id)?.remove();
+          nodes.delete(id);
+        }
+        visibleMarkers = svg?.style.visibility === "visible" ? nodes.size : 0;
+      },
+      get size() {
+        return signals.length;
+      },
+      get overlayStats() {
+        return {
+          renderedFrames,
+          visibleMarkers,
+          signalCount: signals.length,
+          attached: svg !== null,
+          pendingFrame: frame !== null,
+          subscriptions: subscriptions.length
+        };
+      }
+    });
+  }
+
   // src/binance-strategy27-events/dom/tradingview-event-layer.js
   var CHART_ROOT_SELECTOR = ".chart-widget-root";
   var STATUS_ID = "jh-strategy27-event-status";
@@ -1167,17 +1444,9 @@
     return String(value || "").split("@", 1)[0];
   }
   function assertChartContract(chart) {
-    for (const method of ["createShape", "getAllShapes", "getShapeById", "removeEntity", "resolution", "symbol"]) {
+    for (const method of ["hasModel", "dataReady", "onIntervalChanged", "onDataLoaded", "resolution", "symbol"]) {
       if (typeof chart?.[method] !== "function") throw new Error(`TradingView chart method is unavailable: ${method}`);
     }
-  }
-  function readLiveShapeIds(chart) {
-    const shapes = chart.getAllShapes();
-    if (!Array.isArray(shapes)) throw new Error("Strategy 27 chart shape list is invalid");
-    return new Set(shapes.map((shape) => {
-      if (typeof shape?.id !== "string" || shape.id.length === 0) throw new Error("Strategy 27 chart shape id is invalid");
-      return shape.id;
-    }));
   }
   function pinMarkerChartContext(chart) {
     const symbol = chart.symbol();
@@ -1206,20 +1475,6 @@
     if (!chartRoots.length) return null;
     if (chartRoots.length !== 1) throw new Error(`Visible Strategy 27 chart root count is invalid: ${chartRoots.length}`);
     return chartRoots[0];
-  }
-  function shapeOptions(shape, color) {
-    return {
-      shape,
-      lock: true,
-      disableSave: true,
-      disableSelection: true,
-      disableUndo: true,
-      showInObjectsTree: false,
-      overrides: {
-        color,
-        fixedSize: true
-      }
-    };
   }
   function createMarkerPointResolver(chart) {
     const model = chart._chartWidget?.model?.()?.model?.();
@@ -1287,29 +1542,6 @@
       return { time: point.time, price };
     }
     return { dataUpdated, resolve, shift };
-  }
-  function verifyResolvedTime(chart, id, requestedTime) {
-    const shape = chart.getShapeById(id);
-    const points = shape?.getPoints?.();
-    if (!Array.isArray(points) || points.length !== 1 || points[0].time !== requestedTime) {
-      const actualTime = Array.isArray(points) && points.length === 1 ? points[0]?.time : null;
-      const pointCount = Array.isArray(points) ? points.length : null;
-      throw new Error(
-        `Strategy 27 chart time alignment failed: expected ${requestedTime}, received ${actualTime} (point count ${pointCount})`
-      );
-    }
-    return shape;
-  }
-  async function createAlignedShape(chart, point, options) {
-    const id = await chart.createShape(point, options);
-    if (typeof id !== "string" || id.length === 0) throw new Error("TradingView returned an invalid shape id");
-    try {
-      verifyResolvedTime(chart, id, point.time);
-    } catch (error) {
-      chart.removeEntity(id);
-      throw error;
-    }
-    return id;
   }
   function createTradingViewMarkerPlacement(chart, {
     candleWaitMs = DEFAULT_CANDLE_WAIT_MS
@@ -1380,24 +1612,32 @@
   function createTradingViewEventLayer(target, {
     maxEvents,
     maxAgeMs,
-    candleWaitMs = DEFAULT_CANDLE_WAIT_MS
+    candleWaitMs = DEFAULT_CANDLE_WAIT_MS,
+    onRenderError
   }) {
     if (!Number.isInteger(maxEvents) || maxEvents < 1) throw new Error("Strategy 27 maxEvents is invalid");
     if (!Number.isInteger(maxAgeMs) || maxAgeMs < 1) throw new Error("Strategy 27 maxAgeMs is invalid");
-    const { chart } = target;
-    const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
-    const isChartCurrent = pinMarkerChartContext(chart);
+    const placement = createTradingViewMarkerPlacement(target.chart, { candleWaitMs });
+    const isChartCurrent = pinMarkerChartContext(target.chart);
     const registry = /* @__PURE__ */ new Map();
     const pendingRenders = /* @__PURE__ */ new Map();
     let renderGeneration = 0;
-    let reconciliation = null;
     let suspended = false;
+    const overlay = createChartMarkerOverlay(target, {
+      maxMarkers: maxEvents,
+      onRenderError(error) {
+        suspend();
+        if (onRenderError) onRenderError(error);
+        else throw error;
+      }
+    });
+    const markers = () => [...registry.values()].map((record) => record.marker);
     function removeRecord(eventId) {
       pendingRenders.get(eventId)?.abort();
       const record = registry.get(eventId);
       if (!record) return;
       registry.delete(eventId);
-      if (readLiveShapeIds(chart).has(record.markerId)) chart.removeEntity(record.markerId);
+      overlay.remove([record.marker.id]);
     }
     function pruneAge(observedAtMs) {
       for (const [eventId, record] of registry) {
@@ -1407,68 +1647,47 @@
     function ensureCapacityForNew() {
       while (registry.size >= maxEvents) removeRecord(registry.keys().next().value);
     }
-    function restoreMarker(eventId, record, liveIds) {
-      if (record.restoring) return record.restoring;
-      const current = () => !suspended && registry.get(eventId) === record && isChartCurrent();
-      if (!current()) return Promise.resolve(false);
-      if (liveIds.has(record.markerId)) return Promise.resolve(true);
-      record.restoring = (async () => {
-        const markerId = await createAlignedShape(chart, record.markerPoint, record.options);
-        if (!current()) {
-          if (readLiveShapeIds(chart).has(markerId)) chart.removeEntity(markerId);
-          return false;
-        }
-        record.markerId = markerId;
-        return true;
-      })().finally(() => {
-        record.restoring = null;
-      });
-      return record.restoring;
-    }
-    function reconcile() {
-      if (suspended) return Promise.resolve();
-      if (reconciliation) return reconciliation;
-      reconciliation = (async () => {
-        let liveIds = readLiveShapeIds(chart);
-        for (const [eventId, record] of [...registry]) {
-          if (suspended || registry.get(eventId) !== record || !isChartCurrent()) continue;
-          if (!record.restoring && liveIds.has(record.markerId)) continue;
-          await restoreMarker(eventId, record, liveIds);
-          liveIds = readLiveShapeIds(chart);
-        }
-      })().finally(() => {
-        reconciliation = null;
-      });
-      return reconciliation;
+    async function reconcile() {
+      if (!suspended) overlay.render(markers(), { isCurrent: isChartCurrent });
     }
     async function ensureMarker(eventId, annotation, observedAtMs) {
       if (suspended) return false;
-      let record = registry.get(eventId);
-      if (record) {
-        record.observedAtMs = observedAtMs;
-        return restoreMarker(eventId, record, readLiveShapeIds(chart));
+      const existing = registry.get(eventId);
+      if (existing) {
+        existing.observedAtMs = observedAtMs;
+        return overlay.render(markers(), { isCurrent: isChartCurrent });
       }
       if (annotation.markerShape === null) return true;
       const requestedGeneration = renderGeneration;
       const controller = new AbortController();
       pendingRenders.set(eventId, controller);
       try {
-        const markerPoint = await placement.wait(annotation, { signal: controller.signal });
-        if (!markerPoint || controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) return false;
+        const point = await placement.wait(annotation, { signal: controller.signal });
+        if (!point || suspended || controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) return false;
         pruneAge(observedAtMs);
         ensureCapacityForNew();
-        const options = shapeOptions(annotation.markerShape, annotation.markerColor);
-        const markerId = await createAlignedShape(chart, markerPoint, options);
-        if (controller.signal.aborted || requestedGeneration !== renderGeneration || !isChartCurrent()) {
-          if (readLiveShapeIds(chart).has(markerId)) chart.removeEntity(markerId);
-          return false;
-        }
-        record = { markerId, markerPoint, options, observedAtMs, restoring: null };
-        registry.set(eventId, record);
+        const marker = {
+          id: `event:${eventId}`,
+          time: point.time,
+          price: point.price,
+          shape: annotation.markerShape,
+          color: annotation.markerColor,
+          size: 18,
+          anchor: "tip",
+          type: "ordinary",
+          direction: annotation.markerShape === "arrow_up" ? "bullish" : "bearish"
+        };
+        if (!overlay.render([...markers(), marker], { isCurrent: isChartCurrent })) return false;
+        registry.set(eventId, { marker, observedAtMs });
         return true;
       } finally {
         if (pendingRenders.get(eventId) === controller) pendingRenders.delete(eventId);
       }
+    }
+    function suspend() {
+      suspended = true;
+      renderGeneration += 1;
+      for (const controller of pendingRenders.values()) controller.abort();
     }
     return Object.freeze({
       renderOpened: (eventId, annotation, observedAtMs) => ensureMarker(eventId, annotation, observedAtMs),
@@ -1478,16 +1697,12 @@
       remove: removeRecord,
       prune: pruneAge,
       reconcile,
-      /** Stop new presentation without deleting verified history after a job failure. */
-      suspend() {
-        suspended = true;
-        renderGeneration += 1;
-        for (const controller of pendingRenders.values()) controller.abort();
-      },
+      suspend,
       clear() {
         renderGeneration += 1;
         for (const controller of pendingRenders.values()) controller.abort();
-        for (const eventId of [...registry.keys()]) removeRecord(eventId);
+        registry.clear();
+        overlay.clear();
       },
       get size() {
         return registry.size;
@@ -2667,7 +2882,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         if (action.type !== "candidate" || applicationGeneration !== viewGeneration) continue;
         const id = action.candidate.candidate_id;
         const annotation = buildCompoundCandidateAnnotation(action.candidate, { locale: currentLocale });
-        if (layer === null) layer = createLayer();
+        if (layer === null) layer = createLayer({ onRenderError: failJob });
         const renderGeneration = viewGeneration;
         pendingCandidateId = id;
         try {
@@ -2762,139 +2977,60 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
   var ICON_SIZE_PX = 36;
   var CANDLE_GAP_PX = 8;
   var SLOT_STEP_PX = 64;
-  var ICONS = Object.freeze({ arrow_down: 61539, arrow_up: 61538 });
-  function drawingOptions(color) {
-    return {
-      lock: true,
-      disableSave: true,
-      disableSelection: true,
-      disableUndo: true,
-      showInObjectsTree: false,
-      overrides: { color }
-    };
-  }
-  function createTradingViewCompoundLayer(target, { maxCandidates, candleWaitMs = 3e3, locale = "zh-CN" }) {
+  function createTradingViewCompoundLayer(target, {
+    maxCandidates,
+    candleWaitMs = 3e3,
+    locale = "zh-CN",
+    onRenderError
+  }) {
     if (!Number.isSafeInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 80) throw new Error("Compound chart capacity must be 1..80");
     let t = createStrategy27Translator(locale);
     const markerLabel = (shape) => shape === "arrow_down" ? t("候选高", "High candidate") : t("候选低", "Low candidate");
-    const { chart } = target;
-    const placement = createTradingViewMarkerPlacement(chart, { candleWaitMs });
-    const isChartCurrent = pinMarkerChartContext(chart);
+    const placement = createTradingViewMarkerPlacement(target.chart, { candleWaitMs });
+    const isChartCurrent = pinMarkerChartContext(target.chart);
     const records = /* @__PURE__ */ new Map();
     let pending = null;
-    let reconciliation = null;
     let suspended = false;
-    function dispose(recordsToRemove) {
-      const errors = [];
-      const liveIds = readLiveShapeIds(chart);
-      for (const record of recordsToRemove) {
-        for (const id of record.ids.splice(0)) {
-          if (!liveIds.has(id)) continue;
-          try {
-            chart.removeEntity(id);
-          } catch (error) {
-            errors.push(error);
-          }
-        }
+    const overlay = createChartMarkerOverlay(target, {
+      maxMarkers: maxCandidates * 2,
+      onRenderError(error) {
+        suspend();
+        if (onRenderError) onRenderError(error);
+        else throw error;
       }
-      if (errors.length) throw new AggregateError(errors, `Compound chart cleanup failed: ${errors.map((error) => error.message).join("; ")}`);
-    }
-    async function createDrawing(point, options) {
-      const drawing = { ...options };
-      const entityId = await createAlignedShape(chart, point, drawing);
-      try {
-        const properties = chart.getShapeById(entityId).getProperties();
-        const matched = properties.color === drawing.overrides.color && (drawing.shape === "icon" ? properties.icon === drawing.icon && properties.size === ICON_SIZE_PX : properties.text === drawing.text && properties.fontsize === 12);
-        if (!matched) throw new Error("Compound chart drawing properties did not match the requested icon/label");
-      } catch (error) {
-        try {
-          dispose([{ ids: [entityId] }]);
-        } catch (cleanupError) {
-          throw new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
-        }
-        throw error;
-      }
-      return entityId;
-    }
-    function restoreCandidate(id, record, liveIds) {
-      if (record.restoring) return record.restoring;
-      const current = () => !suspended && records.get(id) === record && isChartCurrent();
-      if (!current()) return Promise.resolve(false);
-      if (record.ids.every((entityId) => liveIds.has(entityId))) return Promise.resolve(true);
-      record.restoring = (async () => {
-        for (let index = 0; index < record.drawings.length; index += 1) {
-          if (!current()) return false;
-          if (liveIds.has(record.ids[index])) continue;
-          const [point, drawing] = record.drawings[index];
-          const entityId = await createDrawing(point, drawing);
-          if (!current()) {
-            dispose([{ ids: [entityId] }]);
-            return false;
-          }
-          record.ids[index] = entityId;
-          if (drawing.shape === "text") updateLabel(entityId, drawing, record.markerShape);
-          liveIds = readLiveShapeIds(chart);
-        }
-        return true;
-      })().finally(() => {
-        record.restoring = null;
-      });
-      return record.restoring;
-    }
-    function reconcile() {
-      if (suspended) return Promise.resolve();
-      if (reconciliation) return reconciliation;
-      reconciliation = (async () => {
-        let liveIds = readLiveShapeIds(chart);
-        for (const [id, record] of [...records]) {
-          if (suspended || records.get(id) !== record || !isChartCurrent()) continue;
-          if (!record.restoring && record.ids.every((entityId) => liveIds.has(entityId))) continue;
-          await restoreCandidate(id, record, liveIds);
-          liveIds = readLiveShapeIds(chart);
-        }
-      })().finally(() => {
-        reconciliation = null;
-      });
-      return reconciliation;
+    });
+    const markers = () => [...records.values()].flatMap((record) => record.markers);
+    async function reconcile() {
+      if (!suspended) overlay.render(markers(), { isCurrent: isChartCurrent });
     }
     function remove(id) {
-      const removals = [];
-      if (pending?.id === id) {
-        pending.controller.abort();
-        removals.push(pending);
-      }
+      if (pending?.id === id) pending.controller.abort();
       const record = records.get(id);
-      if (record) {
-        records.delete(id);
-        removals.push(record);
-      }
-      dispose(removals);
+      if (!record) return;
+      records.delete(id);
+      overlay.remove(record.markers.map((marker) => marker.id));
     }
     function clear() {
-      if (pending) pending.controller.abort();
-      const removals = [...records.values()];
+      pending?.controller.abort();
       records.clear();
-      if (pending) removals.push(pending);
-      dispose(removals);
+      overlay.clear();
     }
     async function renderCandidate(id, annotation, decisionAtMs) {
       if (suspended) return false;
-      const existing = records.get(id);
-      if (existing) return restoreCandidate(id, existing, readLiveShapeIds(chart));
+      if (records.has(id)) return overlay.render(markers(), { isCurrent: isChartCurrent });
       if (pending !== null) throw new Error("Compound chart rendering must be serial");
       if (records.size >= maxCandidates) throw new Error("Compound chart capacity exceeded before eviction");
       if (typeof id !== "string" || id.length === 0 || !Number.isSafeInteger(decisionAtMs) || decisionAtMs < 1) throw new Error("Compound chart candidate identity/time is invalid");
-      const icon = ICONS[annotation.markerShape];
       const labels = annotation.markerShape === "arrow_down" ? ["候选高", "High candidate"] : ["候选低", "Low candidate"];
-      if (icon === void 0 || !labels.includes(annotation.markerLabel)) throw new Error("Compound chart direction/label is invalid");
-      const operation = { id, markerShape: annotation.markerShape, controller: new AbortController(), ids: [] };
+      if (!["arrow_down", "arrow_up"].includes(annotation.markerShape) || !labels.includes(annotation.markerLabel)) throw new Error("Compound chart direction/label is invalid");
+      const operation = { id, controller: new AbortController() };
       pending = operation;
       try {
         const base = await placement.wait(annotation, {
           signal: operation.controller.signal,
           gapPx: CANDLE_GAP_PX + ICON_SIZE_PX / 2
         });
-        if (!base || operation.controller.signal.aborted || !isChartCurrent()) return false;
+        if (!base || suspended || operation.controller.signal.aborted || !isChartCurrent()) return false;
         const group = `${base.time}/${annotation.markerShape}`;
         const occupied = new Set([...records.values()].filter((record) => record.group === group).map((record) => record.slot));
         let slot = 0;
@@ -2902,59 +3038,46 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         const sign = annotation.markerShape === "arrow_up" ? 1 : -1;
         const point = placement.shift(base, sign * slot * SLOT_STEP_PX);
         const labelPoint = placement.shift(point, sign > 0 ? 18 : -40);
-        const options = drawingOptions(annotation.markerColor);
-        const drawings = [
-          [point, { ...options, shape: "icon", icon, overrides: { ...options.overrides, size: ICON_SIZE_PX } }],
-          [labelPoint, { ...options, shape: "text", text: markerLabel(annotation.markerShape), overrides: { ...options.overrides, fontsize: 12, bold: true, fillBackground: false, drawBorder: false } }]
-        ];
-        operation.drawings = drawings;
-        for (const [drawingPoint, drawing] of drawings) {
-          const entityId = await createDrawing(drawingPoint, drawing);
-          operation.ids.push(entityId);
-          if (operation.controller.signal.aborted || !isChartCurrent()) {
-            dispose([operation]);
-            return false;
+        const style = { color: annotation.markerColor, direction: sign > 0 ? "bullish" : "bearish" };
+        const candidateMarkers = [
+          {
+            ...style,
+            id: `candidate:${id}:icon`,
+            ...point,
+            shape: annotation.markerShape,
+            size: ICON_SIZE_PX,
+            anchor: "center",
+            type: "compound-icon"
+          },
+          {
+            ...style,
+            id: `candidate:${id}:label`,
+            ...labelPoint,
+            shape: "text",
+            size: 12,
+            anchor: "top",
+            type: "compound-label",
+            text: markerLabel(annotation.markerShape)
           }
-          if (drawing.shape === "text") updateLabel(entityId, drawing, annotation.markerShape);
-        }
-        records.set(id, { ids: operation.ids.splice(0), group, slot, decisionAtMs, markerShape: annotation.markerShape, drawings, restoring: null });
+        ];
+        if (!overlay.render([...markers(), ...candidateMarkers], { isCurrent: isChartCurrent })) return false;
+        records.set(id, { group, slot, decisionAtMs, markerShape: annotation.markerShape, markers: candidateMarkers });
         return true;
-      } catch (error) {
-        try {
-          dispose([operation]);
-        } catch (cleanupError) {
-          throw new AggregateError([error, cleanupError], `${error.message}; ${cleanupError.message}`);
-        }
-        throw error;
       } finally {
-        pending = null;
-      }
-    }
-    function updateLabel(entityId, drawing, shape) {
-      const text = markerLabel(shape);
-      drawing.text = text;
-      const entity = chart.getShapeById(entityId);
-      if (entity.getProperties().text !== text) {
-        entity.setProperties({ text }, false);
-        if (entity.getProperties().text !== text) throw new Error("Compound chart label did not match the selected language");
+        if (pending === operation) pending = null;
       }
     }
     function setLocale(nextLocale) {
       t = createStrategy27Translator(nextLocale);
-      const liveIds = readLiveShapeIds(chart);
-      for (const record of [...records.values(), ...pending ? [pending] : []]) {
-        if (!record.drawings) continue;
-        const drawing = record.drawings[1][1];
-        drawing.text = markerLabel(record.markerShape);
-        if (liveIds.has(record.ids[1])) updateLabel(record.ids[1], drawing, record.markerShape);
+      for (const record of records.values()) {
+        const label = record.markers[1];
+        label.text = markerLabel(record.markerShape);
+        overlay.updateText(label.id, label.text);
       }
     }
     function suspend() {
       suspended = true;
-      if (pending) {
-        pending.controller.abort();
-        dispose([pending]);
-      }
+      pending?.controller.abort();
     }
     return Object.freeze({ setLocale, renderCandidate, reconcile, remove, clear, suspend, get size() {
       return records.size;
@@ -3201,6 +3324,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     const gatewayBridge = installSignalGatewayBridge(page, { getValue: GM_getValue, gmXmlHttpRequest: GM_xmlhttpRequest });
     function stopActive(resetReason) {
       if (!active) return;
+      active.intervalEvent.unsubscribe(active.intervalOwner, active.onIntervalChanged);
       active.controller.abort();
       active.compound.stop(resetReason);
       active.lifecycle.reset(resetReason);
@@ -3242,7 +3366,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       return retainedAtMs;
     }
     function failOrdinary(context, error) {
-      if (error.name === "AbortError" || active !== context || context.failed) return;
+      if (error.name === "AbortError" || active !== context || context.failed || context.intervalRevision !== 0) return;
       context.failed = true;
       context.controller.abort();
       context.layer.suspend();
@@ -3262,7 +3386,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       }
     }
     async function renderGatewayResponse(context, response) {
-      if (active !== context || context.failed) return;
+      if (active !== context || context.failed || context.intervalRevision !== 0) return;
       context.panel.setOrdinaryConnection("connected");
       pruneOrdinaryEvents(context);
       if (response.status === "reset") {
@@ -3292,7 +3416,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         messages = [...bySequence.values()].sort((left, right) => left.sequence - right.sequence);
       }
       for (const message of messages) {
-        if (active !== context || context.failed) return;
+        if (active !== context || context.failed || context.intervalRevision !== 0) return;
         const action = context.lifecycle.apply(message);
         if (action.type === "stream_reset") {
           context.panel.retainHistory();
@@ -3319,11 +3443,11 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
           event_outcome: "renderOutcome"
         }[action.messageKind];
         const rendered = await context.layer[renderMethod](action.eventId, annotation, retainedAtMs);
-        if (!rendered || active !== context || context.failed || !context.ordinaryHistory.has(action.eventId)) continue;
+        if (!rendered || active !== context || context.failed || context.intervalRevision !== 0 || !context.ordinaryHistory.has(action.eventId)) continue;
         context.panel.upsert(action.eventId, localizeAnnotation(annotation, context.locale), retainedAtMs);
         hideStatus();
       }
-      if (response.status === "bootstrap") {
+      if (response.status === "bootstrap" && active === context && context.intervalRevision === 0) {
         context.lifecycle.finishBootstrap(response.last_sequence);
         hideStatus();
       }
@@ -3342,7 +3466,8 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         }),
         layer: createTradingViewEventLayer(target, {
           maxEvents: MAX_RETAINED_EVENTS,
-          maxAgeMs: MAX_EVENT_AGE_MS
+          maxAgeMs: MAX_EVENT_AGE_MS,
+          onRenderError: (error) => failOrdinary(context, error)
         }),
         panel: createStrategy27EventPanel(pageDocument, target.chartRoot, {
           locale: uiLocale,
@@ -3354,6 +3479,10 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         candidatePresentations: /* @__PURE__ */ new Map(),
         ordinaryHistory: /* @__PURE__ */ new Map(),
         reconciliation: null,
+        intervalOwner: {},
+        intervalEvent: target.chart.onIntervalChanged(),
+        intervalRevision: 0,
+        onIntervalChanged: null,
         failed: false
       };
       active = context;
@@ -3364,11 +3493,22 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         authSecret,
         canonicalSymbol,
         panel: context.panel,
-        isCurrent: () => active === context,
+        isCurrent: () => active === context && context.intervalRevision === 0,
         maxCandidates: MAX_RETAINED_EVENTS,
         maxAgeMs: MAX_EVENT_AGE_MS,
-        createLayer: () => createTradingViewCompoundLayer(target, { maxCandidates: MAX_RETAINED_EVENTS, locale: context.locale })
+        createLayer: ({ onRenderError }) => createTradingViewCompoundLayer(target, {
+          maxCandidates: MAX_RETAINED_EVENTS,
+          locale: context.locale,
+          onRenderError
+        })
       });
+      context.onIntervalChanged = () => {
+        context.intervalRevision += 1;
+        context.controller.abort();
+        context.layer.suspend();
+        context.compound.stop("interval_changed");
+      };
+      context.intervalEvent.subscribe(context.intervalOwner, context.onIntervalChanged);
       void context.compound.run();
       showStatus(target.chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 正在连接", "Strategy 27 connecting"));
       const client = createLiveEventClient({
@@ -3377,7 +3517,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         authSecret,
         canonicalSymbol,
         onConnectionStateChange: (state) => {
-          if (active !== context || context.failed) return;
+          if (active !== context || context.failed || context.intervalRevision !== 0) return;
           context.panel.setOrdinaryConnection(state);
           if (state === "reconnecting") {
             showStatus(context.target.chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 网关连接中断，正在重连", "Strategy 27 gateway disconnected; reconnecting"), "inactive");
@@ -3443,7 +3583,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         showStatus(chartRoot, (locale) => createStrategy27Translator(locale)("Strategy 27 正在等待图表接口", "Strategy 27 waiting for the chart interface"), "inactive");
         return;
       }
-      if (active && active.routeSymbol === routeSymbol && active.target.chart === target.chart && active.target.chartRoot === target.chartRoot) {
+      if (active && active.intervalRevision === 0 && active.routeSymbol === routeSymbol && active.target.chart === target.chart && active.target.chartRoot === target.chartRoot) {
         reconcileOrdinary(active);
         void active.compound.reconcile();
         return;

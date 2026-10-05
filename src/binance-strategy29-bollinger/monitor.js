@@ -32,7 +32,6 @@ export function createBollingerMonitor({
   }
 
   function clearRetiredBollingerLayers() {
-    if (isTradingViewDrawingMutationBusy()) return false;
     for (const layer of retiredBollingerLayers) {
       if (layer.clear()) retiredBollingerLayers.delete(layer);
     }
@@ -49,6 +48,7 @@ export function createBollingerMonitor({
   function isBearishBollingerAlertContextCurrent(context) {
     return (
       bearishBollingerAlertContext === context
+      && !context.failed
       && context.intervalSession === bollingerIntervalSession?.session
       && context.intervalSession.isCurrent(context.intervalRevision)
       && !document.hidden
@@ -104,7 +104,7 @@ export function createBollingerMonitor({
     if (!contextMatches) {
       if (!clearBearishBollingerAlertContext()) return;
       if (!intervalSession.isCurrent(intervalSession.revision) || isTradingViewDrawingMutationBusy()) return;
-      bearishBollingerAlertContext = {
+      const nextContext = {
         routeSymbol,
         resolution: target.resolution,
         intervalSession,
@@ -112,7 +112,7 @@ export function createBollingerMonitor({
         target,
         layer: createBollingerMarkerLayer(target, {
           canMutate: () => !isTradingViewDrawingMutationBusy(),
-          onSaveError: (error) => err('Bollinger chart save failed:', error),
+          onRenderError: (error) => handleFailure(nextContext, error, 'render'),
         }),
         failed: false,
         cleanupPending: false,
@@ -120,6 +120,7 @@ export function createBollingerMonitor({
         lastProcessedClosedBarsContentSnapshot: null,
         lastProcessedSignals: null,
       };
+      bearishBollingerAlertContext = nextContext;
     }
 
     if (isTradingViewDrawingMutationBusy() || !clearRetiredBollingerLayers()) return;
@@ -163,63 +164,67 @@ export function createBollingerMonitor({
       }
     })();
     bearishBollingerAlertTask = task;
-    task.catch((error) => {
-      if (
-        bearishBollingerAlertContext !== context
-        || context.intervalSession !== bollingerIntervalSession?.session
-        || context.intervalRevision !== context.intervalSession.revision
-      ) return;
-      let failureKind;
-      let classificationFailed = false;
-      try {
-        failureKind = applyBollingerAlertTaskFailure(context, error);
-      } catch {
-        // A revoked host Proxy can throw during instanceof; an unclassifiable rejection must stop this context.
-        classificationFailed = true;
-        context.failed = true;
-        context.cleanupPending = true;
-        failureKind = 'fatal';
-      }
-      if (failureKind === 'retry') {
-        // TradingView can expose one feed-update race through exportData(). Keep the
-        // already-rendered layer and retry the next poll instead of turning a transient
-        // snapshot into a permanent failed context.
-        warn('布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:', error);
-        return;
-      }
-      /** Preserve host rejection types without serializing arbitrary objects or stacks. */
-      const details = { name: null, message: null };
-      const unreadableFields = [];
-      for (const [key, limit] of [['name', 64], ['message', 512]]) {
-        try {
-          const value = key === 'message' && typeof error === 'string' ? error : error?.[key];
-          details[key] = typeof value === 'string' ? value.slice(0, limit) : null;
-        } catch {
-          // Host rejection accessors may throw; preserve that fact without replacing the original failure.
-          unreadableFields.push(key);
-        }
-      }
-      lastLocalFailure = Object.freeze({
-        thrownType: error === null ? 'null' : typeof error,
-        classificationFailed,
-        ...details,
-        unreadableFields: Object.freeze(unreadableFields),
-        stage,
-        routeSymbol: context.routeSymbol,
-        resolution: context.resolution,
-        cachedSignalCount: context.lastProcessedSignals === null ? null : context.lastProcessedSignals.length,
-        layerSizeBeforeCleanup: context.layer.size,
-        sessionRevision: context.intervalSession.revision,
-        contextIntervalRevision: context.intervalRevision,
-      });
-      err('布林带形态预警已停止:', error);
-    }).finally(() => {
+    task.catch((error) => handleFailure(context, error, stage)).finally(() => {
       if (bearishBollingerAlertTask === task) bearishBollingerAlertTask = null;
     });
   }
 
+  function handleFailure(context, error, stage) {
+    if (
+      bearishBollingerAlertContext !== context
+      || context.intervalSession !== bollingerIntervalSession?.session
+      || context.intervalRevision !== context.intervalSession.revision
+    ) return;
+    let failureKind;
+    let classificationFailed = false;
+    try {
+      failureKind = applyBollingerAlertTaskFailure(context, error);
+    } catch {
+      // A revoked host Proxy can throw during instanceof; an unclassifiable rejection must stop this context.
+      classificationFailed = true;
+      context.failed = true;
+      context.cleanupPending = true;
+      failureKind = 'fatal';
+    }
+    if (failureKind === 'retry') {
+      // TradingView can expose one feed-update race through exportData(). Keep the
+      // already-rendered layer and retry the next poll instead of turning a transient
+      // snapshot into a permanent failed context.
+      warn('布林带形态预警本轮快照不一致，保留现有标记并等待下一次采样:', error);
+      return;
+    }
+    /** Preserve host rejection types without serializing arbitrary objects or stacks. */
+    const details = { name: null, message: null };
+    const unreadableFields = [];
+    for (const [key, limit] of [['name', 64], ['message', 512]]) {
+      try {
+        const value = key === 'message' && typeof error === 'string' ? error : error?.[key];
+        details[key] = typeof value === 'string' ? value.slice(0, limit) : null;
+      } catch {
+        // Host rejection accessors may throw; preserve that fact without replacing the original failure.
+        unreadableFields.push(key);
+      }
+    }
+    lastLocalFailure = Object.freeze({
+      thrownType: error === null ? 'null' : typeof error,
+      classificationFailed,
+      ...details,
+      unreadableFields: Object.freeze(unreadableFields),
+      stage,
+      routeSymbol: context.routeSymbol,
+      resolution: context.resolution,
+      cachedSignalCount: context.lastProcessedSignals === null ? null : context.lastProcessedSignals.length,
+      layerSizeBeforeCleanup: context.layer.size,
+      sessionRevision: context.intervalSession.revision,
+      contextIntervalRevision: context.intervalRevision,
+    });
+    context.layer.clear();
+    context.cleanupPending = false;
+    err('布林带形态预警已停止:', error);
+  }
+
   function stopBearishBollingerAlertMonitor() {
-    // Invalidate even while a trade/save owner defers physical marker removal.
+    // Independent SVG cleanup is safe while a native drawing owner is busy.
     disposeBollingerIntervalSession();
     clearBearishBollingerAlertContext();
   }
@@ -239,7 +244,7 @@ export function createBollingerMonitor({
       cachedSignalCount: context?.lastProcessedSignals === null || !context
         ? null : context.lastProcessedSignals.length,
       layerSize: context ? context.layer.size : null,
-      markerSaveStats: context ? context.layer.saveStats : null,
+      markerOverlayStats: context ? context.layer.overlayStats : null,
       retiredCount: retiredBollingerLayers.size,
       sessionPresent: session !== null,
       sessionRevision: session ? session.revision : null,

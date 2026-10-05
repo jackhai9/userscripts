@@ -2,37 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
-  captureStrategyError, createStrategyDigestGate, createStrategyGmBoundary, createStrategyPromptBoundary, createStrategyShapeBoundary, installStrategyClock,
+  captureStrategyError, createStrategyDigestGate, createStrategyGmBoundary, createStrategyPromptBoundary, installStrategyClock,
   observeStrategyCondition, observeStrategyQueries,
 } from '../../helpers/strategy-migration-boundaries.js';
-
-for (const [label, config] of [
-  ['valid', { shapeId: 'native-shape', points: [{ time: 10, price: 1.25 }], listedShapes: [{ id: 'native-shape' }] }],
-  ['missing', { shapeId: null, points: null, listedShapes: null }],
-  ['malformed', { shapeId: '', points: [], listedShapes: [{ id: 42 }] }],
-]) {
-  test(`user observes ${label} native shape outputs without fixture normalization`, async () => {
-    // Given a host boundary is configured with the exact native return values
-    const boundary = createStrategyShapeBoundary(config);
-    const point = { time: 10, price: 1.25 };
-    const options = { shape: 'arrow_up' };
-
-    // When the host creates, reads, lists, and removes a shape
-    const id = await boundary.chart.createShape(point, options);
-    const points = boundary.chart.getShapeById(id).getPoints();
-    const list = boundary.chart.getAllShapes();
-    boundary.chart.removeEntity('requested-removal');
-
-    // Then every native value and caller-owned operation is preserved exactly
-    assert.equal(id, config.shapeId);
-    assert.equal(points, config.points);
-    assert.equal(list, config.listedShapes);
-    assert.equal(boundary.created.length, 1);
-    assert.equal(boundary.created[0].point, point);
-    assert.equal(boundary.created[0].options, options);
-    assert.deepEqual(boundary.removed, ['requested-removal']);
-  });
-}
 
 test('user observes native interval cadence, arguments, independent ownership and cancellation under the virtual clock', (t) => {
   // Given two native browser intervals and a shared virtual Date

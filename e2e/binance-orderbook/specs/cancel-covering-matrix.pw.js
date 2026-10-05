@@ -93,8 +93,11 @@ for (const entry of CANCEL_COVERING_SCENARIOS) {
       expectedChartSaveRequestCount,
     );
     expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(
-      expectsChartRemovalSave ? 1 : 0,
+      expectedChartSaveRequestCount,
     );
+    expect(state.events.filter((event) => event.type === 'chart-serialized')).toHaveLength(expectsChartRemovalSave ? 1 : 0);
+    expect(state.events.filter((event) => event.type === 'chart-saved').map(({ requestId }) => requestId))
+      .toEqual(state.events.filter((event) => event.type === 'chart-save-requested').map(({ requestId }) => requestId));
     expect(errors).toEqual([]);
   });
 }

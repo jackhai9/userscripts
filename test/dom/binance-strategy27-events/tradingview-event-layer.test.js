@@ -1,550 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-
 import { loadFixtureDom } from '../../helpers/dom.js';
-import { captureStrategyError, createStrategyShapeBoundary } from '../../helpers/strategy-migration-boundaries.js';
-import {
-  createAlignedShape,
-  createTradingViewEventLayer,
-  createTradingViewMarkerPlacement,
-  findStrategy27ChartRoot,
-  findStrategy27ChartTarget as resolveStrategy27ChartTarget,
-  readLiveShapeIds,
-} from '../../../src/binance-strategy27-events/dom/tradingview-event-layer.js';
+import { captureStrategyError } from '../../helpers/strategy-migration-boundaries.js';
+import { createStrategy27OverlayHost } from '../../helpers/strategy27-overlay-host.js';
+import { createTradingViewEventLayer, createTradingViewMarkerPlacement, findStrategy27ChartRoot,
+  findStrategy27ChartTarget as resolveStrategy27ChartTarget } from '../../../src/binance-strategy27-events/dom/tradingview-event-layer.js';
 
 function findStrategy27ChartTarget(document, symbol) {
   return resolveStrategy27ChartTarget(findStrategy27ChartRoot(document), symbol);
 }
-
-function createChartDom({
-  resolution = '1S',
-  symbol = 'BTRUSDT@PRICETYPE=LAST',
-  shiftSeconds = 0,
-  deferredCreate = false,
-  candle = [10, 1.25, 1.3, 1.2, 1.25],
-  previousCandle = null,
-  priceToCoordinate = price => 2_000 - (price * 1_000),
-  coordinateToPrice = coordinate => (2_000 - coordinate) / 1_000,
-} = {}) {
-  const dom = loadFixtureDom('<div class="chart-widget-root"><div><iframe></iframe></div></div>');
-  const shapes = new Map();
-  const removed = [];
-  const dataUpdatedListeners = [];
+function createChartDom({ candle = [10, 1.25, 1.3, 1.2, 1.25], previousCandle = null, ...options } = {}) {
+  const fixture = createStrategy27OverlayHost(options);
   let currentCandle = candle;
-  let currentResolution = resolution;
-  let currentSymbol = symbol;
-  let nextId = 1;
-  let releaseCreate = null;
-  const chart = {
-    resolution: () => currentResolution,
-    symbol: () => currentSymbol,
-    async createShape(point, properties) {
-      if (deferredCreate) await new Promise((resolve) => { releaseCreate = resolve; });
-      const id = `shape-${nextId++}`;
-      let points = [{ ...point, time: point.time + shiftSeconds }];
-      let currentProperties = { ...properties, text: properties.text ?? '' };
-      shapes.set(id, {
-        id,
-        getPoints: () => points,
-        setPoints: (value) => { points = value; },
-        getProperties: () => currentProperties,
-        setProperties: (value) => { currentProperties = { ...currentProperties, ...value }; },
-      });
-      return id;
-    },
-    getShapeById: (id) => shapes.get(id),
-    getAllShapes: () => [...shapes.keys()].map((id) => ({ id })),
-    removeEntity(id) { removed.push(id); shapes.delete(id); },
-    getSeries: () => ({
-      data: () => ({
-        valueAt: (index) => {
-          if (index === 5) return currentCandle;
-          if (index === 4) return previousCandle;
-          return null;
-        },
-      }),
-    }),
-    _chartWidget: {
-      model: () => ({
-        model: () => ({
-          timeScale: () => ({
-            timePointToIndex: (time, matchMode) => {
-              if (time !== 10) return null;
-              if (matchMode === 1 && previousCandle) return 4;
-              return 5;
-            },
-          }),
-          mainSeries: () => ({
-            dataUpdated: () => ({
-              subscribe: (owner, listener) => dataUpdatedListeners.push({ owner, listener }),
-              unsubscribe: (owner, listener) => {
-                const index = dataUpdatedListeners.findIndex(
-                  (candidate) => candidate.owner === owner && candidate.listener === listener,
-                );
-                if (index >= 0) dataUpdatedListeners.splice(index, 1);
-              },
-            }),
-            firstValue: () => 1,
-            priceScale: () => ({
-              priceToCoordinate,
-              coordinateToPrice,
-            }),
-          }),
-        }),
-      }),
-    },
+  fixture.chart.getSeries = () => ({ data: () => ({ valueAt: index => index === 5 ? currentCandle : index === 4 ? previousCandle : null }) });
+  fixture.overlay.timeScale.timePointToIndex = (time, mode) => {
+    if (previousCandle && time === previousCandle[0] && mode === 0) return 4;
+    if (time !== 10) return null;
+    return mode === 1 && previousCandle ? 4 : 5;
   };
-  dom.window.document.querySelector('iframe').contentWindow.tradingViewApi = {
-    activeChart: () => chart,
-  };
-  return {
-    dom,
-    chart,
-    shapes,
-    removed,
-    releaseCreate: () => releaseCreate(),
-    setCandle: (value) => { currentCandle = value; },
-    setResolution: (value) => { currentResolution = value; },
-    setSymbol: (value) => { currentSymbol = value; },
-    fireDataUpdated: () => {
-      for (const { listener } of [...dataUpdatedListeners]) listener();
-    },
-    get dataUpdatedListenerCount() {
-      return dataUpdatedListeners.length;
-    },
-  };
+  fixture.setCandle = value => { currentCandle = value; };
+  Object.defineProperty(fixture, 'dataUpdatedListenerCount', { get: () => fixture.overlay.events.dataUpdated.size });
+  return fixture;
 }
-
 function annotation(overrides = {}) {
-  return {
-    markerShape: 'arrow_up',
-    markerColor: '#0ECB81',
-    markerTime: 10,
-    markerPrice: 1.25,
-    ...overrides,
-  };
+  return { markerShape: 'arrow_up', markerColor: '#0ECB81', markerTime: 10, markerPrice: 1.25, ...overrides };
 }
-
-test('user requires an exact matching one-second TradingView chart', () => {
-  // Given a native chart and ordinary event annotations
-  const { dom } = createChartDom();
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
-  // Then user requires an exact matching one-second TradingView chart
-  assert.equal(target.routeSymbol, 'BTRUSDT');
-  assert.equal(target.resolution, '1S');
-
-  const minute = createChartDom({ resolution: '1' });
-  assert.throws(
-    () => findStrategy27ChartTarget(minute.dom.window.document, 'BTRUSDT'),
-    /one-second chart/,
-  );
-  const wrongSymbol = createChartDom({ symbol: 'BTCUSDT@PRICETYPE=LAST' });
-  assert.throws(
-    () => findStrategy27ChartTarget(wrongSymbol.dom.window.document, 'BTRUSDT'),
-    /chart symbol/,
-  );
-});
-
-test('user observes that one event owns one marker across its complete lifecycle', async () => {
-  // Given a native chart and ordinary event annotations
-  const { dom, shapes, removed } = createChartDom();
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, { maxEvents: 2, maxAgeMs: 60_000 });
-
-  await layer.renderOpened('event-a', annotation(), 10_000);
-  // Then user observes that one event owns one marker across its complete lifecycle
-  assert.equal(shapes.size, 1);
-  await layer.renderUpdated('event-a', annotation(), 11_000);
-  assert.equal(shapes.size, 1);
-  await layer.renderClosed('event-a', annotation(), 12_000);
-  assert.equal(shapes.size, 1);
-  const ids = [...shapes.keys()];
-  await layer.renderOutcome('event-a', annotation(), 13_000);
-  assert.deepEqual([...shapes.keys()], ids);
-  assert.equal(shapes.get(ids[0]).getProperties().shape, 'arrow_up');
-
-  layer.remove('event-a');
-  assert.equal(shapes.size, 0);
-  assert.equal(layer.size, 0);
-
-  await layer.renderOpened('event-b', annotation(), 14_000);
-
-  layer.clear();
-  assert.equal(shapes.size, 0);
-  assert.equal(removed.length, 2);
-});
-
-test('user sees red and green directional arrows eight pixels outside the matching candle', async () => {
-  // Given a native chart and ordinary event annotations
-  const { dom, shapes } = createChartDom();
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, { maxEvents: 3, maxAgeMs: 60_000 });
-
-  await layer.renderOpened('up', annotation({ markerPrice: 9.99 }), 10_000);
-  await layer.renderOpened('down', annotation({
-    markerShape: 'arrow_down',
-    markerColor: '#F6465D',
-    markerPrice: 0.01,
-  }), 10_001);
-  const [up, down] = [...shapes.values()];
-  // Then user sees red and green directional arrows eight pixels outside the matching candle
-  assert.equal(up.getPoints()[0].price, 1.192);
-  assert.equal(down.getPoints()[0].price, 1.308);
-});
-
-test('user keeps the first event marker immutable when later updates change direction', async () => {
-  // Given a native chart and ordinary event annotations
-  const { dom, shapes, removed } = createChartDom();
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, { maxEvents: 2, maxAgeMs: 60_000 });
-
-  await layer.renderOpened('event-a', annotation(), 10_000);
-  const originalId = [...shapes.keys()][0];
-  await layer.renderUpdated('event-a', annotation({
-    markerShape: 'arrow_down',
-    markerColor: '#F6465D',
-  }), 11_000);
-
-  // Then user keeps the first event marker immutable when later updates change direction
-  assert.equal(shapes.size, 1);
-  assert.deepEqual(removed, []);
-  assert.deepEqual([...shapes.keys()], [originalId]);
-  const marker = [...shapes.values()][0];
-  assert.equal(marker.getProperties().shape, 'arrow_up');
-  assert.equal(marker.getPoints()[0].price, 1.192);
-});
-
-test('user waits for the matching candle data update before placing a directional marker', async () => {
-  // Given a native chart and ordinary event annotations
-  const fixture = createChartDom({ candle: null });
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, {
-    maxEvents: 2,
-    maxAgeMs: 60_000,
-    candleWaitMs: 50,
-  });
-
-  const renderPromise = layer.renderOpened('event-a', annotation(), 10_000);
-  await Promise.resolve();
-  // Then user waits for the matching candle data update before placing a directional marker
-  assert.equal(fixture.shapes.size, 0);
-  assert.equal(fixture.dataUpdatedListenerCount, 1);
-
-  fixture.setCandle([10, 1.25, 1.3, 1.2, 1.25]);
-  fixture.fireDataUpdated();
-
-  assert.equal(await renderPromise, true);
-  assert.equal(fixture.shapes.size, 1);
-  assert.equal(fixture.dataUpdatedListenerCount, 0);
-  assert.equal([...fixture.shapes.values()][0].getPoints()[0].price, 1.192);
-});
-
-test('user does not create a marker for a neutral observation', async () => {
-  // Given a native chart and ordinary event annotations
-  const fixture = createChartDom({ candle: null });
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, {
-    maxEvents: 2,
-    maxAgeMs: 60_000,
-    candleWaitMs: 50,
-  });
-
-  const observedResult = await layer.renderOpened('event-a', annotation({
-    markerShape: null,
-    markerColor: null,
-  }), 10_000);
-  // Then user does not create a marker for a neutral observation
-  assert.equal(observedResult, true);
-  assert.equal(fixture.shapes.size, 0);
-  assert.equal(fixture.dataUpdatedListenerCount, 0);
-});
-
-test('user rejects a directional marker when its matching candle misses the bounded wait', async () => {
-  // Given a native chart and ordinary event annotations
-  const { dom } = createChartDom({ candle: null });
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, {
-    maxEvents: 2,
-    maxAgeMs: 60_000,
-    candleWaitMs: 5,
-  });
-
-  const observedResult = layer.renderOpened('event-a', annotation(), 10_000);
-  // Then user rejects a directional marker when its matching candle misses the bounded wait
-  await assert.rejects(
-    observedResult,
-    /candle did not arrive within 5 ms for 10/,
-  );
-});
-
-test('user does not anchor a neutral observation to a previous candle', async () => {
-  // Given a native chart and ordinary event annotations
-  const fixture = createChartDom({
-    candle: null,
-    previousCandle: [9, 1.24, 1.28, 1.18, 1.23],
-  });
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, {
-    maxEvents: 2,
-    maxAgeMs: 60_000,
-    candleWaitMs: 5,
-  });
-
-  const observedResult = await layer.renderOpened('event-a', annotation({
-    markerShape: null,
-    markerColor: null,
-  }), 10_000);
-  // Then user does not anchor a neutral observation to a previous candle
-  assert.equal(observedResult, true);
-
-  assert.equal(fixture.shapes.size, 0);
-  assert.equal(fixture.dataUpdatedListenerCount, 0);
-});
-
-test('user sees a directional event outside the latest prior candle when its exact second has no trade', async () => {
-  // Given a native chart and ordinary event annotations
-  const fixture = createChartDom({
-    candle: null,
-    previousCandle: [9, 1.24, 1.28, 1.18, 1.23],
-  });
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, {
-    maxEvents: 2,
-    maxAgeMs: 60_000,
-    candleWaitMs: 5,
-  });
-
-  const observedResult = await layer.renderOpened('event-a', annotation(), 10_000);
-  // Then user sees a directional event outside the latest prior candle when its exact second has no trade
-  assert.equal(observedResult, true);
-
-  const marker = [...fixture.shapes.values()][0];
-  assert.deepEqual(marker.getPoints(), [{ time: 9, price: 1.172 }]);
-  assert.equal(fixture.dataUpdatedListenerCount, 0);
-});
-
-test('user observes that clear cancels a pending candle wait without creating a late marker', async () => {
-  // Given a native chart and ordinary event annotations
-  const fixture = createChartDom({ candle: null });
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, {
-    maxEvents: 2,
-    maxAgeMs: 60_000,
-    candleWaitMs: 50,
-  });
-
-  const renderPromise = layer.renderOpened('event-a', annotation(), 10_000);
-  await Promise.resolve();
-  layer.clear();
-
-  // Then user observes that clear cancels a pending candle wait without creating a late marker
-  assert.equal(await renderPromise, false);
-  assert.equal(fixture.dataUpdatedListenerCount, 0);
-  fixture.setCandle([10, 1.25, 1.3, 1.2, 1.25]);
-  fixture.fireDataUpdated();
-  assert.equal(fixture.shapes.size, 0);
-});
-
-test('user removes a shifted entity and reports chart alignment failure', async () => {
-  // Given a native chart and ordinary event annotations
-  const { dom, shapes, removed } = createChartDom({ shiftSeconds: -1 });
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, { maxEvents: 2, maxAgeMs: 60_000 });
-
-  const observedResult = layer.renderOpened('event-a', annotation(), 10_000);
-  // Then user removes a shifted entity and reports chart alignment failure
-  await assert.rejects(
-    observedResult,
-    /chart time alignment failed: expected 10, received 9 \(point count 1\)/,
-  );
-  assert.equal(shapes.size, 0);
-  assert.equal(removed.length, 1);
-});
-
-test('user observes that clear removes a marker whose asynchronous creation finishes late', async () => {
-  // Given a native chart and ordinary event annotations
-  const {
-    dom,
-    shapes,
-    removed,
-    releaseCreate,
-  } = createChartDom({ deferredCreate: true });
-  // When findStrategy27ChartTarget processes the configured inputs
-  const target = findStrategy27ChartTarget(dom.window.document, 'BTRUSDT');
-  const layer = createTradingViewEventLayer(target, { maxEvents: 2, maxAgeMs: 60_000 });
-
-  const renderPromise = layer.renderOpened('event-a', annotation(), 10_000);
-  await Promise.resolve();
-  layer.clear();
-  releaseCreate();
-
-  // Then user observes that clear removes a marker whose asynchronous creation finishes late
-  assert.equal(await renderPromise, false);
-  assert.equal(layer.size, 0);
-  assert.equal(shapes.size, 0);
-  assert.equal(removed.length, 1);
-});
-
-test('user observes that an update restores an externally evicted marker with its original immutable presentation', async () => {
-  // Given a native chart and ordinary event annotations
-  const f = createChartDom();
-  const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 2, maxAgeMs: 60000 });
-  // When layer.renderOpened processes the configured inputs
-  await layer.renderOpened('a', annotation(), 10000);
-  const [oldId] = f.shapes.keys();
-  const point = f.shapes.get(oldId).getPoints();
-  f.shapes.delete(oldId);
-  // Then user observes that an update restores an externally evicted marker with its original immutable presentation
-  assert.equal(await layer.renderUpdated('a', annotation({ markerShape: 'arrow_down', markerColor: '#F6465D' }), 11000), true);
-  assert.equal(f.shapes.size, 1);
-  const [id, shape] = [...f.shapes][0];
-  assert.notEqual(id, oldId);
-  assert.deepEqual(shape.getPoints(), point);
-  assert.equal(shape.getProperties().shape, 'arrow_up');
-  assert.equal(shape.getProperties().overrides.color, '#0ECB81');
-  assert.equal(layer.size, 1);
-  assert.deepEqual(f.removed, []);
-});
-
-test('user observes that reconciliation restores missing ordinary markers without an event and never revives a cleared record', async () => {
-  // Given a native chart and ordinary event annotations
-  const f = createChartDom();
-  const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 2, maxAgeMs: 60000 });
-  // When f.shapes.set processes the configured inputs
-  f.shapes.set('foreign', {});
-  await layer.renderOpened('a', annotation(), 10000);
-  f.shapes.delete('shape-1');
-  await layer.reconcile();
-  // Then user observes that reconciliation restores missing ordinary markers without an event and never revives a cleared record
-  assert.deepEqual([...f.shapes.keys()], ['foreign', 'shape-2']);
-  await layer.reconcile();
-  assert.deepEqual([...f.shapes.keys()], ['foreign', 'shape-2']);
-  f.shapes.delete('shape-2');
-  layer.clear();
-  await layer.reconcile();
-  assert.deepEqual([...f.shapes.keys()], ['foreign']);
-  assert.deepEqual(f.removed, []);
-  assert.equal(layer.size, 0);
-});
-
-for (const action of ['retain', 'clear', 'remove', 'expire', 'interval', 'symbol', 'suspend']) {
-  test(`user observes that ordinary timer and gateway repair share a single creation and cancel stale results (action=${JSON.stringify(action)})`, async () => {
-    // Given a native chart and ordinary event annotations
-    const f = createChartDom();
-    const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 2, maxAgeMs: 60000 });
-    // When layer.renderOpened processes the configured inputs
-    await layer.renderOpened('a', annotation(), 10000);
-    f.shapes.delete('shape-1');
-    const entered = Promise.withResolvers();
-    const release = Promise.withResolvers();
-    const nativeCreate = f.chart.createShape;
-    let creates = 0;
-    f.chart.createShape = async (...args) => {
-      creates += 1;
-      entered.resolve();
-      await release.promise;
-      return nativeCreate(...args);
-    };
-    const repair = layer.reconcile();
-    await entered.promise;
-    const update = layer.renderUpdated('a', annotation(), 11000);
-    const anotherTick = layer.reconcile();
-    if (action === 'clear') layer.clear();
-    if (action === 'suspend') layer.suspend();
-    if (action === 'remove') layer.remove('a');
-    if (action === 'expire') layer.prune(7200000);
-    if (action === 'interval') f.chart.resolution = () => '1';
-    if (action === 'symbol') f.chart.symbol = () => 'BTCUSDT';
-    release.resolve();
-    // Then user observes that ordinary timer and gateway repair share a single creation and cancel stale results (action=the selected case)
-    assert.equal(await update, action === 'retain', action);
-    await Promise.all([repair, anotherTick]);
-    assert.equal(creates, 1, action);
-    assert.equal(f.shapes.size, action === 'retain' ? 1 : 0, action);
-    if (['clear', 'remove', 'expire'].includes(action)) assert.equal(layer.size, 0);
-    layer.clear();
-    await layer.reconcile();
-    assert.equal(f.shapes.size, 0);
-
-  });
-}
-
-test('user observes that suspension retains existing markers, cancels late first creation and still permits expiry', async () => {
-  // Given a native chart and ordinary event annotations
-  const f = createChartDom();
-  const layer = createTradingViewEventLayer({ chart: f.chart }, { maxEvents: 3, maxAgeMs: 60000 });
-  // When layer.renderOpened processes the configured inputs
-  await layer.renderOpened('a', annotation(), 10000);
-  const entered = Promise.withResolvers();
-  const release = Promise.withResolvers();
-  const create = f.chart.createShape;
-  f.chart.createShape = async (...args) => { entered.resolve(); await release.promise; return create(...args); };
-  const pending = layer.renderOpened('b', annotation(), 11000);
-  await entered.promise;
-  layer.suspend();
-  release.resolve();
-  // Then user observes that suspension retains existing markers, cancels late first creation and still permits expiry
-  assert.equal(await pending, false);
-  assert.deepEqual([...f.shapes.keys()], ['shape-1']);
-  assert.equal(layer.size, 1);
-  assert.equal(await layer.renderOpened('c', annotation(), 12000), false);
-  await layer.reconcile();
-  assert.deepEqual([...f.shapes.keys()], ['shape-1']);
-  layer.prune(70001);
-  assert.equal(layer.size, 0);
-  assert.equal(f.shapes.size, 0);
-});
-
-test('user observes native chart fixture coordinates, shape identity and listener ownership', async (t) => {
-  // Given the chart fixture exposes unmodified host data and coordinate operations
-  const malformedCandle = { incomplete: true };
-  const fixture = createChartDom({ priceToCoordinate: price => price * 2, coordinateToPrice: coordinate => coordinate / 2 });
-  t.after(() => fixture.dom.window.close());
-  const model = fixture.chart._chartWidget.model().model();
-  const series = model.mainSeries();
-  const notifications = [];
-  const owner = {};
-  const listener = () => notifications.push('update');
-  series.dataUpdated().subscribe(owner, listener);
-  const point = { time: 10, price: 1.25 };
-
-  // When native shape creation, data delivery, and removal are exercised directly
-  const id = await fixture.chart.createShape(point, { shape: 'arrow_up' });
-  const shape = fixture.chart.getShapeById(id);
-  fixture.setCandle(malformedCandle);
-  fixture.setSymbol('ETHUSDT');
-  fixture.setResolution('5');
-  fixture.fireDataUpdated();
-  series.dataUpdated().unsubscribe(owner, listener);
-  fixture.fireDataUpdated();
-  const listed = fixture.chart.getAllShapes();
-  fixture.chart.removeEntity(id);
-
-  // Then the boundary preserves raw data, exact operations and independent subscription cleanup
-  assert.equal(id, 'shape-1');
-  assert.deepEqual(shape.getPoints(), [point]);
-  assert.equal(fixture.chart.getSeries().data().valueAt(5), malformedCandle);
-  assert.equal(series.priceScale().priceToCoordinate(1.25), 2.5);
-  assert.equal(series.priceScale().coordinateToPrice(2.5), 1.25);
-  assert.equal(fixture.chart.symbol(), 'ETHUSDT');
-  assert.equal(fixture.chart.resolution(), '5');
-  assert.deepEqual(notifications, ['update']);
-  assert.equal(fixture.dataUpdatedListenerCount, 0);
-  assert.deepEqual(listed, [{ id: 'shape-1' }]);
-  assert.deepEqual(fixture.removed, ['shape-1']);
-  assert.deepEqual(fixture.chart.getAllShapes(), []);
-});
+const eventLayer = fixture => createTradingViewEventLayer(fixture.target, { maxEvents: 2, maxAgeMs: 60000 });
 
 for (const [label, markup] of [
   ['missing chart', '<body></body>'],
@@ -583,18 +64,18 @@ for (const [label, markup, expected] of [
   });
 }
 
-test('user rejects a native chart without its required entity method', (t) => {
+test('user rejects a native chart without its required chart method', (t) => {
   // Given the native chart no longer exposes the expected create method
   const fixture = createChartDom();
   t.after(() => fixture.dom.window.close());
-  delete fixture.chart.createShape;
+  delete fixture.chart.resolution;
 
   // When the current TradingView target is validated
   const failure = captureStrategyError(() => findStrategy27ChartTarget(fixture.dom.window.document, 'BTRUSDT'));
 
   // Then the unavailable method is identified before marker work begins
-  assert.equal(failure.message, 'TradingView chart method is unavailable: createShape');
-  assert.equal(fixture.shapes.size, 0);
+  assert.equal(failure.message, 'TradingView chart method is unavailable: resolution');
+  assert.equal(fixture.created.length, 0);
 });
 
 test('user rejects a chart with no native symbol instead of adopting the route symbol', (t) => {
@@ -608,60 +89,6 @@ test('user rejects a chart with no native symbol instead of adopting the route s
   // Then the symbol mismatch remains explicit
   assert.equal(failure.message, 'Strategy 27 chart symbol mismatch: expected BTRUSDT, received ');
 });
-
-for (const [label, listedShapes, expected] of [
-  ['non-array list', null, 'Strategy 27 chart shape list is invalid'],
-  ['empty identity', [{ id: '' }], 'Strategy 27 chart shape id is invalid'],
-  ['numeric identity', [{ id: 42 }], 'Strategy 27 chart shape id is invalid'],
-  ['missing entity', [null], 'Strategy 27 chart shape id is invalid'],
-]) {
-  test(`user rejects native shape discovery with ${label}`, () => {
-    // Given the host returns the malformed list without repairing its entries
-    const boundary = createStrategyShapeBoundary({ listedShapes });
-
-    // When live native shape identities are read for reconciliation
-    const failure = captureStrategyError(() => readLiveShapeIds(boundary.chart));
-
-    // Then invalid native identities fail before any removal is attempted
-    assert.equal(failure.message, expected);
-    assert.deepEqual(boundary.removed, []);
-  });
-}
-
-for (const shapeId of [null, '', 42]) {
-  test(`user rejects native shape creation returning identity ${JSON.stringify(shapeId)}`, async () => {
-    // Given native creation returns an unusable entity identity
-    const boundary = createStrategyShapeBoundary({ shapeId });
-    const point = { time: 10, price: 1.25 };
-
-    // When the real aligned creation adapter receives that identity
-    const result = createAlignedShape(boundary.chart, point, { shape: 'arrow_up' });
-
-    // Then the unusable identity is reported without guessing which entity to remove
-    await assert.rejects(result, { message: 'TradingView returned an invalid shape id' });
-    assert.equal(boundary.created.length, 1);
-    assert.deepEqual(boundary.removed, []);
-  });
-}
-
-for (const [label, points, count] of [
-  ['missing points', null, null],
-  ['empty points', [], 0],
-  ['multiple points', [{ time: 10, price: 1.25 }, { time: 11, price: 1.26 }], 2],
-]) {
-  test(`user removes only the newly created marker after native ${label}`, async () => {
-    // Given native creation succeeds but its point collection violates the marker contract
-    const boundary = createStrategyShapeBoundary({ points });
-
-    // When the real aligned creation adapter verifies the native point collection
-    const result = createAlignedShape(boundary.chart, { time: 10, price: 1.25 }, { shape: 'arrow_up' });
-
-    // Then the invalid owned marker is removed and its alignment error remains visible
-    await assert.rejects(result, { message: `Strategy 27 chart time alignment failed: expected 10, received null (point count ${count})` });
-    assert.deepEqual(boundary.removed, ['native-shape']);
-    assert.equal(boundary.created.length, 1);
-  });
-}
 
 for (const [label, candle, expected] of [
   ['non-array candle', { time: 10 }, 'Strategy 27 candle is invalid for 10'],
@@ -683,7 +110,7 @@ for (const [label, candle, expected] of [
     // Then the malformed native data is explicit and no listener or marker is installed
     assert.equal(failure.message, expected);
     assert.equal(fixture.dataUpdatedListenerCount, 0);
-    assert.equal(fixture.shapes.size, 0);
+    assert.equal(fixture.created.length, 0);
   });
 }
 
@@ -704,7 +131,7 @@ for (const [label, chartOptions, expected] of [
     // Then invalid geometry cannot become a guessed marker price
     assert.equal(failure.message, expected);
     assert.equal(fixture.dataUpdatedListenerCount, 0);
-    assert.equal(fixture.shapes.size, 0);
+    assert.equal(fixture.created.length, 0);
   });
 }
 
@@ -725,7 +152,7 @@ for (const [label, candidate, gapPx, expected] of [
     // Then the invalid presentation is reported without waiting or creating a marker
     assert.equal(failure.message, expected);
     assert.equal(fixture.dataUpdatedListenerCount, 0);
-    assert.equal(fixture.shapes.size, 0);
+    assert.equal(fixture.created.length, 0);
   });
 }
 
@@ -769,7 +196,7 @@ test('user cancels placement before any native candle read or subscription', asy
   // Then cancellation returns no marker point and leaves no native subscription
   assert.equal(point, null);
   assert.equal(fixture.dataUpdatedListenerCount, 0);
-  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.created.length, 0);
 });
 
 test('user releases candle subscriptions when a later native update is malformed', async (t) => {
@@ -787,7 +214,7 @@ test('user releases candle subscriptions when a later native update is malformed
   // Then the actual data error rejects placement and its listener is removed
   await assert.rejects(pending, { message: 'Strategy 27 candle is invalid for 10' });
   assert.equal(fixture.dataUpdatedListenerCount, 0);
-  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.created.length, 0);
 });
 
 test('user cannot anchor an expired candle wait to a future native bar', async (t) => {
@@ -806,7 +233,7 @@ test('user cannot anchor an expired candle wait to a future native bar', async (
   // Then a future bar is rejected and the bounded wait releases its listener
   await assert.rejects(pending, { message: 'Strategy 27 candle is invalid for 10' });
   assert.equal(fixture.dataUpdatedListenerCount, 0);
-  assert.equal(fixture.shapes.size, 0);
+  assert.equal(fixture.created.length, 0);
 });
 
 test('user shifts a marker through the native price scale while preserving its candle time', (t) => {
@@ -838,7 +265,7 @@ for (const [label, chartOptions, deltaPixels, expected] of [
 
     // Then invalid geometry fails explicitly without creating an entity
     assert.equal(failure.message, expected);
-    assert.equal(fixture.shapes.size, 0);
+    assert.equal(fixture.created.length, 0);
   });
 }
 
@@ -854,26 +281,230 @@ for (const [field, value] of [['maxEvents', 0], ['maxEvents', 1.5], ['maxAgeMs',
 
     // Then the invalid bound is explicit and no chart entity is created
     assert.equal(failure.message, `Strategy 27 ${field} is invalid`);
-    assert.equal(fixture.shapes.size, 0);
+    assert.equal(fixture.created.length, 0);
   });
 }
 
-test('user does not restore an evicted marker after the native chart has changed symbols', async (t) => {
-  // Given the layer retains a verified BTR event whose native marker was evicted
-  const fixture = createChartDom();
-  t.after(() => fixture.dom.window.close());
-  const layer = createTradingViewEventLayer({ chart: fixture.chart }, { maxEvents: 2, maxAgeMs: 60000 });
-  await layer.renderOpened('event-a', annotation(), 10000);
-  fixture.shapes.delete('shape-1');
-  fixture.setSymbol('ETHUSDT');
 
-  // When an old event update arrives before the outer context sample
-  const rendered = await layer.renderUpdated('event-a', annotation(), 11000);
-
-  // Then the stale marker is not created on the replacement chart
-  assert.equal(rendered, false);
-  assert.equal(layer.size, 1);
-  assert.equal(fixture.shapes.size, 0);
-  assert.deepEqual(fixture.removed, []);
+test('user owns one immutable arrow across opened updated closed and outcome events', async () => {
+  // Given one accepted directional event beside a user drawing
+  const host = createChartDom();
+  const layer = eventLayer(host);
+  await layer.renderOpened('first', annotation(), 10000);
+  const original = host.markers()[0];
+  // When later event stages change their proposed direction and price
+  for (const stage of ['renderUpdated', 'renderClosed', 'renderOutcome']) {
+    await layer[stage]('first', annotation({ markerShape: 'arrow_down', markerColor: '#F6465D', markerPrice: 999 }), 11000);
+  }
+  // Then the original marker identity geometry and color are immutable
+  assert.equal(host.markers().length, 1);
+  assert.equal(host.markers()[0], original);
+  assert.equal(original.dataset.markerId, 'event:first');
+  assert.equal(original.getAttribute('fill'), '#0ECB81');
+  assert.equal(original.getAttribute('transform'), 'translate(50 808)');
+  layer.remove('first');
+  assert.equal(host.markers().length, 0);
+  await layer.renderOpened('second', annotation(), 12000);
   layer.clear();
+  assert.equal(host.markers().length, 0);
+  assert.deepEqual([...host.shapes.keys()], ['user-owned']);
+  assert.deepEqual([host.created.length, host.removed.length, host.saves.length], [0, 0, 0]);
+  host.close();
+});
+
+test('user sees arrows at candle edges with the original eight pixel price conversion', async () => {
+  // Given high and low candle prices independent of signal markerPrice
+  const host = createChartDom();
+  const layer = eventLayer(host);
+  // When both arrow directions are rendered
+  await layer.renderOpened('up', annotation({ markerPrice: 999 }), 10000);
+  await layer.renderOpened('down', annotation({ markerShape: 'arrow_down', markerColor: '#F6465D', markerPrice: 0 }), 10000);
+  // Then both tips have eight pixel gaps and later zoom projects the stored prices
+  assert.deepEqual(host.markers().map(node => node.getAttribute('transform')), ['translate(50 808)', 'translate(50 692)']);
+  host.overlay.setProjection({ price: price => 2000 - price * 500 });
+  host.overlay.events.priceRangeChanged.emit();
+  host.overlay.flushFrames();
+  assert.deepEqual(host.markers().map(node => node.getAttribute('transform')), ['translate(50 1404)', 'translate(50 1346)']);
+  layer.clear();
+  host.close();
+});
+
+test('user receives an exact candle arriving before three seconds without using the previous candle', async t => {
+  // Given a missing exact candle and an available previous candle
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const host = createChartDom({ candle: null, previousCandle: [9, 1.25, 1.3, 1.2, 1.25] });
+  const layer = eventLayer(host);
+  const pending = layer.renderOpened('exact', annotation(), 10000);
+  // When the exact candle arrives one millisecond before the deadline
+  t.mock.timers.tick(2999);
+  assert.equal(host.markers().length, 0);
+  host.setCandle([10, 1.25, 1.3, 1.2, 1.25]);
+  host.fireDataUpdated();
+  // Then the exact candle owns the arrow and the placement listener is released
+  assert.equal(await pending, true);
+  assert.equal(host.markers()[0].getAttribute('transform'), 'translate(50 808)');
+  assert.equal(host.dataUpdatedListenerCount, 1);
+  layer.clear();
+  assert.equal(host.dataUpdatedListenerCount, 0);
+  host.close();
+});
+
+test('user anchors to a previous candle only after the full three second deadline', async t => {
+  // Given no exact candle but a valid earlier candle
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const host = createChartDom({ candle: null, previousCandle: [9, 1.25, 1.3, 1.2, 1.25] });
+  const layer = eventLayer(host);
+  const pending = layer.renderOpened('previous', annotation(), 10000);
+  // When the exact deadline is crossed
+  t.mock.timers.tick(2999);
+  assert.equal(host.markers().length, 0);
+  t.mock.timers.tick(1);
+  // Then the preceding candle receives the marker without snapping to a later bar
+  assert.equal(await pending, true);
+  assert.equal(host.markers()[0].getAttribute('transform'), 'translate(40 808)');
+  layer.clear();
+  host.close();
+});
+
+for (const reason of ['clear', 'remove', 'symbol', 'suspend']) {
+  test(`user never publishes a pending ordinary marker after ${reason}`, async () => {
+    // Given a marker waiting for its exact native candle
+    const host = createChartDom({ candle: null });
+    const layer = eventLayer(host);
+    const pending = layer.renderOpened('pending', annotation(), 10000);
+    // When its owner is retired before native data arrives
+    if (reason === 'clear') layer.clear();
+    if (reason === 'remove') layer.remove('pending');
+    if (reason === 'symbol') host.setSymbol('ETHUSDT');
+    if (reason === 'suspend') layer.suspend();
+    host.setCandle([10, 1.25, 1.3, 1.2, 1.25]);
+    host.fireDataUpdated();
+    // Then no late arrow or placement subscription survives
+    assert.equal(await pending, false);
+    assert.equal(host.markers().length, 0);
+    assert.equal(host.dataUpdatedListenerCount, 0);
+    assert.equal(layer.size, 0);
+    layer.clear();
+    host.close();
+  });
+}
+
+test('user retains suspended history through zoom while refusing new markers and permitting expiry', async () => {
+  // Given an accepted event and a later neutral observation
+  const host = createChartDom();
+  const layer = eventLayer(host);
+  await layer.renderOpened('first', annotation(), 10000);
+  assert.equal(await layer.renderOpened('neutral', annotation({ markerShape: null }), 11000), true);
+  // When presentation is suspended and the native price scale changes
+  layer.suspend();
+  host.overlay.setProjection({ price: price => 2000 - price * 500 });
+  host.overlay.events.modeChanged.emit();
+  host.overlay.flushFrames();
+  // Then verified history remains projected but new events do not render
+  assert.equal(host.markers()[0].getAttribute('transform'), 'translate(50 1404)');
+  assert.equal(await layer.renderOpened('second', annotation(), 12000), false);
+  assert.equal(layer.size, 1);
+  layer.prune(70000);
+  assert.equal(layer.size, 1);
+  layer.prune(70001);
+  assert.equal(layer.size, 0);
+  assert.equal(host.markers().length, 0);
+  layer.clear();
+  host.close();
+});
+
+test('user evicts only the oldest ordinary event when bounded capacity is reached', async () => {
+  // Given a two-event capacity filled in insertion order
+  const host = createChartDom();
+  const layer = eventLayer(host);
+  await layer.renderOpened('first', annotation(), 10000);
+  await layer.renderOpened('second', annotation(), 10001);
+  // When a third event arrives and repeated reconciliation runs
+  await layer.renderOpened('third', annotation(), 10002);
+  const nodes = host.markers();
+  await layer.reconcile();
+  // Then the two newest immutable markers survive without native mutation
+  assert.deepEqual(host.markers().map(node => node.dataset.markerId), ['event:second', 'event:third']);
+  assert.deepEqual(host.markers(), nodes);
+  assert.deepEqual([host.created.length, host.removed.length, host.saves.length], [0, 0, 0]);
+  layer.clear();
+  host.close();
+});
+
+for (const [resolution, symbol, expected] of [['1', 'BTRUSDT', /one-second chart/], ['1S', 'ETHUSDT', /symbol mismatch/]]) {
+  test(`user rejects ${resolution} ${symbol} before binding the current one-second route`, () => {
+    // Given a visible native chart outside the requested symbol or interval
+    const host = createChartDom({ resolution, symbol });
+    // When the current route attempts to bind presentation
+    const resolve = () => findStrategy27ChartTarget(host.document, 'BTRUSDT');
+    // Then the incompatible chart fails before any overlay is installed
+    assert.throws(resolve, expected);
+    assert.equal(host.overlay.pane.querySelectorAll('svg').length, 0);
+    host.close();
+  });
+}
+
+test('user sees a terminal ordinary projection failure without later marker resurrection', async () => {
+  // Given a valid ordinary event and an explicit failure consumer
+  const host = createChartDom();
+  const errors = [];
+  const layer = createTradingViewEventLayer(host.target, { maxEvents: 2, maxAgeMs: 60000, onRenderError: error => errors.push(error.message) });
+  await layer.renderOpened('first', annotation(), 10000);
+  // When native projection fails in a scheduled frame and later recovers
+  host.overlay.setProjection({ price: () => NaN });
+  host.overlay.events.priceRangeChanged.emit();
+  host.overlay.flushFrames();
+  host.overlay.setProjection({ price: price => 2000 - price * 1000 });
+  await layer.reconcile();
+  // Then accepted history remains recorded but failed presentation cannot reappear
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /coordinates are invalid/);
+  assert.equal(layer.size, 1);
+  assert.equal(host.markers().length, 0);
+  assert.equal(await layer.renderUpdated('first', annotation(), 11000), false);
+  assert.equal(host.overlay.subscriptions, 0);
+  layer.clear();
+  host.close();
+});
+
+test('user receives the native candle and coordinate host contract without repaired data', () => {
+  // Given explicit candle rows and an owner-bound delegate
+  const host = createStrategy27OverlayHost({ bars: [[10, 1.25, 1.3, 1.2, 1.25], [12, 1.3, 1.4, 1.25, 1.35]] });
+  const event = host.overlay.events.dataUpdated;
+  const owner = {};
+  let notifications = 0;
+  const callback = () => { notifications += 1; };
+  // When exact previous and missing indices are read and subscriptions are released
+  const exact = host.overlay.timeScale.timePointToIndex(12, 0);
+  const previous = host.overlay.timeScale.timePointToIndex(11, 1);
+  const missing = host.overlay.timeScale.timePointToIndex(11, 0);
+  event.subscribe(owner, callback);
+  host.fireDataUpdated();
+  event.unsubscribe(owner, callback);
+  host.fireDataUpdated();
+  // Then the host obeys independently specified native timing and scale contracts
+  assert.deepEqual([exact, previous, missing], [12, 10, null]);
+  assert.deepEqual(host.chart.getSeries().data().valueAt(exact), [12, 1.3, 1.4, 1.25, 1.35]);
+  assert.equal(host.overlay.priceScale.priceToCoordinate(1.3, 100), 700);
+  assert.equal(host.overlay.priceScale.coordinateToPrice(708, 100), 1.292);
+  assert.equal(notifications, 1);
+  assert.equal(event.size, 0);
+  host.close();
+});
+
+test('user receives a bounded failure when neither the exact nor a previous candle exists', async t => {
+  // Given an empty native candle series and the default three second wait
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const host = createChartDom({ candle: null });
+  const layer = eventLayer(host);
+  const pending = layer.renderOpened('missing', annotation(), 10000);
+  // When the full candle deadline expires
+  t.mock.timers.tick(3000);
+  // Then the specific placement failure releases its subscription without creating presentation
+  await assert.rejects(pending, /candle did not arrive within 3000 ms for 10/);
+  assert.equal(host.dataUpdatedListenerCount, 0);
+  assert.equal(layer.size, 0);
+  assert.equal(host.markers().length, 0);
+  layer.clear();
+  host.close();
 });

@@ -139,7 +139,7 @@ test('user cancels seventy orders while chart drawings stay visible and save onc
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(true);
   await page.getByRole('button', { name: '确认' }).click();
-  // Then all seventy orders disappear and their drawing removals produce one final chart save.
+  // Then all seventy orders disappear and their drawing removals share one serialization across seventy callbacks.
   await expect(page.getByText('撤单已完成')).toBeVisible();
 
   const state = await readFixtureState(page);
@@ -147,7 +147,10 @@ test('user cancels seventy orders while chart drawings stay visible and save onc
   expect(
     state.events.filter((event) => event.type === 'chart-save-requested'),
   ).toHaveLength(70);
-  expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(1);
+  expect(state.events.filter((event) => event.type === 'chart-saved')).toHaveLength(70);
+  expect(state.events.filter((event) => event.type === 'chart-serialized')).toHaveLength(1);
+  expect(state.events.filter((event) => event.type === 'chart-saved').map(({ requestId }) => requestId))
+    .toEqual(state.events.filter((event) => event.type === 'chart-save-requested').map(({ requestId }) => requestId));
   expect(
     state.events
       .filter((event) => event.type === 'chart-orders-checked')
@@ -156,7 +159,7 @@ test('user cancels seventy orders while chart drawings stay visible and save onc
   const finalSaveRequestIndex = state.events.findLastIndex(
     (event) => event.type === 'chart-save-requested',
   );
-  const fullSaveIndex = state.events.findIndex((event) => event.type === 'chart-saved');
+  const fullSaveIndex = state.events.findIndex((event) => event.type === 'chart-serialized');
   expect(fullSaveIndex).toBeGreaterThan(finalSaveRequestIndex);
   await expectRestoredState(page, scenario);
   const probe = await finishInteractionProbe(page);

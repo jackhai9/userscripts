@@ -1,5 +1,30 @@
 const IGNORED_DRAWING_EVENT_TYPES = new Set(['click', 'move']);
 
+/** Only the observed default callback signature permits deferred completion. */
+function isDefaultSaveCall(api, receiver, args) {
+  return receiver === api && args.length >= 1 && args.length <= 2
+    && typeof args[0] === 'function' && args[1] === undefined;
+}
+
+/**
+ * The native serializer produces JSON chart state. Each accepted callback owns
+ * a separate copy; callback failures belong to a separate asynchronous job and
+ * must not interrupt another callback or an unrelated explicit save.
+ */
+function deliverSaveCallbacks(api, saveChart, callbacks, onCallbackError, setTimeoutFn) {
+  if (callbacks.length === 0) return;
+  saveChart.call(api, snapshot => {
+    const json = JSON.stringify(snapshot);
+    const errors = [];
+    for (const callback of callbacks) {
+      try { callback(JSON.parse(json)); } catch (error) { errors.push(error); }
+    }
+    if (errors.length) {
+      setTimeoutFn(() => onCallbackError(new AggregateError(errors, 'TradingView chart save callbacks failed')), 0);
+    }
+  });
+}
+
 function validateTradingViewApi(api) {
   if (!api || typeof api !== 'object') {
     throw new Error('图表接口不可用');
@@ -37,8 +62,8 @@ function readTradingViewDrawingToolName(api, drawingId) {
  * Binance schedules a complete chart serialization 100ms after every broker
  * drawing event. A submit capture is armed by our own button click, but it does
  * not replace saveChart until the matching LineToolOrder event arrives. The
- * wrapper is restored after that short event burst, while only the final
- * cumulative submit snapshot is replayed at the end of the ladder round.
+ * wrapper is restored after that short event burst, while every accepted
+ * callback receives one final snapshot at the end of the ladder round.
  */
 export function createTradingViewContinuousSaveController(
   api,
@@ -49,6 +74,7 @@ export function createTradingViewContinuousSaveController(
     getDrawingToolName = readTradingViewDrawingToolName,
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
+    onCallbackError = (error) => { throw error; },
   } = {},
 ) {
   validateTradingViewApi(api);
@@ -115,26 +141,18 @@ export function createTradingViewContinuousSaveController(
       );
     }
     try {
-      if (!burst.pendingSave) return undefined;
-      if (saveChartWasReplaced) {
-        if (activeRound?.pendingSave) activeRound.pendingSave = null;
-        fullSaveCount += 1;
-        return burst.originalSaveChart.apply(
-          burst.pendingSave.thisValue,
-          burst.pendingSave.args,
-        );
-      }
-      if (burst.deferToRound && activeRound) {
-        activeRound.pendingSave = burst.pendingSave;
+      const callbacks = burst.callbacks;
+      burst.callbacks = [];
+      if (callbacks.length === 0) return undefined;
+      if (!saveChartWasReplaced && burst.deferToRound && activeRound) {
+        activeRound.callbacks.push(...callbacks);
         deferredSubmitSaveCount += 1;
         return undefined;
       }
-      if (activeRound?.pendingSave) activeRound.pendingSave = null;
+      const pending = activeRound ? activeRound.callbacks.splice(0) : [];
+      pending.push(...callbacks);
       fullSaveCount += 1;
-      return burst.originalSaveChart.apply(
-        burst.pendingSave.thisValue,
-        burst.pendingSave.args,
-      );
+      return deliverSaveCallbacks(api, burst.originalSaveChart, pending, onCallbackError, setTimeoutFn);
     } finally {
       if (burst.submitCapture) {
         finishSubmitCapture(
@@ -157,14 +175,21 @@ export function createTradingViewContinuousSaveController(
       deferToRound: false,
       originalDescriptor,
       originalSaveChart,
-      pendingSave: null,
+      callbacks: [],
       settleTimer: null,
       submitCapture: null,
       wrapper: null,
     };
     burst.wrapper = function continuousSaveBurstWrapper(...args) {
+      // A foreign outer wrapper may retain this function after the burst ends.
+      if (activeBurst !== burst) return originalSaveChart.apply(this, args);
       saveRequestCount += 1;
-      burst.pendingSave = { thisValue: this, args };
+      if (!isDefaultSaveCall(api, this, args)) {
+        flushActiveBurst();
+        flushRoundPendingSave();
+        return originalSaveChart.apply(this, args);
+      }
+      burst.callbacks.push(args[0]);
       return undefined;
     };
     api.saveChart = burst.wrapper;
@@ -176,11 +201,10 @@ export function createTradingViewContinuousSaveController(
     return burst;
   };
   const flushRoundPendingSave = () => {
-    const pendingSave = activeRound?.pendingSave || null;
-    if (!pendingSave) return undefined;
-    activeRound.pendingSave = null;
+    if (!activeRound || activeRound.callbacks.length === 0) return undefined;
+    const callbacks = activeRound.callbacks.splice(0);
     fullSaveCount += 1;
-    return api.saveChart.apply(pendingSave.thisValue, pendingSave.args);
+    return deliverSaveCallbacks(api, sessionSaveChart, callbacks, onCallbackError, setTimeoutFn);
   };
   const handleDrawingEvent = (drawingId, eventType) => {
     if (stopped || IGNORED_DRAWING_EVENT_TYPES.has(eventType)) return;
@@ -226,7 +250,7 @@ export function createTradingViewContinuousSaveController(
       if (activeSubmitCapture) throw new Error('上一笔订单线捕获尚未结束');
       flushActiveBurst();
       sequence += 1;
-      activeRound = { id: sequence, pendingSave: null };
+      activeRound = { id: sequence, callbacks: [] };
       return activeRound;
     },
     beginSubmitCapture(round) {
@@ -271,11 +295,11 @@ export function createTradingViewContinuousSaveController(
         throw new Error('结束图表保存轮次时仍有订单线捕获');
       }
       flushActiveBurst();
-      const pendingSave = activeRound.pendingSave;
+      const callbacks = activeRound.callbacks;
       activeRound = null;
-      if (pendingSave) {
+      if (callbacks.length) {
         fullSaveCount += 1;
-        api.saveChart.apply(pendingSave.thisValue, pendingSave.args);
+        deliverSaveCallbacks(api, sessionSaveChart, callbacks, onCallbackError, setTimeoutFn);
       }
       return getStats();
     },
@@ -310,7 +334,7 @@ export function createTradingViewContinuousSaveController(
 /**
  * A native bulk cancellation can emit many drawing removals over several short
  * bursts. Removal-triggered saves are held until the lifecycle finishes. Saves
- * outside a burst still run synchronously and supersede older held snapshots.
+ * outside a burst flush accepted callbacks before running synchronously.
  */
 export function createTradingViewRemovalSaveController(
   api,
@@ -320,6 +344,7 @@ export function createTradingViewRemovalSaveController(
     eventDiscoveryMs = 250,
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
+    onCallbackError = (error) => { throw error; },
   } = {},
 ) {
   validateTradingViewApi(api);
@@ -340,7 +365,7 @@ export function createTradingViewRemovalSaveController(
   let discoveryTimer = null;
   let finished = false;
   let fullSaveCount = 0;
-  let pendingFinalSave = null;
+  let pendingFinalCallbacks = [];
   let removeEventCount = 0;
   let saveRequestCount = 0;
   let synchronousSaveCount = 0;
@@ -355,9 +380,16 @@ export function createTradingViewRemovalSaveController(
     saveRequestCount,
     synchronousSaveCount,
   });
+  const flushFinalCallbacks = () => {
+    if (pendingFinalCallbacks.length === 0) return;
+    const callbacks = pendingFinalCallbacks;
+    pendingFinalCallbacks = [];
+    fullSaveCount += 1;
+    deliverSaveCallbacks(api, sessionSaveChart, callbacks, onCallbackError, setTimeoutFn);
+  };
   const monitoredSaveChart = function monitoredRemovalSessionSaveChart(...args) {
     synchronousSaveCount += 1;
-    pendingFinalSave = null;
+    flushFinalCallbacks();
     return sessionSaveChart.apply(this, args);
   };
   const clearBurstTimers = (burst) => {
@@ -373,7 +405,8 @@ export function createTradingViewRemovalSaveController(
     activeBurst = null;
     if (api.saveChart !== burst.wrapper) {
       controllerError ||= new Error('图表保存接口在删除事件合并期间发生变化');
-      pendingFinalSave = null;
+      pendingFinalCallbacks.push(...burst.callbacks);
+      burst.callbacks = [];
       burst.resolve();
       return;
     }
@@ -383,7 +416,8 @@ export function createTradingViewRemovalSaveController(
       burst.originalSaveChart,
       burst.originalDescriptor,
     );
-    if (burst.pendingSave) pendingFinalSave = burst.pendingSave;
+    pendingFinalCallbacks.push(...burst.callbacks);
+    burst.callbacks = [];
     burst.resolve();
   };
   const scheduleBurstSettle = (burst) => {
@@ -404,15 +438,21 @@ export function createTradingViewRemovalSaveController(
       maxWaitTimer: null,
       originalDescriptor: Object.getOwnPropertyDescriptor(api, 'saveChart'),
       originalSaveChart: api.saveChart,
-      pendingSave: null,
+      callbacks: [],
       resolve,
       settleTimer: null,
       settled,
       wrapper: null,
     };
     burst.wrapper = function removalSaveBurstWrapper(...args) {
+      if (activeBurst !== burst) return sessionSaveChart.apply(this, args);
       saveRequestCount += 1;
-      burst.pendingSave = { thisValue: this, args };
+      if (!isDefaultSaveCall(api, this, args)) {
+        finishBurst();
+        flushFinalCallbacks();
+        return monitoredSaveChart.apply(this, args);
+      }
+      burst.callbacks.push(args[0]);
     };
     api.saveChart = burst.wrapper;
     if (api.saveChart !== burst.wrapper) {
@@ -473,12 +513,8 @@ export function createTradingViewRemovalSaveController(
         );
       } else {
         controllerError ||= new Error('图表保存接口在删除事件监视期间发生变化');
-        pendingFinalSave = null;
       }
-      if (pendingFinalSave) {
-        fullSaveCount += 1;
-        sessionSaveChart.apply(pendingFinalSave.thisValue, pendingFinalSave.args);
-      }
+      flushFinalCallbacks();
       if (controllerError) throw controllerError;
       return getStats();
     },
@@ -487,8 +523,8 @@ export function createTradingViewRemovalSaveController(
 
 /**
  * Binance schedules one complete chart save for every broker drawing event.
- * The last request contains the cumulative final state, so one burst can be
- * persisted with only its final request after all matching events arrive.
+ * A burst shares the final serialization across every accepted default callback.
+ * Callback delivery and downstream persistence remain one per original request.
  */
 export async function coalesceTradingViewDrawingSaves(
   api,
@@ -499,6 +535,7 @@ export async function coalesceTradingViewDrawingSaves(
     timeoutMs = 1800,
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
+    onCallbackError = (error) => { throw error; },
   } = {},
 ) {
   validateTradingViewApi(api);
@@ -517,8 +554,11 @@ export async function coalesceTradingViewDrawingSaves(
   const originalDescriptor = Object.getOwnPropertyDescriptor(api, 'saveChart');
   let drawingEventCount = 0;
   let saveRequestCount = 0;
-  let pendingSave = null;
+  let pendingCallbacks = [];
+  let fullSaveCount = 0;
   let actionFinished = false;
+  let interceptionFinished = false;
+  const failures = [];
   let eventStartResolve;
   let settleResolve;
   let settleReject;
@@ -557,9 +597,30 @@ export async function coalesceTradingViewDrawingSaves(
     if (drawingEventCount === 1) eventStartResolve();
     scheduleSettleIfReady();
   };
+  const flushPendingCallbacks = () => {
+    if (pendingCallbacks.length === 0) return;
+    const callbacks = pendingCallbacks;
+    pendingCallbacks = [];
+    fullSaveCount += 1;
+    deliverSaveCallbacks(api, originalSaveChart, callbacks, onCallbackError, setTimeoutFn);
+  };
   const saveChartWrapper = function coalescedSaveChart(...args) {
+    if (interceptionFinished) return originalSaveChart.apply(this, args);
     saveRequestCount += 1;
-    pendingSave = { thisValue: this, args };
+    if (!isDefaultSaveCall(api, this, args)) {
+      const ownsWrapper = api.saveChart === saveChartWrapper;
+      if (ownsWrapper) restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
+      try {
+        flushPendingCallbacks();
+        return originalSaveChart.apply(this, args);
+      } finally {
+        // Reentrant callbacks run against the original method; a foreign owner
+        // installed by one of them must never be overwritten on return.
+        if (ownsWrapper && api.saveChart === originalSaveChart) api.saveChart = saveChartWrapper;
+        scheduleSettleIfReady();
+      }
+    }
+    pendingCallbacks.push(args[0]);
     scheduleSettleIfReady();
   };
 
@@ -609,20 +670,33 @@ export async function coalesceTradingViewDrawingSaves(
     api.unsubscribe('drawing_event', handleDrawingEvent);
     subscribed = false;
 
-    if (pendingSave) {
-      originalSaveChart.apply(pendingSave.thisValue, pendingSave.args);
-    }
     return {
       actionResult,
       drawingEventCount,
       saveRequestCount,
-      fullSaveCount: pendingSave ? 1 : 0,
+      fullSaveCount: fullSaveCount + (pendingCallbacks.length > 0 ? 1 : 0),
     };
+  } catch (error) {
+    failures.push(error);
   } finally {
     if (eventDiscoveryTimeout !== null) clearTimeoutFn(eventDiscoveryTimeout);
     if (settleQuietTimeout !== null) clearTimeoutFn(settleQuietTimeout);
     if (waitTimeout !== null) clearTimeoutFn(waitTimeout);
     if (subscribed) api.unsubscribe('drawing_event', handleDrawingEvent);
-    restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
+    interceptionFinished = true;
+    // Accepted callbacks survive action errors, deadlines and external owners.
+    // Detach and restore before delivery so callback reentry cannot join its own batch.
+    const ownershipChanged = api.saveChart !== saveChartWrapper;
+    if (!ownershipChanged) {
+      try {
+        restoreSaveChartMethod(api, saveChartWrapper, originalSaveChart, originalDescriptor);
+      } catch (error) { failures.push(error); }
+    }
+    // Cleanup must attempt accepted callbacks once without replacing an earlier
+    // action/deadline failure when native serialization also fails.
+    try { flushPendingCallbacks(); } catch (error) { failures.push(error); }
+    if (ownershipChanged) failures.push(new Error('图表保存接口在操作期间发生变化'));
+    if (failures.length > 1) throw new AggregateError(failures, 'TradingView drawing action and save cleanup failed');
+    if (failures.length === 1) throw failures[0];
   }
 }
