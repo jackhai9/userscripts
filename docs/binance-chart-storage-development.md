@@ -1,0 +1,95 @@
+# Binance Chart Storage Optimizer
+
+`src/binance-chart-storage/` owns the production implementation. Build
+`scripts/binance-chart-storage.user.js` with `npm run build:binance-chart-storage`.
+The earlier `experiments/binance-chart-storage/` files are historical research
+and independent baselines; production imports none of them.
+
+## Behavior and scope
+
+The script starts at document-start in the page's MAIN_WORLD. It only admits
+top-level Binance perpetual trading routes accepted by the shared route parser,
+including USDT and USDC symbols. Futures home, landing and other subpages receive
+no hook or UI. It never places orders, changes leverage, reads credentials, changes
+the proxy, clears databases or replaces global storage methods.
+
+Only the pinned TradingView module `70940` mirror destination expression changes.
+The complete original factory must match before first execution. Late injection,
+source drift and a missing capture after a 30-second timer retire interception
+and leave native registration intact. Metadata does not guarantee early injection
+on every extension configuration; rejection remains a supported outcome.
+
+Each accepted mirror uses one IndexedDB read/write transaction and compares the
+destination values before writing. Equal JSON trees must retain signed zero,
+property order and dense array structure. Missing keys remain distinct from stored
+null. Ordinary saves, source reads, Basic chart settings and `clear()` retain
+their native implementations. No record cache persists between batches.
+
+Input admission defaults to 512 entries, 4 MiB per batch and 16 pending batches
+with 64 MiB of copied input. Unsupported values, capacity limits, initialization
+or driver/configuration rejection and synchronous transaction-creation failure
+execute the original native expression once, before any optimized transaction
+exists. Native handling may exceed the optimizer's limits; these limits bound
+optimization, not Binance's original work. Shared references, cycles and non-JSON
+input use that native path instead of silently changing their stored meaning.
+
+Within a transaction, unsupported old values and exhausted comparison budgets
+cause direct writes. They do not reject otherwise valid replacements. A genuine
+transaction failure aborts the entire batch and stops future optimization; it
+never replays the failed batch. The original caller still receives the failure
+through its Promise boundary. Subsequent calls resume native handling.
+
+## Lifecycle and diagnostics
+
+`self.__BINANCE_CHART_STORAGE__.snapshot()` returns fixed aggregate counters and
+startup status. `stop()` drains the current instance's accepted work, including
+every member of an early-rejecting native Promise array. Calls arriving during
+drain wait for that finite fence, then run their native expression. After stop,
+native arrays and errors pass through synchronously and statistics freeze.
+The public interface exposes no stored keys, values or storage methods.
+
+`acceptedBatches` counts created optimized transactions. `committedTransactions`
+counts real completion events, while `committedWrites` and `skippedWrites` count
+only committed work. `rejectedBatches` and `nativePassthroughBatches` describe
+native routing before transaction creation, not failed saves. `failedBatches`
+counts failed optimized transactions. The separate native-only experiment's
+`completed` and `dispatches` fields must not be interpreted as commit counters.
+
+Stopping does not close shared connections, undo committed data, drain other tabs
+or guarantee persistence before page destruction. Leaving a supported route
+retires optimization when a retained callback runs; pagehide also requests stop.
+
+## Compatibility limits
+
+The native per-key mirror can partially commit; an optimized destination batch
+commits or aborts as a whole. Its interleaving with native clear and other tabs
+therefore differs. Source reads remain non-atomic, and two databases cannot share
+this transaction. No newest-revision ordering, cross-tab coordination, repair of
+already queued work or universal blank-page recovery is promised. The change
+addresses repeated destination transactions and unchanged writes specifically.
+
+The retained upstream factory is generated from the exact public response and
+verified with its manifest and inverse replacement. To update that source pin,
+first inspect and regenerate the fixture provenance; never broaden the matcher
+to accept an unknown module. The generation command accepts an explicit output:
+
+```sh
+node experiments/binance-chart-storage/generate-mirror-module.js /path/to/verified/TradingView.99bc5074.js src/binance-chart-storage/mirror-module.js
+```
+
+## Validation and release
+
+- Runtime unit scenarios execute the real bootstrap and exact native factory.
+- Production writer scenarios use real IndexedDB and the captured localForage,
+  covering original-value semantics, admission, reconnect, abort and drain.
+- Multi-tab scenarios use competing different revisions, native clear, reload
+  and actual transaction events; no fixed sleep determines business completion.
+- The anonymous smoke runner executes the generated install artifact in a fresh
+  Chrome context. Tampermonkey installation requires separate exact installed
+  and loaded-source checks in the user's authorized test tab.
+
+Run the affected Node and browser tests, `npm run lint:tests`, the build/check,
+one passing full `npm test`, and `git diff --check`. Publish through a reviewed
+GitHub PR; verify the main raw artifact before synchronizing Tampermonkey. A
+successful chart and committed test batch do not establish long-running stability
+or prove that every historic white-screen incident had the same cause.

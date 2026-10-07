@@ -23,6 +23,7 @@
 | src/binance-strategy29-bollinger/ | scripts/binance-strategy29-bollinger.user.js |
 | src/binance-strategy31-volume-reversal/ | scripts/binance-strategy31-volume-reversal.user.js |
 | src/m3u8-downloader/ | scripts/m3u8-downloader.user.js |
+| src/binance-chart-storage/ | scripts/binance-chart-storage.user.js |
 
 - Other scripts remain hand-maintained under scripts/*.user.js until migrated.
 - Generated artifacts are readable, non-compressed, non-obfuscated install/update
@@ -43,6 +44,7 @@
 | Trading-data, CoinMarketCap-data, auto-refresh, or cross-script validation | docs/userscript-validation.md |
 | Behavioral tests, test lint, affected selection, or source coverage | docs/test-policy.md |
 | Read-only review | skills/userscript-review/SKILL.md |
+| Chart mirror storage and IndexedDB | docs/binance-chart-storage-development.md |
 | Release or publish | skills/userscript-release/SKILL.md |
 | Codex/browser/proxy/helper/connection timeout | global timeout rule; if available, ~/.dotfiles/knowledge/shared/CODEX_TOOL_TIMEOUT_TRIAGE.md |
 
@@ -62,6 +64,7 @@
   | src/binance-strategy29-bollinger/** | npm run build:binance-strategy29-bollinger |
   | src/binance-strategy31-volume-reversal/** | npm run build:binance-strategy31-volume-reversal |
   | src/m3u8-downloader/** | npm run build:m3u8-downloader |
+  | src/binance-chart-storage/** | npm run build:binance-chart-storage |
 
 - Publish, ship, or merge to main only through a GitHub PR when the current
   conversation explicitly authorizes that action, target, and scope; never

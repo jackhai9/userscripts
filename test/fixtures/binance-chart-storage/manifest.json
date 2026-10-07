@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "purpose": "Test-only public source snapshots for an isolated Binance chart-storage prototype; never include in install artifacts.",
+  "retrieved_at_utc": [
+    "2026-10-06T10:18:36.454178+00:00",
+    "2026-10-06T10:18:37.742213+00:00"
+  ],
+  "chunk_global": "webpackChunkfutures_trade_ui",
+  "fixture_chunk_id": "codex-chart-storage-fixture",
+  "runtime": {
+    "file": "webpack-runtime.js",
+    "source_url": "https://bin.bnbstatic.com/static/webpack-runtime.ea82941e.js",
+    "sha256": "164ce16ddba26e946b346bfd25c1fcadb98bf54bf0f0daa6f191b753e9433411",
+    "bytes": 25138,
+    "transformation": "None; downloaded bytes retained exactly.",
+    "bundler": "rspack@1.7.11"
+  },
+  "localforage": {
+    "file": "localforage-module.js",
+    "module_id": 43917,
+    "library": "localForage",
+    "version": "1.10.0",
+    "license": "Apache-2.0",
+    "source_url": "https://bin.bnbstatic.com/static/main.37a180b9.js",
+    "original_main_sha256": "97bc05dcb6bf9e0803a00027e51e26a2d190c4c6d0a2b5151cfa44dfb846f451",
+    "original_main_bytes": 751358,
+    "fixture_sha256": "cba1091c1d2bde8aaef6e52c643ae5b58cf52d9e9806ca2890883370460164bc",
+    "fixture_bytes": 31570,
+    "module_property_sha256": "f33d0f78c185ff592f1f0781e21baab63e7db937054866c37afdfda028e9e647",
+    "module_property_utf16_range": [
+      519695,
+      551059
+    ],
+    "factory_sha256": "5cb05e8a7e103e5813e7d3361ef0a98fa26adac5c2bcb8597eb47608a4a5ee46",
+    "factory_utf16_range": [
+      519700,
+      551059
+    ],
+    "factory_bytes": 31359,
+    "license_comment_preserved": true,
+    "extraction": {
+      "parser": "acorn@8.18.0",
+      "options": {
+        "ecmaVersion": "latest",
+        "sourceType": "script"
+      },
+      "method": "Parse the main bundle AST. Select the unique numeric Property 43917 from the first webpack chunk push module map. Copy the complete original property range into a two-element registration-only chunk payload. Preserve the original method factory and its inline license without formatting. No application entrypoint or runtime callback is retained.",
+      "ranges": "Zero-based UTF-16 string offsets; end is exclusive.",
+      "original_main_retained": false
+    },
+    "dependencies": {
+      "external_webpack_module_requires": [],
+      "webpack_runtime_properties": [
+        "g"
+      ],
+      "webpack_global_property_reference_count": 4,
+      "internal_browserify_bundle": true,
+      "notes": "The factory reads webpack require.g for the global object. Its bundled Browserify loader contains an unexecuted external require fallback for missing internal modules; it is not an external webpack module import. Evaluate the factory only through the real runtime in an isolated test context."
+    }
+  },
+  "verification": {
+    "chunk_id_absent_from_original_runtime_and_main": true,
+    "fixture_payload_element_count": 2,
+    "registration_executes_factory": false,
+    "node_vm_observed_factory_calls": 0,
+    "node_vm_observed_dom_storage_network_timer_accesses": [],
+    "registered_module_ids": [
+      "43917"
+    ],
+    "runtime_startup": "Installs the webpack-compatible chunk registration and loader helpers. With an empty chunk queue, it neither requires a business module nor starts a chunk load. An existing queue can contain runtime callbacks that it will execute; use a new isolated context.",
+    "browser_and_database_execution": "Not performed by fixture acquisition."
+  }
+}

@@ -13,10 +13,10 @@ import {
 const registry = await createSourceRegistry();
 
 test('user gets coverage maps for the exact install artifacts and complete original sources', async () => {
-  // Given the seven generated installers and two hand-maintained installers.
+  // Given the eight generated installers and two hand-maintained installers.
   const paths = registry.artifacts.map((artifact) => artifact.path).sort();
   const expected = [
-    'auto_refresh', 'binance-coinmarketcap-data', 'binance-orderbook-trade',
+    'auto_refresh', 'binance-chart-storage', 'binance-coinmarketcap-data', 'binance-orderbook-trade',
     'binance-strategy27-events', 'binance-strategy29-bollinger', 'binance-strategy31-volume-reversal', 'binance-trading-data',
     'coinmarketcap-valuation-helper', 'm3u8-downloader',
   ].map((name) => 'scripts/' + name + '.user.js').sort();
