@@ -53,6 +53,7 @@ This repository is the source of truth and distribution point for the scripts. G
 
 - Infers direction from the current open/close tab.
 - Provides a quantity multiplier panel.
+- Includes chart mirror storage optimization without a separate installation.
 - Handles orderbook display precision, available quantity, current orders, and ladder order boundaries.
 - Designed for manual traders who frequently inspect the orderbook and submit limit orders.
 
@@ -108,6 +109,7 @@ npm run build:binance-userscripts
 
 ## Documentation
 
+- [Binance chart storage optimizer](docs/binance-chart-storage-development.md)
 - [Signal gateway architecture and usage (Chinese)](docs/signal-gateway-architecture.zh-CN.md)
 - [Binance orderbook trade development](docs/binance-orderbook-trade-development.md)
 - [Binance Strategy 29 Bollinger signals and migration](docs/binance-strategy29-bollinger-development.md)

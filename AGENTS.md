@@ -43,6 +43,7 @@
 | Trading-data, CoinMarketCap-data, auto-refresh, or cross-script validation | docs/userscript-validation.md |
 | Behavioral tests, test lint, affected selection, or source coverage | docs/test-policy.md |
 | Read-only review | skills/userscript-review/SKILL.md |
+| Chart mirror storage and IndexedDB | docs/binance-chart-storage-development.md |
 | Release or publish | skills/userscript-release/SKILL.md |
 | Codex/browser/proxy/helper/connection timeout | global timeout rule; if available, ~/.dotfiles/knowledge/shared/CODEX_TOOL_TIMEOUT_TRIAGE.md |
 

@@ -1,0 +1,53 @@
+{
+  "description": "Static 70940 factory with one pinned mirror-write RHS replacement; exact original callback fixture uses original host dependencies.",
+  "source": {
+    "file": "TradingView.99bc5074.js",
+    "url": "https://bin.bnbstatic.com/static/chunks/TradingView.99bc5074.js",
+    "sha256": "b6a2cddd017fb4517abb4ea458e19905c59f955a3f99efa18beb1e82f3938c1c"
+  },
+  "offset_contract": "Zero-based UTF-16 String.slice offsets; exclusive ends; SHA-256 uses UTF-8 bytes.",
+  "original_factory": {
+    "source_utf16_range": [
+      6665,
+      36819
+    ],
+    "sha256": "37d249d1ceec4a41b54a959c1ab2c4b52b3061e504cf8cd81a824962af8c6c88"
+  },
+  "replacement": {
+    "source_utf16_range": [
+      33783,
+      34025
+    ],
+    "factory_utf16_range": [
+      27118,
+      27360
+    ],
+    "original_sha256": "668c3d2a30909f839e85dd5ddb8b545a39e0841fca4222e6d0a1e6f6322773cb",
+    "inserted_sha256": "cfb0b68a07f6e2ee0f6ba032628e22b29eccbca5e1e1991a7d18e1140c7f82fa"
+  },
+  "original_callback": {
+    "label": "callback:70940:z",
+    "source_file": "TradingView.99bc5074.js",
+    "source_utf16_range": [
+      32997,
+      34322
+    ],
+    "fixture_utf16_range": [
+      48748,
+      50073
+    ],
+    "sha256": "79aa5f884c6cc6c32815b756a2a406b73231c0c97d058c781a45d0413fe6b6ee"
+  },
+  "transformed_callback_sha256": "f8169f34717c42cc02268f16e1160e9b084add7eeba3b882bcd9bdf9670c8e5b",
+  "outputs": {
+    "mirror-module.js": {
+      "sha256": "2b2d5fa1aaab4e794770aa1a29cff8483f4e213b72ac9647c30964e7920ec658",
+      "bytes": 61596
+    },
+    "mirror-scoped-callback.js": {
+      "sha256": "02a0fc0287b5ddfaadfc97d8dfcf0d16814acafa8b8a643a887a8747ffe8a217",
+      "bytes": 33365
+    }
+  },
+  "evidence_limits": "Whole module source and inverse replacement are statically verified. Offline behavior executes exact callbacks with original dependency factories; full React module initialization is not executed."
+}

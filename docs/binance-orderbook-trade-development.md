@@ -20,6 +20,16 @@ scripts/binance-orderbook-trade.user.js
 
 ## Runtime
 
+### Chart mirror storage
+
+`chart-storage/install.js` runs before the orderbook business initializer. This
+module batches the pinned TradingView mirror destination writes and skips
+unchanged records. It is included in the existing orderbook installer, with no
+separate script. Its top-frame guard applies only to storage interception;
+source drift or late injection must leave the orderbook panel functional.
+See [the storage contract](binance-chart-storage-development.md) for native
+continuation, transaction boundaries and verification requirements.
+
 ### Chart save completion and serialization
 
 `core/chart-save-coalescer.js` batches the observed default
