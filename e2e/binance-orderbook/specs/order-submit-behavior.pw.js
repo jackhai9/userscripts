@@ -13,6 +13,67 @@ const DIRECTIONS = [
   { action: 'CLOSE_SHORT', mode: 'CLOSE', side: 'SHORT', label: '平空', qty: '0.06', prices: ['80.9', '80.4', '79.9', '81.9', '81.4', '80.9'] },
 ];
 
+for (const continuous of [false, true]) {
+  test(`user stops a ${continuous ? 'continuous' : 'single-round'} ladder before its account lock callback starts`, async ({ page }) => {
+    // Given a ready close action can start either a round or a continuous session.
+    await installScenarioClock(page);
+    const host = await openUserscriptScenario(page, createCancelScenario({
+      positions: [{ symbol: CURRENT_SYMBOL, side: 'LONG', quantity: '1' }],
+      ui: { tradeMode: 'CLOSE' },
+    }));
+    const button = page.locator('[data-ladder-action="CLOSE_LONG"]');
+    await expect(button).toBeEnabled();
+    await pauseScenarioClock(page);
+
+    // When Start and Stop occur in one event turn before Web Locks can call back.
+    await button.evaluate((element, continuous) => {
+      element.dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: continuous }));
+      window.__TM_CLOSE_LONG_DEBUG__.stopLadder();
+    }, continuous);
+    await page.clock.runFor(400);
+    await expect.poll(async () => {
+      await page.clock.runFor(16);
+      return page.locator(STATUS).textContent();
+    }).toContain('已停止');
+
+    // Then the deferred callback cannot start native trading or chart-save preparation.
+    await page.clock.runFor(400);
+    const state = await readFixtureState(page);
+    expect(state.events.filter(event => /order-submitted|cancel-requested|chart-orders-checked/.test(event.type))).toEqual([]);
+    await expect(button).toBeEnabled();
+    expect(host.errors).toEqual([]);
+  });
+}
+
+test('user cannot start a ladder while another page owns the transfer lock', async ({ page }) => {
+  // Given another account operation has exclusive ownership of the origin lock.
+  await installScenarioClock(page);
+  const host = await openUserscriptScenario(page, createCancelScenario());
+  await pauseScenarioClock(page);
+  await page.evaluate(() => new Promise(resolve => {
+    navigator.locks.request('userscripts:usdt-account-operation:v1', () => new Promise(release => {
+      window.__RELEASE_TRANSFER_LOCK__ = release;
+      resolve();
+    }));
+  }));
+
+  // When the user clicks an ordinary ladder while the transfer remains active.
+  await page.locator('[data-ladder-action="OPEN_LONG"]').evaluate(button => button.click());
+  await expect.poll(async () => {
+    await page.clock.runFor(16);
+    return page.locator(STATUS).textContent();
+  }).toContain('another tab');
+  await page.clock.runFor(400);
+
+  // Then the request is refused and no delayed order is queued behind the transfer.
+  expect((await readFixtureState(page)).events.filter(event => event.type === 'order-submitted')).toEqual([]);
+  await expect(page.locator('[data-ladder-action="OPEN_LONG"]')).toBeEnabled();
+  await page.evaluate(() => window.__RELEASE_TRANSFER_LOCK__());
+  await page.clock.runFor(400);
+  expect((await readFixtureState(page)).events.filter(event => event.type === 'order-submitted')).toEqual([]);
+  expect(host.errors).toEqual([]);
+});
+
 for (const direction of [
   { action: 'OPEN_LONG', mode: 'OPEN', label: '开多' },
   { action: 'CLOSE_SHORT', mode: 'CLOSE', label: '平空' },

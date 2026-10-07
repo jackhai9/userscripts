@@ -111,6 +111,10 @@ for (const side of ['LONG', 'SHORT']) {
     await page.clock.runFor(32);
 
     // Then the action returns automatically without any extra order or transfer.
+    await expect.poll(async () => {
+      await page.clock.runFor(32);
+      return page.locator(ACTION).isEnabled();
+    }).toBe(true);
     await expect(page.locator(ACTION)).toBeVisible();
     await expect(page.locator(ACTION)).toBeEnabled();
     await expectNoAdditionalTrading(page, host);
@@ -143,13 +147,14 @@ for (const blocker of ['native position', 'native order', 'API position']) {
 }
 
 test('user qualifies after returning to a page where continuous closing finished while hidden', async ({ page }) => {
-  // Given a continuous close is pending while the account becomes flat.
+  // Given a continuous close is pending with its visible position snapshot settled.
   const host = await openPendingClose(page, 'LONG');
   await installSimulatedVisibility(page);
-  await publishAccount(page);
+  await page.clock.runFor(32);
 
-  // When the page hides before the final acknowledgement arrives.
+  // When the page hides before the flat account update and final acknowledgement arrive.
   await setSimulatedVisibility(page, true);
+  await publishAccount(page);
   await host.releaseSubmitResponse(3);
   await page.clock.runFor(2050);
 

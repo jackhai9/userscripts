@@ -2,6 +2,84 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ACCOUNT_PATHS, createAccountRebalanceApi } from '../../e2e/binance-orderbook/fixtures/account-rebalance-api.js';
 
+test('user reads an explicit standard futures identity independently of positions', () => {
+  // Given an account fixture with no positions and a stable account identity
+  const api = createAccountRebalanceApi({ FUNDING: '0', MAIN: '0', UMFUTURE: '100' });
+
+  // When the caller requests the identity with the native empty POST body
+  const initial = api.handle({ pathname: ACCOUNT_PATHS.identity, method: 'POST', body: {} });
+  api.setIdentity({ userId: 'fixture-second-account', isExistFutureAccount: false, isPortfolioMarginRetailUser: true });
+  const updated = api.handle({ pathname: ACCOUNT_PATHS.identity, method: 'POST', body: {} });
+  const positions = api.handle({ pathname: ACCOUNT_PATHS.positions, method: 'POST', body: {} });
+
+  // Then identity changes are explicit and never inferred from flat position state
+  assert.deepEqual(initial, { status: 200, body: { success: true, code: '000000', data: {
+    userId: 'fixture-account', isExistFutureAccount: true, isPortfolioMarginRetailUser: false,
+  } } });
+  assert.deepEqual(updated.body.data, {
+    userId: 'fixture-second-account', isExistFutureAccount: false, isPortfolioMarginRetailUser: true,
+  });
+  assert.deepEqual(positions.body.data, []);
+});
+
+test('user reads every basic and conditional order across symbols independently of positions', () => {
+  // Given basic and conditional orders exist on different symbols without positions
+  const api = createAccountRebalanceApi({ FUNDING: '0', MAIN: '0', UMFUTURE: '100' });
+  const orders = {
+    basic: [{ symbol: 'BTCUSDT', orderId: 'basic-one' }, { symbol: 'ETHUSDT', orderId: 'basic-two' }],
+    conditional: [{ symbol: 'SOLUSDT', algoId: 'conditional-one' }],
+  };
+  api.setOrders(orders);
+
+  // When both all-symbol order endpoints and positions are read
+  const basic = api.handle({ pathname: ACCOUNT_PATHS.basicOrders, method: 'POST', body: {} });
+  const conditional = api.handle({ pathname: ACCOUNT_PATHS.conditionalOrders, method: 'POST', body: { algoType: 'CONDITIONAL' } });
+  const positions = api.handle({ pathname: ACCOUNT_PATHS.positions, method: 'POST', body: {} });
+
+  // Then the complete arrays preserve other-symbol orders and positions remain independent
+  assert.deepEqual(basic, { status: 200, body: { success: true, code: '000000', data: orders.basic } });
+  assert.deepEqual(conditional, { status: 200, body: { success: true, code: '000000', data: orders.conditional } });
+  assert.equal(basic.body.data.length + conditional.body.data.length, 3);
+  assert.deepEqual(positions.body.data, []);
+});
+
+for (const { key, method, body } of [
+  { key: 'identity', method: 'GET', body: {} },
+  { key: 'identity', method: 'POST', body: { userId: 'scoped' } },
+  { key: 'basicOrders', method: 'POST', body: { symbol: 'BTCUSDT' } },
+  { key: 'basicOrders', method: 'POST', body: { page: 1 } },
+  { key: 'basicOrders', method: 'POST', body: undefined },
+  { key: 'conditionalOrders', method: 'POST', body: {} },
+  { key: 'conditionalOrders', method: 'POST', body: { algoType: 'OTHER' } },
+  { key: 'conditionalOrders', method: 'POST', body: { algoType: 'CONDITIONAL', symbol: 'BTCUSDT' } },
+]) {
+  test(`user rejects an invalid ${key} request with ${method} ${JSON.stringify(body)}`, () => {
+    // Given the independent fixture requires the exact public endpoint contract
+    const api = createAccountRebalanceApi({ FUNDING: '0', MAIN: '0', UMFUTURE: '100' });
+
+    // When the caller sends a scoped, missing, or otherwise incorrect request
+    const request = () => api.handle({ pathname: ACCOUNT_PATHS[key], method, body });
+
+    // Then the fixture exposes the request mismatch instead of inventing an empty response
+    assert.throws(request, /wrong HTTP method|Unexpected .* request/);
+  });
+}
+
+test('user receives an account order read failure without changing balances or transferring funds', () => {
+  // Given the next all-symbol basic order read fails before any transfer
+  const balances = { FUNDING: '0', MAIN: '0', UMFUTURE: '100' };
+  const api = createAccountRebalanceApi(balances);
+  api.failNext(ACCOUNT_PATHS.basicOrders, { status: 503, body: { success: false, code: 'FIXTURE_FAILURE' } });
+
+  // When the caller reads the account basic orders
+  const response = api.handle({ pathname: ACCOUNT_PATHS.basicOrders, method: 'POST', body: {} });
+
+  // Then the declared failure is returned and all funds stay in their original wallet
+  assert.deepEqual(response, { status: 503, body: { success: false, code: 'FIXTURE_FAILURE' } });
+  assert.deepEqual(api.snapshot().balances, balances);
+  assert.deepEqual(api.snapshot().requests.map(request => request.pathname), [ACCOUNT_PATHS.basicOrders]);
+});
+
 test('user can detect a wrong transfer direction because the native account fake applies the actual request', () => {
   // Given balances are held by an independently modeled external account boundary.
   const api = createAccountRebalanceApi({ FUNDING: '50.12345678', MAIN: '40', UMFUTURE: '10' });

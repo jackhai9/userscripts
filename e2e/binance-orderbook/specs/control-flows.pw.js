@@ -555,6 +555,9 @@ test('user stops an active ladder and a late response cannot submit another leve
     },
   });
   const { errors, pendingSubmitSequences, releaseSubmitResponse } = await openUserscriptScenario(page, scenario);
+  await page.route('https://www.binance.com/bapi/accounts/v1/private/account/user/base-detail', route => route.fulfill({
+    status: 503, contentType: 'application/json', body: JSON.stringify({ success: false }),
+  }));
   const panel = page.locator(PANEL_SELECTOR);
   await panel.getByRole('button', { name: '阶梯开多', exact: true }).click();
   await expect.poll(pendingSubmitSequences).toEqual([1]);
@@ -579,6 +582,7 @@ test('user stops an active ladder and a late response cannot submit another leve
   // Then native readiness and late success cannot restart the stopped ladder.
   await expect(status).toContainText('阶梯开多已停止');
   await expect(panel.getByRole('button', { name: '阶梯开多', exact: true })).toBeEnabled();
+  await expect(panel.locator('#jh-binance-auto-rebalance-status')).toContainText('HTTP 503');
   const state = await readFixtureState(page);
   expect(state.events.filter(({ type }) => type === 'submit-button-ready')).toHaveLength(1);
   expect(state.events.filter(({ type }) => type === 'order-submitted')).toHaveLength(1);

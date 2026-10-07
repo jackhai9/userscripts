@@ -10,6 +10,14 @@ async function submissions(page) {
   return (await readFixtureState(page)).events.filter(({ type }) => type === 'order-submitted');
 }
 
+/** Web Lock delivery is a browser event; advance business time only until native validation starts. */
+async function waitForNativeAttempt(page, native) {
+  await expect.poll(async () => {
+    await page.clock.runFor(16);
+    return native.evaluate(boundary => boundary.snapshot().attempts.length);
+  }).toBe(1);
+}
+
 for (const feedback of [
   { label: 'a new client rejection', initial: '', text: '订单提交失败', markup: false },
   { label: 'a reused toast with updated text', initial: '订单已提交成功', text: '订单提交失败', markup: false },
@@ -24,8 +32,7 @@ for (const feedback of [
 
     // When a trusted price click reaches native validation and a new rejection is published.
     await page.locator('#futuresOrderbook .bid-light').first().click();
-    await page.clock.runFor(100);
-    await expect.poll(() => native.evaluate(boundary => boundary.snapshot().attempts.length)).toBe(1);
+    await waitForNativeAttempt(page, native);
     await native.evaluate((boundary, feedback) => boundary.publish(feedback.text, { replaceMarkup: feedback.markup }), feedback);
 
     // Then the rejection is associated with this single attempt without inventing an API error or sending a request.
@@ -54,8 +61,7 @@ for (const boundary of [
 
     // When a real single-order click receives only the declared native UI evidence.
     await page.locator('#futuresOrderbook .bid-light').first().click();
-    await page.clock.runFor(100);
-    await expect.poll(() => native.evaluate(host => host.snapshot().attempts.length)).toBe(1);
+    await waitForNativeAttempt(page, native);
     if (boundary.text !== null) await native.evaluate((host, text) => host.publish(text), boundary.text);
     await page.clock.runFor(3000);
 
@@ -91,8 +97,7 @@ test('user receives a close-maker rejection from native validation without autom
 
   // When a trusted close price reaches validation and receives a Post Only maker rejection.
   await page.locator('#futuresOrderbook .bid-light').first().click();
-  await page.clock.runFor(100);
-  await expect.poll(() => native.evaluate(boundary => boundary.snapshot().attempts.length)).toBe(1);
+  await waitForNativeAttempt(page, native);
   await native.evaluate(boundary => boundary.publish('Post Only order rejected: could not be executed as a maker'));
   await page.clock.runFor(1500);
 
@@ -131,6 +136,10 @@ for (const native of [
 
     // When the ordinary ladder exhausts the native button's three-second readiness window.
     await page.locator('[data-ladder-action="OPEN_LONG"]').evaluate(button => button.click());
+    await expect.poll(async () => {
+      await page.clock.runFor(16);
+      return page.locator(STATUS).textContent();
+    }).toBe('阶梯开多计划：3.5% / 5档 / 幅5');
     await page.clock.runFor(3500);
 
     // Then the matching readiness reason stops the ladder with zero confirmed or sent orders.
@@ -155,6 +164,10 @@ for (const field of [
 
       // When a real book click exercises the rejected field and the synchronization deadline expires.
       await page.locator('#futuresOrderbook .bid-light').nth(field.name === 'price' ? 1 : 0).click();
+      await expect.poll(async () => {
+        await page.clock.runFor(16);
+        return native.evaluate(boundary => boundary.snapshot().proposed.length);
+      }).toBeGreaterThan(0);
       await page.clock.runFor(600);
 
       // Then the mismatch is explicit, writes remain bounded, and no partially synchronized order is submitted.

@@ -322,13 +322,64 @@ and the evidence report contract are owned by
 
 Do not auto-confirm destructive Binance dialogs. The script may open Binance's native cancel confirmation, but final confirmation remains manual.
 
-USDT account rebalancing is a manual action, not an automatic post-close side effect. The inline `账户再平衡` action becomes available only after the account-order widget has continuously reported zero positions and zero open orders for two seconds, and a fresh all-symbol futures-position response also confirms that every position is flat. Starting any script trade or cancel task invalidates that eligibility immediately. When a cancellation or continuous-close task ends, readable zero account counters restart the same guarded eligibility window even if the counts did not change during the task or the earlier check was blocked by the running task. A continuous session restarts this window only after the whole session ends, not between rounds. Hidden pages defer qualification until the existing visibility lifecycle observes the account again. The action opens a script-owned native `<dialog>` styled with Binance color variables; it shows current and target balances plus the exact transfer plan, focuses Cancel by default, and proceeds only after an explicit confirmation. Escape and Cancel close it without transferring funds.
+USDT account rebalancing has separate automatic excess withdrawal and manual full-allocation paths. The inline `账户再平衡` action becomes available only after the account-order widget has continuously reported zero positions and zero open orders for two seconds, and a fresh all-symbol futures-position response also confirms that every position is flat. Starting any script trade or cancel task invalidates that eligibility immediately. When a cancellation or continuous-close task ends, readable zero account counters restart the same guarded eligibility window even if the counts did not change during the task or the earlier check was blocked by the running task. A continuous session restarts this window only after the whole session ends, not between rounds. Hidden pages defer qualification until the existing visibility lifecycle observes the account again. The action opens a script-owned native `<dialog>` styled with Binance color variables; it shows current and target balances plus the exact transfer plan, focuses Cancel by default, and proceeds only after an explicit confirmation. Escape and Cancel close it without transferring funds.
+
+Automatic withdrawal runs once per verified globally flat episode after the same
+two-second zero-counter window. Its target keeps 10% of total available USDT in
+Futures, sends only Futures excess toward Funding's 50% target, and sends the
+remainder to Spot. It never debits Funding or Spot, and never refills Futures.
+Targets display the balances actually reachable by these outward-only transfers.
+The manual action keeps its explicit confirmation and full 5:4:1 allocation.
+Automatic qualification, waiting, progress, completion, and failure messages use
+the separate `jh-binance-auto-rebalance-status` row. It starts hidden, uses safe
+text/title updates, and retains its status across locale-driven panel rebuilds.
+Automatic work never replaces a retained manual trading or cancellation result;
+the general flat-account message is shown only when the trading row is idle.
+
+All transfers hold the origin-wide exclusive Web Lock
+`userscripts:usdt-account-operation:v1`. Script single orders, cancellations,
+ladders, and whole continuous sessions hold that lock in shared mode. A busy
+lock refuses a new manual or trading action immediately instead of queuing a stale click; automatic qualification alone waits for the exclusive lock with an
+epoch-bound AbortSignal, then rechecks every precondition after acquisition.
+Invalidating eligibility cancels a pending lock request;
+continuous rounds execute inside their session lock. Ladder and continuous-task
+controllers are published synchronously before requesting the lock. Each acquired
+lock checks Stop before beginning chart coalescing or trade-form work, so a Stop
+in the click turn cannot be lost while the browser schedules its lock callback.
+Native Binance actions,
+other browsers, and devices are outside this script lock's scope.
+
+Inside the lock, the script reads `/bapi/accounts/v1/private/account/user/base-detail`
+with POST `{}` and requires code `000000`, a nonempty string user ID, an existing
+Futures account, and an explicit false portfolio-margin flag. It hashes the ID
+with SHA-256 and stores only a versioned episode status under
+`userscripts:automatic-usdt-rebalance:v1:<digest>`. Missing state initially
+qualifies; `consumed` becomes `active` only after a new authoritative nonflat
+snapshot. That activity observation uses the same lock in shared mode so it can
+observe an ongoing script trade while remaining excluded by transfers. The
+`in_flight` marker is persisted before each transfer POST. It and `blocked` remain
+terminal across reloads and later activity; neither a timer nor another tab
+clears an uncertain outcome. There is no automatic retry or rollback. Missing
+Web Locks, digest support, storage, or identity contracts surface an error.
+
+Every automatic attempt and every transfer step verifies all-symbol positions,
+POST `/bapi/futures/v1/private/future/order/open-orders` with `{}`, and POST
+`/bapi/futures/v1/private/future/order/open-algo-order` with
+`{algoType: "CONDITIONAL"}`. Both pinned order endpoints must return successful
+complete arrays, including other symbols. Each step rereads account identity and
+balances, then checks the route, eligibility epoch, counters, and script tasks
+again synchronously immediately before persisting and submitting. Ordinary
+USD-M symbol pages with no query parameters alone qualify. Any query, including
+the native copy-trading `cl=public` / `cl=private` modes, prevents automatic
+qualification before identity is requested.
+The manual dialog opens before exclusive locking, and confirmed execution
+revalidates its original account identity and exact previewed balances.
 
 The rebalance path is pinned to the current Binance page bundle contract instead of automating the native transfer dialog. It reads Spot and Funding available USDT from `/bapi/asset/v2/private/asset-service/wallet/balance`, reads the U-M Futures transferable amount from `/bapi/futures/v1/private/future/user-data/getMaxWithdrawAmount`, and submits at most two sequential transfers through `/bapi/asset/v1/private/asset-service/wallet/transfer` with `{ asset, amount, kindType }`. Wallet rows are identified by the stable `accountType` values `MAIN`, `CARD`, and `FUTURE`; `walletName` is localized and must not be used as an identifier. The private transfer BAPI uses those same account codes; do not substitute the public SAPI names `FUNDING` or `UMFUTURE`. It does not save an API key and does not fall back to DOM clicking if this private BAPI contract changes.
 
-The user must approve one native confirmation that shows the current balances, 5:4:1 targets, and exact transfer list. After confirmation, the script rechecks all positions, all open orders, and the exact three-account balance snapshot before every transfer. Each successful response must then be reflected by a fresh balance read before the next transfer starts. An intervening position, order, or balance change stops the task; a partial completion is reported explicitly and is never retried or rolled back automatically.
+For manual full rebalancing, the user must approve one native confirmation that shows the current balances, 5:4:1 targets, and exact transfer list. After confirmation, the script rechecks all positions, all open orders, and the exact three-account balance snapshot before every transfer. Each successful response must then be reflected by a fresh balance read before the next transfer starts. An intervening position, order, or balance change stops the task; a partial completion is reported explicitly and is never retried or rolled back automatically.
 
-Hiding the tab after the user confirms a rebalance does not cancel its remaining transfers. The initial eligibility and preview still require a visible trading page; each confirmed transfer continues to require the same fresh account checks, matching balances, and current trading route while hidden.
+Automatic withdrawal requires visibility again before each transfer. Hiding the tab after the user confirms a manual rebalance does not cancel its remaining transfers. The initial eligibility and preview still require a visible trading page; each confirmed transfer continues to require the same fresh account checks, matching balances, and current trading route while hidden.
 
 Ladder replacement must stay scoped and direction-aware. Automatic replacement may cancel only visible basic open-order rows for the current symbol and the same plan direction (`开多`, `开空`, `平多`, or `平空`). It must not use current-symbol cancel-all for ladder replacement, must not touch conditional/protection orders, and must retry the ladder plan only after the replacement path is validated by current DOM rows.
 

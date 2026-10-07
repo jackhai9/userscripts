@@ -22,7 +22,11 @@ async function openSettledAccount(page, options) {
 }
 
 async function expectEligible(page) {
-  await page.clock.runFor(32);
+  // Automatic account checks finish asynchronously before their next scheduled render.
+  await expect.poll(async () => {
+    await page.clock.runFor(32);
+    return page.locator(ACTION).isEnabled();
+  }).toBe(true);
   await expect(page.locator(ACTION)).toBeVisible();
   await expect(page.locator(ACTION)).toBeEnabled();
 }
@@ -369,20 +373,22 @@ test('user previews balances published during qualification instead of an earlie
   await host.waitForPositionResponses(3);
   await expectEligible(page);
 
-  // Then qualification has not cached balances or sent an account transfer.
-  expect(host.api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets)).toEqual([]);
+  // Then automatic qualification reads current wallets without transferring a futures deficit.
+  const automaticWalletReads = host.api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length;
+  expect(automaticWalletReads).toBe(1);
   await host.expectNoTradingActions();
 
   // When the user opens the now-eligible account preview.
+  host.api.setBalances({ FUNDING: '70', MAIN: '30', UMFUTURE: '0' });
   await page.locator(ACTION).evaluate(button => button.click());
   const dialog = page.getByRole('dialog', { name: '账户再平衡' });
 
   // Then the reviewed plan uses the newly published balances and remains unexecuted.
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('20 USDT');
-  await expect(dialog).toContainText('10 USDT');
-  await expect(dialog).not.toContainText('40 USDT');
-  expect(host.api.snapshot().balances).toEqual({ FUNDING: '80', MAIN: '20', UMFUTURE: '0' });
+  await expect(dialog.locator('.jh-rebalance-dialog-transfer-amount')).toHaveText(['10 USDT', '10 USDT']);
+  expect(host.api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length)
+    .toBe(automaticWalletReads + 1);
+  expect(host.api.snapshot().balances).toEqual({ FUNDING: '70', MAIN: '30', UMFUTURE: '0' });
   await dialog.getByRole('button', { name: '取消', exact: true }).evaluate(button => button.click());
   await host.expectNoTradingActions();
 });

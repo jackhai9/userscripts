@@ -49,6 +49,7 @@ test('user sees the fixed panel layout in open mode', async ({ page }) => {
   await openUserscriptScenario(page, scenario);
   // Then the precision controls, full-width divider, and layout match the checked-in visual contract.
   await expectPrecisionReady(page);
+  await expect(page.locator('#jh-binance-auto-rebalance-status')).toBeVisible();
   await expectNativeDivider(page);
   await expectVisualContract(page, 'open-fixed.visual.json');
 });

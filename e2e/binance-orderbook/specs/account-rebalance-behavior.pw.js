@@ -193,10 +193,11 @@ test('user sees a partial account result when an acknowledged transfer never app
   const dialog = page.getByRole('dialog', { name: '账户再平衡' });
   await expect(dialog).toBeVisible();
   await pauseScenarioClock(page);
+  const walletReadsBeforeConfirmation = api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length;
 
   // When the user confirms and the first balance observation still has the old values.
   await dialog.getByRole('button', { name: '确认再平衡', exact: true }).evaluate(button => button.click());
-  await expect.poll(() => api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length).toBe(3);
+  await expect.poll(() => api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length).toBe(walletReadsBeforeConfirmation + 2);
   await page.clock.runFor(1);
 
   // Then the second transfer remains blocked while the first one awaits balance confirmation.
@@ -222,8 +223,9 @@ test('user sees one completed account transfer when the next transfer fails afte
   const dialog = page.getByRole('dialog', { name: '账户再平衡' });
   await expect(dialog).toBeVisible();
   await pauseScenarioClock(page);
+  const walletReadsBeforeConfirmation = api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length;
   await dialog.getByRole('button', { name: '确认再平衡', exact: true }).evaluate(button => button.click());
-  await expect.poll(() => api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length).toBe(3);
+  await expect.poll(() => api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length).toBe(walletReadsBeforeConfirmation + 2);
   await page.clock.runFor(1);
 
   // When the account publishes the first transfer and explicitly rejects the next request.
