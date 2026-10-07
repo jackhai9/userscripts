@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { build } from 'esbuild';
+import assert from 'node:assert/strict';
+import { parse } from 'acorn';
+import { build, transform } from 'esbuild';
 
 import { nativeOrderNotificationSources } from '../../../test/fixtures/binance-order-notifications/original-factories.js';
 import { openUserscriptScenario } from './userscript-page.js';
@@ -7,7 +9,7 @@ import { createCancelScenario } from '../scenarios/cancel-current-symbol.js';
 
 let dependenciesSource;
 
-/** Bundle only library dependencies; captured native factories retain their exact source. */
+/** Bundle React dependencies separately from the native factories under test. */
 async function readReactDependencies() {
   if (!dependenciesSource) {
     const result = await build({
@@ -166,7 +168,10 @@ function installNotificationHost(nativeFactories) {
 }
 
 /** Install the built artifact at document-start, then enter through the real Rspack queue. */
-export async function openNotificationScenario(page, symbol) {
+export async function openNotificationScenario(page, symbol, {
+  soundSourceSha256 = '5362a54e61f022714e673e166b62e3c22997084ca7a9f4e676475ec91cfcfaa8',
+  repackNativeFactories = false,
+} = {}) {
   await page.route('**/*', (route) => route.abort('blockedbyclient'));
   const [artifact, runtime, react] = await Promise.all([
     readFile(new URL('../../../scripts/binance-orderbook-trade.user.js', import.meta.url), 'utf8'),
@@ -175,10 +180,40 @@ export async function openNotificationScenario(page, symbol) {
   ]);
   await page.addInitScript({ content: `self.__NOTIFICATION_EARLY_ROOT__=Boolean(document.documentElement);\n${artifact}` });
   const ids = new Set(['30877', '39116', '55401', '40477', '70020', '22584', '34122', '4189']);
-  const factories = nativeOrderNotificationSources.filter((entry) => ids.has(entry.id)
-    && (entry.id !== '30877' || entry.chunks.includes('37511'))).map((entry) => entry.source).join(',\n');
+  const selectedSources = nativeOrderNotificationSources.filter((entry) => ids.has(entry.id)
+    && (entry.id !== '30877' || entry.chunks.includes('37511'))
+    && (entry.id !== '39116' || entry.sha256 === soundSourceSha256));
+  const factories = Array.from(ids, (id) => {
+    const matches = selectedSources.filter((entry) => entry.id === id);
+    assert.equal(matches.length, 1, `Notification host requires exactly one native factory for ${id}`);
+    return matches[0].source;
+  }).join(',\n');
+  let factoryObject = `{${factories}}`;
+  if (repackNativeFactories) {
+    // An independent compiler supplies unseen bindings without using the production matcher.
+    const capturedFactories = parse(`(${factoryObject});`, { ecmaVersion: 'latest' }).body[0].expression;
+    const { code } = await transform(`(${factoryObject});`, {
+      minifyIdentifiers: true,
+      minifySyntax: false,
+      minifyWhitespace: false,
+    });
+    const program = parse(code, { ecmaVersion: 'latest' });
+    assert.equal(program.body.length, 1, 'Repacked factories must remain one expression');
+    const expression = program.body[0].expression;
+    assert.equal(expression.type, 'ObjectExpression', 'Repacked factories must remain an object');
+    assert.deepEqual(expression.properties.map((property) => String(property.key.value)), [...ids]);
+    for (const [index, property] of expression.properties.entries()) {
+      const captured = selectedSources.find((entry) => entry.id === String(property.key.value));
+      assert.notEqual(code.slice(property.start, property.end), captured.source,
+        `Repacking must change the captured source for ${captured.id}`);
+      assert.notDeepEqual(property.value.params.map((parameter) => parameter.name),
+        capturedFactories.properties[index].value.params.map((parameter) => parameter.name),
+        `Repacking must rename factory parameters for ${captured.id}`);
+    }
+    factoryObject = code.slice(expression.start, expression.end);
+  }
   const host = await openUserscriptScenario(page, createCancelScenario({ currentSymbol: symbol }), {
-    beforeOrderbook: `${react}\n${runtime}\n(${installNotificationHost.toString()})({${factories}});\nif(false){`,
+    beforeOrderbook: `${react}\n${runtime}\n(${installNotificationHost.toString()})(${factoryObject});\nif(false){`,
     afterOrderbook: '}',
   });
   await page.waitForFunction(() => self.__NOTIFICATION_HOST__?.ready() === true);

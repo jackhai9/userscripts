@@ -6,11 +6,32 @@ import { pathToFileURL } from 'node:url';
 import { parse } from 'acorn';
 import { decode, encode } from '@jridgewell/sourcemap-codec';
 import * as esbuild from 'esbuild';
-import { TARGETS } from '../build-userscript.mjs';
+import { TARGETS, createUserscriptBanner } from '../build-userscript.mjs';
 import { ROOT, productionSourceFiles, relativeSourcePath } from './config.mjs';
 import { findArtifactSegments } from './split-entries.mjs';
 
 const parserOptions = { ecmaVersion: 'latest', sourceType: 'module' };
+
+/** A vendor segment must clear the previous mapping, never inherit project coverage. */
+export function retainProjectSourceMappings(map, projectSources) {
+  const indexes = new Map();
+  const sources = [];
+  const sourcesContent = [];
+  map.sources.forEach((path, index) => {
+    if (projectSources.has(path)) {
+      indexes.set(index, sources.length);
+      sources.push(path);
+      sourcesContent.push(map.sourcesContent[index]);
+    } else {
+      assert.ok(path.startsWith('node_modules/'), 'Unexpected non-project coverage source: ' + path);
+    }
+  });
+  const mappings = decode(map.mappings).map(line => line.map(segment => {
+    if (segment.length === 1 || !indexes.has(segment[1])) return [segment[0]];
+    return [segment[0], indexes.get(segment[1]), ...segment.slice(2)];
+  }));
+  return { ...map, sources, sourcesContent, mappings: encode(mappings) };
+}
 
 /** A coverage-only compilation must execute exactly the public artifact's bytes. */
 export async function createSourceRegistry() {
@@ -26,7 +47,7 @@ export async function createSourceRegistry() {
     const outfile = resolve(ROOT, 'test-results/coverage/maps', name + '.js');
     const result = await esbuild.build({
       absWorkingDir: ROOT,
-      banner: { js: metadata },
+      banner: { js: await createUserscriptBanner(metadata, target) },
       bundle: true,
       charset: 'utf8',
       format: 'iife',
@@ -42,15 +63,21 @@ export async function createSourceRegistry() {
       write: false,
     });
     const code = result.outputFiles.find((file) => file.path.endsWith('.js')).text;
-    const map = JSON.parse(result.outputFiles.find((file) => file.path.endsWith('.map')).text);
+    let map = JSON.parse(result.outputFiles.find((file) => file.path.endsWith('.map')).text);
     assert.equal(code, await readFile(resolve(ROOT, target.output), 'utf8'),
       'Coverage build differs from the public artifact; rebuild ' + name);
-    map.sources = map.sources.map((path, index) => {
+    map.sources = await Promise.all(map.sources.map(async (path, index) => {
       const normalized = relativeSourcePath(resolve(dirname(outfile), path));
-      assert.equal(map.sourcesContent[index], sources.get(normalized),
+      assert.ok(sources.has(normalized) || normalized.startsWith('node_modules/'),
+        'Unexpected coverage source: ' + normalized);
+      const expected = sources.has(normalized)
+        ? sources.get(normalized)
+        : await readFile(resolve(ROOT, normalized), 'utf8');
+      assert.equal(map.sourcesContent[index], expected,
         'Coverage source content differs from ' + normalized);
       return normalized;
-    });
+    }));
+    map = retainProjectSourceMappings(map, sources);
     const body = parse(code, parserOptions).body;
     artifacts.push({ path: target.output, code, map, body });
   }

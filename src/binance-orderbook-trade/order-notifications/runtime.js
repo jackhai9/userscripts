@@ -5,7 +5,7 @@ const MODULE_IDS = ['30877', '39116', '55401'];
 
 /**
  * Share the orderbook's single early queue observer without sharing storage
- * state. Producer and player must both execute their pinned factories before
+ * state. Producer and player must both execute their verified factories before
  * either side changes the native string queue contract.
  */
 export function createOrderNotificationScope() {

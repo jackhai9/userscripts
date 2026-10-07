@@ -24,7 +24,7 @@ scripts/binance-orderbook-trade.user.js
 
 `order-notifications/` scopes native ordinary order toasts and sound to the
 current futures symbol. The storage installer shares its single early queue
-observer with these independently pinned targets; no separate userscript is
+observer with these independently verified structural targets; no separate userscript is
 installed. Risk and unknown events retain native handling. The native account
 data flow and trading feedback readers remain unchanged. See
 [notification scope](binance-order-notifications.md) for source pins, delayed

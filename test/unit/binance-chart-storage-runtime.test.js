@@ -202,7 +202,8 @@ test('user keeps the original factory executable when strict source registration
 /** Render-free factory execution proves the shared real Rspack registration path. */
 function registerNotificationFactories({ mismatchId } = {}) {
   const originals = Object.fromEntries([['30877', '37511'], ['39116', '3314'], ['55401', '29042']]
-    .map(([id, chunk]) => [id, createNativeOrderNotificationFactory(id, chunk)]));
+    .map(([id, chunk]) => [id, createNativeOrderNotificationFactory(id, chunk,
+      id === '39116' ? '5362a54e61f022714e673e166b62e3c22997084ca7a9f4e676475ec91cfcfaa8' : undefined)]));
   if (mismatchId) originals[mismatchId] = module => { module.exports = { nativeDrift: mismatchId }; };
   const inactiveIds = [61523, 64041, 51471, 40477, 16921, 72363, 70020];
   const inactive = Object.fromEntries(inactiveIds.map(id => [id, module => { module.exports = Object.freeze({}); }]));

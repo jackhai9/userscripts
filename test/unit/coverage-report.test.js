@@ -8,9 +8,36 @@ import { ROOT, productionSourceFiles } from '../../scripts/test-coverage/config.
 import {
   createSourceRegistry,
   mapCoverageEntry,
+  retainProjectSourceMappings,
 } from '../../scripts/test-coverage/source-maps.mjs';
 
 const registry = await createSourceRegistry();
+
+test('user excludes bundled vendor code without extending adjacent project coverage', () => {
+  // Given project and vendor mappings share a generated line and one project source is unexecuted
+  const sources = ['src/first.js', 'node_modules/parser/index.js', 'src/second.js', 'src/unexecuted.js'];
+  const map = { version: 3, sources, sourcesContent: ['first', 'vendor', 'second', 'unexecuted'], names: [],
+    mappings: encode([[[0, 0, 0, 0], [7, 1, 0, 0], [13, 2, 0, 0]], [[0, 1, 1, 0]]]) };
+
+  // When the mapper retains the complete project source set
+  const result = retainProjectSourceMappings(map, new Set(sources.filter(path => path.startsWith('src/'))));
+
+  // Then vendor columns explicitly clear attribution and all project sources remain
+  assert.deepEqual(result.sources, ['src/first.js', 'src/second.js', 'src/unexecuted.js']);
+  assert.deepEqual(result.sourcesContent, ['first', 'second', 'unexecuted']);
+  assert.deepEqual(decode(result.mappings), [[[0, 0, 0, 0], [7], [13, 1, 0, 0]], [[0]]]);
+});
+
+test('user rejects a coverage source outside the project and bundled dependencies', () => {
+  // Given a map claims an unknown source that is neither project code nor a dependency
+  const map = { sources: ['outside/unknown.js'], sourcesContent: ['unknown'], names: [], mappings: '' };
+
+  // When the registry attempts to classify its source
+  const classify = () => retainProjectSourceMappings(map, new Set());
+
+  // Then the unexpected source is exposed instead of silently reducing the denominator
+  assert.throws(classify, /Unexpected non-project coverage source: outside\/unknown.js/);
+});
 
 test('user gets coverage maps for the exact install artifacts and complete original sources', async () => {
   // Given the seven generated installers and two hand-maintained installers.
