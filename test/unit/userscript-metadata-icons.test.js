@@ -3,8 +3,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const iconSources = [
-  'src/binance-chart-storage/index.user.js',
-  'scripts/binance-chart-storage.user.js',
   'src/binance-strategy29-bollinger/index.user.js',
   'scripts/binance-strategy29-bollinger.user.js',
   'src/binance-orderbook-trade/index.user.js',

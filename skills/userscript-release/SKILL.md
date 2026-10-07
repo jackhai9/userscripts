@@ -33,7 +33,6 @@ remote repository, Tampermonkey, a browser page, or a trading account.
 | `src/binance-strategy29-bollinger/**` | `src/binance-strategy29-bollinger/index.user.js` | `npm run build:binance-strategy29-bollinger` |
 | `src/binance-strategy31-volume-reversal/**` | `src/binance-strategy31-volume-reversal/index.user.js` | `npm run build:binance-strategy31-volume-reversal` |
 | `src/m3u8-downloader/**` | `src/m3u8-downloader/index.user.js` | `npm run build:m3u8-downloader` |
-| `src/binance-chart-storage/**` | `src/binance-chart-storage/index.user.js` | `npm run build:binance-chart-storage` |
 | An unmigrated `scripts/*.user.js` | that userscript file | no build; bump its header directly |
 
 Never hand-edit a generated artifact for feature work. Keep generated output

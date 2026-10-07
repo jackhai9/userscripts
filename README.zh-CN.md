@@ -35,7 +35,6 @@
 
 | 脚本 | 适用场景 | 说明 | 源码真源 | 安装 |
 |---|---|---|---|---|
-| Binance 图表存储优化 | Binance 合约币种交易页 | 合并 TradingView 镜像写入并跳过未变化记录；不满足优化条件时使用原生处理 | 本仓库 | [安装](https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-chart-storage.user.js) |
 | 【自写】Binance Strategy 29 布林带信号 | Binance Futures | 标注本地图表信号，并通过共享网关显示服务端跨周期汇总 | 本仓库 | [安装][install-binance-strategy29-bollinger] |
 | Binance Strategy 31 放量信号 | Binance Futures | 在服务端确认的前红后绿、绿 K 放量形态下方画上涨箭头 | 本仓库 | [安装](https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy31-volume-reversal.user.js) |
 | 【自写】Binance 订单簿单击下单 | Binance Futures | 单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板 | 本仓库 | [`点击安装`][install-binance-orderbook-trade] |
@@ -52,6 +51,7 @@
 
 - 根据当前开仓/平仓 tab 自动识别操作方向。
 - 支持数量倍率面板，减少重复输入。
+- 内置图表镜像存储优化，无需额外安装脚本。
 - 处理订单簿价格精度、可用数量、当前委托和阶梯挂单相关边界。
 - 适合高频查看盘口、需要快速提交限价单的手动交易场景。
 

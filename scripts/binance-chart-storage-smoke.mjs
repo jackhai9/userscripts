@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { chromium } from 'playwright';
 
 const target = 'https://www.binance.com/zh-CN/futures/USUSDT';
-const artifactUrl = new URL('binance-chart-storage.user.js', import.meta.url);
+const artifactUrl = new URL('binance-orderbook-trade.user.js', import.meta.url);
 const artifact = await readFile(artifactUrl, 'utf8');
 const directory = await mkdtemp(join(tmpdir(), 'binance-chart-storage-smoke-'));
 const report = {
@@ -18,6 +18,7 @@ const report = {
   stages: [],
   documentStatuses: [],
   pageErrors: 0,
+  pageErrorKinds: { styleParentUnavailable: 0, other: 0 },
   browserClosed: false,
 };
 let browser;
@@ -83,7 +84,20 @@ function assertOptimized(snapshot) {
 }
 
 async function snapshot() {
-  return page.evaluate(() => ({ optimizer: self.__BINANCE_CHART_STORAGE__.snapshot(), destination: self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot() }));
+  return page.evaluate(() => {
+    const panel = document.getElementById('jh-binance-close-qty-multiplier-panel');
+    const style = panel && getComputedStyle(panel);
+    return { optimizer: self.__BINANCE_CHART_STORAGE__.snapshot(), destination: self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot(),
+      startupDOM: self.__CHART_STORAGE_SMOKE_START__,
+      orderbook: {
+        panelCount: document.querySelectorAll('#jh-binance-close-qty-multiplier-panel').length,
+        panelVisible: Boolean(panel && panel.getClientRects().length && style.visibility === 'visible' && style.display !== 'none'),
+        modeAnchorPresent: Boolean(document.getElementById('position-direction')),
+        styleCount: document.querySelectorAll('#jh-disabled-control-style').length,
+        initialized: typeof self.__TM_CLOSE_LONG_DEBUG__ === 'object',
+      },
+    };
+  });
 }
 
 async function changeInterval(label, resolution, optimized) {
@@ -129,9 +143,17 @@ try {
   report.browserVersion = browser.version();
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' });
   await context.addInitScript(observeDestinationTransactions);
-  await context.addInitScript({ content: artifact });
+  await context.addInitScript({ content: `self.__CHART_STORAGE_SMOKE_START__ = {
+    hasDocumentElement: Boolean(document.documentElement), hasHead: Boolean(document.head)
+  };\n${artifact}` });
   page = await context.newPage();
-  page.on('pageerror', () => { report.pageErrors += 1; });
+  page.on('pageerror', error => {
+    report.pageErrors += 1;
+    const styleParentUnavailable = error.name === 'TypeError'
+      && error.message.includes('null') && error.message.includes('appendChild')
+      && error.stack.includes('injectDisabledControlStyle');
+    report.pageErrorKinds[styleParentUnavailable ? 'styleParentUnavailable' : 'other'] += 1;
+  });
   page.on('response', response => {
     const request = response.request();
     if (request.isNavigationRequest() && request.frame() === page.mainFrame() && request.url() === target) {
@@ -162,6 +184,9 @@ try {
   const initial = await snapshot();
   assert.equal(initial.optimizer.matches, 1);
   assert.equal(initial.optimizer.executions, 1);
+  assert.equal(initial.orderbook.panelCount, 1);
+  assert.equal(initial.orderbook.styleCount, 1);
+  assert.equal(initial.orderbook.initialized, true);
   report.initial = initial;
   stage = 'optimized_one_hour';
   await changeInterval('1小时', '60', true);
@@ -189,7 +214,8 @@ try {
         const optimizer = self.__BINANCE_CHART_STORAGE__;
         if (!optimizer) return { installed: false };
         await optimizer.stop();
-        return { optimizer: optimizer.snapshot(), destination: self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot() };
+        return { optimizer: optimizer.snapshot(), destination: self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot(),
+          startupDOM: self.__CHART_STORAGE_SMOKE_START__ };
       }));
       await page.screenshot({ path: join(directory, 'final.png'), timeout: 10000 });
     }

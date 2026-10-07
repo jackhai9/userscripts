@@ -844,9 +844,11 @@ loaded experimental source and the inspected `chart-candles.png` crop.
 
 ### Production successor acceptance: 2026-10-07 (Beijing)
 
-The user then authorized continuing through publication. The production successor
-is `src/binance-chart-storage/`, generated as `scripts/binance-chart-storage.user.js`
-version `0.1.0`. It imports no experiment implementation. Review identified and
+The user then authorized continuing through publication. The initial production
+candidate used `src/binance-chart-storage/`, generated as
+`scripts/binance-chart-storage.user.js` version `0.1.0`. This separate installer
+was superseded by the orderbook integration below before publication.
+It imports no experiment implementation. Review identified and
 fixed signed-zero/key-order comparison, shared-reference cloning, unsupported
 old values and transaction-creation failure handling. Unsupported work returns
 to the original map only before transaction creation; genuine transaction failure
@@ -891,3 +893,40 @@ Neither live run read back saved keys or values. Persistent contents, competing
 revision integrity and reload are covered by the isolated real-IDB tests.
 These are bounded acceptance results, not a universal white-screen recovery or
 long-running stability claim.
+
+### Orderbook integration acceptance: 2026-10-07 (Beijing)
+
+The final implementation lives in `src/binance-orderbook-trade/chart-storage/`
+and ships only through the existing orderbook installer, version `2.7.218`.
+The standalone production entry and build target were removed. This optimizes
+the current matching Binance page's pinned TradingView mirror destination
+writes; it is neither a Chrome-wide userscript optimization nor limited to
+orders submitted by the orderbook. The destination database is shared by
+same-origin Binance pages and may contain historical symbol records.
+
+The storage installer runs before orderbook business initialization. During
+anonymous early-injection validation, the complete artifact exposed an existing
+startup assumption: both `document.head` and `document.documentElement` could
+still be absent when disabled-control styles were inserted. A regression first
+reproduced the `null.appendChild` failure. The initializer now observes creation
+of the HTML root, disconnects and initializes once; storage interception still
+starts immediately. The original iframe and SPA orderbook behavior is retained.
+
+The final artifact has 661,567 bytes and SHA-256
+`f281dd8c7b5f384e6f05ef1f7e837201923a0194d7fcdebd135997ee8e766f64`.
+All 2,143 Node/DOM tests, 132 chart-storage browser scenarios, test lint,
+build/syntax and final independent read-only review passed. The six integration
+scenarios include missing-root startup, source rejection, late injection,
+home-to-trading navigation and a real iframe.
+
+The anonymous Chrome smoke executed this complete artifact with both HTML root
+and head absent at injection. The orderbook initialized with exactly one panel
+and one style element and zero page errors. The anonymous host lacked its
+open/close mode anchor, so the panel remained hidden under its existing
+placement contract. The inspected screenshot showed candles and the depth
+overlay. Two interval changes committed five optimized transactions, six writes
+and thirteen skipped writes, with no failed, rejected, aborted or pending work.
+After stop, another interval change committed four native transactions and four
+writes while optimizer statistics stayed frozen. Chart data readiness was true
+throughout all three stages. The browser was closed. Evidence is retained in
+`/var/folders/99/d7dxx5j94_x8n09snmknq0x80000gn/T/binance-chart-storage-smoke-30Xntg/`.

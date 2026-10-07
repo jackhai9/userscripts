@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getEventListeners } from 'node:events';
-import { startChartStorageOptimizer } from '../../src/binance-chart-storage/runtime.js';
+import { startChartStorageOptimizer } from '../../src/binance-orderbook-trade/chart-storage/runtime.js';
 import { createNativeMirrorFactory } from '../fixtures/binance-chart-storage/mirror-scoped-callback.js';
 
 const PAGE = 'https://www.binance.com/zh-CN/futures/BTCUSDT';

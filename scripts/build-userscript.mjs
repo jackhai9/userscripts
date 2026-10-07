@@ -6,10 +6,6 @@ import * as esbuild from 'esbuild';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const TARGETS = {
-  'binance-chart-storage': {
-    entry: 'src/binance-chart-storage/index.user.js',
-    output: 'scripts/binance-chart-storage.user.js',
-  },
   'binance-strategy31-volume-reversal': {
     entry: 'src/binance-strategy31-volume-reversal/index.user.js',
     output: 'scripts/binance-strategy31-volume-reversal.user.js',

@@ -1,4 +1,4 @@
-import { isFuturesTradingPathname } from '../shared/binance-futures-route.js';
+import { isFuturesTradingPathname } from '../../shared/binance-futures-route.js';
 
 /** Storage admission follows the same concrete contract routes as the trading tools. */
 export function isChartStoragePage() {

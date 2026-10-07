@@ -37,7 +37,6 @@ This repository is the source of truth and distribution point for the scripts. G
 
 | Script | Target | Description | Source of truth | Install |
 | --- | --- | --- | --- | --- |
-| Binance Chart Storage Optimizer | Binance Futures trading pages | Batch TradingView mirror writes and skip unchanged records; preserve native handling when optimization is unavailable | This repository | [Install](https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-chart-storage.user.js) |
 | Binance Strategy 29 Bollinger signals | Binance Futures | Annotate native loaded candles and show cross-timeframe server summaries through the shared gateway | This repository | [Install][install-binance-strategy29-bollinger] |
 | Binance Strategy 31 volume reversal | Binance Futures | Show server-confirmed red-to-green higher-volume candles as upward arrows | This repository | [Install](https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy31-volume-reversal.user.js) |
 | Binance orderbook one-click order entry | Binance Futures | Click an orderbook price, infer the current open/close tab, fill quantity, and submit an order with a multiplier panel | This repository | [Install][install-binance-orderbook-trade] |
@@ -54,6 +53,7 @@ This repository is the source of truth and distribution point for the scripts. G
 
 - Infers direction from the current open/close tab.
 - Provides a quantity multiplier panel.
+- Includes chart mirror storage optimization without a separate installation.
 - Handles orderbook display precision, available quantity, current orders, and ladder order boundaries.
 - Designed for manual traders who frequently inspect the orderbook and submit limit orders.
 

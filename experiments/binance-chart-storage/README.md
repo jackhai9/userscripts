@@ -1,7 +1,7 @@
 # Binance chart-storage experiment
 
 The reviewed production successor is now maintained independently in
-[`src/binance-chart-storage/`](../../src/binance-chart-storage/), with its
+[`src/binance-orderbook-trade/chart-storage/`](../../src/binance-orderbook-trade/chart-storage/), with its
 [current contract](../../docs/binance-chart-storage-development.md). The files
 below retain the historical experiments and native baselines; their former
 production restrictions and remaining-work lists describe those experiments.

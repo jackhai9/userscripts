@@ -23,7 +23,6 @@
 | src/binance-strategy29-bollinger/ | scripts/binance-strategy29-bollinger.user.js |
 | src/binance-strategy31-volume-reversal/ | scripts/binance-strategy31-volume-reversal.user.js |
 | src/m3u8-downloader/ | scripts/m3u8-downloader.user.js |
-| src/binance-chart-storage/ | scripts/binance-chart-storage.user.js |
 
 - Other scripts remain hand-maintained under scripts/*.user.js until migrated.
 - Generated artifacts are readable, non-compressed, non-obfuscated install/update
@@ -64,7 +63,6 @@
   | src/binance-strategy29-bollinger/** | npm run build:binance-strategy29-bollinger |
   | src/binance-strategy31-volume-reversal/** | npm run build:binance-strategy31-volume-reversal |
   | src/m3u8-downloader/** | npm run build:m3u8-downloader |
-  | src/binance-chart-storage/** | npm run build:binance-chart-storage |
 
 - Publish, ship, or merge to main only through a GitHub PR when the current
   conversation explicitly authorizes that action, target, and scope; never

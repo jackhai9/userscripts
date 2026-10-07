@@ -1,16 +1,20 @@
-# Binance Chart Storage Optimizer
+# Orderbook Chart Storage Optimization
 
-`src/binance-chart-storage/` owns the production implementation. Build
-`scripts/binance-chart-storage.user.js` with `npm run build:binance-chart-storage`.
+`src/binance-orderbook-trade/chart-storage/` owns the production implementation. Build
+the existing `scripts/binance-orderbook-trade.user.js` with
+`npm run build:binance-orderbook-trade`. There is no separate install entry.
 The earlier `experiments/binance-chart-storage/` files are historical research
 and independent baselines; production imports none of them.
 
 ## Behavior and scope
 
-The script starts at document-start in the page's MAIN_WORLD. It only admits
+The module installs before the orderbook business initializer at document-start
+in the page's MAIN_WORLD. It only admits
 top-level Binance perpetual trading routes accepted by the shared route parser,
 including USDT and USDC symbols. Futures home, landing and other subpages receive
-no hook or UI. It never places orders, changes leverage, reads credentials, changes
+no storage hook or UI. The orderbook retains its own existing frame and SPA
+behavior. Landing-to-trading SPA navigation does not re-run the storage installer;
+only a fresh matching page starts early interception. It never places orders, changes leverage, reads credentials, changes
 the proxy, clears databases or replaces global storage methods.
 
 Only the pinned TradingView module `70940` mirror destination expression changes.
@@ -74,7 +78,7 @@ first inspect and regenerate the fixture provenance; never broaden the matcher
 to accept an unknown module. The generation command accepts an explicit output:
 
 ```sh
-node experiments/binance-chart-storage/generate-mirror-module.js /path/to/verified/TradingView.99bc5074.js src/binance-chart-storage/mirror-module.js
+node experiments/binance-chart-storage/generate-mirror-module.js /path/to/verified/TradingView.99bc5074.js src/binance-orderbook-trade/chart-storage/mirror-module.js
 ```
 
 ## Validation and release

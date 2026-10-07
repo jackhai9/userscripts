@@ -9,7 +9,7 @@ export async function openProductionMirrorWriterLab(page, { limits = {} } = {}) 
       ? 'mirror-writer.js' : 'json.js';
     await route.fulfill({
       contentType: 'text/javascript',
-      body: await readFile(new URL(`../../../src/binance-chart-storage/${filename}`, import.meta.url), 'utf8'),
+      body: await readFile(new URL(`../../../src/binance-orderbook-trade/chart-storage/${filename}`, import.meta.url), 'utf8'),
     });
   });
   await page.evaluate(async limits => {
