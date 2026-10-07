@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.220
+// @version      2.7.221
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -682,6 +682,26 @@
     };
   }
 
+  // src/binance-orderbook-trade/core/automatic-usdt-rebalance.js
+  function readAutomaticRebalanceEpisode(serialized) {
+    if (serialized === null) return { version: 1, status: "active" };
+    const record = JSON.parse(serialized);
+    if (record?.version !== 1 || !["active", "consumed", "in_flight", "blocked"].includes(record.status)) {
+      throw new Error("Invalid automatic rebalance episode");
+    }
+    return record;
+  }
+  function observeAutomaticRebalanceActivity(record, flat) {
+    if (!flat && record.status === "consumed") return { version: 1, status: "active" };
+    return record;
+  }
+  function assertCompleteOpenOrders(payload) {
+    if (payload?.success !== true || !Array.isArray(payload.data)) {
+      throw new Error("Invalid complete open-order response");
+    }
+    return payload.data.length;
+  }
+
   // src/binance-orderbook-trade/core/usdt-rebalance.js
   var USDT_SCALE = 8;
   var ACCOUNT_ORDER = ["FUNDING", "MAIN", "UMFUTURE"];
@@ -835,6 +855,47 @@
       throw new Error("USDT 再平衡计划未闭合");
     }
     if (transfers.length > 2) throw new Error("USDT 再平衡计划超过两笔划转");
+    return {
+      total: unitsToDecimal(totalUnits),
+      before: Object.fromEntries(
+        ACCOUNT_ORDER.map((accountCode) => [accountCode, unitsToDecimal(beforeUnits[accountCode])])
+      ),
+      targets: Object.fromEntries(
+        ACCOUNT_ORDER.map((accountCode) => [accountCode, unitsToDecimal(targetUnits[accountCode])])
+      ),
+      transfers
+    };
+  }
+  function buildAutomaticUsdtRebalancePlan(rawBalances) {
+    const beforeUnits = Object.fromEntries(
+      ACCOUNT_ORDER.map((accountCode) => [accountCode, decimalToUnits(rawBalances[accountCode])])
+    );
+    const totalUnits = ACCOUNT_ORDER.reduce((sum, accountCode) => sum + beforeUnits[accountCode], 0n);
+    const fundingTarget = totalUnits * 50n / 100n;
+    const spotTarget = totalUnits * 40n / 100n;
+    const futuresTarget = totalUnits - fundingTarget - spotTarget;
+    const targetUnits = { ...beforeUnits };
+    const transfers = [];
+    if (beforeUnits.UMFUTURE > futuresTarget) {
+      const excess = beforeUnits.UMFUTURE - futuresTarget;
+      const fundingDeficit = fundingTarget > beforeUnits.FUNDING ? fundingTarget - beforeUnits.FUNDING : 0n;
+      const toFunding = excess < fundingDeficit ? excess : fundingDeficit;
+      const distributions = [
+        { accountCode: "FUNDING", amount: toFunding },
+        { accountCode: "MAIN", amount: excess - toFunding }
+      ];
+      for (const { accountCode, amount } of distributions) {
+        if (amount === 0n) continue;
+        transfers.push({
+          from: "UMFUTURE",
+          to: accountCode,
+          kindType: `${USDT_REBALANCE_ACCOUNTS.UMFUTURE.bapiCode}_${USDT_REBALANCE_ACCOUNTS[accountCode].bapiCode}`,
+          amount: unitsToDecimal(amount)
+        });
+        targetUnits[accountCode] += amount;
+        targetUnits.UMFUTURE -= amount;
+      }
+    }
     return {
       total: unitsToDecimal(totalUnits),
       before: Object.fromEntries(
@@ -7630,6 +7691,8 @@
     let usdtRebalanceEligibilityTask = null;
     let usdtRebalanceEligible = false;
     let usdtRebalanceTask = null;
+    let automaticUsdtRebalanceObservationTask = null;
+    let automaticUsdtRebalanceLockController = null;
     let ladderPanelBodySignature = "";
     let panelPositionInvalidated = true;
     let panelObservedSize = "";
@@ -8489,6 +8552,9 @@
       queueMicrotask(() => {
         if (isFuturesTradingPage() && getActiveTradeMode() === "OPEN") {
           queueAutoOpenLeveragePositionCheck("headers_ready");
+        }
+        if (isFuturesTradingPage() && (readAccountPositionCount() > 0 || getOpenOrdersTabCount() > 0)) {
+          queueAutomaticUsdtRebalanceActivityObservation();
         }
       });
     }
@@ -10202,7 +10268,26 @@
       }
       return { done, repriceAttempts, lastRepriceApiErrorCode };
     }
+    async function withAccountOperationLock(mode, operation, queuedSignal = null) {
+      if (!navigator.locks) throw new Error("Account operations require Web Locks");
+      return navigator.locks.request("userscripts:usdt-account-operation:v1", {
+        mode,
+        ...queuedSignal ? { signal: queuedSignal } : { ifAvailable: true }
+      }, async (lock) => {
+        if (!lock) {
+          setLadderStatus("Account operation blocked: another tab is transferring funds");
+          return { status: "not_started" };
+        }
+        return operation();
+      });
+    }
     async function startLadder(actionType, continuousProgress = null, chartSaveController = null) {
+      if (continuousProgress !== null) {
+        return runLadderWithAccountLock(actionType, continuousProgress, chartSaveController);
+      }
+      return withAccountOperationLock("shared", () => runLadderWithAccountLock(actionType));
+    }
+    async function runLadderWithAccountLock(actionType, continuousProgress = null, chartSaveController = null) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec) {
         setLadderStatus("未知阶梯动作");
@@ -10451,6 +10536,7 @@
         activeLadderActionType = null;
         activeLadderPanelContext = null;
         ladderStopRequested = false;
+        if (!continuousSession) restartUsdtRebalanceEligibilityFromCurrentAccountState();
         scheduleRenderPanel();
       });
       scheduleRenderPanel();
@@ -10540,8 +10626,11 @@
       }
     }
     async function startContinuousLadder(actionType) {
+      return withAccountOperationLock("shared", () => runContinuousLadderWithAccountLock(actionType));
+    }
+    async function runContinuousLadderWithAccountLock(actionType) {
       const spec = getLadderActionSpec2(actionType);
-      if (!spec || spec.mode !== "CLOSE") return startLadder(actionType);
+      if (!spec || spec.mode !== "CLOSE") return runLadderWithAccountLock(actionType);
       if (continuousLadderTask) return continuousLadderTask;
       const actionSymbol = getCurrentSymbol();
       if (!isCurrentObservedSymbol(actionSymbol)) {
@@ -12114,6 +12203,9 @@
       }
     }
     async function cancelCurrentSymbolOpenOrders(options = null) {
+      return withAccountOperationLock("shared", () => runCancelWithAccountLock(options));
+    }
+    async function runCancelWithAccountLock(options = null) {
       if (cancelCurrentSymbolOpenOrdersTask) return cancelCurrentSymbolOpenOrdersTask;
       if (singleOrderTask) {
         return { ok: false, status: "single_order_running", message: "单击下单处理中" };
@@ -12859,21 +12951,161 @@
         futuresPayload
       );
     }
-    async function assertUsdtRebalanceTradingState({ allowHidden = false } = {}) {
+    function assertUsdtRebalanceLocalState({ allowHidden = false, epoch = null, automatic = false } = {}) {
       if (!isFuturesTradingPage() || !allowHidden && document.hidden) {
-        throw new Error("当前不在可操作的合约页面");
+        throw new Error("Current futures page is not eligible for account transfers");
+      }
+      const route = new URL(window.location.href);
+      if (automatic && route.search !== "") {
+        throw new Error("Automatic transfers require an ordinary USD-M Futures account");
+      }
+      if (epoch !== null && epoch !== usdtRebalanceEligibilityEpoch) {
+        throw new Error("Account eligibility changed before transfer");
       }
       if (ladderTask || continuousLadderTask || singleOrderTask || cancelCurrentSymbolOpenOrdersTask) {
-        throw new Error("当前仍有交易任务运行");
+        throw new Error("A trading task is still running");
       }
-      const positionCount = readAccountPositionCount();
-      if (positionCount == null) throw new Error("未读取到全账户持仓数量");
-      if (positionCount !== 0) throw new Error("全账户仍有持仓");
-      const openOrdersCount = getOpenOrdersTabCount();
-      if (openOrdersCount == null) throw new Error("未读取到全账户当前委托数量");
-      if (openOrdersCount !== 0) throw new Error("全账户仍有当前委托");
-      const positionState = resolveAllFuturesPositionStatus(await fetchCurrentPositionsPayload());
-      if (positionState.status !== "flat") throw new Error("全账户仍有持仓");
+      if (readAccountPositionCount() !== 0 || getOpenOrdersTabCount() !== 0) {
+        throw new Error("全账户持仓和当前委托必须为零");
+      }
+    }
+    async function readUsdtRebalanceAccountKey() {
+      const payload = await fetchUsdtRebalanceBapi("/bapi/accounts/v1/private/account/user/base-detail", {
+        method: "POST",
+        body: {},
+        label: "Account identity"
+      });
+      if (payload?.code !== "000000" || typeof payload.data?.userId !== "string" || payload.data.userId.length === 0 || payload.data.isPortfolioMarginRetailUser !== false || payload.data.isExistFutureAccount !== true) {
+        throw new Error("Unsupported or unverified account identity");
+      }
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload.data.userId));
+      return "userscripts:automatic-usdt-rebalance:v1:" + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+    function readUsdtRebalanceEpisode(key) {
+      return readAutomaticRebalanceEpisode(localStorage.getItem(key));
+    }
+    function writeUsdtRebalanceEpisode(key, status) {
+      const serialized = JSON.stringify({ version: 1, status });
+      localStorage.setItem(key, serialized);
+      if (localStorage.getItem(key) !== serialized) throw new Error("Automatic transfer state could not be persisted");
+    }
+    async function readAuthoritativeUsdtRebalanceFlatState() {
+      const [positions, basic, conditional] = await Promise.all([
+        fetchCurrentPositionsPayload(),
+        fetchUsdtRebalanceBapi("/bapi/futures/v1/private/future/order/open-orders", {
+          method: "POST",
+          body: {},
+          label: "All basic orders"
+        }),
+        fetchUsdtRebalanceBapi("/bapi/futures/v1/private/future/order/open-algo-order", {
+          method: "POST",
+          body: { algoType: "CONDITIONAL" },
+          label: "All conditional orders"
+        })
+      ]);
+      const basicCount = assertCompleteOpenOrders(basic);
+      const conditionalCount = assertCompleteOpenOrders(conditional);
+      return resolveAllFuturesPositionStatus(positions).status === "flat" && basicCount === 0 && conditionalCount === 0;
+    }
+    async function assertUsdtRebalanceTradingState(options = {}) {
+      assertUsdtRebalanceLocalState(options);
+      if (!await readAuthoritativeUsdtRebalanceFlatState()) {
+        throw new Error("全账户仍有持仓或当前委托");
+      }
+      assertUsdtRebalanceLocalState(options);
+    }
+    async function observeAutomaticUsdtRebalanceActivity() {
+      return withAccountOperationLock("shared", async () => {
+        const epoch = usdtRebalanceEligibilityEpoch;
+        const key = await readUsdtRebalanceAccountKey();
+        const previous = readUsdtRebalanceEpisode(key);
+        if (previous.status !== "consumed") return;
+        const flat = await readAuthoritativeUsdtRebalanceFlatState();
+        if (await readUsdtRebalanceAccountKey() !== key) throw new Error("Account identity changed");
+        if (epoch !== usdtRebalanceEligibilityEpoch || !isFuturesTradingPage()) return;
+        const next = observeAutomaticRebalanceActivity(previous, flat);
+        if (next.status !== previous.status) writeUsdtRebalanceEpisode(key, next.status);
+      });
+    }
+    function queueAutomaticUsdtRebalanceActivityObservation() {
+      if (automaticUsdtRebalanceObservationTask || !cachedBncHeaders) return;
+      automaticUsdtRebalanceObservationTask = observeAutomaticUsdtRebalanceActivity().catch((error) => setLadderStatus(`Automatic USDT transfer check failed: ${error.message}`)).finally(() => {
+        automaticUsdtRebalanceObservationTask = null;
+        if (!usdtRebalanceTask && !ladderTask && !continuousLadderTask && !singleOrderTask && !cancelCurrentSymbolOpenOrdersTask && readAccountPositionCount() === 0 && getOpenOrdersTabCount() === 0) {
+          restartUsdtRebalanceEligibilityFromCurrentAccountState();
+        }
+      });
+    }
+    async function executeUsdtRebalancePlan(plan, accountKey, options) {
+      let expectedBalances = plan.before;
+      let completed = 0;
+      try {
+        for (const transfer of plan.transfers) {
+          if (await readUsdtRebalanceAccountKey() !== accountKey) throw new Error("Account identity changed");
+          await assertUsdtRebalanceTradingState(options);
+          const currentBalances = await readCurrentUsdtRebalanceBalances();
+          if (!areUsdtBalancesEqual(currentBalances, expectedBalances)) {
+            throw new Error("账户余额已变化，已停止账户再平衡");
+          }
+          if (await readUsdtRebalanceAccountKey() !== accountKey) throw new Error("Account identity changed");
+          assertUsdtRebalanceLocalState(options);
+          if (options.automatic && (transfer.from !== "UMFUTURE" || !["FUNDING", "MAIN"].includes(transfer.to))) {
+            throw new Error("Automatic transfers may only withdraw Futures excess");
+          }
+          writeUsdtRebalanceEpisode(accountKey, "in_flight");
+          setLadderStatus(options.automatic ? `Automatic USDT transfer ${completed + 1}/${plan.transfers.length}` : `账户再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`);
+          await submitUsdtRebalanceTransfer(transfer);
+          completed += 1;
+          expectedBalances = applyUsdtTransferToBalances(expectedBalances, transfer);
+          await waitForUsdtRebalanceBalances(expectedBalances);
+          writeUsdtRebalanceEpisode(accountKey, "consumed");
+        }
+      } catch (error) {
+        error.rebalanceCompleted = completed;
+        throw error;
+      }
+      writeUsdtRebalanceEpisode(accountKey, "consumed");
+      usdtRebalanceEligible = false;
+      setLadderStatus(options.automatic ? `Automatic USDT transfers completed: ${completed}/${plan.transfers.length}` : `账户再平衡已完成 · ${completed}/${plan.transfers.length} 笔`);
+      return { status: "completed", plan, completed };
+    }
+    async function runAutomaticUsdtRebalance(epoch, signal) {
+      return withAccountOperationLock("exclusive", async () => {
+        const options = { epoch, automatic: true };
+        assertUsdtRebalanceLocalState(options);
+        const accountKey = await readUsdtRebalanceAccountKey();
+        const record = readUsdtRebalanceEpisode(accountKey);
+        if (record.status !== "active") {
+          if (record.status === "in_flight" || record.status === "blocked") {
+            setLadderStatus("Automatic USDT transfer blocked: previous outcome requires account review");
+          }
+          return { status: record.status };
+        }
+        await assertUsdtRebalanceTradingState(options);
+        const balances = await readCurrentUsdtRebalanceBalances();
+        assertUsdtRebalanceLocalState(options);
+        const plan = buildAutomaticUsdtRebalancePlan(balances);
+        writeUsdtRebalanceEpisode(accountKey, "consumed");
+        if (plan.transfers.length === 0) return { status: "no_excess", plan };
+        return executeUsdtRebalancePlan(plan, accountKey, options);
+      }, signal);
+    }
+    function startAutomaticUsdtRebalance(epoch) {
+      if (usdtRebalanceTask) return usdtRebalanceTask;
+      const controller = new AbortController();
+      automaticUsdtRebalanceLockController = controller;
+      const task = runAutomaticUsdtRebalance(epoch, controller.signal).catch((error) => {
+        if (controller.signal.aborted && error.name === "AbortError") return { status: "invalidated" };
+        setLadderStatus(`Automatic USDT transfer stopped: ${error.message}`, error.message);
+        return { status: "failed" };
+      }).finally(() => {
+        if (usdtRebalanceTask === task) usdtRebalanceTask = null;
+        if (automaticUsdtRebalanceLockController === controller) automaticUsdtRebalanceLockController = null;
+        scheduleRenderPanel();
+      });
+      usdtRebalanceTask = task;
+      scheduleRenderPanel();
+      return task;
     }
     function buildUsdtRebalanceDialogModel(plan) {
       const accountLabels = {
@@ -12930,9 +13162,9 @@
     }
     async function runUsdtRebalance() {
       let plan = null;
-      let completed = 0;
       setLadderStatus("正在读取账户再平衡计划");
       try {
+        const previewAccountKey = await readUsdtRebalanceAccountKey();
         await assertUsdtRebalanceTradingState();
         const initialBalances = await readCurrentUsdtRebalanceBalances();
         plan = buildUsdtRebalancePlan(initialBalances);
@@ -12945,24 +13177,18 @@
           setLadderStatus("账户再平衡已取消");
           return { status: "cancelled", plan };
         }
-        let expectedBalances = initialBalances;
-        for (const transfer of plan.transfers) {
-          await assertUsdtRebalanceTradingState({ allowHidden: true });
-          const currentBalances = await readCurrentUsdtRebalanceBalances();
-          if (!areUsdtBalancesEqual(currentBalances, expectedBalances)) {
-            throw new Error("账户余额已变化，已停止账户再平衡");
+        return await withAccountOperationLock("exclusive", async () => {
+          const accountKey = await readUsdtRebalanceAccountKey();
+          if (accountKey !== previewAccountKey) throw new Error("Account identity changed after confirmation");
+          const record = readUsdtRebalanceEpisode(accountKey);
+          if (record.status === "in_flight" || record.status === "blocked") {
+            throw new Error("Previous transfer outcome requires account review");
           }
-          setLadderStatus(`账户再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`);
-          await submitUsdtRebalanceTransfer(transfer);
-          completed += 1;
-          expectedBalances = applyUsdtTransferToBalances(expectedBalances, transfer);
-          await waitForUsdtRebalanceBalances(expectedBalances);
-        }
-        usdtRebalanceEligible = false;
-        setLadderStatus(`账户再平衡已完成 · ${completed}/${plan.transfers.length} 笔`);
-        return { status: "completed", plan, completed };
+          return executeUsdtRebalancePlan(plan, accountKey, { allowHidden: true });
+        });
       } catch (error) {
         const message = error?.name === "AbortError" ? "Binance 请求超时" : error?.message || String(error);
+        const completed = error.rebalanceCompleted || 0;
         const prefix = completed > 0 && plan ? `账户再平衡部分完成 · ${completed}/${plan.transfers.length} 笔` : "账户再平衡失败";
         setLadderStatus(`${prefix} · ${message}`, message);
         throw error;
@@ -13116,6 +13342,7 @@
       window.clearTimeout(usdtRebalanceEligibilityTimer);
       usdtRebalanceEligibilityTimer = 0;
       usdtRebalanceEligibilityEpoch += 1;
+      automaticUsdtRebalanceLockController?.abort();
       if (!usdtRebalanceTask) usdtRebalanceEligible = false;
       const resetFlatStatus = !usdtRebalanceTask && ladderStatusText === PANEL_COPY.state.allPositionsClosed;
       if (resetFlatStatus) {
@@ -13134,9 +13361,11 @@
       const positionState = resolveAllFuturesPositionStatus(await fetchCurrentPositionsPayload());
       if (epoch !== usdtRebalanceEligibilityEpoch) return false;
       if (positionState.status !== "flat") return false;
+      assertUsdtRebalanceLocalState({ epoch });
       usdtRebalanceEligible = true;
       setLadderStatus(PANEL_COPY.state.allPositionsClosed);
       scheduleRenderPanel();
+      await startAutomaticUsdtRebalance(epoch);
       return true;
     }
     function scheduleUsdtRebalanceEligibility() {
@@ -13146,7 +13375,7 @@
         usdtRebalanceEligibilityTimer = 0;
         let task = null;
         task = confirmUsdtRebalanceEligibility(epoch).catch((error) => {
-          log("USDT 再平衡资格检查未通过", error?.message || error);
+          setLadderStatus(`Automatic USDT eligibility check failed: ${error.message}`, error.message);
           return false;
         }).finally(() => {
           if (usdtRebalanceEligibilityTask === task) usdtRebalanceEligibilityTask = null;
@@ -13160,6 +13389,7 @@
         return;
       }
       invalidateUsdtRebalanceEligibility();
+      if (positionCount > 0 || openOrdersCount > 0) queueAutomaticUsdtRebalanceActivityObservation();
     }
     function restartUsdtRebalanceEligibilityFromCurrentAccountState() {
       if (document.hidden || !isFuturesTradingPage()) return;
@@ -14591,7 +14821,7 @@
         lastTs = now;
         invalidateUsdtRebalanceEligibility();
         setLadderStatus(`单击${action.side}准备中`);
-        singleOrderTask = (async () => {
+        singleOrderTask = withAccountOperationLock("shared", async () => {
           await syncTradeInputs(clickedPrice, qtyPlan.qty, {
             priceLabel: "点击价",
             qtyLabel: "目标量"
@@ -14667,7 +14897,7 @@
           }
           setLadderStatus(`单击${action.side}已提交 · ${clickedPrice} × ${qtyPlan.qty}`);
           log(`单击${action.side}已确认提交`);
-        })();
+        });
         scheduleRenderPanel();
         try {
           await singleOrderTask;
@@ -14678,6 +14908,7 @@
           warn(message);
         } finally {
           singleOrderTask = null;
+          restartUsdtRebalanceEligibilityFromCurrentAccountState();
           scheduleRenderPanel();
         }
       } catch (e2) {

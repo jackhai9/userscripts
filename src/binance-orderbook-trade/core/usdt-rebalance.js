@@ -194,6 +194,57 @@ export function buildUsdtRebalancePlan(rawBalances) {
   };
 }
 
+/**
+ * Automatic distribution can only withdraw futures excess. Reserve wallets
+ * never donate, so `targets` describes reachable final balances rather than a
+ * mandatory 5:4:1 allocation. Both ratio floors leave decimal dust in futures,
+ * preserving the manual planner's reserve of at least ten percent.
+ */
+export function buildAutomaticUsdtRebalancePlan(rawBalances) {
+  const beforeUnits = Object.fromEntries(
+    ACCOUNT_ORDER.map((accountCode) => [accountCode, decimalToUnits(rawBalances[accountCode])]),
+  );
+  const totalUnits = ACCOUNT_ORDER.reduce((sum, accountCode) => sum + beforeUnits[accountCode], 0n);
+  const fundingTarget = totalUnits * 50n / 100n;
+  const spotTarget = totalUnits * 40n / 100n;
+  const futuresTarget = totalUnits - fundingTarget - spotTarget;
+  const targetUnits = { ...beforeUnits };
+  const transfers = [];
+
+  if (beforeUnits.UMFUTURE > futuresTarget) {
+    const excess = beforeUnits.UMFUTURE - futuresTarget;
+    const fundingDeficit = fundingTarget > beforeUnits.FUNDING
+      ? fundingTarget - beforeUnits.FUNDING : 0n;
+    const toFunding = excess < fundingDeficit ? excess : fundingDeficit;
+    const distributions = [
+      { accountCode: 'FUNDING', amount: toFunding },
+      { accountCode: 'MAIN', amount: excess - toFunding },
+    ];
+    for (const { accountCode, amount } of distributions) {
+      if (amount === 0n) continue;
+      transfers.push({
+        from: 'UMFUTURE',
+        to: accountCode,
+        kindType: `${USDT_REBALANCE_ACCOUNTS.UMFUTURE.bapiCode}_${USDT_REBALANCE_ACCOUNTS[accountCode].bapiCode}`,
+        amount: unitsToDecimal(amount),
+      });
+      targetUnits[accountCode] += amount;
+      targetUnits.UMFUTURE -= amount;
+    }
+  }
+
+  return {
+    total: unitsToDecimal(totalUnits),
+    before: Object.fromEntries(
+      ACCOUNT_ORDER.map((accountCode) => [accountCode, unitsToDecimal(beforeUnits[accountCode])]),
+    ),
+    targets: Object.fromEntries(
+      ACCOUNT_ORDER.map((accountCode) => [accountCode, unitsToDecimal(targetUnits[accountCode])]),
+    ),
+    transfers,
+  };
+}
+
 export function applyUsdtTransferToBalances(rawBalances, transfer) {
   if (!ACCOUNT_ORDER.includes(transfer?.from) || !ACCOUNT_ORDER.includes(transfer?.to)) {
     throw new Error('USDT 划转账户无效');

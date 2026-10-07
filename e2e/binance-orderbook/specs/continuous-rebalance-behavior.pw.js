@@ -111,6 +111,10 @@ for (const side of ['LONG', 'SHORT']) {
     await page.clock.runFor(32);
 
     // Then the action returns automatically without any extra order or transfer.
+    await expect.poll(async () => {
+      await page.clock.runFor(32);
+      return page.locator(ACTION).isEnabled();
+    }).toBe(true);
     await expect(page.locator(ACTION)).toBeVisible();
     await expect(page.locator(ACTION)).toBeEnabled();
     await expectNoAdditionalTrading(page, host);

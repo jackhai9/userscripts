@@ -1,4 +1,7 @@
 export const ACCOUNT_PATHS = Object.freeze({
+  identity: '/bapi/accounts/v1/private/account/user/base-detail',
+  basicOrders: '/bapi/futures/v1/private/future/order/open-orders',
+  conditionalOrders: '/bapi/futures/v1/private/future/order/open-algo-order',
   positions: '/bapi/futures/v6/private/future/user-data/user-position',
   wallets: '/bapi/asset/v2/private/asset-service/wallet/balance',
   withdrawable: '/bapi/futures/v1/private/future/user-data/getMaxWithdrawAmount',
@@ -25,6 +28,8 @@ function amount(value) {
 export function createAccountRebalanceApi(initialBalances, { commitTransfers = true } = {}) {
   let balances = Object.fromEntries(['FUNDING', 'MAIN', 'UMFUTURE'].map(key => [key, units(initialBalances[key])]));
   let positions = [];
+  let identity = { userId: 'fixture-account', isExistFutureAccount: true, isPortfolioMarginRetailUser: false };
+  let orders = { basic: [], conditional: [] };
   const requests = [];
   const failures = new Map();
   const pendingTransfers = [];
@@ -38,6 +43,8 @@ export function createAccountRebalanceApi(initialBalances, { commitTransfers = t
   return {
     supports: pathname => Object.values(ACCOUNT_PATHS).includes(pathname),
     setPositions(value) { positions = structuredClone(value); },
+    setIdentity(value) { identity = structuredClone(value); },
+    setOrders(value) { orders = structuredClone(value); },
     setBalances(value) {
       balances = Object.fromEntries(['FUNDING', 'MAIN', 'UMFUTURE'].map(key => [key, units(value[key])]));
     },
@@ -62,10 +69,23 @@ export function createAccountRebalanceApi(initialBalances, { commitTransfers = t
       if (!Object.values(ACCOUNT_PATHS).includes(pathname)) throw new Error('Unknown account fixture endpoint');
       const expectedMethod = pathname === ACCOUNT_PATHS.wallets ? 'GET' : 'POST';
       if (method !== expectedMethod) throw new Error('Account fixture received the wrong HTTP method');
+      if (pathname === ACCOUNT_PATHS.identity || pathname === ACCOUNT_PATHS.basicOrders) {
+        if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0) {
+          throw new Error('Unexpected account identity or basic orders request');
+        }
+      }
+      if (pathname === ACCOUNT_PATHS.conditionalOrders) {
+        if (body?.algoType !== 'CONDITIONAL' || Object.keys(body).join(',') !== 'algoType') {
+          throw new Error('Unexpected conditional orders request');
+        }
+      }
       requests.push({ pathname, method, body: structuredClone(body) });
       const failed = failures.get(pathname)?.shift();
       if (failed) return failed;
       let payload;
+      if (pathname === ACCOUNT_PATHS.identity) payload = { success: true, code: '000000', data: structuredClone(identity) };
+      if (pathname === ACCOUNT_PATHS.basicOrders) payload = { success: true, code: '000000', data: structuredClone(orders.basic) };
+      if (pathname === ACCOUNT_PATHS.conditionalOrders) payload = { success: true, code: '000000', data: structuredClone(orders.conditional) };
       if (pathname === ACCOUNT_PATHS.positions) payload = { success: true, data: structuredClone(positions) };
       if (pathname === ACCOUNT_PATHS.wallets) {
         payload = {
