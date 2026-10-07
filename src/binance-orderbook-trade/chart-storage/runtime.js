@@ -1,87 +1,113 @@
 import { observeChartStorageBootstrap } from './bootstrap.js';
 import { replaceChartMirrorFactory } from './mirror-module.js';
+import { replaceChartDrawingSaveFactory } from './drawing-save-module.js';
 import { createChartMirrorWriter } from './mirror-writer.js';
 import { isChartStoragePage } from './scope.js';
 
 const CAPTURE_DEADLINE_MS = 30_000;
+const MIRROR_MODULE = '70940';
+const DRAWING_MODULE = '76535';
 
 /**
- * The sole interception point is the pinned mirror destination expression.
- * Unsupported startup retires the hook; it never executes modules to find them.
- * A retained callback drains accepted writes before resuming the native map.
+ * Mirror optimization is optional and drainable. Drawing ownership protection
+ * remains installed after stop and gets the same finite startup capture window.
  */
 export function startChartStorageOptimizer() {
   if (!isChartStoragePage()) throw new Error('Chart storage requires a top-level Binance trading page');
   const writer = createChartMirrorWriter();
   const state = { status: 'waiting', reason: null, attempts: 0, matches: 0, executions: 0 };
+  const drawingScope = { status: 'waiting', reason: null, attempts: 0, matches: 0, executions: 0 };
   let observer;
   let timer;
   let stopping;
+  let observationFinished = false;
 
   function snapshot() {
     const stats = writer.getStats();
     return { ...state, status: stats.failedBatches > 0 ? 'native_after_failure' : state.status,
-      phase: writer.getPhase(), writer: stats };
+      phase: writer.getPhase(), writer: stats, drawingScope: { ...drawingScope } };
   }
 
   function stop(reason = 'manual') {
     if (stopping) return stopping;
     state.status = 'stopping';
     state.reason = reason;
-    clearTimeout(timer);
-    self.removeEventListener('pagehide', onPageHide);
-    if (observer) observer.stop();
     stopping = writer.stop().then(() => {
       state.status = 'native';
       return snapshot();
     });
+    if (observer) observer.stopTarget(MIRROR_MODULE, reason);
+    if (observationFinished) self.removeEventListener('pagehide', onPageHide);
     return stopping;
   }
 
-  function onPageHide() { void stop('pagehide'); }
+  function finishObservation() {
+    observationFinished = true;
+    clearTimeout(timer);
+    if (stopping) self.removeEventListener('pagehide', onPageHide);
+  }
+
+  function onPageHide() {
+    if (observer) observer.stop('pagehide');
+    void stop('pagehide');
+  }
 
   function dispatch(target, entries, nativeThunk) {
     if (!isChartStoragePage()) void stop('scope_changed');
     return writer.dispatch(target, entries, nativeThunk);
   }
 
+  function replaceFactory(id, original, replace) {
+    if (!isChartStoragePage()) {
+      observer.stop('scope_changed');
+      void stop('scope_changed');
+      return original;
+    }
+    const targetState = id === MIRROR_MODULE ? state : drawingScope;
+    targetState.attempts += 1;
+    const replacement = replace(original);
+    targetState.matches += 1;
+    return function (...args) {
+      targetState.executions += 1;
+      return Reflect.apply(replacement, this, args);
+    };
+  }
+
   try {
     observer = observeChartStorageBootstrap({
-      replaceMirrorFactory(original) {
-        if (!isChartStoragePage()) {
-          void stop('scope_changed');
-          return original;
-        }
-        state.attempts += 1;
-        let replacement;
-        try {
-          replacement = replaceChartMirrorFactory(original, dispatch);
-        } catch {
-          // Source drift is an expected release boundary; leave registration native.
-          void stop('source_mismatch');
-          return original;
-        }
-        state.matches += 1;
-        return function (...args) {
-          state.executions += 1;
-          return Reflect.apply(replacement, this, args);
-        };
+      targets: {
+        [MIRROR_MODULE]: original => replaceFactory(MIRROR_MODULE, original, factory => replaceChartMirrorFactory(factory, dispatch)),
+        [DRAWING_MODULE]: original => replaceFactory(DRAWING_MODULE, original, replaceChartDrawingSaveFactory),
       },
-      onCapture() {
-        clearTimeout(timer);
-        state.status = 'active';
+      onCapture(id) {
+        const targetState = id === MIRROR_MODULE ? state : drawingScope;
+        if (id !== MIRROR_MODULE || !stopping) targetState.status = 'active';
       },
+      onFailure(id, reason) {
+        if (id === MIRROR_MODULE) {
+          void stop(reason === 'execution_failed' ? 'capture_failed' : reason);
+        } else {
+          drawingScope.status = reason === 'source_mismatch' ? 'source_mismatch' : 'unavailable';
+          drawingScope.reason = reason;
+        }
+      },
+      onComplete() { finishObservation(); },
     });
   } catch {
-    // A late extension cannot safely replace the runtime's cached module.
+    // A late extension cannot safely replace the runtime's cached modules.
+    drawingScope.status = 'unavailable';
+    drawingScope.reason = 'bootstrap_unavailable';
+    finishObservation();
     void stop('bootstrap_unavailable');
     return Object.freeze({ snapshot, stop });
   }
 
-  observer.captured.catch(() => {
-    if (!stopping) void stop('capture_failed');
-  });
-  self.addEventListener('pagehide', onPageHide, { once: true });
-  timer = setTimeout(() => { void stop('capture_deadline'); }, CAPTURE_DEADLINE_MS);
+  if (!observationFinished) {
+    self.addEventListener('pagehide', onPageHide, { once: true });
+    timer = setTimeout(() => {
+      observer.stop('capture_deadline');
+      if (state.status === 'waiting') void stop('capture_deadline');
+    }, CAPTURE_DEADLINE_MS);
+  }
   return Object.freeze({ snapshot, stop });
 }

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.218
+// @version      2.7.219
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -5212,11 +5212,16 @@
 
   // src/binance-orderbook-trade/chart-storage/bootstrap.js
   var QUEUE_NAME = "webpackChunkfutures_trade_ui";
-  function observeChartStorageBootstrap({ onCapture, replaceMirrorFactory } = {}) {
+  function observeChartStorageBootstrap({ targets, onCapture, onFailure, onComplete }) {
     if (!isChartStoragePage()) throw new Error("Storage bootstrap requires a top-level Binance trading page");
-    if (onCapture !== void 0 && typeof onCapture !== "function") throw new Error("onCapture must be a synchronous function");
-    if (replaceMirrorFactory !== void 0 && typeof replaceMirrorFactory !== "function") throw new Error("replaceMirrorFactory must be a synchronous function");
-    const moduleId = replaceMirrorFactory === void 0 ? "43917" : "70940";
+    const registrations = new Map(Object.entries(targets).map(([id, replaceFactory]) => {
+      if (typeof replaceFactory !== "function") throw new Error("Storage replacement must be a synchronous function");
+      return [id, { id, replaceFactory, terminal: false }];
+    }));
+    if (registrations.size === 0) throw new Error("Storage bootstrap requires explicit module targets");
+    for (const callback of [onCapture, onFailure, onComplete]) {
+      if (typeof callback !== "function") throw new Error("Storage observation callbacks must be synchronous functions");
+    }
     const globalDescriptor = Object.getOwnPropertyDescriptor(self, QUEUE_NAME);
     if (globalDescriptor && !Object.hasOwn(globalDescriptor, "value")) throw new Error("Storage bootstrap requires a native queue property");
     const queue = globalDescriptor && globalDescriptor.value !== void 0 ? globalDescriptor.value : [];
@@ -5230,21 +5235,18 @@
     const createdQueue = !globalDescriptor || globalDescriptor.value === void 0;
     if (createdQueue) Object.defineProperty(self, QUEUE_NAME, { value: queue, writable: true, configurable: true, enumerable: true });
     let runtimePush;
+    let runtimeRequire;
     let inFlightAppends = 0;
     let active = true;
-    let originalFactory;
-    let observedFactory;
-    let observedChunk;
-    let runtimeRequire;
-    let resolveCapture;
-    let rejectCapture;
-    const captured = new Promise((resolve, reject) => {
-      resolveCapture = resolve;
-      rejectCapture = reject;
-    });
-    function restore() {
-      if (runtimeRequire && runtimeRequire.m[moduleId] === observedFactory) runtimeRequire.m[moduleId] = originalFactory;
-      if (observedChunk && observedChunk[1][moduleId] === observedFactory) observedChunk[1][moduleId] = originalFactory;
+    function restoreFactory(target) {
+      if (target.observedFactory && runtimeRequire && runtimeRequire.m[target.id] === target.observedFactory) {
+        runtimeRequire.m[target.id] = target.originalFactory;
+      }
+      if (target.observedChunk && target.observedChunk[1][target.id] === target.observedFactory) {
+        target.observedChunk[1][target.id] = target.originalFactory;
+      }
+    }
+    function restoreQueue() {
       const descriptor = Object.getOwnPropertyDescriptor(queue, "push");
       if (!descriptor || descriptor.get !== getPush || descriptor.set !== setPush || !descriptor.configurable) {
         throw new Error("Storage bootstrap lost queue accessor ownership");
@@ -5259,64 +5261,77 @@
         }
       }
     }
-    function finish(succeeded, result) {
-      if (!active) return;
+    function completeIfFinished() {
+      if (!active || [...registrations.values()].some((target) => !target.terminal)) return;
       active = false;
+      let reason = null;
       try {
-        restore();
-      } catch (cleanupError) {
-        if (succeeded) {
-          succeeded = false;
-          result = cleanupError;
-        }
+        restoreQueue();
+      } catch {
+        reason = "ownership_lost";
       }
-      if (succeeded) resolveCapture(result);
-      else rejectCapture(result);
+      onComplete(reason);
+    }
+    function finish(target, reason) {
+      if (target.terminal) return;
+      target.terminal = true;
+      restoreFactory(target);
+      if (reason === "captured") onCapture(target.id);
+      else onFailure(target.id, reason);
+      completeIfFinished();
+    }
+    function stop(reason = "stopped") {
+      for (const target of registrations.values()) finish(target, reason);
     }
     function prepareChunk(chunk) {
       if (!active) return chunk;
-      try {
-        if (!Array.isArray(chunk) || !Array.isArray(chunk[0]) || !chunk[1] || typeof chunk[1] !== "object") {
-          throw new Error("Storage bootstrap observed an unsupported chunk shape");
+      if (!Array.isArray(chunk) || !Array.isArray(chunk[0]) || !chunk[1] || typeof chunk[1] !== "object" || chunk[2] !== void 0 && typeof chunk[2] !== "function") {
+        stop("unsupported_registration");
+        return chunk;
+      }
+      let observedChunk;
+      for (const target of registrations.values()) {
+        if (target.terminal || !Object.hasOwn(chunk[1], target.id)) continue;
+        if (target.originalFactory || typeof chunk[1][target.id] !== "function") {
+          finish(target, "unsupported_registration");
+          continue;
         }
-        if (!Object.hasOwn(chunk[1], moduleId)) return chunk;
-        if (originalFactory) throw new Error("Storage module registered twice before capture");
-        originalFactory = chunk[1][moduleId];
-        if (typeof originalFactory !== "function") throw new Error("Storage module factory must be a function");
-        const hostRuntime = chunk[2];
-        if (hostRuntime !== void 0 && typeof hostRuntime !== "function") throw new Error("Storage chunk runtime callback must be a function");
-        const executionFactory = replaceMirrorFactory === void 0 ? originalFactory : replaceMirrorFactory(originalFactory);
-        if (!active) return chunk;
-        if (typeof executionFactory !== "function") throw new Error("Mirror replacement must return a factory synchronously");
-        observedFactory = function(module, exports, require2) {
+        target.originalFactory = chunk[1][target.id];
+        let executionFactory;
+        try {
+          executionFactory = target.replaceFactory(target.originalFactory);
+        } catch {
+          finish(target, "source_mismatch");
+          continue;
+        }
+        if (target.terminal) continue;
+        if (typeof executionFactory !== "function") {
+          finish(target, "unsupported_registration");
+          continue;
+        }
+        target.observedFactory = function(module, exports, require2) {
           runtimeRequire = require2;
           let returned;
           try {
             returned = executionFactory.call(this, module, exports, require2);
           } catch (hostError) {
-            finish(false, hostError);
+            finish(target, "execution_failed");
             throw hostError;
           }
-          if (active) {
-            try {
-              const result = onCapture === void 0 ? void 0 : onCapture(module.exports);
-              if (result && typeof result.then === "function") throw new Error("Storage observation callback must complete synchronously");
-              finish(true, module.exports);
-            } catch (observationError) {
-              finish(false, observationError);
-            }
-          }
+          finish(target, "captured");
           return returned;
         };
-        observedChunk = [chunk[0], { ...chunk[1], [moduleId]: observedFactory }, (require2) => {
-          runtimeRequire = require2;
-          if (hostRuntime !== void 0) return hostRuntime(require2);
-        }];
-        return observedChunk;
-      } catch (observationError) {
-        finish(false, observationError);
-        return chunk;
+        if (!observedChunk) {
+          const hostRuntime = chunk[2];
+          observedChunk = [chunk[0], { ...chunk[1] }, (require2) => {
+            runtimeRequire = require2;
+            if (hostRuntime !== void 0) return hostRuntime(require2);
+          }];
+        }
+        observedChunk[1][target.id] = target.observedFactory;
+        target.observedChunk = observedChunk;
       }
+      return observedChunk || chunk;
     }
     function preRuntimePush(...chunks) {
       if (!active || runtimePush) return nativeAppend.apply(this, chunks);
@@ -5339,7 +5354,7 @@
         return;
       }
       if (runtimePush || typeof dispatcher !== "function") {
-        finish(false, new Error("Storage bootstrap observed an unexpected push replacement"));
+        stop("unexpected_dispatcher");
         Object.defineProperty(queue, "push", { value: dispatcher, writable: true, configurable: true, enumerable: true });
         return;
       }
@@ -5347,9 +5362,11 @@
     }
     Object.defineProperty(queue, "push", { get: getPush, set: setPush, enumerable: true, configurable: true });
     return Object.freeze({
-      captured,
-      stop() {
-        finish(false, new Error("Storage bootstrap stopped before module execution"));
+      stop,
+      stopTarget(id, reason = "stopped") {
+        const target = registrations.get(id);
+        if (!target) throw new Error("Storage bootstrap target is not registered");
+        finish(target, reason);
       }
     });
   }
@@ -6098,6 +6115,377 @@
     return createMirrorFactory(dispatch);
   }
 
+  // src/binance-orderbook-trade/chart-storage/drawing-save-scope.js
+  function scopeChartDrawingSnapshot(save) {
+    return {
+      ...save,
+      charts: save.charts.map((chart) => {
+        const sources = chart.panes.flatMap((pane) => pane.sources);
+        const symbols = new Set(sources.filter((source) => source.type === "MainSeries").map((source) => source.state.symbol.toUpperCase()));
+        if (symbols.size === 0 && sources.some((source) => source.type.startsWith("LineTool"))) {
+          throw new Error("Drawing save requires a MainSeries symbol for its chart");
+        }
+        return {
+          ...chart,
+          panes: chart.panes.map((pane) => ({
+            ...pane,
+            sources: pane.sources.filter((source) => !source.type.startsWith("LineTool") || symbols.has(source.state.symbol.toUpperCase()))
+          }))
+        };
+      })
+    };
+  }
+
+  // src/binance-orderbook-trade/chart-storage/drawing-save-module.js
+  var originalFactorySource2 = '76535(w,B,r){r.d(B,{A:()=>_e,X:()=>Te});var A=r(31085),e=r(41594),f=r(43917),g=r.n(f),G=r(19020),T=r(13067);const b=null,v="myTradingView";var K=r(78441),U=r(53837),o=r(4260),S=r(80817);const P=t=>{switch(t){case"zh-CN":case"cn":return"zh";case"zh-HK":case"zh-TW":case"zh-TC":case"tw":return"zh_TW";case"ja":return"ja";case"ko":return"ko";case"th":return"th";case"he":return"he_IL";case"ru":return"ru";case"cs":return"cs";case"sv":return"sv";case"vi":case"vn":return"vi";case"tr":return"tr";case"ro":return"ro";case"pt-PT":case"pt-BR":case"pt":return"pt";case"pl":return"pl";case"nl":return"nl_NL";case"it":return"it";case"fr":return"fr";case"es":case"es-LA":return"es";case"de":return"de";case"id":return"id_ID";default:return"en"}};var x=r(46108),ot=r.n(x),Z=r(75857),rt=r.n(Z),at=r(87809),j=r.n(at),X=r(34789),Q=r.n(X),ct=r(19953),it=r.n(ct),lt=r(82438),ut=r.n(lt),a=r(87835),E=r.n(a),O=r(75257);const W=t=>/^(LineTool)/g.test(t),_t=t=>`${t}.customSettings`,ft=t=>`${t}.layout`,J=t=>t.chartId,kt=({save:t})=>{const n={},s=[],i=t.charts.reduce((I,N)=>{const _=N.panes.reduce((m,y)=>{const R=y.sources.find(h=>h.type==="MainSeries");R?.state.symbol&&(n[R?.state.symbol.toUpperCase()]=[]);const[C,Y]=it()(y.sources,h=>W(h.type));return s.push(...C),m.push({...y,sources:Y}),m},[]);return I.push({...N,panes:_}),I},[]),l=E()(s,I=>I.id),u=j()(l,I=>I.state.symbol),d={...n,...u};return{charts:i,drawings:d}},wt=async({storage:t,key:n,charts:s})=>{const i=ft(n),l=await t.getItem(i)||[],u=Q()(l,J),d=Q()(s,J),I=l.map(J),N=s.map(J),y=ut()([...I,...N]).map(R=>d[R]||u[R]).sort((R,C)=>+R.chartId-+C.chartId);return await t.setItem(i,y),y},xt=async({storage:t,save:n,key:s,widget:i})=>{if(!i)return{chartSave:n,drawingsSave:{}};const{drawings:l,charts:u}=kt({save:n}),d={...n,charts:u};return await t.setItem(s,d),await wt({storage:t,key:s,charts:u}),await Promise.all(Object.keys(l).map(I=>t.setItem(`#TV_SYMBOL-${I}`,l[I]))),{chartSave:d,drawingsSave:l}},Wt=async({storage:t,key:n,widget:s})=>{if(!s)return(0,O.b)({activeChartIndex:0});const i=_t(n),l=s.activeChartIndex(),u=(0,O.b)({activeChartIndex:l});return await t.setItem(i,u),u},zt=async({storage:t,key:n})=>{const l=(await t.keys()).filter(h=>/^(#TV_SYMBOL-)/g.test(h)).map(async h=>t.getItem(h)),u=await Promise.all(l),d=rt()(u).filter(h=>!!h),I=j()(d,h=>h.ownerSource),N=ft(n),_=_t(n),m=await t.getItem(n),y=await t.getItem(_);if(!m)return{chartSave:m,customSettings:y};const C=(await t.getItem(N)||m.charts).reduce((h,H)=>{const V=H.panes.reduce((D,M)=>{const z=ot()(M.sources),q=I[M.mainSourceId]||[];return z.push(...q),D.push({...M,sources:z}),D},[]);return h.push({...H,panes:V}),h},[]);return{chartSave:{...m,charts:C},customSettings:y}},$t=()=>{const t=(0,T.w)();return(0,e.useCallback)(n=>{const{colors:s}=t,i=n.isBuy?s.Buy:s.Sell;return{...n,direction:n.isBuy?"buy":"sell",arrowStyles:{height:8,spacing:1,color:i},textStyles:{color:s.PrimaryText}}},[t])},jt=[],Zt=({namespace:t,orders:n})=>{const s=(0,o.y$)(t),[i]=s(o.yC),[l]=s(o._b),u=$t(),d=(0,e.useMemo)(()=>n.map(u),[u,n]);return(0,e.useMemo)(()=>i&&l===o.Ev.Single?d:jt,[i,l,d])};var ht=r(92873);const Xt=({storage:t,storageName:n})=>{const{getI18n:s}=(0,ht.o)("","trade-ui"),i=(0,e.useMemo)(()=>s("trd-chart-tv-initialization-error",{defaultValue:"Something went wrong while initializing TradingView."})||"",[s]),l=(0,e.useMemo)(()=>s("trd-chart-crash-reload",{defaultValue:"Refresh"})||"",[s]),u=(0,e.useMemo)(()=>s("trd-chart-init-error",{defaultValue:"Failed to initialize TradingView due to malformed config, please try to refresh"})||"",[s]),d=(0,e.useCallback)(()=>window.location.reload(),[]),I=(0,e.useCallback)(async()=>{await t.removeItem(n),d()},[d,t,n]),[N,_]=(0,e.useState)(!1),[m,y]=(0,e.useState)(""),[R,C]=(0,e.useState)(""),[Y,h]=(0,e.useState)(async()=>{}),H=(0,e.useCallback)(()=>{_(!0),y(u),C(l),h(I)},[I,l,u]),V=(0,e.useCallback)(()=>{_(!0),y(i),C(l),h(d)},[i,l,d]);return{showError:N,mainText:m,buttonText:R,buttonCallback:Y,onTradingViewInitError:H,onChartReadyError:V}},Qt=()=>{const t=(0,T.w)();return(0,e.useCallback)(n=>{const{colors:s}=t,i=n.isBuy?s.Buy:s.Sell;return{...n,lineStyles:{color:i,length:45,unit:"percentage",style:2,extended:!1},bodyStyles:{color:s.PrimaryText,borderColor:i,backgroundColor:i},cancelButtonStyles:{color:s.IconNormal}}},[t])},Jt=()=>{const t=(0,T.w)();return(0,e.useCallback)(n=>{const{colors:s}=t;return{...n,lineStyles:{color:s.Buy,length:45,unit:"percentage",style:2,extended:!1},bodyStyles:{color:s.TextBuy,borderColor:s.Buy,backgroundColor:s.DepthBuyBg},cancelButtonStyles:{color:s.IconNormal}}},[t])},qt=()=>{const t=(0,T.w)();return(0,e.useCallback)(n=>{const{colors:s}=t;return{...n,lineStyles:{color:s.EmphasizeText,length:100,unit:"percentage",style:0,extended:!1},bodyStyles:{color:s.RedGreenBgText,borderColor:s.EmphasizeText,backgroundColor:s.EmphasizeText},cancelButtonStyles:{color:s.IconNormal}}},[t])},te=()=>{const t=(0,T.w)();return(0,e.useCallback)(n=>{const{colors:s}=t;return{...n,lineStyles:{color:s.DisableText,length:100,unit:"percentage",style:2,extended:!1},bodyStyles:{color:s.PrimaryText,borderColor:s.InputLine,backgroundColor:s.InputLine},cancelButtonStyles:{color:s.IconNormal,borderColor:s.InputLine,backgroundColor:s.BasicBg}}},[t])},ee=[],se=({namespace:t,labelLines:n})=>{const s=(0,o.y$)(t),[i]=s(o.O),[l]=s(o.S5),[u]=s(o.ks),[d]=s(o.yA),[I]=s(o.pT),[N]=s(o._b),_=Qt(),m=Jt(),y=qt(),R=te(),C=(0,e.useMemo)(()=>i?n.filter(M=>M.type===o.ND.AverageBuyPrice).map(M=>_({...M,isBuy:!0})):[],[n,i,_]),Y=(0,e.useMemo)(()=>l?n.filter(M=>M.type===o.ND.AverageSellPrice).map(M=>_({...M,isBuy:!1})):[],[n,l,_]),h=(0,e.useMemo)(()=>u?n.filter(M=>M.type===o.ND.BreakEvenPrice).map(m):[],[n,u,m]),H=(0,e.useMemo)(()=>d?n.filter(M=>M.type===o.ND.LiquidationPrice).map(y):[],[n,d,y]),V=(0,e.useMemo)(()=>I?n.filter(M=>M.type===o.ND.PriceAlert).map(R):[],[n,I,R]),D=(0,e.useMemo)(()=>[...C,...Y,...h,...H,...V],[C,Y,h,H,V]);return(0,e.useMemo)(()=>N===o.Ev.Single?D:ee,[D,N])},ne=()=>{const{getI18n:t}=(0,ht.o)("","kline-ui");return(0,e.useMemo)(()=>({openOrder:{dragTooltip:t("order-drag-tooltip",{defaultValue:"Drag for price modify"}),modifyTooltip:t("order-modify-tooltip",{defaultValue:"Click for modify"}),cancelTooltip:t("order-cancel-tooltip",{defaultValue:"Click for cancel"})}}),[t])},oe=({position:t,extended:n})=>{switch(t){case"center":return{length:35,unit:"percentage",extended:n};case"right":return{length:24,unit:"pixel",extended:n};case"left":return{length:-24,unit:"pixel",extended:n};case"left-most":return{length:100,unit:"percentage",extended:n};default:return{length:65,unit:"percentage",extended:n}}},re=()=>{const t=ne(),n=(0,T.w)();return(0,e.useCallback)((s,i)=>{const{colors:l}=n,u=s.isBuy?l.Buy:l.Sell;return{...s,tooltip:s.tooltip??t.openOrder.dragTooltip,modifyTooltip:s.modifyTooltip??t.openOrder.modifyTooltip,cancelTooltip:s.cancelTooltip??t.openOrder.cancelTooltip,lineStyles:{...oe(i),color:u,style:2,extended:!1},bodyStyles:{borderColor:l.CardBg,backgroundColor:u,color:l.RedGreenBgText},quantityStyles:{borderColor:u,backgroundColor:l.CardBg,color:u},cancelButtonStyles:{borderColor:u,backgroundColor:l.CardBg,color:u}}},[t.openOrder.dragTooltip,t.openOrder.modifyTooltip,t.openOrder.cancelTooltip,n])},ae=[],ce=({namespace:t,orders:n})=>{const s=(0,o.y$)(t),[i]=s(o.Nh),[l]=s(o.R3),[u]=s(o.Ec),[d]=s(o._b),[I]=s(o.CV),[N]=s(o.bv),_=re(),m=(0,e.useMemo)(()=>n.filter(({limitOrderType:C})=>(C===void 0||C===o.aA.LimitOrder)&&i).map(C=>_(C,{position:I,extended:N})),[n,i,_,I,N]),y=(0,e.useMemo)(()=>n.filter(({limitOrderType:C})=>C===o.aA.BotPreview&&l).map(C=>_(C,{position:"legacy",extended:!1})),[n,l,_]),R=(0,e.useMemo)(()=>n.filter(({limitOrderType:C})=>C===o.aA.OrderPreview&&u).map(C=>_(C,{position:"left-most",extended:!1})),[n,u,_]);return(0,e.useMemo)(()=>d===o.Ev.Single?[...m,...y,...R]:ae,[m,y,R,d])},ie=()=>{const t=(0,T.w)();return(0,e.useCallback)(n=>{const{colors:s}=t,i=n.isBuy?s.Buy:s.Sell,l=n.PNL>0?s.Buy:n.PNL<0?s.Sell:i;return{...n,lineStyles:{color:l,length:100,unit:"percentage",style:2,extended:!1},bodyStyles:{borderColor:l,backgroundColor:l,color:s.RedGreenBgText},quantityStyles:{borderColor:i,backgroundColor:s.CardBg,color:i},reverseButtonStyles:{borderColor:i,backgroundColor:s.CardBg,color:i},closeButtonStyles:{borderColor:i,backgroundColor:s.CardBg,color:i}}},[t])},le=[],ue=({namespace:t,orders:n})=>{const s=(0,o.y$)(t),[i]=s(o.FH),[l]=s(o._b),u=ie(),d=(0,e.useMemo)(()=>n.map(u),[u,n]);return(0,e.useMemo)(()=>i&&l===o.Ev.Single?[...d]:le,[i,l,d])};var Ee=r(6868);const de=({namespace:t})=>{const n=(0,o.y$)(t),[s,i]=n(o.mn),l=(0,Ee.r)(),u=l(_=>_.hasHydrated),d=l(_=>_.lastUpdatedTimestamp),I=(0,e.useMemo)(()=>u&&d!==s,[u,d,s]),N=(0,e.useCallback)(()=>{i(d)},[d,i]);return(0,e.useMemo)(()=>({overwritingThemeOnLoaded:I,syncThemeTimestamp:N}),[I,N])},Te=()=>r.e("66202").then(r.bind(r,78273)),Ce=(0,e.lazy)(()=>r.e("66202").then(r.bind(r,78273))),Ie=t=>(0,e.useMemo)(()=>g().createInstance({name:t}),[t]),St=t=>{switch(t){case o.Ev.HorizontalTwo:return"2v";case o.Ev.VerticalTwo:return"2h";case o.Ev.HorizontalThree:return"3v";case o.Ev.VerticalThree:return"3h";case o.Ev.LeftOneRightTwo:return"3s";case o.Ev.TopOneBottomTwo:return"1-2";case o.Ev.Four:return"4";case o.Ev.VerticalFour:return"4h";case o.Ev.LeftOneRightThree:return"4s";case o.Ev.TopOneBottomThree:return"1-3";case o.Ev.Five:return"2-3";case o.Ev.SixTwoByThree:return"6";case o.Ev.SixThreeByTwo:return"6c";case o.Ev.Eight:return"8";default:return"s"}},_e=({tradingViewProps:t,namespace:n,storageName:s=v,containerId:i="tradingview",disablePointerEvents:l=!1})=>{const u=(0,o.y$)(n),d=(0,U.y$)(n),I=(0,K.y)(n),[N,_]=u(o.A8),m=u(o.WK),[y]=u(o.e6),[R,C]=u(o.iw),[Y]=u(o._b),[,h]=I(K.N),[,H]=d(U.yj),[V]=d(U.Cf),[D,M]=(0,e.useState)(!1),z=Ie(n),q=(0,G.Bl)(),Nt=(0,e.useMemo)(()=>P(q),[q]),fe=(0,T.w)(),tt=(0,e.useMemo)(()=>`${n}-${i}`,[i,n]),p=(0,e.useRef)(),Et=(0,e.useRef)(N),Rt=(0,e.useRef)(R),dt=(0,e.useRef)(Y),et=(0,e.useRef)(z),st=(0,e.useRef)(s),Lt=(0,e.useRef)(V),he=(0,e.useRef)(D);(0,e.useEffect)(()=>{Et.current=N},[N]),(0,e.useEffect)(()=>{Rt.current=R},[R]),(0,e.useEffect)(()=>{dt.current=Y},[Y]),(0,e.useEffect)(()=>{et.current=z},[z]),(0,e.useEffect)(()=>{st.current=s},[s]),(0,e.useEffect)(()=>{he.current=D},[D]),(0,e.useEffect)(()=>{Lt.current=V},[V]);const Se=ce({namespace:n,orders:t.limitOrders}),Ne=ue({namespace:n,orders:t.positionOrders}),Re=Zt({namespace:n,orders:t.executionOrders}),Le=se({namespace:n,labelLines:t.labelLines}),{overwritingThemeOnLoaded:Oe,syncThemeTimestamp:nt}=de({namespace:n}),Ot=(0,e.useCallback)(({resolution:c,chartType:L})=>{const F=(0,S.Cz)(c);_(L===3?"time":F)},[_]),At=(0,e.useCallback)(async()=>{p.current&&await Wt({storage:et.current,key:st.current,widget:p.current})},[]),mt=(0,e.useCallback)(async c=>zt({storage:et.current,key:st.current}),[]),Tt=(0,e.useCallback)(async c=>{const{chartSave:L}=await xt({storage:et.current,save:c,key:st.current,widget:p.current});await t.initialConfig.onSave?.(L)},[t.initialConfig]),yt=(0,e.useCallback)(async()=>{const c=await mt(dt.current);if(t.initialConfig.onLoadConfig?.(),!c.chartSave)return c;const L=St(dt.current);return c.chartSave.layout===L?c:{...c,chartSave:{...c.chartSave,layout:L}}},[mt,t.initialConfig]),gt=(0,e.useCallback)(c=>{h(c),t.initialConfig.onLoading?.(c)},[h,t.initialConfig]),$=(0,e.useCallback)((c,L=!0)=>{L?c.setChartType(Et.current==="time"?2:Rt.current):Et.current==="time"&&c.setChartType(2)},[]),Ae=(0,e.useCallback)(c=>{p.current=c,H(c)},[H]),Dt=(0,e.useCallback)(()=>{setTimeout(()=>{if(p.current)try{const c=p.current?.activeChart();$(c)}catch{}},0),M(!0),t.initialConfig.onChartReadyDone?.()},[$,t.initialConfig]),Mt=(0,e.useCallback)(()=>{nt(),t.initialConfig.onSetThemeDone?.()},[nt,t.initialConfig]),vt=(0,e.useCallback)(()=>{nt(),t.initialConfig.onFirstTimeSetThemeDone?.()},[nt,t.initialConfig]),pt=(0,e.useCallback)(c=>{t.initialConfig.onIntervalChanged?.(c)},[t.initialConfig]),Ct=(0,e.useCallback)(async c=>{const{chart:L}=c;if(!L.symbolExt())return;const k=L.chartType();C(k),Ot({resolution:L.resolution(),chartType:k}),await At(),t.initialConfig.onActiveChartChanged?.(c)},[At,Ot,C,t.initialConfig]),Bt=(0,e.useCallback)(c=>{window.open(`https://www.tradingview.com/x/${c}`,"_blank")},[]),Ut=(0,e.useCallback)(c=>{t.initialConfig.onAddStudy?.(c)},[t.initialConfig]),Kt=(0,e.useCallback)(c=>{t.initialConfig.onSymbolChanged?.(c)},[t.initialConfig]),Gt=(0,e.useCallback)(c=>{t.initialConfig.onFirstTimeDataLoadedDone?.(c)},[t.initialConfig]),bt=(0,e.useCallback)(c=>{t.initialConfig.onDataLoadedDone?.(c)},[t.initialConfig]),Pt=(0,e.useCallback)(({chart:c,tradingViewSave:L})=>{if(L)return;[{length:7,color:"rgba(241, 156, 56, 0.7)"},{length:25,color:"rgba(234, 61, 247, 0.7)"},{length:99,color:"rgba(116, 252, 253, 0.7)"}].forEach(({length:k,color:It})=>{c.createStudy("Moving Average",!1,!1,{length:k},{"plot.linewidth":1,"plot.color":It,showLabelsOnPriceScale:!1})})},[]),Yt=(0,e.useCallback)(c=>{(t.initialConfig.onInitChart||Pt)(c);const F=c.chart,k=F.resolution(),It=(0,S.Cz)(k);Lt.current.includes(It)||F.setResolution("1D")},[Pt,t.initialConfig.onInitChart]),Ft=(0,e.useCallback)(()=>{setTimeout(()=>{if(p.current)try{const c=p.current.activeChartIndex(),L=p.current.activeChart(),F=L.chartType();Ct({chart:L,index:c}),C(F),p.current.save(k=>{Tt(k)})}catch{}},100)},[]);(0,e.useEffect)(()=>{if(!(!D||!p.current))try{p.current.activeChart().setChartType(R)}catch{}},[R,D]),(0,e.useEffect)(()=>{if(!(!D||!p.current))try{$(p.current.activeChart())}catch{}},[D,N,$]),(0,e.useEffect)(()=>{if(!(!D||!p.current))try{p.current.setLayout(St(Y))}catch{}},[Y,D]),(0,e.useEffect)(function(){if(D&&p.current)try{const L=p.current.activeChart();L.onChartTypeChanged().subscribe({},()=>{$(L,!1)})}catch{}},[$,D]);const{onTradingViewInitError:Ht,onChartReadyError:Vt}=Xt({storage:z,storageName:s});(0,e.useEffect)(()=>{if(!D)return;const c=l?"none":"auto";try{const F=document.getElementById(tt)?.querySelector("iframe");if(!F)return;F.style.pointerEvents=c}catch{}},[D,tt,l]);const me=(0,e.useMemo)(()=>({...t.initialConfig,tvConfig:{...t.initialConfig.tvConfig,container:tt,interval:m,locale:Nt},onSave:Tt,onLoadConfig:yt,onLoading:gt,onChartReadyDone:Dt,onChartReadyError:Vt,onTradingViewInitError:Ht,onIntervalChanged:pt,onFirstTimeSetThemeDone:vt,onSetThemeDone:Mt,onFirstTimeDataLoadedDone:Gt,onDataLoadedDone:bt,onInitChart:Yt,onActiveChartChanged:Ct,onSymbolChanged:Kt,onAddStudy:Ut,onScreenshotReady:Bt,onLayoutChanged:Ft}),[tt,m,Nt,Ct,Ut,Dt,Vt,bt,Gt,vt,Yt,pt,Ft,yt,gt,Tt,Bt,Mt,Kt,Ht,t.initialConfig]);return(0,A.jsx)("div",{className:"h-full",style:{display:y!==o.tU.TradingView?"none":"block"},children:(0,A.jsx)(e.Suspense,{fallback:null,children:(0,A.jsx)(Ce,{...t,interval:m,limitOrders:Se,positionOrders:Ne,executionOrders:Re,labelLines:Le,overwritingThemeOnLoaded:Oe,themeConfig:fe,initialConfig:me,onInitialized:Ae})})})}}';
+  function createChartDrawingSaveFactory(__scopeChartDrawingSnapshot = scopeChartDrawingSnapshot) {
+    return { 76535(w, B, r) {
+      r.d(B, { A: () => _e, X: () => Te });
+      var A = r(31085), e = r(41594), f = r(43917), g = r.n(f), G = r(19020), T = r(13067);
+      const b = null, v = "myTradingView";
+      var K = r(78441), U = r(53837), o = r(4260), S = r(80817);
+      const P = (t) => {
+        switch (t) {
+          case "zh-CN":
+          case "cn":
+            return "zh";
+          case "zh-HK":
+          case "zh-TW":
+          case "zh-TC":
+          case "tw":
+            return "zh_TW";
+          case "ja":
+            return "ja";
+          case "ko":
+            return "ko";
+          case "th":
+            return "th";
+          case "he":
+            return "he_IL";
+          case "ru":
+            return "ru";
+          case "cs":
+            return "cs";
+          case "sv":
+            return "sv";
+          case "vi":
+          case "vn":
+            return "vi";
+          case "tr":
+            return "tr";
+          case "ro":
+            return "ro";
+          case "pt-PT":
+          case "pt-BR":
+          case "pt":
+            return "pt";
+          case "pl":
+            return "pl";
+          case "nl":
+            return "nl_NL";
+          case "it":
+            return "it";
+          case "fr":
+            return "fr";
+          case "es":
+          case "es-LA":
+            return "es";
+          case "de":
+            return "de";
+          case "id":
+            return "id_ID";
+          default:
+            return "en";
+        }
+      };
+      var x = r(46108), ot = r.n(x), Z = r(75857), rt = r.n(Z), at = r(87809), j = r.n(at), X = r(34789), Q = r.n(X), ct = r(19953), it = r.n(ct), lt = r(82438), ut = r.n(lt), a = r(87835), E = r.n(a), O = r(75257);
+      const W = (t) => /^(LineTool)/g.test(t), _t = (t) => `${t}.customSettings`, ft = (t) => `${t}.layout`, J = (t) => t.chartId, kt = ({ save: t }) => {
+        const n = {}, s = [], i = t.charts.reduce((I, N) => {
+          const _ = N.panes.reduce((m, y) => {
+            const R = y.sources.find((h) => h.type === "MainSeries");
+            R?.state.symbol && (n[R?.state.symbol.toUpperCase()] = []);
+            const [C, Y] = it()(y.sources, (h) => W(h.type));
+            return s.push(...C), m.push({ ...y, sources: Y }), m;
+          }, []);
+          return I.push({ ...N, panes: _ }), I;
+        }, []), l = E()(s, (I) => I.id), u = j()(l, (I) => I.state.symbol), d = { ...n, ...u };
+        return { charts: i, drawings: d };
+      }, wt = async ({ storage: t, key: n, charts: s }) => {
+        const i = ft(n), l = await t.getItem(i) || [], u = Q()(l, J), d = Q()(s, J), I = l.map(J), N = s.map(J), y = ut()([...I, ...N]).map((R) => d[R] || u[R]).sort((R, C) => +R.chartId - +C.chartId);
+        return await t.setItem(i, y), y;
+      }, xt = async ({ storage: t, save: n, key: s, widget: i }) => {
+        if (!i) return { chartSave: n, drawingsSave: {} };
+        const { drawings: l, charts: u } = kt({ save: __scopeChartDrawingSnapshot(n) }), d = { ...n, charts: u };
+        return await t.setItem(s, d), await wt({ storage: t, key: s, charts: u }), await Promise.all(Object.keys(l).map((I) => t.setItem(`#TV_SYMBOL-${I}`, l[I]))), { chartSave: d, drawingsSave: l };
+      }, Wt = async ({ storage: t, key: n, widget: s }) => {
+        if (!s) return (0, O.b)({ activeChartIndex: 0 });
+        const i = _t(n), l = s.activeChartIndex(), u = (0, O.b)({ activeChartIndex: l });
+        return await t.setItem(i, u), u;
+      }, zt = async ({ storage: t, key: n }) => {
+        const l = (await t.keys()).filter((h) => /^(#TV_SYMBOL-)/g.test(h)).map(async (h) => t.getItem(h)), u = await Promise.all(l), d = rt()(u).filter((h) => !!h), I = j()(d, (h) => h.ownerSource), N = ft(n), _ = _t(n), m = await t.getItem(n), y = await t.getItem(_);
+        if (!m) return { chartSave: m, customSettings: y };
+        const C = (await t.getItem(N) || m.charts).reduce((h, H) => {
+          const V = H.panes.reduce((D, M) => {
+            const z = ot()(M.sources), q = I[M.mainSourceId] || [];
+            return z.push(...q), D.push({ ...M, sources: z }), D;
+          }, []);
+          return h.push({ ...H, panes: V }), h;
+        }, []);
+        return { chartSave: { ...m, charts: C }, customSettings: y };
+      }, $t = () => {
+        const t = (0, T.w)();
+        return (0, e.useCallback)((n) => {
+          const { colors: s } = t, i = n.isBuy ? s.Buy : s.Sell;
+          return { ...n, direction: n.isBuy ? "buy" : "sell", arrowStyles: { height: 8, spacing: 1, color: i }, textStyles: { color: s.PrimaryText } };
+        }, [t]);
+      }, jt = [], Zt = ({ namespace: t, orders: n }) => {
+        const s = (0, o.y$)(t), [i] = s(o.yC), [l] = s(o._b), u = $t(), d = (0, e.useMemo)(() => n.map(u), [u, n]);
+        return (0, e.useMemo)(() => i && l === o.Ev.Single ? d : jt, [i, l, d]);
+      };
+      var ht = r(92873);
+      const Xt = ({ storage: t, storageName: n }) => {
+        const { getI18n: s } = (0, ht.o)("", "trade-ui"), i = (0, e.useMemo)(() => s("trd-chart-tv-initialization-error", { defaultValue: "Something went wrong while initializing TradingView." }) || "", [s]), l = (0, e.useMemo)(() => s("trd-chart-crash-reload", { defaultValue: "Refresh" }) || "", [s]), u = (0, e.useMemo)(() => s("trd-chart-init-error", { defaultValue: "Failed to initialize TradingView due to malformed config, please try to refresh" }) || "", [s]), d = (0, e.useCallback)(() => window.location.reload(), []), I = (0, e.useCallback)(async () => {
+          await t.removeItem(n), d();
+        }, [d, t, n]), [N, _] = (0, e.useState)(false), [m, y] = (0, e.useState)(""), [R, C] = (0, e.useState)(""), [Y, h] = (0, e.useState)(async () => {
+        }), H = (0, e.useCallback)(() => {
+          _(true), y(u), C(l), h(I);
+        }, [I, l, u]), V = (0, e.useCallback)(() => {
+          _(true), y(i), C(l), h(d);
+        }, [i, l, d]);
+        return { showError: N, mainText: m, buttonText: R, buttonCallback: Y, onTradingViewInitError: H, onChartReadyError: V };
+      }, Qt = () => {
+        const t = (0, T.w)();
+        return (0, e.useCallback)((n) => {
+          const { colors: s } = t, i = n.isBuy ? s.Buy : s.Sell;
+          return { ...n, lineStyles: { color: i, length: 45, unit: "percentage", style: 2, extended: false }, bodyStyles: { color: s.PrimaryText, borderColor: i, backgroundColor: i }, cancelButtonStyles: { color: s.IconNormal } };
+        }, [t]);
+      }, Jt = () => {
+        const t = (0, T.w)();
+        return (0, e.useCallback)((n) => {
+          const { colors: s } = t;
+          return { ...n, lineStyles: { color: s.Buy, length: 45, unit: "percentage", style: 2, extended: false }, bodyStyles: { color: s.TextBuy, borderColor: s.Buy, backgroundColor: s.DepthBuyBg }, cancelButtonStyles: { color: s.IconNormal } };
+        }, [t]);
+      }, qt = () => {
+        const t = (0, T.w)();
+        return (0, e.useCallback)((n) => {
+          const { colors: s } = t;
+          return { ...n, lineStyles: { color: s.EmphasizeText, length: 100, unit: "percentage", style: 0, extended: false }, bodyStyles: { color: s.RedGreenBgText, borderColor: s.EmphasizeText, backgroundColor: s.EmphasizeText }, cancelButtonStyles: { color: s.IconNormal } };
+        }, [t]);
+      }, te = () => {
+        const t = (0, T.w)();
+        return (0, e.useCallback)((n) => {
+          const { colors: s } = t;
+          return { ...n, lineStyles: { color: s.DisableText, length: 100, unit: "percentage", style: 2, extended: false }, bodyStyles: { color: s.PrimaryText, borderColor: s.InputLine, backgroundColor: s.InputLine }, cancelButtonStyles: { color: s.IconNormal, borderColor: s.InputLine, backgroundColor: s.BasicBg } };
+        }, [t]);
+      }, ee = [], se = ({ namespace: t, labelLines: n }) => {
+        const s = (0, o.y$)(t), [i] = s(o.O), [l] = s(o.S5), [u] = s(o.ks), [d] = s(o.yA), [I] = s(o.pT), [N] = s(o._b), _ = Qt(), m = Jt(), y = qt(), R = te(), C = (0, e.useMemo)(() => i ? n.filter((M) => M.type === o.ND.AverageBuyPrice).map((M) => _({ ...M, isBuy: true })) : [], [n, i, _]), Y = (0, e.useMemo)(() => l ? n.filter((M) => M.type === o.ND.AverageSellPrice).map((M) => _({ ...M, isBuy: false })) : [], [n, l, _]), h = (0, e.useMemo)(() => u ? n.filter((M) => M.type === o.ND.BreakEvenPrice).map(m) : [], [n, u, m]), H = (0, e.useMemo)(() => d ? n.filter((M) => M.type === o.ND.LiquidationPrice).map(y) : [], [n, d, y]), V = (0, e.useMemo)(() => I ? n.filter((M) => M.type === o.ND.PriceAlert).map(R) : [], [n, I, R]), D = (0, e.useMemo)(() => [...C, ...Y, ...h, ...H, ...V], [C, Y, h, H, V]);
+        return (0, e.useMemo)(() => N === o.Ev.Single ? D : ee, [D, N]);
+      }, ne = () => {
+        const { getI18n: t } = (0, ht.o)("", "kline-ui");
+        return (0, e.useMemo)(() => ({ openOrder: { dragTooltip: t("order-drag-tooltip", { defaultValue: "Drag for price modify" }), modifyTooltip: t("order-modify-tooltip", { defaultValue: "Click for modify" }), cancelTooltip: t("order-cancel-tooltip", { defaultValue: "Click for cancel" }) } }), [t]);
+      }, oe = ({ position: t, extended: n }) => {
+        switch (t) {
+          case "center":
+            return { length: 35, unit: "percentage", extended: n };
+          case "right":
+            return { length: 24, unit: "pixel", extended: n };
+          case "left":
+            return { length: -24, unit: "pixel", extended: n };
+          case "left-most":
+            return { length: 100, unit: "percentage", extended: n };
+          default:
+            return { length: 65, unit: "percentage", extended: n };
+        }
+      }, re = () => {
+        const t = ne(), n = (0, T.w)();
+        return (0, e.useCallback)((s, i) => {
+          const { colors: l } = n, u = s.isBuy ? l.Buy : l.Sell;
+          return { ...s, tooltip: s.tooltip ?? t.openOrder.dragTooltip, modifyTooltip: s.modifyTooltip ?? t.openOrder.modifyTooltip, cancelTooltip: s.cancelTooltip ?? t.openOrder.cancelTooltip, lineStyles: { ...oe(i), color: u, style: 2, extended: false }, bodyStyles: { borderColor: l.CardBg, backgroundColor: u, color: l.RedGreenBgText }, quantityStyles: { borderColor: u, backgroundColor: l.CardBg, color: u }, cancelButtonStyles: { borderColor: u, backgroundColor: l.CardBg, color: u } };
+        }, [t.openOrder.dragTooltip, t.openOrder.modifyTooltip, t.openOrder.cancelTooltip, n]);
+      }, ae = [], ce = ({ namespace: t, orders: n }) => {
+        const s = (0, o.y$)(t), [i] = s(o.Nh), [l] = s(o.R3), [u] = s(o.Ec), [d] = s(o._b), [I] = s(o.CV), [N] = s(o.bv), _ = re(), m = (0, e.useMemo)(() => n.filter(({ limitOrderType: C }) => (C === void 0 || C === o.aA.LimitOrder) && i).map((C) => _(C, { position: I, extended: N })), [n, i, _, I, N]), y = (0, e.useMemo)(() => n.filter(({ limitOrderType: C }) => C === o.aA.BotPreview && l).map((C) => _(C, { position: "legacy", extended: false })), [n, l, _]), R = (0, e.useMemo)(() => n.filter(({ limitOrderType: C }) => C === o.aA.OrderPreview && u).map((C) => _(C, { position: "left-most", extended: false })), [n, u, _]);
+        return (0, e.useMemo)(() => d === o.Ev.Single ? [...m, ...y, ...R] : ae, [m, y, R, d]);
+      }, ie = () => {
+        const t = (0, T.w)();
+        return (0, e.useCallback)((n) => {
+          const { colors: s } = t, i = n.isBuy ? s.Buy : s.Sell, l = n.PNL > 0 ? s.Buy : n.PNL < 0 ? s.Sell : i;
+          return { ...n, lineStyles: { color: l, length: 100, unit: "percentage", style: 2, extended: false }, bodyStyles: { borderColor: l, backgroundColor: l, color: s.RedGreenBgText }, quantityStyles: { borderColor: i, backgroundColor: s.CardBg, color: i }, reverseButtonStyles: { borderColor: i, backgroundColor: s.CardBg, color: i }, closeButtonStyles: { borderColor: i, backgroundColor: s.CardBg, color: i } };
+        }, [t]);
+      }, le = [], ue = ({ namespace: t, orders: n }) => {
+        const s = (0, o.y$)(t), [i] = s(o.FH), [l] = s(o._b), u = ie(), d = (0, e.useMemo)(() => n.map(u), [u, n]);
+        return (0, e.useMemo)(() => i && l === o.Ev.Single ? [...d] : le, [i, l, d]);
+      };
+      var Ee = r(6868);
+      const de = ({ namespace: t }) => {
+        const n = (0, o.y$)(t), [s, i] = n(o.mn), l = (0, Ee.r)(), u = l((_) => _.hasHydrated), d = l((_) => _.lastUpdatedTimestamp), I = (0, e.useMemo)(() => u && d !== s, [u, d, s]), N = (0, e.useCallback)(() => {
+          i(d);
+        }, [d, i]);
+        return (0, e.useMemo)(() => ({ overwritingThemeOnLoaded: I, syncThemeTimestamp: N }), [I, N]);
+      }, Te = () => r.e("66202").then(r.bind(r, 78273)), Ce = (0, e.lazy)(() => r.e("66202").then(r.bind(r, 78273))), Ie = (t) => (0, e.useMemo)(() => g().createInstance({ name: t }), [t]), St = (t) => {
+        switch (t) {
+          case o.Ev.HorizontalTwo:
+            return "2v";
+          case o.Ev.VerticalTwo:
+            return "2h";
+          case o.Ev.HorizontalThree:
+            return "3v";
+          case o.Ev.VerticalThree:
+            return "3h";
+          case o.Ev.LeftOneRightTwo:
+            return "3s";
+          case o.Ev.TopOneBottomTwo:
+            return "1-2";
+          case o.Ev.Four:
+            return "4";
+          case o.Ev.VerticalFour:
+            return "4h";
+          case o.Ev.LeftOneRightThree:
+            return "4s";
+          case o.Ev.TopOneBottomThree:
+            return "1-3";
+          case o.Ev.Five:
+            return "2-3";
+          case o.Ev.SixTwoByThree:
+            return "6";
+          case o.Ev.SixThreeByTwo:
+            return "6c";
+          case o.Ev.Eight:
+            return "8";
+          default:
+            return "s";
+        }
+      }, _e = ({ tradingViewProps: t, namespace: n, storageName: s = v, containerId: i = "tradingview", disablePointerEvents: l = false }) => {
+        const u = (0, o.y$)(n), d = (0, U.y$)(n), I = (0, K.y)(n), [N, _] = u(o.A8), m = u(o.WK), [y] = u(o.e6), [R, C] = u(o.iw), [Y] = u(o._b), [, h] = I(K.N), [, H] = d(U.yj), [V] = d(U.Cf), [D, M] = (0, e.useState)(false), z = Ie(n), q = (0, G.Bl)(), Nt = (0, e.useMemo)(() => P(q), [q]), fe = (0, T.w)(), tt = (0, e.useMemo)(() => `${n}-${i}`, [i, n]), p = (0, e.useRef)(), Et = (0, e.useRef)(N), Rt = (0, e.useRef)(R), dt = (0, e.useRef)(Y), et = (0, e.useRef)(z), st = (0, e.useRef)(s), Lt = (0, e.useRef)(V), he = (0, e.useRef)(D);
+        (0, e.useEffect)(() => {
+          Et.current = N;
+        }, [N]), (0, e.useEffect)(() => {
+          Rt.current = R;
+        }, [R]), (0, e.useEffect)(() => {
+          dt.current = Y;
+        }, [Y]), (0, e.useEffect)(() => {
+          et.current = z;
+        }, [z]), (0, e.useEffect)(() => {
+          st.current = s;
+        }, [s]), (0, e.useEffect)(() => {
+          he.current = D;
+        }, [D]), (0, e.useEffect)(() => {
+          Lt.current = V;
+        }, [V]);
+        const Se = ce({ namespace: n, orders: t.limitOrders }), Ne = ue({ namespace: n, orders: t.positionOrders }), Re = Zt({ namespace: n, orders: t.executionOrders }), Le = se({ namespace: n, labelLines: t.labelLines }), { overwritingThemeOnLoaded: Oe, syncThemeTimestamp: nt } = de({ namespace: n }), Ot = (0, e.useCallback)(({ resolution: c, chartType: L }) => {
+          const F = (0, S.Cz)(c);
+          _(L === 3 ? "time" : F);
+        }, [_]), At = (0, e.useCallback)(async () => {
+          p.current && await Wt({ storage: et.current, key: st.current, widget: p.current });
+        }, []), mt = (0, e.useCallback)(async (c) => zt({ storage: et.current, key: st.current }), []), Tt = (0, e.useCallback)(async (c) => {
+          const { chartSave: L } = await xt({ storage: et.current, save: c, key: st.current, widget: p.current });
+          await t.initialConfig.onSave?.(L);
+        }, [t.initialConfig]), yt = (0, e.useCallback)(async () => {
+          const c = await mt(dt.current);
+          if (t.initialConfig.onLoadConfig?.(), !c.chartSave) return c;
+          const L = St(dt.current);
+          return c.chartSave.layout === L ? c : { ...c, chartSave: { ...c.chartSave, layout: L } };
+        }, [mt, t.initialConfig]), gt = (0, e.useCallback)((c) => {
+          h(c), t.initialConfig.onLoading?.(c);
+        }, [h, t.initialConfig]), $ = (0, e.useCallback)((c, L = true) => {
+          L ? c.setChartType(Et.current === "time" ? 2 : Rt.current) : Et.current === "time" && c.setChartType(2);
+        }, []), Ae = (0, e.useCallback)((c) => {
+          p.current = c, H(c);
+        }, [H]), Dt = (0, e.useCallback)(() => {
+          setTimeout(() => {
+            if (p.current) try {
+              const c = p.current?.activeChart();
+              $(c);
+            } catch {
+            }
+          }, 0), M(true), t.initialConfig.onChartReadyDone?.();
+        }, [$, t.initialConfig]), Mt = (0, e.useCallback)(() => {
+          nt(), t.initialConfig.onSetThemeDone?.();
+        }, [nt, t.initialConfig]), vt = (0, e.useCallback)(() => {
+          nt(), t.initialConfig.onFirstTimeSetThemeDone?.();
+        }, [nt, t.initialConfig]), pt = (0, e.useCallback)((c) => {
+          t.initialConfig.onIntervalChanged?.(c);
+        }, [t.initialConfig]), Ct = (0, e.useCallback)(async (c) => {
+          const { chart: L } = c;
+          if (!L.symbolExt()) return;
+          const k = L.chartType();
+          C(k), Ot({ resolution: L.resolution(), chartType: k }), await At(), t.initialConfig.onActiveChartChanged?.(c);
+        }, [At, Ot, C, t.initialConfig]), Bt = (0, e.useCallback)((c) => {
+          window.open(`https://www.tradingview.com/x/${c}`, "_blank");
+        }, []), Ut = (0, e.useCallback)((c) => {
+          t.initialConfig.onAddStudy?.(c);
+        }, [t.initialConfig]), Kt = (0, e.useCallback)((c) => {
+          t.initialConfig.onSymbolChanged?.(c);
+        }, [t.initialConfig]), Gt = (0, e.useCallback)((c) => {
+          t.initialConfig.onFirstTimeDataLoadedDone?.(c);
+        }, [t.initialConfig]), bt = (0, e.useCallback)((c) => {
+          t.initialConfig.onDataLoadedDone?.(c);
+        }, [t.initialConfig]), Pt = (0, e.useCallback)(({ chart: c, tradingViewSave: L }) => {
+          if (L) return;
+          [{ length: 7, color: "rgba(241, 156, 56, 0.7)" }, { length: 25, color: "rgba(234, 61, 247, 0.7)" }, { length: 99, color: "rgba(116, 252, 253, 0.7)" }].forEach(({ length: k, color: It }) => {
+            c.createStudy("Moving Average", false, false, { length: k }, { "plot.linewidth": 1, "plot.color": It, showLabelsOnPriceScale: false });
+          });
+        }, []), Yt = (0, e.useCallback)((c) => {
+          (t.initialConfig.onInitChart || Pt)(c);
+          const F = c.chart, k = F.resolution(), It = (0, S.Cz)(k);
+          Lt.current.includes(It) || F.setResolution("1D");
+        }, [Pt, t.initialConfig.onInitChart]), Ft = (0, e.useCallback)(() => {
+          setTimeout(() => {
+            if (p.current) try {
+              const c = p.current.activeChartIndex(), L = p.current.activeChart(), F = L.chartType();
+              Ct({ chart: L, index: c }), C(F), p.current.save((k) => {
+                Tt(k);
+              });
+            } catch {
+            }
+          }, 100);
+        }, []);
+        (0, e.useEffect)(() => {
+          if (!(!D || !p.current)) try {
+            p.current.activeChart().setChartType(R);
+          } catch {
+          }
+        }, [R, D]), (0, e.useEffect)(() => {
+          if (!(!D || !p.current)) try {
+            $(p.current.activeChart());
+          } catch {
+          }
+        }, [D, N, $]), (0, e.useEffect)(() => {
+          if (!(!D || !p.current)) try {
+            p.current.setLayout(St(Y));
+          } catch {
+          }
+        }, [Y, D]), (0, e.useEffect)(function() {
+          if (D && p.current) try {
+            const L = p.current.activeChart();
+            L.onChartTypeChanged().subscribe({}, () => {
+              $(L, false);
+            });
+          } catch {
+          }
+        }, [$, D]);
+        const { onTradingViewInitError: Ht, onChartReadyError: Vt } = Xt({ storage: z, storageName: s });
+        (0, e.useEffect)(() => {
+          if (!D) return;
+          const c = l ? "none" : "auto";
+          try {
+            const F = document.getElementById(tt)?.querySelector("iframe");
+            if (!F) return;
+            F.style.pointerEvents = c;
+          } catch {
+          }
+        }, [D, tt, l]);
+        const me = (0, e.useMemo)(() => ({ ...t.initialConfig, tvConfig: { ...t.initialConfig.tvConfig, container: tt, interval: m, locale: Nt }, onSave: Tt, onLoadConfig: yt, onLoading: gt, onChartReadyDone: Dt, onChartReadyError: Vt, onTradingViewInitError: Ht, onIntervalChanged: pt, onFirstTimeSetThemeDone: vt, onSetThemeDone: Mt, onFirstTimeDataLoadedDone: Gt, onDataLoadedDone: bt, onInitChart: Yt, onActiveChartChanged: Ct, onSymbolChanged: Kt, onAddStudy: Ut, onScreenshotReady: Bt, onLayoutChanged: Ft }), [tt, m, Nt, Ct, Ut, Dt, Vt, bt, Gt, vt, Yt, pt, Ft, yt, gt, Tt, Bt, Mt, Kt, Ht, t.initialConfig]);
+        return (0, A.jsx)("div", { className: "h-full", style: { display: y !== o.tU.TradingView ? "none" : "block" }, children: (0, A.jsx)(e.Suspense, { fallback: null, children: (0, A.jsx)(Ce, { ...t, interval: m, limitOrders: Se, positionOrders: Ne, executionOrders: Re, labelLines: Le, overwritingThemeOnLoaded: Oe, themeConfig: fe, initialConfig: me, onInitialized: Ae }) }) });
+      };
+    } }[76535];
+  }
+  function replaceChartDrawingSaveFactory(originalFactory) {
+    if (typeof originalFactory !== "function" || Function.prototype.toString.call(originalFactory) !== originalFactorySource2) {
+      throw new Error("Drawing save factory source does not match the pinned public module");
+    }
+    return createChartDrawingSaveFactory();
+  }
+
   // src/binance-orderbook-trade/chart-storage/json.js
   var encoder = new TextEncoder();
   var nativeObjectSource = Function.prototype.toString.call(Object);
@@ -6377,79 +6765,103 @@
 
   // src/binance-orderbook-trade/chart-storage/runtime.js
   var CAPTURE_DEADLINE_MS = 3e4;
+  var MIRROR_MODULE = "70940";
+  var DRAWING_MODULE = "76535";
   function startChartStorageOptimizer() {
     if (!isChartStoragePage()) throw new Error("Chart storage requires a top-level Binance trading page");
     const writer = createChartMirrorWriter();
     const state = { status: "waiting", reason: null, attempts: 0, matches: 0, executions: 0 };
+    const drawingScope = { status: "waiting", reason: null, attempts: 0, matches: 0, executions: 0 };
     let observer;
     let timer;
     let stopping;
+    let observationFinished = false;
     function snapshot() {
       const stats = writer.getStats();
       return {
         ...state,
         status: stats.failedBatches > 0 ? "native_after_failure" : state.status,
         phase: writer.getPhase(),
-        writer: stats
+        writer: stats,
+        drawingScope: { ...drawingScope }
       };
     }
     function stop(reason = "manual") {
       if (stopping) return stopping;
       state.status = "stopping";
       state.reason = reason;
-      clearTimeout(timer);
-      self.removeEventListener("pagehide", onPageHide);
-      if (observer) observer.stop();
       stopping = writer.stop().then(() => {
         state.status = "native";
         return snapshot();
       });
+      if (observer) observer.stopTarget(MIRROR_MODULE, reason);
+      if (observationFinished) self.removeEventListener("pagehide", onPageHide);
       return stopping;
     }
+    function finishObservation() {
+      observationFinished = true;
+      clearTimeout(timer);
+      if (stopping) self.removeEventListener("pagehide", onPageHide);
+    }
     function onPageHide() {
+      if (observer) observer.stop("pagehide");
       void stop("pagehide");
     }
     function dispatch(target, entries, nativeThunk) {
       if (!isChartStoragePage()) void stop("scope_changed");
       return writer.dispatch(target, entries, nativeThunk);
     }
+    function replaceFactory(id, original, replace) {
+      if (!isChartStoragePage()) {
+        observer.stop("scope_changed");
+        void stop("scope_changed");
+        return original;
+      }
+      const targetState = id === MIRROR_MODULE ? state : drawingScope;
+      targetState.attempts += 1;
+      const replacement = replace(original);
+      targetState.matches += 1;
+      return function(...args) {
+        targetState.executions += 1;
+        return Reflect.apply(replacement, this, args);
+      };
+    }
     try {
       observer = observeChartStorageBootstrap({
-        replaceMirrorFactory(original) {
-          if (!isChartStoragePage()) {
-            void stop("scope_changed");
-            return original;
-          }
-          state.attempts += 1;
-          let replacement;
-          try {
-            replacement = replaceChartMirrorFactory(original, dispatch);
-          } catch {
-            void stop("source_mismatch");
-            return original;
-          }
-          state.matches += 1;
-          return function(...args) {
-            state.executions += 1;
-            return Reflect.apply(replacement, this, args);
-          };
+        targets: {
+          [MIRROR_MODULE]: (original) => replaceFactory(MIRROR_MODULE, original, (factory) => replaceChartMirrorFactory(factory, dispatch)),
+          [DRAWING_MODULE]: (original) => replaceFactory(DRAWING_MODULE, original, replaceChartDrawingSaveFactory)
         },
-        onCapture() {
-          clearTimeout(timer);
-          state.status = "active";
+        onCapture(id) {
+          const targetState = id === MIRROR_MODULE ? state : drawingScope;
+          if (id !== MIRROR_MODULE || !stopping) targetState.status = "active";
+        },
+        onFailure(id, reason) {
+          if (id === MIRROR_MODULE) {
+            void stop(reason === "execution_failed" ? "capture_failed" : reason);
+          } else {
+            drawingScope.status = reason === "source_mismatch" ? "source_mismatch" : "unavailable";
+            drawingScope.reason = reason;
+          }
+        },
+        onComplete() {
+          finishObservation();
         }
       });
     } catch {
+      drawingScope.status = "unavailable";
+      drawingScope.reason = "bootstrap_unavailable";
+      finishObservation();
       void stop("bootstrap_unavailable");
       return Object.freeze({ snapshot, stop });
     }
-    observer.captured.catch(() => {
-      if (!stopping) void stop("capture_failed");
-    });
-    self.addEventListener("pagehide", onPageHide, { once: true });
-    timer = setTimeout(() => {
-      void stop("capture_deadline");
-    }, CAPTURE_DEADLINE_MS);
+    if (!observationFinished) {
+      self.addEventListener("pagehide", onPageHide, { once: true });
+      timer = setTimeout(() => {
+        observer.stop("capture_deadline");
+        if (state.status === "waiting") void stop("capture_deadline");
+      }, CAPTURE_DEADLINE_MS);
+    }
     return Object.freeze({ snapshot, stop });
   }
 

@@ -76,6 +76,8 @@ function assertOptimized(snapshot) {
   assert.equal(snapshot.phase, 'active');
   assert.equal(snapshot.matches, 1);
   assert.equal(snapshot.executions, 1);
+  assert.equal(snapshot.drawingScope.status, 'active');
+  assert.equal(snapshot.drawingScope.executions, 1);
   for (const field of ['rejectedBatches', 'failedBatches', 'abortedTransactions', 'pendingBatches', 'pendingBytes', 'nativePassthroughBatches']) {
     assert.equal(snapshot.writer[field], 0, field);
   }
@@ -184,6 +186,8 @@ try {
   const initial = await snapshot();
   assert.equal(initial.optimizer.matches, 1);
   assert.equal(initial.optimizer.executions, 1);
+  assert.equal(initial.optimizer.drawingScope.status, 'active');
+  assert.equal(initial.optimizer.drawingScope.executions, 1);
   assert.equal(initial.orderbook.panelCount, 1);
   assert.equal(initial.orderbook.styleCount, 1);
   assert.equal(initial.orderbook.initialized, true);
@@ -195,6 +199,7 @@ try {
   stage = 'stop';
   report.stopped = await bounded(page.evaluate(() => self.__BINANCE_CHART_STORAGE__.stop()));
   assert.equal(report.stopped.phase, 'stopped');
+  assert.equal(report.stopped.drawingScope.status, 'active');
   stage = 'native_after_stop';
   await changeInterval('4小时', '240', false);
   assert.equal(report.navigationRefused, undefined);
