@@ -20,6 +20,16 @@ scripts/binance-orderbook-trade.user.js
 
 ## Runtime
 
+### Native order reminders
+
+`order-notifications/` scopes native ordinary order toasts and sound to the
+current futures symbol. The storage installer shares its single early queue
+observer with these independently pinned targets; no separate userscript is
+installed. Risk and unknown events retain native handling. The native account
+data flow and trading feedback readers remain unchanged. See
+[notification scope](binance-order-notifications.md) for source pins, delayed
+delivery, cross-tab behavior and validation boundaries.
+
 ### Chart mirror storage
 
 `chart-storage/install.js` runs before the orderbook business initializer. This

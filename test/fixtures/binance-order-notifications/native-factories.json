@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "capture_date": "2026-10-07",
+  "factories": [
+    {
+      "id": "39116",
+      "chunks": [
+        "3314"
+      ],
+      "source": "39116(D,l,t){\"use strict\";t.d(l,{QZ:()=>p.Q,$$:()=>n,E$:()=>S});var e=t(41594),a=2e3,r=2,n=function(){var E=(0,e.useRef)(null),A=function(O){E.current=setTimeout(function(){O(),E.current&&clearTimeout(E.current),E.current=null},a)};return(0,e.useMemo)(function(){return{interval:E,intervalFunc:A}},[])},i=t(75510),s=t(16921),c=t(72363),d=t(79515),y=t(40477),p=t(70020),T=function(E,A){var O=(0,d.nH)(),m=(0,d.Py)().isExistFutureAccount,g=(0,y.A)(A,500),u=g.run,o=(0,d.ON)().isPM2,f=(0,s.Gw)();(0,e.useEffect)(function(){if(!O||!m||!E)return function(){return null};var _=(0,c.Ri)({isCM:!0});return _.getUserOrderStream({isPM2:o,params:f}).subscribe(function(v){var L=Array.isArray(v)?(0,i._)(v):[v];L.forEach(function(P){(P.status===\"FILLED\"||P.status===\"PARTIALLY_FILLED\"||P.status===\"EXPIRED\")&&u(String(P.orderId))})})},[u,E,m,O,o,f]),(0,e.useEffect)(function(){if(!O||!m||!E)return function(){return null};var _=(0,c.Ri)({isCM:!1});return _.getUserOrderStream({isPM2:o,params:f}).subscribe(function(v){var L=Array.isArray(v)?(0,i._)(v):[v];L.forEach(function(P){(P.status===\"FILLED\"||P.status===\"PARTIALLY_FILLED\"||P.status===\"EXPIRED\")&&u(String(P.orderId))})})},[u,E,m,O,o,f])},S=function(){var E=(0,e.useState)(new Date),A=E[0],O=E[1],m=(0,e.useRef)([]),g=(0,p.Q)(),u=g.showNotification,o=g.enableNotification,f=(0,e.useCallback)(function(){var v;(v=m)===null||v===void 0||v.current.shift(),O(new Date)},[]),_=(0,e.useCallback)(function(v){var L;if(u&&((L=m)===null||L===void 0?void 0:L.current.length)<r&&o&&v){var P;(P=m)===null||P===void 0||P.current.push(v),O(new Date)}},[o,u]);return T(u&&o,_),(0,e.useMemo)(function(){return{notifications:m,lastNotifyTime:A,popNotification:f}},[A,f])}}",
+      "sha256": "5362a54e61f022714e673e166b62e3c22997084ca7a9f4e676475ec91cfcfaa8",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/3314.51597d7f.js",
+        "sha256": "9081346db36168e132d8cb36131c8a02703e1aa8b296ea8e87e22aad13d478d1",
+        "bytes": 103437,
+        "factory_utf16_range": [
+          75503,
+          77203
+        ]
+      }
+    },
+    {
+      "id": "40477",
+      "chunks": [
+        "3314"
+      ],
+      "source": "40477(D,l,t){\"use strict\";t.d(l,{A:()=>i});var e=t(75510),a=t(41594),r=t.n(a),n=function(s,c,d){var y=Array.isArray(c)?c:[],p=typeof c==\"number\"?c:d||0,T=(0,a.useRef)(!1),S=(0,a.useRef)(),E=(0,a.useRef)(s);E.current=s;var A=(0,a.useRef)([]),O=(0,a.useCallback)(function(){S.current&&clearTimeout(S.current),S.current=void 0},[]),m=(0,a.useCallback)(function(){for(var g=arguments.length,u=new Array(g),o=0;o<g;o++)u[o]=arguments[o];A.current=u,S.current||(S.current=setTimeout(function(){var f;(f=E).current.apply(f,(0,e._)(A.current)),S.current=void 0},p))},[p,O]);return(0,a.useEffect)(function(){return O},[]),(0,a.useEffect)(function(){T.current?m():T.current=!0},(0,e._)(y).concat([m])),{run:m,cancel:O}};const i=n}",
+      "sha256": "3f9291c4bb07d576ba766852e0343b2196d8e044aa7122e4a0f5c9c1fcf341a6",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/3314.51597d7f.js",
+        "sha256": "9081346db36168e132d8cb36131c8a02703e1aa8b296ea8e87e22aad13d478d1",
+        "bytes": 103437,
+        "factory_utf16_range": [
+          44905,
+          45625
+        ]
+      }
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "37511"
+      ],
+      "source": "30877(be,W,e){e.d(W,{F:()=>N,z:()=>o});var r=e(41594),a=e.n(r),T=e(61523),p=e(92873),P=e(64041),b=e(17409),S=e(51471),E=e(40477),$=\"trd-openOrder\",G=function(c){return(0,p.o)($,c)},o=function(){var c=(0,S.zr)(\"open_order_status_toast\",!0),h=c.data,R=c.setData,K=c.hasInitialized,x=(0,r.useCallback)(function(){R(!h)},[h,R]);return{enableToast:K?h:!1,toggleToast:x}},N=function(){var c=G().getI18n,h=(0,P.h)().enqueueNotification,R=o().enableToast,K=(0,E.A)(h,30),x=K.run,i=(0,T.d4)(function(l){return l.setting.layout}),d=(0,r.useMemo)(function(){return i===b.a0},[i]),A=(0,r.useCallback)(function(l){var D=l.side.toUpperCase(),Y=l.type.replace(/[-_]/g,\"\");return\"\".concat(D).concat(Y)},[]),g=(0,r.useCallback)(function(l){if(!(l.type===\"LIQUIDATION\"||!R)){var D=A(l),Y=c(\"\".concat(D,\"CancelTitle\"),{defaultValue:\"\".concat(l.type,\" \").concat(l.side,\" Order Canceled\")});x(Y)}},[A,c,x,R]),C=(0,r.useCallback)(function(l){if(!(l.type===\"LIQUIDATION\"||!R)){var D=A(l),Y=c(\"\".concat(D,\"FillTitle\"),{defaultValue:\"\".concat(l.type,\" \").concat(l.side,\" Order Filled\")});x(Y,{variant:\"success\"})}},[A,c,x,R]),I=(0,r.useCallback)(function(l){if(!(l.type===\"LIQUIDATION\"||!R)){var D=A(l),Y=c(\"\".concat(D,\"PFTitle\"),{defaultValue:\"\".concat(l.type,\" \").concat(l.side,\" Order Partially Filled\")});x(Y,{variant:\"success\"})}},[A,c,x,R]);return(0,r.useMemo)(function(){return{cancelOrderNotify:g,fillOrderNotify:C,fillOrderPartNotify:I}},[g,C,I])}}",
+      "sha256": "8eaee3ce87f001f8530992b2ea4ce99ee632ef902f129e79c76d6b1268b4de1a",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/37511.5ad8e45f.js",
+        "sha256": "4450c0c462c214862282a421fe2d929fd40f22970e17e90814b29b2b21e04269",
+        "bytes": 124660,
+        "factory_utf16_range": [
+          13866,
+          15298
+        ]
+      }
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "24132"
+      ],
+      "source": "30877(V,b,e){e.d(b,{F:()=>m,z:()=>I});var r=e(41594),A=e.n(r),s=e(61523),f=e(92873),v=e(64041),o=e(17409),l=e(51471),P=e(40477),k=\"trd-openOrder\",y=function(g){return(0,f.o)(k,g)},I=function(){var g=(0,l.zr)(\"open_order_status_toast\",!0),_=g.data,F=g.setData,R=g.hasInitialized,L=(0,r.useCallback)(function(){F(!_)},[_,F]);return{enableToast:R?_:!1,toggleToast:L}},m=function(){var g=y().getI18n,_=(0,v.h)().enqueueNotification,F=I().enableToast,R=(0,P.A)(_,30),L=R.run,a=(0,s.d4)(function(i){return i.setting.layout}),M=(0,r.useMemo)(function(){return a===o.a0},[a]),C=(0,r.useCallback)(function(i){var S=i.side.toUpperCase(),T=i.type.replace(/[-_]/g,\"\");return\"\".concat(S).concat(T)},[]),c=(0,r.useCallback)(function(i){if(!(i.type===\"LIQUIDATION\"||!F)){var S=C(i),T=g(\"\".concat(S,\"CancelTitle\"),{defaultValue:\"\".concat(i.type,\" \").concat(i.side,\" Order Canceled\")});L(T)}},[C,g,L,F]),u=(0,r.useCallback)(function(i){if(!(i.type===\"LIQUIDATION\"||!F)){var S=C(i),T=g(\"\".concat(S,\"FillTitle\"),{defaultValue:\"\".concat(i.type,\" \").concat(i.side,\" Order Filled\")});L(T,{variant:\"success\"})}},[C,g,L,F]),h=(0,r.useCallback)(function(i){if(!(i.type===\"LIQUIDATION\"||!F)){var S=C(i),T=g(\"\".concat(S,\"PFTitle\"),{defaultValue:\"\".concat(i.type,\" \").concat(i.side,\" Order Partially Filled\")});L(T,{variant:\"success\"})}},[C,g,L,F]);return(0,r.useMemo)(function(){return{cancelOrderNotify:c,fillOrderNotify:u,fillOrderPartNotify:h}},[c,u,h])}}",
+      "sha256": "faec1b3eb9f86a4e7087128f8fd3b74a210581c9988a0041c909a848cfb0ae0f",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/24132.91842e2a.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      }
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "57898"
+      ],
+      "source": "30877(K,T,e){e.d(T,{F:()=>i,z:()=>E});var t=e(41594),r=e.n(t),n=e(61523),s=e(92873),g=e(64041),c=e(17409),h=e(51471),p=e(40477),b=\"trd-openOrder\",S=function(y){return(0,s.o)(b,y)},E=function(){var y=(0,h.zr)(\"open_order_status_toast\",!0),C=y.data,f=y.setData,I=y.hasInitialized,d=(0,t.useCallback)(function(){f(!C)},[C,f]);return{enableToast:I?C:!1,toggleToast:d}},i=function(){var y=S().getI18n,C=(0,g.h)().enqueueNotification,f=E().enableToast,I=(0,p.A)(C,30),d=I.run,P=(0,n.d4)(function(a){return a.setting.layout}),M=(0,t.useMemo)(function(){return P===c.a0},[P]),k=(0,t.useCallback)(function(a){var o=a.side.toUpperCase(),u=a.type.replace(/[-_]/g,\"\");return\"\".concat(o).concat(u)},[]),A=(0,t.useCallback)(function(a){if(!(a.type===\"LIQUIDATION\"||!f)){var o=k(a),u=y(\"\".concat(o,\"CancelTitle\"),{defaultValue:\"\".concat(a.type,\" \").concat(a.side,\" Order Canceled\")});d(u)}},[k,y,d,f]),O=(0,t.useCallback)(function(a){if(!(a.type===\"LIQUIDATION\"||!f)){var o=k(a),u=y(\"\".concat(o,\"FillTitle\"),{defaultValue:\"\".concat(a.type,\" \").concat(a.side,\" Order Filled\")});d(u,{variant:\"success\"})}},[k,y,d,f]),x=(0,t.useCallback)(function(a){if(!(a.type===\"LIQUIDATION\"||!f)){var o=k(a),u=y(\"\".concat(o,\"PFTitle\"),{defaultValue:\"\".concat(a.type,\" \").concat(a.side,\" Order Partially Filled\")});d(u,{variant:\"success\"})}},[k,y,d,f]);return(0,t.useMemo)(function(){return{cancelOrderNotify:A,fillOrderNotify:O,fillOrderPartNotify:x}},[A,O,x])}}",
+      "sha256": "ab507602d8d3533b30239e7eadc4b2d53392dd18a2af5da4539f35feacdac2c6",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/57898.16437e66.js",
+        "sha256": "73221d1be841cc383f4b90b703713cdcf19455eadc78c64c40ca1692ff359f52",
+        "bytes": 102464,
+        "factory_utf16_range": [
+          78802,
+          80233
+        ]
+      }
+    },
+    {
+      "id": "55401",
+      "chunks": [
+        "29042"
+      ],
+      "source": "55401(S,f,o){o.r(f),o.d(f,{SoundNotificationProvider:()=>C});var c=o(31085),e=o(41594),x=o(17409),s=o(39116),E=function(a){var r,n;(r=a)===null||r===void 0||r.load();var u=(n=a)===null||n===void 0?void 0:n.play();u&&u.then(function(){var t;(t=a)===null||t===void 0||t.play()}).catch(function(){})},C=function(a){var r=a.children,n=(0,s.$$)(),u=n.interval,t=n.intervalFunc,h=(0,e.useRef)(null),N=(0,s.QZ)(),p=N.enableNotification,m=N.showNotification,d=(0,s.E$)(),l=d.notifications,P=d.lastNotifyTime,y=d.popNotification,j=(0,e.useCallback)(function(){var i,v=(i=h)===null||i===void 0?void 0:i.current;v&&(v.src=\"\".concat(x.K5,\"/static/spot-trade-ui/trade-sound.mp3\"),E(v),t(y))},[t,y]);return(0,e.useEffect)(function(){var i;(!m||!p)&&(l.current=[]),l&&((i=l)===null||i===void 0?void 0:i.current.length)>0&&(u.current||j())},[P,p,j,l,u,m]),(0,c.jsxs)(\"div\",{children:[r,(0,c.jsx)(\"div\",{children:(0,c.jsx)(\"audio\",{ref:h,children:(0,c.jsx)(\"source\",{src:\"\"})})})]})}}",
+      "sha256": "98094af191e88c1637017da1ba05037fa1fb4c39a7028dc8e35d0aa1c39c2a3e",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/29042.3c0cf97b.js",
+        "sha256": "fc8acb6938b71aeb1054de9e970052b5bd5e84b53e9eb373378ef6e21c0b161e",
+        "bytes": 1076,
+        "factory_utf16_range": [
+          104,
+          1071
+        ]
+      }
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "57276"
+      ],
+      "source": "30877(Y,T,e){e.d(T,{F:()=>o,z:()=>N});var a=e(41594),k=e.n(a),P=e(61523),l=e(92873),O=e(64041),C=e(17409),h=e(51471),M=e(40477),p=\"trd-openOrder\",R=function(n){return(0,l.o)(p,n)},N=function(){var n=(0,h.zr)(\"open_order_status_toast\",!0),c=n.data,i=n.setData,F=n.hasInitialized,u=(0,a.useCallback)(function(){i(!c)},[c,i]);return{enableToast:F?c:!1,toggleToast:u}},o=function(){var n=R().getI18n,c=(0,O.h)().enqueueNotification,i=N().enableToast,F=(0,M.A)(c,30),u=F.run,L=(0,P.d4)(function(r){return r.setting.layout}),g=(0,a.useMemo)(function(){return L===C.a0},[L]),I=(0,a.useCallback)(function(r){var d=r.side.toUpperCase(),f=r.type.replace(/[-_]/g,\"\");return\"\".concat(d).concat(f)},[]),S=(0,a.useCallback)(function(r){if(!(r.type===\"LIQUIDATION\"||!i)){var d=I(r),f=n(\"\".concat(d,\"CancelTitle\"),{defaultValue:\"\".concat(r.type,\" \").concat(r.side,\" Order Canceled\")});u(f)}},[I,n,u,i]),A=(0,a.useCallback)(function(r){if(!(r.type===\"LIQUIDATION\"||!i)){var d=I(r),f=n(\"\".concat(d,\"FillTitle\"),{defaultValue:\"\".concat(r.type,\" \").concat(r.side,\" Order Filled\")});u(f,{variant:\"success\"})}},[I,n,u,i]),Q=(0,a.useCallback)(function(r){if(!(r.type===\"LIQUIDATION\"||!i)){var d=I(r),f=n(\"\".concat(d,\"PFTitle\"),{defaultValue:\"\".concat(r.type,\" \").concat(r.side,\" Order Partially Filled\")});u(f,{variant:\"success\"})}},[I,n,u,i]);return(0,a.useMemo)(function(){return{cancelOrderNotify:S,fillOrderNotify:A,fillOrderPartNotify:Q}},[S,A,Q])}}",
+      "sha256": "7465bd6eac312fcc597b231b916795bf0daaf51e01191f60e6a6c2b6adeabdba",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/57276.ae6ee5f0.js",
+        "sha256": "8bbc3de3d94e8e19dbd2946f22cb03b43d2cd8051c7da452c5c59ad67e8345bc",
+        "bytes": 4285,
+        "factory_utf16_range": [
+          2047,
+          3478
+        ]
+      }
+    },
+    {
+      "id": "34122",
+      "chunks": [
+        "57276"
+      ],
+      "source": "34122(Y,T,e){e.r(T),e.d(T,{OrderToastNotifyRegister:()=>N,OrderToastSwitch:()=>R});var a=e(31085),k=e(41594),P=e.n(k),l=e(71822),O=e(88478),C=e(48651),h=e(30877),M=e(34175),p=e(10157),R=function(){var o=(0,h.z)(),n=o.enableToast,c=o.toggleToast,i=(0,C.ud)().getI18n;return(0,a.jsxs)(\"div\",{className:p.XE,onClick:c,children:[(0,a.jsx)(\"div\",{className:p.IG,children:i(\"orderToastReminder\",{defaultValue:\"Toast Reminder\"})}),(0,a.jsx)(O.A,{size:\"small\",checked:n})]})},N=function(){var o=(0,h.F)();return(0,k.useEffect)(function(){var n=[l.J.on(\"NEW\",M.Zu),l.J.on(\"PARTIALLY_FILLED\",o.fillOrderPartNotify),l.J.on(\"CANCELED\",o.cancelOrderNotify),l.J.on(\"FILLED\",o.fillOrderNotify),l.J.on(\"FILLED_NORMAL_ORDER\",o.fillOrderNotify)];return function(){return n.forEach(function(c){return c()})}},[o]),null}}",
+      "sha256": "f036bb5b69da48fe84b75664e4e05079e1953baf0406dabdc60e07f3d716b492",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/57276.ae6ee5f0.js",
+        "sha256": "8bbc3de3d94e8e19dbd2946f22cb03b43d2cd8051c7da452c5c59ad67e8345bc",
+        "bytes": 4285,
+        "factory_utf16_range": [
+          3479,
+          4280
+        ]
+      }
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "76905"
+      ],
+      "source": "30877(L,T,e){e.d(T,{F:()=>_,z:()=>v});var r=e(41594),x=e.n(r),O=e(61523),h=e(92873),p=e(64041),k=e(17409),C=e(51471),I=e(40477),g=\"trd-openOrder\",f=function(s){return(0,h.o)(g,s)},v=function(){var s=(0,C.zr)(\"open_order_status_toast\",!0),c=s.data,o=s.setData,d=s.hasInitialized,n=(0,r.useCallback)(function(){o(!c)},[c,o]);return{enableToast:d?c:!1,toggleToast:n}},_=function(){var s=f().getI18n,c=(0,p.h)().enqueueNotification,o=v().enableToast,d=(0,I.A)(c,30),n=d.run,a=(0,O.d4)(function(t){return t.setting.layout}),S=(0,r.useMemo)(function(){return a===k.a0},[a]),i=(0,r.useCallback)(function(t){var l=t.side.toUpperCase(),u=t.type.replace(/[-_]/g,\"\");return\"\".concat(l).concat(u)},[]),y=(0,r.useCallback)(function(t){if(!(t.type===\"LIQUIDATION\"||!o)){var l=i(t),u=s(\"\".concat(l,\"CancelTitle\"),{defaultValue:\"\".concat(t.type,\" \").concat(t.side,\" Order Canceled\")});n(u)}},[i,s,n,o]),F=(0,r.useCallback)(function(t){if(!(t.type===\"LIQUIDATION\"||!o)){var l=i(t),u=s(\"\".concat(l,\"FillTitle\"),{defaultValue:\"\".concat(t.type,\" \").concat(t.side,\" Order Filled\")});n(u,{variant:\"success\"})}},[i,s,n,o]),m=(0,r.useCallback)(function(t){if(!(t.type===\"LIQUIDATION\"||!o)){var l=i(t),u=s(\"\".concat(l,\"PFTitle\"),{defaultValue:\"\".concat(t.type,\" \").concat(t.side,\" Order Partially Filled\")});n(u,{variant:\"success\"})}},[i,s,n,o]);return(0,r.useMemo)(function(){return{cancelOrderNotify:y,fillOrderNotify:F,fillOrderPartNotify:m}},[y,F,m])}}",
+      "sha256": "1f40d63c4f3f27799bd34fd93ece8686c6b276741d62f37d928cdcba858ec53f",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/76905.2ae2c9b9.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      }
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "49426"
+      ],
+      "source": "30877(R,T,e){e.d(T,{F:()=>y,z:()=>D});var t=e(41594),O=e.n(t),u=e(61523),i=e(92873),m=e(64041),d=e(17409),f=e(51471),a=e(40477),o=\"trd-openOrder\",b=function(S){return(0,i.o)(o,S)},D=function(){var S=(0,f.zr)(\"open_order_status_toast\",!0),M=S.data,P=S.setData,N=S.hasInitialized,_=(0,t.useCallback)(function(){P(!M)},[M,P]);return{enableToast:N?M:!1,toggleToast:_}},y=function(){var S=b().getI18n,M=(0,m.h)().enqueueNotification,P=D().enableToast,N=(0,a.A)(M,30),_=N.run,v=(0,u.d4)(function(n){return n.setting.layout}),l=(0,t.useMemo)(function(){return v===d.a0},[v]),s=(0,t.useCallback)(function(n){var g=n.side.toUpperCase(),c=n.type.replace(/[-_]/g,\"\");return\"\".concat(g).concat(c)},[]),r=(0,t.useCallback)(function(n){if(!(n.type===\"LIQUIDATION\"||!P)){var g=s(n),c=S(\"\".concat(g,\"CancelTitle\"),{defaultValue:\"\".concat(n.type,\" \").concat(n.side,\" Order Canceled\")});_(c)}},[s,S,_,P]),p=(0,t.useCallback)(function(n){if(!(n.type===\"LIQUIDATION\"||!P)){var g=s(n),c=S(\"\".concat(g,\"FillTitle\"),{defaultValue:\"\".concat(n.type,\" \").concat(n.side,\" Order Filled\")});_(c,{variant:\"success\"})}},[s,S,_,P]),h=(0,t.useCallback)(function(n){if(!(n.type===\"LIQUIDATION\"||!P)){var g=s(n),c=S(\"\".concat(g,\"PFTitle\"),{defaultValue:\"\".concat(n.type,\" \").concat(n.side,\" Order Partially Filled\")});_(c,{variant:\"success\"})}},[s,S,_,P]);return(0,t.useMemo)(function(){return{cancelOrderNotify:r,fillOrderNotify:p,fillOrderPartNotify:h}},[r,p,h])}}",
+      "sha256": "a25ce74a214c9e2b80bc7141b20fe798c7fbc30bcb4f79c0a9c363b4cca7119f",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/49426.57389f4e.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      }
+    },
+    {
+      "id": "73335",
+      "chunks": [
+        "40026"
+      ],
+      "source": "73335(ve,C,o){/**\n * @license React\n * react-jsx-runtime.production.min.js\n *\n * Copyright (c) Facebook, Inc. and its affiliates.\n *\n * This source code is licensed under the MIT license found in the\n * LICENSE file in the root directory of this source tree.\n */var O=o(41594),S=Symbol.for(\"react.element\"),w=Symbol.for(\"react.fragment\"),Q=Object.prototype.hasOwnProperty,Y=O.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner,H={key:!0,ref:!0,__self:!0,__source:!0};function oe(B,$,z){var D,P={},F=null,ae=null;z!==void 0&&(F=\"\"+z),$.key!==void 0&&(F=\"\"+$.key),$.ref!==void 0&&(ae=$.ref);for(D in $)Q.call($,D)&&!H.hasOwnProperty(D)&&(P[D]=$[D]);if(B&&B.defaultProps)for(D in $=B.defaultProps,$)P[D]===void 0&&(P[D]=$[D]);return{$$typeof:S,type:B,key:F,ref:ae,props:P,_owner:Y.current}}C.Fragment=w,C.jsx=oe,C.jsxs=oe}",
+      "sha256": "45e3ee5e33406e46329e7f641af069ba469481d4a3d003ebae8af2a46df77e94",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": null,
+        "evidence": "Runtime factory source and registration chunk ID only; complete chunk bytes and script URL were not captured."
+      }
+    },
+    {
+      "id": "22584",
+      "chunks": [
+        "67656"
+      ],
+      "source": "22584(_,y,e){\"use strict\";e.d(y,{b:()=>i});var t=e(94917),i=function r(){\"use strict\";var a=this;(0,t._)(this,r),this.cbs={},this.on=function(s,n){var o=a;return a.cbs[s]||(a.cbs[s]=[]),a.cbs[s].push(n),function(){return o.off(s,n)}},this.off=function(s,n){a.cbs[s]||(a.cbs[s]=[]),a.cbs[s]=a.cbs[s].filter(function(o){return o!==n})},this.emit=function(s,n){a.cbs[s]||(a.cbs[s]=[]),a.cbs[s].forEach(function(o){return typeof o==\"function\"&&o(n)})}}}",
+      "sha256": "dbb8a7a3bddd76408b5382a0f20a6ee7ad45d09ad61ce2168c3de799aafd2f9b",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": null,
+        "evidence": "Runtime factory source and registration chunk ID only; complete chunk bytes and script URL were not captured."
+      }
+    },
+    {
+      "id": "5558",
+      "chunks": [
+        "32536"
+      ],
+      "source": "5558(ee,K,t){t.d(K,{$Q:()=>T,Ai:()=>S,CC:()=>R,H9:()=>h,Ub:()=>O,cg:()=>A,qS:()=>F});var P=t(61489),n=t(37230),o=t(53548);const S={symbol:\"s\",clientOrderId:\"c\",side:\"S\",orderType:\"o\",timeInForce:\"f\",quantity:n.X9.number(\"q\"),price:n.X9.number(\"p\"),stopPrice:n.X9.number(\"P\"),icebergQuantity:n.X9.number(\"F\"),orderListId:\"g\",originalClientOrderId:\"C\",executionType:\"x\",orderStatus:\"X\",orderRejectReason:\"r\",orderId:\"i\",LastExecutedQuantity:n.X9.number(\"l\"),cumulativeFilledQuantity:n.X9.number(\"z\"),lastPrice:n.X9.number(\"L\"),commissionAmount:n.X9.number(\"n\"),commissionAsset:\"N\",transactionTime:\"T\",tradeId:\"t\",isOnOrderBook:\"w\",isMaker:\"m\",orderCreationTime:\"O\",cumulativeQuoteQuantity:n.X9.number(\"Z\"),lastQuoteQuantity:n.X9.number(\"Y\"),quoteOrderQty:n.X9.number(\"Q\"),activatePrice:n.X9.number(\"AP\"),callbackRate:n.X9.number(\"cr\"),trailingDelta:\"d\",trailingTime:\"D\",workingTime:\"W\",isSor:\"uS\",pegPriceType:\"gP\",pegOffsetType:\"gOT\",pegOffsetValue:\"gOV\",peggedPrice:\"gp\"},T=Object.keys(S),I={symbol:\"s\",insertTime:\"T\",type:\"o\",side:\"S\",price:n.X9.number(\"p\"),avgPrice:n.X9.number(\"ap\"),executedPrice:n.X9.number(\"ap\"),executedQty:n.X9.number(\"z\"),origQty:\"q\",stopPrice:n.X9.number(\"sp\"),operate:\"x\",status:\"X\",orderId:\"i\",clientOrderId:\"c\",orderType:\"o\",origType:\"ot\",timeInForce:\"f\",goodTillDate:n.X9.number(\"gtd\"),bidNotional:n.X9.number(\"b\"),askNotional:n.X9.number(\"a\"),workingType:\"wt\",positionSide:\"ps\",reduceOnly:\"R\",strategyId:\"si\",strategySubId:\"ss\",strategyType:\"st\",closePosition:\"cp\",activatePrice:n.X9.number(\"AP\"),callbackRate:n.X9.number(\"cr\"),priceRate:n.X9.number(\"cr\"),priceMatch:\"pm\",updateTime:\"T\"},l=Object.keys(I),f={algoId:\"aid\",clientAlgoId:\"caid\",algoType:\"at\",orderType:\"o\",symbol:\"s\",side:\"S\",positionSide:\"ps\",timeInForce:\"f\",quantity:\"q\",algoStatus:\"X\",actualOrderId:\"ai\",actualPrice:\"ap\",actualQty:\"aq\",actualType:\"act\",triggerPrice:\"tp\",price:\"p\",icebergQuantity:\"iq\",tpTriggerPrice:\"tptp\",tpPrice:\"tpp\",tpOrderType:\"tpot\",slTriggerPrice:\"sltp\",slPrice:\"slp\",slOrderType:\"slot\",selfTradePreventionMode:\"V\",workingType:\"wt\",priceMatch:\"pm\",closePosition:\"cp\",priceProtect:\"pP\",reduceOnly:\"R\",activatePrice:\"AP\",callbackRate:\"cr\",goodTillDate:n.X9.number(\"gtd\"),triggerTime:n.X9.number(\"tt\"),updateTime:n.X9.now()},y=Object.keys(f),g={symbol:\"s\",strategyId:\"si\",newClientStrategyId:\"c\",side:\"S\",strategyType:\"st\",timeInForce:\"f\",origQty:\"q\",price:\"p\",stopPrice:\"sp\",strategyStatus:\"os\",bookTime:\"T\",reduceOnly:\"R\",workingType:\"wt\",positionSide:\"ps\",closePosition:\"cp\",activatePrice:\"AP\",priceRate:n.X9.number(\"cr\"),priceMatch:\"pm\",orderId:\"i\",parentStrategyId:\"pi\",parentSubId:\"PS\",parentStrategyType:\"pt\",goodTillDate:n.X9.number(\"gtd\")},r=Object.keys(g),d={symbol:\"s\",strategyClientOrderId:\"c\",strategyType:\"st\",strategyId:\"si\",takeProfitPrice:\"tpp\",stopLossPrice:\"slp\",takeProfitTriggerPrice:\"tptp\",stopLossTriggerPrice:\"sltp\"},i=Object.keys(d);function A(m,_,W){const X=(0,P.s)(m,{type:m.type,eventType:\"executionReport\",transform:Q=>j=>Q.coalscedMsg.forEach(({data:V})=>j((0,n.Li)(V,S,T)))},_,W);return(0,o.G)(X)}function R(m,_,W){const X=(0,P.s)(m,{type:m.type,eventType:\"ORDER_TRADE_UPDATE\",transform:Q=>j=>Q.coalscedMsg.forEach(({data:V})=>{if(V.fs&&V.fs!==m.PMFuturesSource)return;const c=(0,n.Li)(V.o,I,l);return(V.o.X===\"PARTIALLY_FILLED\"||V.o.x===\"AMENDMENT\")&&(c.updateTime=V.E),j(c)})},_,W);return(0,o.G)(X)}function F(m,_,W){const X=(0,P.s)(m,{type:m.type,eventType:\"ALGO_UPDATE\",transform:Q=>j=>Q.coalscedMsg.forEach(({data:V})=>{const c=\"ao\"in V?V.ao:V.o;return j((0,n.Li)(c,f,y))})},_,W);return(0,o.G)(X)}function O(m){const _=(0,P.s)(m,{type:m.type,eventType:\"CONDITIONAL_ORDER_TRADE_UPDATE\",transform:W=>X=>W.coalscedMsg.forEach(({data:Q})=>{if(!(Q.fs&&Q.fs!==m.PMFuturesSource))return X((0,n.Li)(Q.so,g,r))})});return(0,o.G)(_)}function h(m,_,W){const X=(0,P.s)(m,{type:m.type,eventType:\"OTOCO_ORDER_UPDATE\",transform:Q=>j=>Q.coalscedMsg.forEach(({data:V})=>{j((0,n.Li)(V.su,d,i))})},_,W);return(0,o.G)(X)}}",
+      "sha256": "352d145ced1d19136316a6d5768c7b9440f3ab66986db37d5706ff84a312f884",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/32536.f022d7ba.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      }
+    },
+    {
+      "id": "70020",
+      "chunks": [
+        "3314"
+      ],
+      "source": "70020(D,l,t){\"use strict\";t.d(l,{Q:()=>d});var e=t(41594),a=t.n(e),r=t(80065),n=t(96636),i=t(51471),s=\"open-order-notification-sound-open\",c=(0,r.A)(function(y){return{enableNotification:!1,setNotification:function(p){return y({enableNotification:p})}}}),d=function(){var y=(0,e.useState)(!1),p=y[0],T=y[1],S=(0,i.zr)(s,!1),E=S.data,A=S.setData,O=S.hasInitialized,m=c(),g=m.enableNotification,u=m.setNotification,o=(0,n.Z)().isEUFuturesUrl;(0,e.useEffect)(function(){p||O&&(u(E),T(!0))},[E,p,O,u]);var f=(0,e.useCallback)(function(){u(!g),A(!g)},[g,A,u]);return{initialized:p,showNotification:!o,enableNotification:o?!1:g,toggleNotification:f}}}",
+      "sha256": "9e247d3e16a783e1c6f2b2c529d64241db8ec3b52afe5d7de1618aae36467963",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/3314.51597d7f.js",
+        "sha256": "9081346db36168e132d8cb36131c8a02703e1aa8b296ea8e87e22aad13d478d1",
+        "bytes": 103437,
+        "factory_utf16_range": [
+          77204,
+          77849
+        ]
+      }
+    },
+    {
+      "id": "4189",
+      "chunks": [
+        "14105"
+      ],
+      "source": "4189(U,P,e){e.d(P,{zH:()=>D,nT:()=>h,u7:()=>Q,$t:()=>u,Qj:()=>T});var s=e(41594),l=e(87017),y=e(48187),m=e(57861),L=e(41466);const M=async g=>{let f;try{f=await(0,m.post)(`/bapi/futures/v1/private/future/order/open-orders?${(0,L.E2)(g||{})}`,{})}catch{f={success:!1}}return f};var S=e(43335),R=e(26860),N=e(84266),I=e(16921),C=e(90291),A=e(47738),a=e(95541),F=e(71822);const d=(g,f,i)=>{const{isCM:b}=i,p=[...g];return f.forEach(O=>{const{symbol:k,status:B,strategyType:G=null,clientOrderId:K}=O,z={...O,strategyType:G},x=p.findIndex(V=>V.clientOrderId===K&&V.symbol===k);switch(B){case\"NEW\":F.J.emit(\"NEW\",{isCM:b,clientOrderId:K}),x!==-1?p[x]=z:p.unshift(z);break;case\"PARTIALLY_FILLED\":x!==-1&&(O.operate!==\"AMENDMENT\"&&F.J.emit(\"PARTIALLY_FILLED\",p[x]),p[x]=z);break;case\"CANCELED\":case\"EXPIRED\":case\"EXPIRED_IN_MATCH\":x!==-1&&(F.J.emit(\"CANCELED\",p[x]),p.splice(x,1));break;case\"FILLED\":x!==-1&&(F.J.emit(\"FILLED_NORMAL_ORDER\",p[x]),p.splice(x,1));break;default:break}}),p},v=({isPM2:g,isCM:f,stream:i,queryClient:b,copyTradingPayload:p})=>{const O=p||{},k=f?a.CX:(0,a.kc)({copyTradingPayload:O}),B=K=>{b.setQueryData(S.Bz.OPEN_ORDERS(f,O),z=>({success:!0,data:d(z?.data||[],K,{isCM:f})}))};k.addWorker(B);const G=i.getUserOrderStream({isPM2:g,params:O}).subscribe(K=>{k.push(K)});return()=>{G(),k.removeWorker(B)}},o=(0,A.Y)({queryKey:S.Bz.OPEN_ORDERS,subscribeToStreamFn:v}),T=async({isCM:g,copyTradingPayload:f})=>g?(0,y.mp)():M(f),u=({enabled:g,isCM:f,isPM2:i,getSDK:b,queryClient:p,copyTradingPayload:O})=>{g&&o({getSDK:b,queryClient:p,isCM:f,isPM2:i,copyTradingPayload:O})},D=(g,{disableWs:f,...i}={})=>{const b=(0,R.n)(),{isExistFutureAccount:p}=(0,N.Py)(),O=(0,I.by)(),k=!!(b&&p),B=(0,I.Gw)(),G=(0,l.useQueryClient)(),K=(0,C.OE)();return(0,s.useEffect)(function(){u({enabled:k&&!f,isCM:g,isPM2:O,getSDK:K,queryClient:G,copyTradingPayload:B})},[k,g,O,K,G,f,B]),(0,l.useQuery)(S.Bz.OPEN_ORDERS(g,B),()=>T({isCM:g,copyTradingPayload:B}),{enabled:k,cacheTime:1/0,staleTime:1/0,notifyOnChangeProps:[\"data\"],...i})},Q=g=>{const f=(0,l.useQueryClient)(),i=(0,I.Gw)();return(0,s.useCallback)(()=>{f.invalidateQueries(S.Bz.OPEN_ORDERS(g,i))},[i,g,f])},h=g=>{const f=(0,l.useQueryClient)(),i=(0,I.Gw)();return(0,s.useCallback)(()=>f.getQueryData(S.Bz.OPEN_ORDERS(g,i))?.data?.length||0,[i,g,f])}}",
+      "sha256": "1a9a1cfa869a72786a4b53fb5f800f5bd81fbd67ba22ad707404ee1be7b301cf",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/14105.10a31c5d.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      }
+    },
+    {
+      "id": "37230",
+      "chunks": [
+        "32536"
+      ],
+      "source": "37230(ee,K,t){t.d(K,{Li:()=>S,Rr:()=>n,X9:()=>o});const P={isolated:!0,cross:!1};function n(T){const I=T.split(\".\");return l=>{for(let f=0;f<I.length;f++){if(!l)return;l=l[I[f]]}return l}}const o={number(T){const I=n(T);return l=>Number(I(l))},text(T){const I=n(T);return l=>I(l)},isolatedVal(T){const I=n(T);return l=>P[I(l)]},now(){return T=>Date.now()}};function S(T,I,l){const f=Object.create(null);for(let y=0;y<l.length;y++){const g=l[y],r=I[g];let d;typeof r==\"function\"?d=r(T):d=T[r],f[g]=d}return f}}",
+      "sha256": "cc95a3e9cf866e8925386948ee8bb5118ff5fd2188f1f70185abf99c66ca9607",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/32536.f022d7ba.js",
+        "evidence": "Observed resource URL and runtime factory source; complete chunk bytes were not captured."
+      }
+    }
+  ]
+}

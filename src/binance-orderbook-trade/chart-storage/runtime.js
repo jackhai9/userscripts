@@ -12,8 +12,14 @@ const DRAWING_MODULE = '76535';
  * Mirror optimization is optional and drainable. Drawing ownership protection
  * remains installed after stop and gets the same finite startup capture window.
  */
-export function startChartStorageOptimizer() {
+export function startChartStorageOptimizer({ additionalTargets = {} } = {}) {
   if (!isChartStoragePage()) throw new Error('Chart storage requires a top-level Binance trading page');
+  for (const [id, target] of Object.entries(additionalTargets)) {
+    if (id === MIRROR_MODULE || id === DRAWING_MODULE ||
+        !target || [target.replace, target.onCapture, target.onFailure].some(callback => typeof callback !== 'function')) {
+      throw new Error('Additional native targets require independent replacement and outcome callbacks');
+    }
+  }
   const writer = createChartMirrorWriter();
   const state = { status: 'waiting', reason: null, attempts: 0, matches: 0, executions: 0 };
   const drawingScope = { status: 'waiting', reason: null, attempts: 0, matches: 0, executions: 0 };
@@ -78,12 +84,28 @@ export function startChartStorageOptimizer() {
       targets: {
         [MIRROR_MODULE]: original => replaceFactory(MIRROR_MODULE, original, factory => replaceChartMirrorFactory(factory, dispatch)),
         [DRAWING_MODULE]: original => replaceFactory(DRAWING_MODULE, original, replaceChartDrawingSaveFactory),
+        ...Object.fromEntries(Object.entries(additionalTargets).map(([id, target]) => [id, original => {
+          if (!isChartStoragePage()) {
+            observer.stop('scope_changed');
+            void stop('scope_changed');
+            return original;
+          }
+          return target.replace(original);
+        }])),
       },
       onCapture(id) {
+        if (Object.hasOwn(additionalTargets, id)) {
+          additionalTargets[id].onCapture();
+          return;
+        }
         const targetState = id === MIRROR_MODULE ? state : drawingScope;
         if (id !== MIRROR_MODULE || !stopping) targetState.status = 'active';
       },
       onFailure(id, reason) {
+        if (Object.hasOwn(additionalTargets, id)) {
+          additionalTargets[id].onFailure(reason);
+          return;
+        }
         if (id === MIRROR_MODULE) {
           void stop(reason === 'execution_failed' ? 'capture_failed' : reason);
         } else {
@@ -95,6 +117,7 @@ export function startChartStorageOptimizer() {
     });
   } catch {
     // A late extension cannot safely replace the runtime's cached modules.
+    for (const target of Object.values(additionalTargets)) target.onFailure('bootstrap_unavailable');
     drawingScope.status = 'unavailable';
     drawingScope.reason = 'bootstrap_unavailable';
     finishObservation();

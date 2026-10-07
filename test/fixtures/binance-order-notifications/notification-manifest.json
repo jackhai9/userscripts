@@ -1,0 +1,955 @@
+{
+  "schema_version": 1,
+  "capture_date": "2026-10-07",
+  "source_snapshot": {
+    "file": "native-factories.json",
+    "sha256": "10744d8bd43ff1910729cc3b81eb553014ec9f3bde6b95ccf92c004c3f4a7381"
+  },
+  "parser": "acorn@8.18.0",
+  "offsets": "Zero-based UTF-16 offsets; end is exclusive. Factory ranges refer to exact Function.prototype.toString sources.",
+  "scope": "Only native order toast and sound side effects are scoped. Native subscriptions, event emitters, preferences, queue limit, throttles, cooldown, JSX and other factory behavior remain unchanged.",
+  "factories": [
+    {
+      "id": "39116",
+      "chunks": [
+        "3314"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/3314.51597d7f.js",
+        "sha256": "9081346db36168e132d8cb36131c8a02703e1aa8b296ea8e87e22aad13d478d1",
+        "bytes": 103437,
+        "factory_utf16_range": [
+          75503,
+          77203
+        ]
+      },
+      "original_sha256": "5362a54e61f022714e673e166b62e3c22997084ca7a9f4e676475ec91cfcfaa8",
+      "transformed_sha256": "5e395fc737bca006731fb6dfec0a7f8be107f20a6108b874bf09669433c022d7",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            446,
+            447
+          ],
+          "original": "A",
+          "inserted": "function(__event){if(__notify.allowSoundInput(__event))return Reflect.apply(A,this,[__event])}",
+          "purpose": "Recheck a ready sound token before the native throttle callback enqueues it",
+          "transformed_utf16_range": [
+            446,
+            540
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            797,
+            817
+          ],
+          "original": "u(String(P.orderId))",
+          "inserted": "((!__notify.soundReady()||__notify.allowOrder(P))&&u(__notify.soundInput(P)))",
+          "purpose": "Keep unready native order IDs; otherwise scope and capture the stream order symbol",
+          "transformed_utf16_range": [
+            890,
+            967
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1142,
+            1162
+          ],
+          "original": "u(String(P.orderId))",
+          "inserted": "((!__notify.soundReady()||__notify.allowOrder(P))&&u(__notify.soundInput(P)))",
+          "purpose": "Keep unready native order IDs; otherwise scope and capture the stream order symbol",
+          "transformed_utf16_range": [
+            1292,
+            1369
+          ]
+        }
+      ]
+    },
+    {
+      "id": "40477",
+      "chunks": [
+        "3314"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/3314.51597d7f.js",
+        "sha256": "9081346db36168e132d8cb36131c8a02703e1aa8b296ea8e87e22aad13d478d1",
+        "bytes": 103437,
+        "factory_utf16_range": [
+          44905,
+          45625
+        ]
+      },
+      "original_sha256": "3f9291c4bb07d576ba766852e0343b2196d8e044aa7122e4a0f5c9c1fcf341a6",
+      "transformation": "None; retained as an independent native dependency fixture."
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "37511"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/37511.5ad8e45f.js",
+        "sha256": "4450c0c462c214862282a421fe2d929fd40f22970e17e90814b29b2b21e04269",
+        "bytes": 124660,
+        "factory_utf16_range": [
+          13866,
+          15298
+        ]
+      },
+      "original_sha256": "8eaee3ce87f001f8530992b2ea4ce99ee632ef902f129e79c76d6b1268b4de1a",
+      "transformed_sha256": "ed76d88f300c24e66dbbb7a16964f13afeb6c97bf671a74f114073c21e4326c7",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            457,
+            458
+          ],
+          "original": "h",
+          "inserted": "function(__token,...__args){if(__notify.allowToken(__token))return Reflect.apply(h,this,__args)}",
+          "purpose": "Recheck the captured symbol token when the native toast throttle executes",
+          "transformed_utf16_range": [
+            457,
+            553
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            723,
+            723
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(l))return;",
+          "purpose": "Scope cancelOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            818,
+            852
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            872,
+            872
+          ],
+          "original": "",
+          "inserted": "__notify.token(l),",
+          "purpose": "Carry the cancelOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1001,
+            1019
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            920,
+            920
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(l))return;",
+          "purpose": "Scope fillOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            1067,
+            1101
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1065,
+            1065
+          ],
+          "original": "",
+          "inserted": "__notify.token(l),",
+          "purpose": "Carry the fillOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1246,
+            1264
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1133,
+            1133
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(l))return;",
+          "purpose": "Scope fillOrderPartNotify before native toast logic",
+          "transformed_utf16_range": [
+            1332,
+            1366
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1286,
+            1286
+          ],
+          "original": "",
+          "inserted": "__notify.token(l),",
+          "purpose": "Carry the fillOrderPartNotify symbol token",
+          "transformed_utf16_range": [
+            1519,
+            1537
+          ]
+        }
+      ]
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "24132"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/24132.91842e2a.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      },
+      "original_sha256": "faec1b3eb9f86a4e7087128f8fd3b74a210581c9988a0041c909a848cfb0ae0f",
+      "transformed_sha256": "a8dc537d87246b6dc1c14fc75084952e6a062c275c5a3f454ee6b58efa08dba0",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            456,
+            457
+          ],
+          "original": "_",
+          "inserted": "function(__token,...__args){if(__notify.allowToken(__token))return Reflect.apply(_,this,__args)}",
+          "purpose": "Recheck the captured symbol token when the native toast throttle executes",
+          "transformed_utf16_range": [
+            456,
+            552
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            722,
+            722
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(i))return;",
+          "purpose": "Scope cancelOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            817,
+            851
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            871,
+            871
+          ],
+          "original": "",
+          "inserted": "__notify.token(i),",
+          "purpose": "Carry the cancelOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1000,
+            1018
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            919,
+            919
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(i))return;",
+          "purpose": "Scope fillOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            1066,
+            1100
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1064,
+            1064
+          ],
+          "original": "",
+          "inserted": "__notify.token(i),",
+          "purpose": "Carry the fillOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1245,
+            1263
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1132,
+            1132
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(i))return;",
+          "purpose": "Scope fillOrderPartNotify before native toast logic",
+          "transformed_utf16_range": [
+            1331,
+            1365
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1285,
+            1285
+          ],
+          "original": "",
+          "inserted": "__notify.token(i),",
+          "purpose": "Carry the fillOrderPartNotify symbol token",
+          "transformed_utf16_range": [
+            1518,
+            1536
+          ]
+        }
+      ]
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "57898"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/57898.16437e66.js",
+        "sha256": "73221d1be841cc383f4b90b703713cdcf19455eadc78c64c40ca1692ff359f52",
+        "bytes": 102464,
+        "factory_utf16_range": [
+          78802,
+          80233
+        ]
+      },
+      "original_sha256": "ab507602d8d3533b30239e7eadc4b2d53392dd18a2af5da4539f35feacdac2c6",
+      "transformed_sha256": "d4d563456fb918fae85f8e3b3b25a4c2721f67b629a2ae4f40a8db10f0821831",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            456,
+            457
+          ],
+          "original": "C",
+          "inserted": "function(__token,...__args){if(__notify.allowToken(__token))return Reflect.apply(C,this,__args)}",
+          "purpose": "Recheck the captured symbol token when the native toast throttle executes",
+          "transformed_utf16_range": [
+            456,
+            552
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            722,
+            722
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(a))return;",
+          "purpose": "Scope cancelOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            817,
+            851
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            871,
+            871
+          ],
+          "original": "",
+          "inserted": "__notify.token(a),",
+          "purpose": "Carry the cancelOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1000,
+            1018
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            919,
+            919
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(a))return;",
+          "purpose": "Scope fillOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            1066,
+            1100
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1064,
+            1064
+          ],
+          "original": "",
+          "inserted": "__notify.token(a),",
+          "purpose": "Carry the fillOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1245,
+            1263
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1132,
+            1132
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(a))return;",
+          "purpose": "Scope fillOrderPartNotify before native toast logic",
+          "transformed_utf16_range": [
+            1331,
+            1365
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1285,
+            1285
+          ],
+          "original": "",
+          "inserted": "__notify.token(a),",
+          "purpose": "Carry the fillOrderPartNotify symbol token",
+          "transformed_utf16_range": [
+            1518,
+            1536
+          ]
+        }
+      ]
+    },
+    {
+      "id": "55401",
+      "chunks": [
+        "29042"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/29042.3c0cf97b.js",
+        "sha256": "fc8acb6938b71aeb1054de9e970052b5bd5e84b53e9eb373378ef6e21c0b161e",
+        "bytes": 1076,
+        "factory_utf16_range": [
+          104,
+          1071
+        ]
+      },
+      "original_sha256": "98094af191e88c1637017da1ba05037fa1fb4c39a7028dc8e35d0aa1c39c2a3e",
+      "transformed_sha256": "b6cab5fc0aa0da9adee9c9443b7b522689d2b48324621d58a267afa6c92eef21",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            121,
+            121
+          ],
+          "original": "",
+          "inserted": ",__event",
+          "purpose": "Capture one symbol token for both native play calls",
+          "transformed_utf16_range": [
+            121,
+            129
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            123,
+            123
+          ],
+          "original": "",
+          "inserted": "if(!__notify.canPlay(__event))return;",
+          "purpose": "Recheck symbol immediately before audio load and play",
+          "transformed_utf16_range": [
+            131,
+            168
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            234,
+            234
+          ],
+          "original": "",
+          "inserted": "if(!__notify.canPlay(__event))return;",
+          "purpose": "Recheck the same symbol token before the second native play",
+          "transformed_utf16_range": [
+            279,
+            316
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            551,
+            551
+          ],
+          "original": "",
+          "inserted": "if(!__notify.prepareSound(l))return;",
+          "purpose": "Drop stale queued symbols only when the native playback entrypoint is ready",
+          "transformed_utf16_range": [
+            633,
+            669
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            670,
+            670
+          ],
+          "original": "",
+          "inserted": ",l.current[0]",
+          "purpose": "Retain the active queue token across the audio promise",
+          "transformed_utf16_range": [
+            788,
+            801
+          ]
+        }
+      ]
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "57276"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/57276.ae6ee5f0.js",
+        "sha256": "8bbc3de3d94e8e19dbd2946f22cb03b43d2cd8051c7da452c5c59ad67e8345bc",
+        "bytes": 4285,
+        "factory_utf16_range": [
+          2047,
+          3478
+        ]
+      },
+      "original_sha256": "7465bd6eac312fcc597b231b916795bf0daaf51e01191f60e6a6c2b6adeabdba",
+      "transformed_sha256": "0e53ec3fd8c1bc0053ad5392718a70254d9b5634051a762a55af8e2689e1ce01",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            456,
+            457
+          ],
+          "original": "c",
+          "inserted": "function(__token,...__args){if(__notify.allowToken(__token))return Reflect.apply(c,this,__args)}",
+          "purpose": "Recheck the captured symbol token when the native toast throttle executes",
+          "transformed_utf16_range": [
+            456,
+            552
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            722,
+            722
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(r))return;",
+          "purpose": "Scope cancelOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            817,
+            851
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            871,
+            871
+          ],
+          "original": "",
+          "inserted": "__notify.token(r),",
+          "purpose": "Carry the cancelOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1000,
+            1018
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            919,
+            919
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(r))return;",
+          "purpose": "Scope fillOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            1066,
+            1100
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1064,
+            1064
+          ],
+          "original": "",
+          "inserted": "__notify.token(r),",
+          "purpose": "Carry the fillOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1245,
+            1263
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1132,
+            1132
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(r))return;",
+          "purpose": "Scope fillOrderPartNotify before native toast logic",
+          "transformed_utf16_range": [
+            1331,
+            1365
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1285,
+            1285
+          ],
+          "original": "",
+          "inserted": "__notify.token(r),",
+          "purpose": "Carry the fillOrderPartNotify symbol token",
+          "transformed_utf16_range": [
+            1518,
+            1536
+          ]
+        }
+      ]
+    },
+    {
+      "id": "34122",
+      "chunks": [
+        "57276"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/57276.ae6ee5f0.js",
+        "sha256": "8bbc3de3d94e8e19dbd2946f22cb03b43d2cd8051c7da452c5c59ad67e8345bc",
+        "bytes": 4285,
+        "factory_utf16_range": [
+          3479,
+          4280
+        ]
+      },
+      "original_sha256": "f036bb5b69da48fe84b75664e4e05079e1953baf0406dabdc60e07f3d716b492",
+      "transformation": "None; retained as an independent native dependency fixture."
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "76905"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/76905.2ae2c9b9.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      },
+      "original_sha256": "1f40d63c4f3f27799bd34fd93ece8686c6b276741d62f37d928cdcba858ec53f",
+      "transformed_sha256": "9d93d6d605c61b37d32cb93acaf5f1fbd451437aa8cf22e496c125daaf23cd8b",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            456,
+            457
+          ],
+          "original": "c",
+          "inserted": "function(__token,...__args){if(__notify.allowToken(__token))return Reflect.apply(c,this,__args)}",
+          "purpose": "Recheck the captured symbol token when the native toast throttle executes",
+          "transformed_utf16_range": [
+            456,
+            552
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            722,
+            722
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(t))return;",
+          "purpose": "Scope cancelOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            817,
+            851
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            871,
+            871
+          ],
+          "original": "",
+          "inserted": "__notify.token(t),",
+          "purpose": "Carry the cancelOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1000,
+            1018
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            919,
+            919
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(t))return;",
+          "purpose": "Scope fillOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            1066,
+            1100
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1064,
+            1064
+          ],
+          "original": "",
+          "inserted": "__notify.token(t),",
+          "purpose": "Carry the fillOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1245,
+            1263
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1132,
+            1132
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(t))return;",
+          "purpose": "Scope fillOrderPartNotify before native toast logic",
+          "transformed_utf16_range": [
+            1331,
+            1365
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1285,
+            1285
+          ],
+          "original": "",
+          "inserted": "__notify.token(t),",
+          "purpose": "Carry the fillOrderPartNotify symbol token",
+          "transformed_utf16_range": [
+            1518,
+            1536
+          ]
+        }
+      ]
+    },
+    {
+      "id": "30877",
+      "chunks": [
+        "49426"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/49426.57389f4e.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      },
+      "original_sha256": "a25ce74a214c9e2b80bc7141b20fe798c7fbc30bcb4f79c0a9c363b4cca7119f",
+      "transformed_sha256": "a9636d03e0c127abfe3baa29cbcfe2f548735a0fb1097e73165f4f053d8703bd",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            456,
+            457
+          ],
+          "original": "M",
+          "inserted": "function(__token,...__args){if(__notify.allowToken(__token))return Reflect.apply(M,this,__args)}",
+          "purpose": "Recheck the captured symbol token when the native toast throttle executes",
+          "transformed_utf16_range": [
+            456,
+            552
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            722,
+            722
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(n))return;",
+          "purpose": "Scope cancelOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            817,
+            851
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            871,
+            871
+          ],
+          "original": "",
+          "inserted": "__notify.token(n),",
+          "purpose": "Carry the cancelOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1000,
+            1018
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            919,
+            919
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(n))return;",
+          "purpose": "Scope fillOrderNotify before native toast logic",
+          "transformed_utf16_range": [
+            1066,
+            1100
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1064,
+            1064
+          ],
+          "original": "",
+          "inserted": "__notify.token(n),",
+          "purpose": "Carry the fillOrderNotify symbol token",
+          "transformed_utf16_range": [
+            1245,
+            1263
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1132,
+            1132
+          ],
+          "original": "",
+          "inserted": "if(!__notify.allowOrder(n))return;",
+          "purpose": "Scope fillOrderPartNotify before native toast logic",
+          "transformed_utf16_range": [
+            1331,
+            1365
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1285,
+            1285
+          ],
+          "original": "",
+          "inserted": "__notify.token(n),",
+          "purpose": "Carry the fillOrderPartNotify symbol token",
+          "transformed_utf16_range": [
+            1518,
+            1536
+          ]
+        }
+      ]
+    },
+    {
+      "id": "73335",
+      "chunks": [
+        "40026"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": null,
+        "evidence": "Runtime factory source and registration chunk ID only; complete chunk bytes and script URL were not captured."
+      },
+      "original_sha256": "45e3ee5e33406e46329e7f641af069ba469481d4a3d003ebae8af2a46df77e94",
+      "transformation": "None; retained as an independent native dependency fixture."
+    },
+    {
+      "id": "22584",
+      "chunks": [
+        "67656"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": null,
+        "evidence": "Runtime factory source and registration chunk ID only; complete chunk bytes and script URL were not captured."
+      },
+      "original_sha256": "dbb8a7a3bddd76408b5382a0f20a6ee7ad45d09ad61ce2168c3de799aafd2f9b",
+      "transformation": "None; retained as an independent native dependency fixture."
+    },
+    {
+      "id": "5558",
+      "chunks": [
+        "32536"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/32536.f022d7ba.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      },
+      "original_sha256": "352d145ced1d19136316a6d5768c7b9440f3ab66986db37d5706ff84a312f884",
+      "transformation": "None; retained as an independent native dependency fixture."
+    },
+    {
+      "id": "70020",
+      "chunks": [
+        "3314"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/3314.51597d7f.js",
+        "sha256": "9081346db36168e132d8cb36131c8a02703e1aa8b296ea8e87e22aad13d478d1",
+        "bytes": 103437,
+        "factory_utf16_range": [
+          77204,
+          77849
+        ]
+      },
+      "original_sha256": "9e247d3e16a783e1c6f2b2c529d64241db8ec3b52afe5d7de1618aae36467963",
+      "transformation": "None; retained as an independent native dependency fixture."
+    },
+    {
+      "id": "4189",
+      "chunks": [
+        "14105"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/14105.10a31c5d.js",
+        "evidence": "Observed scriptParsed URL and runtime factory source; complete chunk bytes were not captured."
+      },
+      "original_sha256": "1a9a1cfa869a72786a4b53fb5f800f5bd81fbd67ba22ad707404ee1be7b301cf",
+      "transformation": "None; retained as an independent native dependency fixture."
+    },
+    {
+      "id": "37230",
+      "chunks": [
+        "32536"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on 2026-10-07.",
+      "bundle": {
+        "availability": "unavailable",
+        "url": "https://bin.bnbstatic.com/static/chunks/32536.f022d7ba.js",
+        "evidence": "Observed resource URL and runtime factory source; complete chunk bytes were not captured."
+      },
+      "original_sha256": "cc95a3e9cf866e8925386948ee8bb5118ff5fd2188f1f70185abf99c66ca9607",
+      "transformation": "None; retained as an independent native dependency fixture."
+    }
+  ],
+  "outputs": {
+    "module_sha256": "e8f7336b35ca193e448585f3b5fa326bcf2835d437c3f04a64e315dafe281f56",
+    "fixture_sha256": "02db153a063830b3b5ec9aca76157633b478a82a1aa4aaffac56394349678305"
+  }
+}
