@@ -3615,13 +3615,13 @@ installChartStorageOptimizer();
     return { done, repriceAttempts, lastRepriceApiErrorCode };
   }
 
-  async function withAccountOperationLock(mode, operation, queuedSignal = null) {
+  async function withAccountOperationLock(mode, operation, queuedSignal = null, reportUnavailable = true) {
     if (!navigator.locks) throw new Error('Account operations require Web Locks');
     return navigator.locks.request('userscripts:usdt-account-operation:v1', {
       mode, ...(queuedSignal ? { signal: queuedSignal } : { ifAvailable: true }),
     }, async (lock) => {
       if (!lock) {
-        setLadderStatus('Account operation blocked: another tab is transferring funds');
+        if (reportUnavailable) setLadderStatus('Account operation blocked: another tab is transferring funds');
         return { status: 'not_started' };
       }
       return operation();
@@ -6820,13 +6820,16 @@ installChartStorageOptimizer();
       if (epoch !== usdtRebalanceEligibilityEpoch || !isFuturesTradingPage()) return;
       const next = observeAutomaticRebalanceActivity(previous, flat);
       if (next.status !== previous.status) writeUsdtRebalanceEpisode(key, next.status);
-    });
+    }, null, false);
   }
 
   function queueAutomaticUsdtRebalanceActivityObservation() {
     if (automaticUsdtRebalanceObservationTask || !cachedBncHeaders) return;
     automaticUsdtRebalanceObservationTask = observeAutomaticUsdtRebalanceActivity()
-      .catch((error) => setLadderStatus(`Automatic USDT transfer check failed: ${error.message}`))
+      .catch((error) => {
+        // Background rearming must not replace the outcome of the user's trading task.
+        log('Automatic USDT activity observation failed', error.name, error.message.slice(0, 240));
+      })
       .finally(() => {
         automaticUsdtRebalanceObservationTask = null;
         if (!usdtRebalanceTask && !ladderTask && !continuousLadderTask
