@@ -265,6 +265,25 @@
         "url": "https://bin.bnbstatic.com/static/chunks/32536.f022d7ba.js",
         "evidence": "Observed resource URL and runtime factory source; complete chunk bytes were not captured."
       }
+    },
+    {
+      "chunks": [
+        "3314"
+      ],
+      "id": "39116",
+      "source": "39116(D,l,t){\"use strict\";t.d(l,{QZ:()=>p.Q,$$:()=>n,E$:()=>S});var r=t(41594),s=2e3,e=2,n=function(){var E=(0,r.useRef)(null),A=function(O){E.current=setTimeout(function(){O(),E.current&&clearTimeout(E.current),E.current=null},s)};return(0,r.useMemo)(function(){return{interval:E,intervalFunc:A}},[])},i=t(75510),a=t(16921),c=t(72363),d=t(79515),h=t(40477),p=t(70020),T=function(E,A){var O=(0,d.nH)(),m=(0,d.Py)().isExistFutureAccount,y=(0,h.A)(A,500),u=y.run,o=(0,d.ON)().isPM2,f=(0,a.Gw)();(0,r.useEffect)(function(){if(!O||!m||!E)return function(){return null};var _=(0,c.Ri)({isCM:!0});return _.getUserOrderStream({isPM2:o,params:f}).subscribe(function(v){var L=Array.isArray(v)?(0,i._)(v):[v];L.forEach(function(C){(C.status===\"FILLED\"||C.status===\"PARTIALLY_FILLED\"||C.status===\"EXPIRED\")&&u(String(C.orderId))})})},[u,E,m,O,o,f]),(0,r.useEffect)(function(){if(!O||!m||!E)return function(){return null};var _=(0,c.Ri)({isCM:!1});return _.getUserOrderStream({isPM2:o,params:f}).subscribe(function(v){var L=Array.isArray(v)?(0,i._)(v):[v];L.forEach(function(C){(C.status===\"FILLED\"||C.status===\"PARTIALLY_FILLED\"||C.status===\"EXPIRED\")&&u(String(C.orderId))})})},[u,E,m,O,o,f])},S=function(){var E=(0,r.useState)(new Date),A=E[0],O=E[1],m=(0,r.useRef)([]),y=(0,p.Q)(),u=y.showNotification,o=y.enableNotification,f=(0,r.useCallback)(function(){var v;(v=m)===null||v===void 0||v.current.shift(),O(new Date)},[]),_=(0,r.useCallback)(function(v){var L;if(u&&((L=m)===null||L===void 0?void 0:L.current.length)<e&&o&&v){var C;(C=m)===null||C===void 0||C.current.push(v),O(new Date)}},[o,u]);return T(u&&o,_),(0,r.useMemo)(function(){return{notifications:m,lastNotifyTime:A,popNotification:f}},[A,f])}}",
+      "sha256": "0e53de2a0de8073e445688bdf6b858b9f0eb3c20b49ecda9f230418a7c85a2f8",
+      "evidence": "Runtime Function.prototype.toString source captured read-only on OUSDT and encoded 龙虾USDT on 2026-10-07; both sources match the complete public chunk.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/3314.86064918.js",
+        "sha256": "1051f1539d0003b3c5767bc1805cab99ed373f5935e86cf5110d93aa1e99329a",
+        "bytes": 103616,
+        "factory_utf16_range": [
+          75624,
+          77324
+        ]
+      }
     }
   ]
 }

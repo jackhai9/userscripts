@@ -17,6 +17,7 @@ export const TARGETS = {
   'binance-orderbook-trade': {
     entry: 'src/binance-orderbook-trade/index.user.js',
     output: 'scripts/binance-orderbook-trade.user.js',
+    licenseNotices: 'docs/licenses/binance-notification-parser.txt',
   },
   'binance-trading-data': {
     entry: 'src/binance-trading-data/index.user.js',
@@ -39,6 +40,14 @@ export const TARGETS = {
     },
   },
 };
+
+/** Keep release and coverage compilation byte-identical, including dependency notices. */
+export async function createUserscriptBanner(metadata, target) {
+  const licenseBanner = target.licenseNotices
+    ? `\n/*\n${await readFile(resolve(root, target.licenseNotices), 'utf8')}\n*/`
+    : '';
+  return metadata + licenseBanner;
+}
 
 async function buildTarget(name) {
   const target = TARGETS[name];
@@ -64,7 +73,7 @@ async function buildTarget(name) {
   const sourceWithoutMetadata = source.replace(metadata, '').trimStart();
   const result = await esbuild.build({
     absWorkingDir: root,
-    banner: { js: metadata },
+    banner: { js: await createUserscriptBanner(metadata, target) },
     bundle: true,
     charset: 'utf8',
     format: 'iife',

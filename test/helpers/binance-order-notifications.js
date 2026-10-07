@@ -206,6 +206,7 @@ export async function createNotificationHarness(t, {
   toastEnabled = true,
   soundEnabled = true,
   variantChunk = '37511',
+  soundSourceSha256 = '5362a54e61f022714e673e166b62e3c22997084ca7a9f4e676475ec91cfcfaa8',
   driftModule = null,
   firstPlayPending = false,
   inspectSoundQueue = false,
@@ -263,13 +264,14 @@ export async function createNotificationHarness(t, {
     : null;
   const factories = new Map();
   for (const id of [30877, 39116, 55401, 40477, 70020, 22584, 34122]) {
-    const original = createNativeOrderNotificationFactory(id, id === 30877 ? variantChunk : undefined);
+    const original = createNativeOrderNotificationFactory(id, id === 30877 ? variantChunk : undefined,
+      id === 39116 ? soundSourceSha256 : undefined);
     const target = scope?.targets[id];
     if (target && id === driftModule) {
       const driftedFactory = function changedNativeFactory(...args) {
         return Reflect.apply(original, this, args);
       };
-      assert.throws(() => target.replace(driftedFactory), /source does not match a pinned public module/);
+      assert.throws(() => target.replace(driftedFactory), SyntaxError);
       target.onFailure('source_mismatch');
       factories.set(id, driftedFactory);
     } else if (target) {

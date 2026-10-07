@@ -3,9 +3,12 @@
   "capture_date": "2026-10-07",
   "source_snapshot": {
     "file": "native-factories.json",
-    "sha256": "10744d8bd43ff1910729cc3b81eb553014ec9f3bde6b95ccf92c004c3f4a7381"
+    "sha256": "6abce8ab71349c94c786b0d628844d21224018e8cb1f4f43f4441428b9312f33"
   },
   "parser": "acorn@8.18.0",
+  "scope_analyzer": "eslint-scope@9.1.2",
+  "runtime_matching": "Lexical binding equivalence; property names, globals, constants, directives and all other behavior remain exact.",
+  "runtime_templates": 3,
   "offsets": "Zero-based UTF-16 offsets; end is exclusive. Factory ranges refer to exact Function.prototype.toString sources.",
   "scope": "Only native order toast and sound side effects are scoped. Native subscriptions, event emitters, preferences, queue limit, throttles, cooldown, JSX and other factory behavior remain unchanged.",
   "factories": [
@@ -946,10 +949,71 @@
       },
       "original_sha256": "cc95a3e9cf866e8925386948ee8bb5118ff5fd2188f1f70185abf99c66ca9607",
       "transformation": "None; retained as an independent native dependency fixture."
+    },
+    {
+      "id": "39116",
+      "chunks": [
+        "3314"
+      ],
+      "evidence": "Runtime Function.prototype.toString source captured read-only on OUSDT and encoded 龙虾USDT on 2026-10-07; both sources match the complete public chunk.",
+      "bundle": {
+        "availability": "complete_loaded_source",
+        "url": "https://bin.bnbstatic.com/static/chunks/3314.86064918.js",
+        "sha256": "1051f1539d0003b3c5767bc1805cab99ed373f5935e86cf5110d93aa1e99329a",
+        "bytes": 103616,
+        "factory_utf16_range": [
+          75624,
+          77324
+        ]
+      },
+      "original_sha256": "0e53de2a0de8073e445688bdf6b858b9f0eb3c20b49ecda9f230418a7c85a2f8",
+      "transformed_sha256": "94400bba354cdca99a7fc7a0310589a1edd390b4675c0bece6582d3d192b6617",
+      "inverse_replacement_verified": true,
+      "replacements": [
+        {
+          "factory_utf16_range": [
+            446,
+            447
+          ],
+          "original": "A",
+          "inserted": "function(__event){if(__notify.allowSoundInput(__event))return Reflect.apply(A,this,[__event])}",
+          "purpose": "Recheck a ready sound token before the native throttle callback enqueues it",
+          "transformed_utf16_range": [
+            446,
+            540
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            797,
+            817
+          ],
+          "original": "u(String(C.orderId))",
+          "inserted": "((!__notify.soundReady()||__notify.allowOrder(C))&&u(__notify.soundInput(C)))",
+          "purpose": "Keep unready native order IDs; otherwise scope and capture the stream order symbol",
+          "transformed_utf16_range": [
+            890,
+            967
+          ]
+        },
+        {
+          "factory_utf16_range": [
+            1142,
+            1162
+          ],
+          "original": "u(String(C.orderId))",
+          "inserted": "((!__notify.soundReady()||__notify.allowOrder(C))&&u(__notify.soundInput(C)))",
+          "purpose": "Keep unready native order IDs; otherwise scope and capture the stream order symbol",
+          "transformed_utf16_range": [
+            1292,
+            1369
+          ]
+        }
+      ]
     }
   ],
   "outputs": {
-    "module_sha256": "e8f7336b35ca193e448585f3b5fa326bcf2835d437c3f04a64e315dafe281f56",
-    "fixture_sha256": "02db153a063830b3b5ec9aca76157633b478a82a1aa4aaffac56394349678305"
+    "module_sha256": "6088431774688828aae0efcb99725be4b2a46760a0735e8df9ba8a5a78dddd7b",
+    "fixture_sha256": "b02dc7a3a774931e62bf1b8447320b2625d136ec56a986231df1293b39b2158b"
   }
 }
