@@ -143,7 +143,10 @@ test('user ignores programmatic and unreadable price clicks before accepting one
   await page.clock.runFor(100);
 
   // Then exactly the real valid click is acknowledged with its concrete fields.
-  await expect(page.locator('#jh-binance-ladder-status')).toHaveText('单击开多已提交 · 81.0 × 0.07');
+  await expect.poll(async () => {
+    await page.clock.runFor(16);
+    return page.locator('#jh-binance-ladder-status').textContent();
+  }).toBe('单击开多已提交 · 81.0 × 0.07');
   expect((await readFixtureState(page)).events.filter(({ type }) => type === 'order-submitted')
     .map(({ action, price, quantity }) => ({ action, price, quantity })))
     .toEqual([{ action: '开多', price: '81.0', quantity: '0.07' }]);

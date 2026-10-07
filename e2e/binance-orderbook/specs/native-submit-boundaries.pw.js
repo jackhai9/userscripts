@@ -136,6 +136,10 @@ for (const native of [
 
     // When the ordinary ladder exhausts the native button's three-second readiness window.
     await page.locator('[data-ladder-action="OPEN_LONG"]').evaluate(button => button.click());
+    await expect.poll(async () => {
+      await page.clock.runFor(16);
+      return page.locator(STATUS).textContent();
+    }).toBe('阶梯开多计划：3.5% / 5档 / 幅5');
     await page.clock.runFor(3500);
 
     // Then the matching readiness reason stops the ladder with zero confirmed or sent orders.
