@@ -7,6 +7,8 @@ import { observeChartStorageBootstrap } from '../../src/binance-orderbook-trade/
 import { startChartStorageOptimizer } from '../../src/binance-orderbook-trade/chart-storage/runtime.js';
 import { createNativeMirrorFactory } from '../fixtures/binance-chart-storage/mirror-scoped-callback.js';
 import { createNativeDrawingSaveFactory } from '../fixtures/binance-chart-storage/drawing-save-scoped.js';
+import { createNativeOrderNotificationFactory } from '../fixtures/binance-order-notifications/original-factories.js';
+import { createOrderNotificationScope } from '../../src/binance-orderbook-trade/order-notifications/runtime.js';
 
 const PAGE = 'https://www.binance.com/zh-CN/futures/BTCUSDT';
 const QUEUE = 'webpackChunkfutures_trade_ui';
@@ -90,8 +92,8 @@ function installPage(t, { url = PAGE, framed = false, queue } = {}) {
       observers.push(observer);
       return observer;
     },
-    start() {
-      const session = startChartStorageOptimizer();
+    start(options) {
+      const session = startChartStorageOptimizer(options);
       sessions.push(session);
       return session;
     },
@@ -195,6 +197,108 @@ test('user keeps the original factory executable when strict source registration
   assert.equal(typeof Object.getOwnPropertyDescriptor(globalThis[QUEUE], 'push').get, 'function');
   assert.deepEqual(module.exports, { chart: 'native-value' });
   assert.deepEqual(stopped, { status: 'native', reason: 'source_mismatch', attempts: 1, matches: 0, executions: 0, phase: 'stopped', writer: EMPTY_WRITER, drawingScope: WAITING_DRAWING });
+});
+
+/** Render-free factory execution proves the shared real Rspack registration path. */
+function registerNotificationFactories({ mismatchId } = {}) {
+  const originals = Object.fromEntries([['30877', '37511'], ['39116', '3314'], ['55401', '29042']]
+    .map(([id, chunk]) => [id, createNativeOrderNotificationFactory(id, chunk)]));
+  if (mismatchId) originals[mismatchId] = module => { module.exports = { nativeDrift: mismatchId }; };
+  const inactiveIds = [61523, 64041, 51471, 40477, 16921, 72363, 70020];
+  const inactive = Object.fromEntries(inactiveIds.map(id => [id, module => { module.exports = Object.freeze({}); }]));
+  globalThis[QUEUE].push([['notification-registration'], { ...inactive, ...originals }]);
+  return originals;
+}
+
+for (const stopMirrorFirst of [false, true]) {
+  test(`user captures notification modules independently when mirror stopped=${stopMirrorFirst}`, async t => {
+    // Given one shared observer owns chart and notification targets before the real host runtime.
+    const page = installPage(t);
+    const notifications = createOrderNotificationScope();
+    const session = page.start({ additionalTargets: notifications.targets });
+    if (stopMirrorFirst) await session.stop();
+    const host = registerPinnedChartFactories();
+    registerNotificationFactories();
+
+    // When native notification factories execute before the remaining chart factories.
+    host.require(55401);
+    host.require(30877);
+    host.require(76535);
+    host.require(70940);
+    const status = notifications.snapshot();
+
+    // Then both notification paths activate and native queue ownership is restored exactly once.
+    assert.equal(status.toastActive, true);
+    assert.equal(status.soundActive, true);
+    assert.deepEqual(Object.values(status.modules).map(target => target.status), ['active', 'active', 'active']);
+    assert.equal(session.snapshot().drawingScope.status, 'active');
+    assert.equal(session.snapshot().status, stopMirrorFirst ? 'native' : 'active');
+    assert.equal(Object.hasOwn(Object.getOwnPropertyDescriptor(globalThis[QUEUE], 'push'), 'value'), true);
+  });
+}
+
+for (const mismatchId of ['30877', '39116', '55401']) {
+  test(`user keeps storage and native source drift isolated for notification module ${mismatchId}`, t => {
+    // Given one notification factory changed upstream while all chart factories still match.
+    const page = installPage(t);
+    const notifications = createOrderNotificationScope();
+    const session = page.start({ additionalTargets: notifications.targets });
+    const host = registerPinnedChartFactories();
+    const originals = registerNotificationFactories({ mismatchId });
+
+    // When all three notification factories and the chart factories execute.
+    for (const id of ['39116', '55401', '30877', '70940']) host.require(id);
+    const status = notifications.snapshot();
+
+    // Then only the changed notification target rejects and both storage protections stay active.
+    assert.deepEqual(status.modules[mismatchId], { status: 'source_mismatch', reason: 'source_mismatch', attempts: 1, matches: 0 });
+    assert.equal(status.toastActive, mismatchId !== '30877');
+    assert.equal(status.soundActive, mismatchId === '30877');
+    assert.deepEqual(host.require(mismatchId), { nativeDrift: mismatchId });
+    assert.equal(host.require.m[mismatchId], originals[mismatchId]);
+    assert.equal(session.snapshot().status, 'active');
+    assert.equal(session.snapshot().drawingScope.status, 'active');
+  });
+}
+
+test('user sees independent notification expiry at the original shared capture deadline', async t => {
+  // Given the notification targets have not registered and the mirror was stopped early.
+  const page = installPage(t);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const notifications = createOrderNotificationScope();
+  const session = page.start({ additionalTargets: notifications.targets });
+  t.mock.timers.tick(20_000);
+  await session.stop();
+
+  // When the remaining ten seconds expire without resetting the shared deadline.
+  t.mock.timers.tick(10_000);
+  const status = notifications.snapshot();
+
+  // Then no notification target activates or touches storage and the queue observer retires.
+  assert.equal(status.toastActive, false);
+  assert.equal(status.soundActive, false);
+  for (const target of Object.values(status.modules)) {
+    assert.deepEqual(target, { status: 'unavailable', reason: 'capture_deadline', attempts: 0, matches: 0 });
+  }
+  assert.equal(Object.hasOwn(globalThis, QUEUE), false);
+  assert.equal(session.snapshot().reason, 'manual');
+});
+
+test('user gets explicit notification unavailability when injection is too late', async t => {
+  // Given the host has already registered a chunk before installation.
+  const page = installPage(t, { queue: [[['existing'], {}]] });
+  const notifications = createOrderNotificationScope();
+
+  // When the normal installer tries to attach the shared capture targets.
+  const session = page.start({ additionalTargets: notifications.targets });
+  await session.stop();
+
+  // Then all notifications stay native with a clear late-bootstrap outcome.
+  for (const target of Object.values(notifications.snapshot().modules)) {
+    assert.deepEqual(target, { status: 'unavailable', reason: 'bootstrap_unavailable', attempts: 0, matches: 0 });
+  }
+  assert.equal(globalThis[QUEUE].length, 1);
+  assert.equal(Object.hasOwn(globalThis[QUEUE], 'push'), false);
 });
 
 test('user restores the exact pinned factory when stopping before its first execution', async t => {

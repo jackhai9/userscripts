@@ -47,6 +47,8 @@
     "esbuild": "^0.25.0",
     "eslint": "10.10.0",
     "jsdom": "^29.1.1",
-    "monocart-coverage-reports": "2.13.0"
+    "monocart-coverage-reports": "2.13.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   }
 }

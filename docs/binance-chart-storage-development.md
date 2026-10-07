@@ -25,6 +25,13 @@ outcomes are independent; one changed upstream module does not cancel a matching
 other module. Late injection leaves both native. Metadata does not guarantee
 early injection on every extension configuration; rejection remains explicit.
 
+The orderbook installer also supplies independently tracked
+[notification targets](binance-order-notifications.md) to this same observer.
+`startChartStorageOptimizer({ additionalTargets })` accepts explicit
+`replace`, `onCapture` and `onFailure` callbacks for each non-storage module ID;
+storage IDs cannot be replaced by those descriptors. They share the original
+capture deadline, but mirror `stop()` does not stop their capture or handling.
+
 ### Drawing ownership
 
 Native loading puts historical symbols' drawings into every chart that shares

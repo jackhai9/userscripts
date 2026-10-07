@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.219
+// @version      2.7.220
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -6767,8 +6767,13 @@
   var CAPTURE_DEADLINE_MS = 3e4;
   var MIRROR_MODULE = "70940";
   var DRAWING_MODULE = "76535";
-  function startChartStorageOptimizer() {
+  function startChartStorageOptimizer({ additionalTargets = {} } = {}) {
     if (!isChartStoragePage()) throw new Error("Chart storage requires a top-level Binance trading page");
+    for (const [id, target] of Object.entries(additionalTargets)) {
+      if (id === MIRROR_MODULE || id === DRAWING_MODULE || !target || [target.replace, target.onCapture, target.onFailure].some((callback) => typeof callback !== "function")) {
+        throw new Error("Additional native targets require independent replacement and outcome callbacks");
+      }
+    }
     const writer = createChartMirrorWriter();
     const state = { status: "waiting", reason: null, attempts: 0, matches: 0, executions: 0 };
     const drawingScope = { status: "waiting", reason: null, attempts: 0, matches: 0, executions: 0 };
@@ -6830,13 +6835,29 @@
       observer = observeChartStorageBootstrap({
         targets: {
           [MIRROR_MODULE]: (original) => replaceFactory(MIRROR_MODULE, original, (factory) => replaceChartMirrorFactory(factory, dispatch)),
-          [DRAWING_MODULE]: (original) => replaceFactory(DRAWING_MODULE, original, replaceChartDrawingSaveFactory)
+          [DRAWING_MODULE]: (original) => replaceFactory(DRAWING_MODULE, original, replaceChartDrawingSaveFactory),
+          ...Object.fromEntries(Object.entries(additionalTargets).map(([id, target]) => [id, (original) => {
+            if (!isChartStoragePage()) {
+              observer.stop("scope_changed");
+              void stop("scope_changed");
+              return original;
+            }
+            return target.replace(original);
+          }]))
         },
         onCapture(id) {
+          if (Object.hasOwn(additionalTargets, id)) {
+            additionalTargets[id].onCapture();
+            return;
+          }
           const targetState = id === MIRROR_MODULE ? state : drawingScope;
           if (id !== MIRROR_MODULE || !stopping) targetState.status = "active";
         },
         onFailure(id, reason) {
+          if (Object.hasOwn(additionalTargets, id)) {
+            additionalTargets[id].onFailure(reason);
+            return;
+          }
           if (id === MIRROR_MODULE) {
             void stop(reason === "execution_failed" ? "capture_failed" : reason);
           } else {
@@ -6849,6 +6870,7 @@
         }
       });
     } catch {
+      for (const target of Object.values(additionalTargets)) target.onFailure("bootstrap_unavailable");
       drawingScope.status = "unavailable";
       drawingScope.reason = "bootstrap_unavailable";
       finishObservation();
@@ -6865,11 +6887,502 @@
     return Object.freeze({ snapshot, stop });
   }
 
+  // src/binance-orderbook-trade/order-notifications/native-modules.js
+  var pinnedFactories = [
+    {
+      id: "39116",
+      original: '39116(D,l,t){"use strict";t.d(l,{QZ:()=>p.Q,$$:()=>n,E$:()=>S});var e=t(41594),a=2e3,r=2,n=function(){var E=(0,e.useRef)(null),A=function(O){E.current=setTimeout(function(){O(),E.current&&clearTimeout(E.current),E.current=null},a)};return(0,e.useMemo)(function(){return{interval:E,intervalFunc:A}},[])},i=t(75510),s=t(16921),c=t(72363),d=t(79515),y=t(40477),p=t(70020),T=function(E,A){var O=(0,d.nH)(),m=(0,d.Py)().isExistFutureAccount,g=(0,y.A)(A,500),u=g.run,o=(0,d.ON)().isPM2,f=(0,s.Gw)();(0,e.useEffect)(function(){if(!O||!m||!E)return function(){return null};var _=(0,c.Ri)({isCM:!0});return _.getUserOrderStream({isPM2:o,params:f}).subscribe(function(v){var L=Array.isArray(v)?(0,i._)(v):[v];L.forEach(function(P){(P.status==="FILLED"||P.status==="PARTIALLY_FILLED"||P.status==="EXPIRED")&&u(String(P.orderId))})})},[u,E,m,O,o,f]),(0,e.useEffect)(function(){if(!O||!m||!E)return function(){return null};var _=(0,c.Ri)({isCM:!1});return _.getUserOrderStream({isPM2:o,params:f}).subscribe(function(v){var L=Array.isArray(v)?(0,i._)(v):[v];L.forEach(function(P){(P.status==="FILLED"||P.status==="PARTIALLY_FILLED"||P.status==="EXPIRED")&&u(String(P.orderId))})})},[u,E,m,O,o,f])},S=function(){var E=(0,e.useState)(new Date),A=E[0],O=E[1],m=(0,e.useRef)([]),g=(0,p.Q)(),u=g.showNotification,o=g.enableNotification,f=(0,e.useCallback)(function(){var v;(v=m)===null||v===void 0||v.current.shift(),O(new Date)},[]),_=(0,e.useCallback)(function(v){var L;if(u&&((L=m)===null||L===void 0?void 0:L.current.length)<r&&o&&v){var P;(P=m)===null||P===void 0||P.current.push(v),O(new Date)}},[o,u]);return T(u&&o,_),(0,e.useMemo)(function(){return{notifications:m,lastNotifyTime:A,popNotification:f}},[A,f])}}',
+      create(__notify) {
+        return { 39116(D, l, t) {
+          "use strict";
+          t.d(l, { QZ: () => p.Q, $$: () => n, E$: () => S });
+          var e = t(41594), a = 2e3, r = 2, n = function() {
+            var E = (0, e.useRef)(null), A = function(O) {
+              E.current = setTimeout(function() {
+                O(), E.current && clearTimeout(E.current), E.current = null;
+              }, a);
+            };
+            return (0, e.useMemo)(function() {
+              return { interval: E, intervalFunc: A };
+            }, []);
+          }, i = t(75510), s = t(16921), c = t(72363), d = t(79515), y = t(40477), p = t(70020), T = function(E, A) {
+            var O = (0, d.nH)(), m = (0, d.Py)().isExistFutureAccount, g = (0, y.A)(function(__event) {
+              if (__notify.allowSoundInput(__event)) return Reflect.apply(A, this, [__event]);
+            }, 500), u = g.run, o = (0, d.ON)().isPM2, f = (0, s.Gw)();
+            (0, e.useEffect)(function() {
+              if (!O || !m || !E) return function() {
+                return null;
+              };
+              var _ = (0, c.Ri)({ isCM: true });
+              return _.getUserOrderStream({ isPM2: o, params: f }).subscribe(function(v) {
+                var L = Array.isArray(v) ? (0, i._)(v) : [v];
+                L.forEach(function(P) {
+                  (P.status === "FILLED" || P.status === "PARTIALLY_FILLED" || P.status === "EXPIRED") && ((!__notify.soundReady() || __notify.allowOrder(P)) && u(__notify.soundInput(P)));
+                });
+              });
+            }, [u, E, m, O, o, f]), (0, e.useEffect)(function() {
+              if (!O || !m || !E) return function() {
+                return null;
+              };
+              var _ = (0, c.Ri)({ isCM: false });
+              return _.getUserOrderStream({ isPM2: o, params: f }).subscribe(function(v) {
+                var L = Array.isArray(v) ? (0, i._)(v) : [v];
+                L.forEach(function(P) {
+                  (P.status === "FILLED" || P.status === "PARTIALLY_FILLED" || P.status === "EXPIRED") && ((!__notify.soundReady() || __notify.allowOrder(P)) && u(__notify.soundInput(P)));
+                });
+              });
+            }, [u, E, m, O, o, f]);
+          }, S = function() {
+            var E = (0, e.useState)(/* @__PURE__ */ new Date()), A = E[0], O = E[1], m = (0, e.useRef)([]), g = (0, p.Q)(), u = g.showNotification, o = g.enableNotification, f = (0, e.useCallback)(function() {
+              var v;
+              (v = m) === null || v === void 0 || v.current.shift(), O(/* @__PURE__ */ new Date());
+            }, []), _ = (0, e.useCallback)(function(v) {
+              var L;
+              if (u && ((L = m) === null || L === void 0 ? void 0 : L.current.length) < r && o && v) {
+                var P;
+                (P = m) === null || P === void 0 || P.current.push(v), O(/* @__PURE__ */ new Date());
+              }
+            }, [o, u]);
+            return T(u && o, _), (0, e.useMemo)(function() {
+              return { notifications: m, lastNotifyTime: A, popNotification: f };
+            }, [A, f]);
+          };
+        } }[39116];
+      }
+    },
+    {
+      id: "30877",
+      original: '30877(be,W,e){e.d(W,{F:()=>N,z:()=>o});var r=e(41594),a=e.n(r),T=e(61523),p=e(92873),P=e(64041),b=e(17409),S=e(51471),E=e(40477),$="trd-openOrder",G=function(c){return(0,p.o)($,c)},o=function(){var c=(0,S.zr)("open_order_status_toast",!0),h=c.data,R=c.setData,K=c.hasInitialized,x=(0,r.useCallback)(function(){R(!h)},[h,R]);return{enableToast:K?h:!1,toggleToast:x}},N=function(){var c=G().getI18n,h=(0,P.h)().enqueueNotification,R=o().enableToast,K=(0,E.A)(h,30),x=K.run,i=(0,T.d4)(function(l){return l.setting.layout}),d=(0,r.useMemo)(function(){return i===b.a0},[i]),A=(0,r.useCallback)(function(l){var D=l.side.toUpperCase(),Y=l.type.replace(/[-_]/g,"");return"".concat(D).concat(Y)},[]),g=(0,r.useCallback)(function(l){if(!(l.type==="LIQUIDATION"||!R)){var D=A(l),Y=c("".concat(D,"CancelTitle"),{defaultValue:"".concat(l.type," ").concat(l.side," Order Canceled")});x(Y)}},[A,c,x,R]),C=(0,r.useCallback)(function(l){if(!(l.type==="LIQUIDATION"||!R)){var D=A(l),Y=c("".concat(D,"FillTitle"),{defaultValue:"".concat(l.type," ").concat(l.side," Order Filled")});x(Y,{variant:"success"})}},[A,c,x,R]),I=(0,r.useCallback)(function(l){if(!(l.type==="LIQUIDATION"||!R)){var D=A(l),Y=c("".concat(D,"PFTitle"),{defaultValue:"".concat(l.type," ").concat(l.side," Order Partially Filled")});x(Y,{variant:"success"})}},[A,c,x,R]);return(0,r.useMemo)(function(){return{cancelOrderNotify:g,fillOrderNotify:C,fillOrderPartNotify:I}},[g,C,I])}}',
+      create(__notify) {
+        return { 30877(be, W, e) {
+          e.d(W, { F: () => N, z: () => o });
+          var r = e(41594), a = e.n(r), T = e(61523), p = e(92873), P = e(64041), b = e(17409), S = e(51471), E = e(40477), $ = "trd-openOrder", G = function(c) {
+            return (0, p.o)($, c);
+          }, o = function() {
+            var c = (0, S.zr)("open_order_status_toast", true), h = c.data, R = c.setData, K = c.hasInitialized, x = (0, r.useCallback)(function() {
+              R(!h);
+            }, [h, R]);
+            return { enableToast: K ? h : false, toggleToast: x };
+          }, N = function() {
+            var c = G().getI18n, h = (0, P.h)().enqueueNotification, R = o().enableToast, K = (0, E.A)(function(__token, ...__args) {
+              if (__notify.allowToken(__token)) return Reflect.apply(h, this, __args);
+            }, 30), x = K.run, i = (0, T.d4)(function(l) {
+              return l.setting.layout;
+            }), d = (0, r.useMemo)(function() {
+              return i === b.a0;
+            }, [i]), A = (0, r.useCallback)(function(l) {
+              var D = l.side.toUpperCase(), Y = l.type.replace(/[-_]/g, "");
+              return "".concat(D).concat(Y);
+            }, []), g = (0, r.useCallback)(function(l) {
+              if (!__notify.allowOrder(l)) return;
+              if (!(l.type === "LIQUIDATION" || !R)) {
+                var D = A(l), Y = c("".concat(D, "CancelTitle"), { defaultValue: "".concat(l.type, " ").concat(l.side, " Order Canceled") });
+                x(__notify.token(l), Y);
+              }
+            }, [A, c, x, R]), C = (0, r.useCallback)(function(l) {
+              if (!__notify.allowOrder(l)) return;
+              if (!(l.type === "LIQUIDATION" || !R)) {
+                var D = A(l), Y = c("".concat(D, "FillTitle"), { defaultValue: "".concat(l.type, " ").concat(l.side, " Order Filled") });
+                x(__notify.token(l), Y, { variant: "success" });
+              }
+            }, [A, c, x, R]), I = (0, r.useCallback)(function(l) {
+              if (!__notify.allowOrder(l)) return;
+              if (!(l.type === "LIQUIDATION" || !R)) {
+                var D = A(l), Y = c("".concat(D, "PFTitle"), { defaultValue: "".concat(l.type, " ").concat(l.side, " Order Partially Filled") });
+                x(__notify.token(l), Y, { variant: "success" });
+              }
+            }, [A, c, x, R]);
+            return (0, r.useMemo)(function() {
+              return { cancelOrderNotify: g, fillOrderNotify: C, fillOrderPartNotify: I };
+            }, [g, C, I]);
+          };
+        } }[30877];
+      }
+    },
+    {
+      id: "30877",
+      original: '30877(V,b,e){e.d(b,{F:()=>m,z:()=>I});var r=e(41594),A=e.n(r),s=e(61523),f=e(92873),v=e(64041),o=e(17409),l=e(51471),P=e(40477),k="trd-openOrder",y=function(g){return(0,f.o)(k,g)},I=function(){var g=(0,l.zr)("open_order_status_toast",!0),_=g.data,F=g.setData,R=g.hasInitialized,L=(0,r.useCallback)(function(){F(!_)},[_,F]);return{enableToast:R?_:!1,toggleToast:L}},m=function(){var g=y().getI18n,_=(0,v.h)().enqueueNotification,F=I().enableToast,R=(0,P.A)(_,30),L=R.run,a=(0,s.d4)(function(i){return i.setting.layout}),M=(0,r.useMemo)(function(){return a===o.a0},[a]),C=(0,r.useCallback)(function(i){var S=i.side.toUpperCase(),T=i.type.replace(/[-_]/g,"");return"".concat(S).concat(T)},[]),c=(0,r.useCallback)(function(i){if(!(i.type==="LIQUIDATION"||!F)){var S=C(i),T=g("".concat(S,"CancelTitle"),{defaultValue:"".concat(i.type," ").concat(i.side," Order Canceled")});L(T)}},[C,g,L,F]),u=(0,r.useCallback)(function(i){if(!(i.type==="LIQUIDATION"||!F)){var S=C(i),T=g("".concat(S,"FillTitle"),{defaultValue:"".concat(i.type," ").concat(i.side," Order Filled")});L(T,{variant:"success"})}},[C,g,L,F]),h=(0,r.useCallback)(function(i){if(!(i.type==="LIQUIDATION"||!F)){var S=C(i),T=g("".concat(S,"PFTitle"),{defaultValue:"".concat(i.type," ").concat(i.side," Order Partially Filled")});L(T,{variant:"success"})}},[C,g,L,F]);return(0,r.useMemo)(function(){return{cancelOrderNotify:c,fillOrderNotify:u,fillOrderPartNotify:h}},[c,u,h])}}',
+      create(__notify) {
+        return { 30877(V, b, e) {
+          e.d(b, { F: () => m, z: () => I });
+          var r = e(41594), A = e.n(r), s = e(61523), f = e(92873), v = e(64041), o = e(17409), l = e(51471), P = e(40477), k = "trd-openOrder", y = function(g) {
+            return (0, f.o)(k, g);
+          }, I = function() {
+            var g = (0, l.zr)("open_order_status_toast", true), _ = g.data, F = g.setData, R = g.hasInitialized, L = (0, r.useCallback)(function() {
+              F(!_);
+            }, [_, F]);
+            return { enableToast: R ? _ : false, toggleToast: L };
+          }, m = function() {
+            var g = y().getI18n, _ = (0, v.h)().enqueueNotification, F = I().enableToast, R = (0, P.A)(function(__token, ...__args) {
+              if (__notify.allowToken(__token)) return Reflect.apply(_, this, __args);
+            }, 30), L = R.run, a = (0, s.d4)(function(i) {
+              return i.setting.layout;
+            }), M = (0, r.useMemo)(function() {
+              return a === o.a0;
+            }, [a]), C = (0, r.useCallback)(function(i) {
+              var S = i.side.toUpperCase(), T = i.type.replace(/[-_]/g, "");
+              return "".concat(S).concat(T);
+            }, []), c = (0, r.useCallback)(function(i) {
+              if (!__notify.allowOrder(i)) return;
+              if (!(i.type === "LIQUIDATION" || !F)) {
+                var S = C(i), T = g("".concat(S, "CancelTitle"), { defaultValue: "".concat(i.type, " ").concat(i.side, " Order Canceled") });
+                L(__notify.token(i), T);
+              }
+            }, [C, g, L, F]), u = (0, r.useCallback)(function(i) {
+              if (!__notify.allowOrder(i)) return;
+              if (!(i.type === "LIQUIDATION" || !F)) {
+                var S = C(i), T = g("".concat(S, "FillTitle"), { defaultValue: "".concat(i.type, " ").concat(i.side, " Order Filled") });
+                L(__notify.token(i), T, { variant: "success" });
+              }
+            }, [C, g, L, F]), h = (0, r.useCallback)(function(i) {
+              if (!__notify.allowOrder(i)) return;
+              if (!(i.type === "LIQUIDATION" || !F)) {
+                var S = C(i), T = g("".concat(S, "PFTitle"), { defaultValue: "".concat(i.type, " ").concat(i.side, " Order Partially Filled") });
+                L(__notify.token(i), T, { variant: "success" });
+              }
+            }, [C, g, L, F]);
+            return (0, r.useMemo)(function() {
+              return { cancelOrderNotify: c, fillOrderNotify: u, fillOrderPartNotify: h };
+            }, [c, u, h]);
+          };
+        } }[30877];
+      }
+    },
+    {
+      id: "30877",
+      original: '30877(K,T,e){e.d(T,{F:()=>i,z:()=>E});var t=e(41594),r=e.n(t),n=e(61523),s=e(92873),g=e(64041),c=e(17409),h=e(51471),p=e(40477),b="trd-openOrder",S=function(y){return(0,s.o)(b,y)},E=function(){var y=(0,h.zr)("open_order_status_toast",!0),C=y.data,f=y.setData,I=y.hasInitialized,d=(0,t.useCallback)(function(){f(!C)},[C,f]);return{enableToast:I?C:!1,toggleToast:d}},i=function(){var y=S().getI18n,C=(0,g.h)().enqueueNotification,f=E().enableToast,I=(0,p.A)(C,30),d=I.run,P=(0,n.d4)(function(a){return a.setting.layout}),M=(0,t.useMemo)(function(){return P===c.a0},[P]),k=(0,t.useCallback)(function(a){var o=a.side.toUpperCase(),u=a.type.replace(/[-_]/g,"");return"".concat(o).concat(u)},[]),A=(0,t.useCallback)(function(a){if(!(a.type==="LIQUIDATION"||!f)){var o=k(a),u=y("".concat(o,"CancelTitle"),{defaultValue:"".concat(a.type," ").concat(a.side," Order Canceled")});d(u)}},[k,y,d,f]),O=(0,t.useCallback)(function(a){if(!(a.type==="LIQUIDATION"||!f)){var o=k(a),u=y("".concat(o,"FillTitle"),{defaultValue:"".concat(a.type," ").concat(a.side," Order Filled")});d(u,{variant:"success"})}},[k,y,d,f]),x=(0,t.useCallback)(function(a){if(!(a.type==="LIQUIDATION"||!f)){var o=k(a),u=y("".concat(o,"PFTitle"),{defaultValue:"".concat(a.type," ").concat(a.side," Order Partially Filled")});d(u,{variant:"success"})}},[k,y,d,f]);return(0,t.useMemo)(function(){return{cancelOrderNotify:A,fillOrderNotify:O,fillOrderPartNotify:x}},[A,O,x])}}',
+      create(__notify) {
+        return { 30877(K, T, e) {
+          e.d(T, { F: () => i, z: () => E });
+          var t = e(41594), r = e.n(t), n = e(61523), s = e(92873), g = e(64041), c = e(17409), h = e(51471), p = e(40477), b = "trd-openOrder", S = function(y) {
+            return (0, s.o)(b, y);
+          }, E = function() {
+            var y = (0, h.zr)("open_order_status_toast", true), C = y.data, f = y.setData, I = y.hasInitialized, d = (0, t.useCallback)(function() {
+              f(!C);
+            }, [C, f]);
+            return { enableToast: I ? C : false, toggleToast: d };
+          }, i = function() {
+            var y = S().getI18n, C = (0, g.h)().enqueueNotification, f = E().enableToast, I = (0, p.A)(function(__token, ...__args) {
+              if (__notify.allowToken(__token)) return Reflect.apply(C, this, __args);
+            }, 30), d = I.run, P = (0, n.d4)(function(a) {
+              return a.setting.layout;
+            }), M = (0, t.useMemo)(function() {
+              return P === c.a0;
+            }, [P]), k = (0, t.useCallback)(function(a) {
+              var o = a.side.toUpperCase(), u = a.type.replace(/[-_]/g, "");
+              return "".concat(o).concat(u);
+            }, []), A = (0, t.useCallback)(function(a) {
+              if (!__notify.allowOrder(a)) return;
+              if (!(a.type === "LIQUIDATION" || !f)) {
+                var o = k(a), u = y("".concat(o, "CancelTitle"), { defaultValue: "".concat(a.type, " ").concat(a.side, " Order Canceled") });
+                d(__notify.token(a), u);
+              }
+            }, [k, y, d, f]), O = (0, t.useCallback)(function(a) {
+              if (!__notify.allowOrder(a)) return;
+              if (!(a.type === "LIQUIDATION" || !f)) {
+                var o = k(a), u = y("".concat(o, "FillTitle"), { defaultValue: "".concat(a.type, " ").concat(a.side, " Order Filled") });
+                d(__notify.token(a), u, { variant: "success" });
+              }
+            }, [k, y, d, f]), x = (0, t.useCallback)(function(a) {
+              if (!__notify.allowOrder(a)) return;
+              if (!(a.type === "LIQUIDATION" || !f)) {
+                var o = k(a), u = y("".concat(o, "PFTitle"), { defaultValue: "".concat(a.type, " ").concat(a.side, " Order Partially Filled") });
+                d(__notify.token(a), u, { variant: "success" });
+              }
+            }, [k, y, d, f]);
+            return (0, t.useMemo)(function() {
+              return { cancelOrderNotify: A, fillOrderNotify: O, fillOrderPartNotify: x };
+            }, [A, O, x]);
+          };
+        } }[30877];
+      }
+    },
+    {
+      id: "55401",
+      original: '55401(S,f,o){o.r(f),o.d(f,{SoundNotificationProvider:()=>C});var c=o(31085),e=o(41594),x=o(17409),s=o(39116),E=function(a){var r,n;(r=a)===null||r===void 0||r.load();var u=(n=a)===null||n===void 0?void 0:n.play();u&&u.then(function(){var t;(t=a)===null||t===void 0||t.play()}).catch(function(){})},C=function(a){var r=a.children,n=(0,s.$$)(),u=n.interval,t=n.intervalFunc,h=(0,e.useRef)(null),N=(0,s.QZ)(),p=N.enableNotification,m=N.showNotification,d=(0,s.E$)(),l=d.notifications,P=d.lastNotifyTime,y=d.popNotification,j=(0,e.useCallback)(function(){var i,v=(i=h)===null||i===void 0?void 0:i.current;v&&(v.src="".concat(x.K5,"/static/spot-trade-ui/trade-sound.mp3"),E(v),t(y))},[t,y]);return(0,e.useEffect)(function(){var i;(!m||!p)&&(l.current=[]),l&&((i=l)===null||i===void 0?void 0:i.current.length)>0&&(u.current||j())},[P,p,j,l,u,m]),(0,c.jsxs)("div",{children:[r,(0,c.jsx)("div",{children:(0,c.jsx)("audio",{ref:h,children:(0,c.jsx)("source",{src:""})})})]})}}',
+      create(__notify) {
+        return { 55401(S, f, o) {
+          o.r(f), o.d(f, { SoundNotificationProvider: () => C });
+          var c = o(31085), e = o(41594), x = o(17409), s = o(39116), E = function(a, __event) {
+            if (!__notify.canPlay(__event)) return;
+            var r, n;
+            (r = a) === null || r === void 0 || r.load();
+            var u = (n = a) === null || n === void 0 ? void 0 : n.play();
+            u && u.then(function() {
+              if (!__notify.canPlay(__event)) return;
+              var t;
+              (t = a) === null || t === void 0 || t.play();
+            }).catch(function() {
+            });
+          }, C = function(a) {
+            var r = a.children, n = (0, s.$$)(), u = n.interval, t = n.intervalFunc, h = (0, e.useRef)(null), N = (0, s.QZ)(), p = N.enableNotification, m = N.showNotification, d = (0, s.E$)(), l = d.notifications, P = d.lastNotifyTime, y = d.popNotification, j = (0, e.useCallback)(function() {
+              if (!__notify.prepareSound(l)) return;
+              var i, v = (i = h) === null || i === void 0 ? void 0 : i.current;
+              v && (v.src = "".concat(x.K5, "/static/spot-trade-ui/trade-sound.mp3"), E(v, l.current[0]), t(y));
+            }, [t, y]);
+            return (0, e.useEffect)(function() {
+              var i;
+              (!m || !p) && (l.current = []), l && ((i = l) === null || i === void 0 ? void 0 : i.current.length) > 0 && (u.current || j());
+            }, [P, p, j, l, u, m]), (0, c.jsxs)("div", { children: [r, (0, c.jsx)("div", { children: (0, c.jsx)("audio", { ref: h, children: (0, c.jsx)("source", { src: "" }) }) })] });
+          };
+        } }[55401];
+      }
+    },
+    {
+      id: "30877",
+      original: '30877(Y,T,e){e.d(T,{F:()=>o,z:()=>N});var a=e(41594),k=e.n(a),P=e(61523),l=e(92873),O=e(64041),C=e(17409),h=e(51471),M=e(40477),p="trd-openOrder",R=function(n){return(0,l.o)(p,n)},N=function(){var n=(0,h.zr)("open_order_status_toast",!0),c=n.data,i=n.setData,F=n.hasInitialized,u=(0,a.useCallback)(function(){i(!c)},[c,i]);return{enableToast:F?c:!1,toggleToast:u}},o=function(){var n=R().getI18n,c=(0,O.h)().enqueueNotification,i=N().enableToast,F=(0,M.A)(c,30),u=F.run,L=(0,P.d4)(function(r){return r.setting.layout}),g=(0,a.useMemo)(function(){return L===C.a0},[L]),I=(0,a.useCallback)(function(r){var d=r.side.toUpperCase(),f=r.type.replace(/[-_]/g,"");return"".concat(d).concat(f)},[]),S=(0,a.useCallback)(function(r){if(!(r.type==="LIQUIDATION"||!i)){var d=I(r),f=n("".concat(d,"CancelTitle"),{defaultValue:"".concat(r.type," ").concat(r.side," Order Canceled")});u(f)}},[I,n,u,i]),A=(0,a.useCallback)(function(r){if(!(r.type==="LIQUIDATION"||!i)){var d=I(r),f=n("".concat(d,"FillTitle"),{defaultValue:"".concat(r.type," ").concat(r.side," Order Filled")});u(f,{variant:"success"})}},[I,n,u,i]),Q=(0,a.useCallback)(function(r){if(!(r.type==="LIQUIDATION"||!i)){var d=I(r),f=n("".concat(d,"PFTitle"),{defaultValue:"".concat(r.type," ").concat(r.side," Order Partially Filled")});u(f,{variant:"success"})}},[I,n,u,i]);return(0,a.useMemo)(function(){return{cancelOrderNotify:S,fillOrderNotify:A,fillOrderPartNotify:Q}},[S,A,Q])}}',
+      create(__notify) {
+        return { 30877(Y, T, e) {
+          e.d(T, { F: () => o, z: () => N });
+          var a = e(41594), k = e.n(a), P = e(61523), l = e(92873), O = e(64041), C = e(17409), h = e(51471), M = e(40477), p = "trd-openOrder", R = function(n) {
+            return (0, l.o)(p, n);
+          }, N = function() {
+            var n = (0, h.zr)("open_order_status_toast", true), c = n.data, i = n.setData, F = n.hasInitialized, u = (0, a.useCallback)(function() {
+              i(!c);
+            }, [c, i]);
+            return { enableToast: F ? c : false, toggleToast: u };
+          }, o = function() {
+            var n = R().getI18n, c = (0, O.h)().enqueueNotification, i = N().enableToast, F = (0, M.A)(function(__token, ...__args) {
+              if (__notify.allowToken(__token)) return Reflect.apply(c, this, __args);
+            }, 30), u = F.run, L = (0, P.d4)(function(r) {
+              return r.setting.layout;
+            }), g = (0, a.useMemo)(function() {
+              return L === C.a0;
+            }, [L]), I = (0, a.useCallback)(function(r) {
+              var d = r.side.toUpperCase(), f = r.type.replace(/[-_]/g, "");
+              return "".concat(d).concat(f);
+            }, []), S = (0, a.useCallback)(function(r) {
+              if (!__notify.allowOrder(r)) return;
+              if (!(r.type === "LIQUIDATION" || !i)) {
+                var d = I(r), f = n("".concat(d, "CancelTitle"), { defaultValue: "".concat(r.type, " ").concat(r.side, " Order Canceled") });
+                u(__notify.token(r), f);
+              }
+            }, [I, n, u, i]), A = (0, a.useCallback)(function(r) {
+              if (!__notify.allowOrder(r)) return;
+              if (!(r.type === "LIQUIDATION" || !i)) {
+                var d = I(r), f = n("".concat(d, "FillTitle"), { defaultValue: "".concat(r.type, " ").concat(r.side, " Order Filled") });
+                u(__notify.token(r), f, { variant: "success" });
+              }
+            }, [I, n, u, i]), Q = (0, a.useCallback)(function(r) {
+              if (!__notify.allowOrder(r)) return;
+              if (!(r.type === "LIQUIDATION" || !i)) {
+                var d = I(r), f = n("".concat(d, "PFTitle"), { defaultValue: "".concat(r.type, " ").concat(r.side, " Order Partially Filled") });
+                u(__notify.token(r), f, { variant: "success" });
+              }
+            }, [I, n, u, i]);
+            return (0, a.useMemo)(function() {
+              return { cancelOrderNotify: S, fillOrderNotify: A, fillOrderPartNotify: Q };
+            }, [S, A, Q]);
+          };
+        } }[30877];
+      }
+    },
+    {
+      id: "30877",
+      original: '30877(L,T,e){e.d(T,{F:()=>_,z:()=>v});var r=e(41594),x=e.n(r),O=e(61523),h=e(92873),p=e(64041),k=e(17409),C=e(51471),I=e(40477),g="trd-openOrder",f=function(s){return(0,h.o)(g,s)},v=function(){var s=(0,C.zr)("open_order_status_toast",!0),c=s.data,o=s.setData,d=s.hasInitialized,n=(0,r.useCallback)(function(){o(!c)},[c,o]);return{enableToast:d?c:!1,toggleToast:n}},_=function(){var s=f().getI18n,c=(0,p.h)().enqueueNotification,o=v().enableToast,d=(0,I.A)(c,30),n=d.run,a=(0,O.d4)(function(t){return t.setting.layout}),S=(0,r.useMemo)(function(){return a===k.a0},[a]),i=(0,r.useCallback)(function(t){var l=t.side.toUpperCase(),u=t.type.replace(/[-_]/g,"");return"".concat(l).concat(u)},[]),y=(0,r.useCallback)(function(t){if(!(t.type==="LIQUIDATION"||!o)){var l=i(t),u=s("".concat(l,"CancelTitle"),{defaultValue:"".concat(t.type," ").concat(t.side," Order Canceled")});n(u)}},[i,s,n,o]),F=(0,r.useCallback)(function(t){if(!(t.type==="LIQUIDATION"||!o)){var l=i(t),u=s("".concat(l,"FillTitle"),{defaultValue:"".concat(t.type," ").concat(t.side," Order Filled")});n(u,{variant:"success"})}},[i,s,n,o]),m=(0,r.useCallback)(function(t){if(!(t.type==="LIQUIDATION"||!o)){var l=i(t),u=s("".concat(l,"PFTitle"),{defaultValue:"".concat(t.type," ").concat(t.side," Order Partially Filled")});n(u,{variant:"success"})}},[i,s,n,o]);return(0,r.useMemo)(function(){return{cancelOrderNotify:y,fillOrderNotify:F,fillOrderPartNotify:m}},[y,F,m])}}',
+      create(__notify) {
+        return { 30877(L, T, e) {
+          e.d(T, { F: () => _, z: () => v });
+          var r = e(41594), x = e.n(r), O = e(61523), h = e(92873), p = e(64041), k = e(17409), C = e(51471), I = e(40477), g = "trd-openOrder", f = function(s) {
+            return (0, h.o)(g, s);
+          }, v = function() {
+            var s = (0, C.zr)("open_order_status_toast", true), c = s.data, o = s.setData, d = s.hasInitialized, n = (0, r.useCallback)(function() {
+              o(!c);
+            }, [c, o]);
+            return { enableToast: d ? c : false, toggleToast: n };
+          }, _ = function() {
+            var s = f().getI18n, c = (0, p.h)().enqueueNotification, o = v().enableToast, d = (0, I.A)(function(__token, ...__args) {
+              if (__notify.allowToken(__token)) return Reflect.apply(c, this, __args);
+            }, 30), n = d.run, a = (0, O.d4)(function(t) {
+              return t.setting.layout;
+            }), S = (0, r.useMemo)(function() {
+              return a === k.a0;
+            }, [a]), i = (0, r.useCallback)(function(t) {
+              var l = t.side.toUpperCase(), u = t.type.replace(/[-_]/g, "");
+              return "".concat(l).concat(u);
+            }, []), y = (0, r.useCallback)(function(t) {
+              if (!__notify.allowOrder(t)) return;
+              if (!(t.type === "LIQUIDATION" || !o)) {
+                var l = i(t), u = s("".concat(l, "CancelTitle"), { defaultValue: "".concat(t.type, " ").concat(t.side, " Order Canceled") });
+                n(__notify.token(t), u);
+              }
+            }, [i, s, n, o]), F = (0, r.useCallback)(function(t) {
+              if (!__notify.allowOrder(t)) return;
+              if (!(t.type === "LIQUIDATION" || !o)) {
+                var l = i(t), u = s("".concat(l, "FillTitle"), { defaultValue: "".concat(t.type, " ").concat(t.side, " Order Filled") });
+                n(__notify.token(t), u, { variant: "success" });
+              }
+            }, [i, s, n, o]), m = (0, r.useCallback)(function(t) {
+              if (!__notify.allowOrder(t)) return;
+              if (!(t.type === "LIQUIDATION" || !o)) {
+                var l = i(t), u = s("".concat(l, "PFTitle"), { defaultValue: "".concat(t.type, " ").concat(t.side, " Order Partially Filled") });
+                n(__notify.token(t), u, { variant: "success" });
+              }
+            }, [i, s, n, o]);
+            return (0, r.useMemo)(function() {
+              return { cancelOrderNotify: y, fillOrderNotify: F, fillOrderPartNotify: m };
+            }, [y, F, m]);
+          };
+        } }[30877];
+      }
+    },
+    {
+      id: "30877",
+      original: '30877(R,T,e){e.d(T,{F:()=>y,z:()=>D});var t=e(41594),O=e.n(t),u=e(61523),i=e(92873),m=e(64041),d=e(17409),f=e(51471),a=e(40477),o="trd-openOrder",b=function(S){return(0,i.o)(o,S)},D=function(){var S=(0,f.zr)("open_order_status_toast",!0),M=S.data,P=S.setData,N=S.hasInitialized,_=(0,t.useCallback)(function(){P(!M)},[M,P]);return{enableToast:N?M:!1,toggleToast:_}},y=function(){var S=b().getI18n,M=(0,m.h)().enqueueNotification,P=D().enableToast,N=(0,a.A)(M,30),_=N.run,v=(0,u.d4)(function(n){return n.setting.layout}),l=(0,t.useMemo)(function(){return v===d.a0},[v]),s=(0,t.useCallback)(function(n){var g=n.side.toUpperCase(),c=n.type.replace(/[-_]/g,"");return"".concat(g).concat(c)},[]),r=(0,t.useCallback)(function(n){if(!(n.type==="LIQUIDATION"||!P)){var g=s(n),c=S("".concat(g,"CancelTitle"),{defaultValue:"".concat(n.type," ").concat(n.side," Order Canceled")});_(c)}},[s,S,_,P]),p=(0,t.useCallback)(function(n){if(!(n.type==="LIQUIDATION"||!P)){var g=s(n),c=S("".concat(g,"FillTitle"),{defaultValue:"".concat(n.type," ").concat(n.side," Order Filled")});_(c,{variant:"success"})}},[s,S,_,P]),h=(0,t.useCallback)(function(n){if(!(n.type==="LIQUIDATION"||!P)){var g=s(n),c=S("".concat(g,"PFTitle"),{defaultValue:"".concat(n.type," ").concat(n.side," Order Partially Filled")});_(c,{variant:"success"})}},[s,S,_,P]);return(0,t.useMemo)(function(){return{cancelOrderNotify:r,fillOrderNotify:p,fillOrderPartNotify:h}},[r,p,h])}}',
+      create(__notify) {
+        return { 30877(R, T, e) {
+          e.d(T, { F: () => y, z: () => D });
+          var t = e(41594), O = e.n(t), u = e(61523), i = e(92873), m = e(64041), d = e(17409), f = e(51471), a = e(40477), o = "trd-openOrder", b = function(S) {
+            return (0, i.o)(o, S);
+          }, D = function() {
+            var S = (0, f.zr)("open_order_status_toast", true), M = S.data, P = S.setData, N = S.hasInitialized, _ = (0, t.useCallback)(function() {
+              P(!M);
+            }, [M, P]);
+            return { enableToast: N ? M : false, toggleToast: _ };
+          }, y = function() {
+            var S = b().getI18n, M = (0, m.h)().enqueueNotification, P = D().enableToast, N = (0, a.A)(function(__token, ...__args) {
+              if (__notify.allowToken(__token)) return Reflect.apply(M, this, __args);
+            }, 30), _ = N.run, v = (0, u.d4)(function(n) {
+              return n.setting.layout;
+            }), l = (0, t.useMemo)(function() {
+              return v === d.a0;
+            }, [v]), s = (0, t.useCallback)(function(n) {
+              var g = n.side.toUpperCase(), c = n.type.replace(/[-_]/g, "");
+              return "".concat(g).concat(c);
+            }, []), r = (0, t.useCallback)(function(n) {
+              if (!__notify.allowOrder(n)) return;
+              if (!(n.type === "LIQUIDATION" || !P)) {
+                var g = s(n), c = S("".concat(g, "CancelTitle"), { defaultValue: "".concat(n.type, " ").concat(n.side, " Order Canceled") });
+                _(__notify.token(n), c);
+              }
+            }, [s, S, _, P]), p = (0, t.useCallback)(function(n) {
+              if (!__notify.allowOrder(n)) return;
+              if (!(n.type === "LIQUIDATION" || !P)) {
+                var g = s(n), c = S("".concat(g, "FillTitle"), { defaultValue: "".concat(n.type, " ").concat(n.side, " Order Filled") });
+                _(__notify.token(n), c, { variant: "success" });
+              }
+            }, [s, S, _, P]), h = (0, t.useCallback)(function(n) {
+              if (!__notify.allowOrder(n)) return;
+              if (!(n.type === "LIQUIDATION" || !P)) {
+                var g = s(n), c = S("".concat(g, "PFTitle"), { defaultValue: "".concat(n.type, " ").concat(n.side, " Order Partially Filled") });
+                _(__notify.token(n), c, { variant: "success" });
+              }
+            }, [s, S, _, P]);
+            return (0, t.useMemo)(function() {
+              return { cancelOrderNotify: r, fillOrderNotify: p, fillOrderPartNotify: h };
+            }, [r, p, h]);
+          };
+        } }[30877];
+      }
+    }
+  ];
+  function replaceOrderNotificationFactory(id, originalFactory, bridge) {
+    if (typeof originalFactory !== "function") throw new TypeError("Native notification factory must be a function");
+    const source = Function.prototype.toString.call(originalFactory);
+    const pinned = pinnedFactories.find((entry) => entry.id === String(id) && entry.original === source);
+    if (!pinned) throw new Error("Native notification factory source does not match a pinned public module");
+    return pinned.create(bridge);
+  }
+
+  // src/binance-orderbook-trade/order-notifications/scope.js
+  var ORDINARY_TYPES = /* @__PURE__ */ new Set([
+    "LIMIT",
+    "MARKET",
+    "STOP",
+    "STOP_MARKET",
+    "TAKE_PROFIT",
+    "TAKE_PROFIT_MARKET",
+    "TRAILING_STOP_MARKET"
+  ]);
+  var ORDINARY_EXECUTIONS = /* @__PURE__ */ new Set(["NEW", "CANCELED", "EXPIRED", "TRADE", "AMENDMENT"]);
+  var UNSCOPED = Object.freeze({ symbol: null });
+  function createOrderNotificationToken(order) {
+    if (!order || typeof order !== "object" || !isBinanceSymbol(order.symbol) || !ORDINARY_TYPES.has(order.type) || typeof order.clientOrderId !== "string" || order.clientOrderId.length === 0) return UNSCOPED;
+    if (Object.hasOwn(order, "origType") && !ORDINARY_TYPES.has(order.origType)) return UNSCOPED;
+    if (Object.hasOwn(order, "operate") && !ORDINARY_EXECUTIONS.has(order.operate)) return UNSCOPED;
+    if (order.clientOrderId.startsWith("autoclose-") || order.clientOrderId.startsWith("adl_autoclose") || order.clientOrderId.startsWith("settlement_autoclose-")) return UNSCOPED;
+    return Object.freeze({ symbol: order.symbol });
+  }
+  function isOrderNotificationTokenAllowed(token, pathname) {
+    if (typeof token === "string") return true;
+    if (!token || typeof token !== "object" || token.symbol !== null && !isBinanceSymbol(token.symbol)) {
+      throw new TypeError("Notification scope requires a native string or a classified symbol token");
+    }
+    const currentSymbol = parseFuturesTradingSymbolFromPathname(pathname);
+    return token.symbol === null || currentSymbol === null || token.symbol === currentSymbol;
+  }
+
+  // src/binance-orderbook-trade/order-notifications/runtime.js
+  var MODULE_IDS = ["30877", "39116", "55401"];
+  function createOrderNotificationScope() {
+    const states = Object.fromEntries(MODULE_IDS.map((id) => [id, {
+      status: "waiting",
+      reason: null,
+      attempts: 0,
+      matches: 0
+    }]));
+    let checks = 0;
+    let suppressedChecks = 0;
+    const soundReady = () => states["39116"].status === "active" && states["55401"].status === "active";
+    function allowToken(token) {
+      const allowed = isOrderNotificationTokenAllowed(token, self.location.pathname);
+      checks += 1;
+      if (!allowed) suppressedChecks += 1;
+      return allowed;
+    }
+    const bridge = Object.freeze({
+      token: createOrderNotificationToken,
+      allowToken,
+      allowOrder: (order) => allowToken(createOrderNotificationToken(order)),
+      soundReady,
+      soundInput: (order) => soundReady() ? createOrderNotificationToken(order) : String(order.orderId),
+      allowSoundInput: (token) => !soundReady() || allowToken(token),
+      canPlay: (token) => !soundReady() || allowToken(token),
+      prepareSound(queue) {
+        if (!soundReady()) return true;
+        while (queue.current.length && !allowToken(queue.current[0])) queue.current.shift();
+        return queue.current.length > 0;
+      }
+    });
+    const targets = Object.fromEntries(MODULE_IDS.map((id) => [id, {
+      replace(original) {
+        states[id].attempts += 1;
+        const factory = replaceOrderNotificationFactory(id, original, bridge);
+        states[id].matches += 1;
+        return factory;
+      },
+      onCapture() {
+        states[id].status = "active";
+      },
+      onFailure(reason) {
+        states[id].status = reason === "source_mismatch" ? "source_mismatch" : "unavailable";
+        states[id].reason = reason;
+      }
+    }]));
+    return Object.freeze({
+      targets,
+      snapshot() {
+        return {
+          toastActive: states["30877"].status === "active",
+          soundActive: soundReady(),
+          checks,
+          suppressedChecks,
+          modules: Object.fromEntries(MODULE_IDS.map((id) => [id, { ...states[id] }]))
+        };
+      }
+    });
+  }
+
   // src/binance-orderbook-trade/chart-storage/install.js
   function installChartStorageOptimizer() {
     if (!isChartStoragePage() || Object.hasOwn(self, "__BINANCE_CHART_STORAGE__")) return;
+    const notifications = createOrderNotificationScope();
+    Object.defineProperty(self, "__BINANCE_ORDER_NOTIFICATIONS__", {
+      value: Object.freeze({ snapshot: notifications.snapshot }),
+      configurable: true
+    });
     Object.defineProperty(self, "__BINANCE_CHART_STORAGE__", {
-      value: startChartStorageOptimizer(),
+      value: startChartStorageOptimizer({ additionalTargets: notifications.targets }),
       configurable: true
     });
   }
