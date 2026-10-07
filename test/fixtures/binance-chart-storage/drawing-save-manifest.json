@@ -1,0 +1,26 @@
+{
+  "source": {
+    "url": "https://bin.bnbstatic.com/static/chunks/36648.dd8ae7dc.js",
+    "sha256": "8191b50fb47212425d03146834207645c0e89b8ce623e23a71477194ee9a60ff"
+  },
+  "originalFactory": {
+    "range": [
+      104,
+      15009
+    ],
+    "sha256": "a6371afcfc264f610500bcc427d286cacbdc645b859be14d0a6a7fcf71b84c7a"
+  },
+  "replacement": {
+    "range": [
+      1851,
+      1863
+    ],
+    "original": "kt({save:n})",
+    "inserted": "kt({save:__scopeChartDrawingSnapshot(n)})"
+  },
+  "outputs": {
+    "module": "65395422f4d6c80e8882c8891012eccacc3e1bebdaf3d34b7dec4f746b47f43c",
+    "fixture": "3b5dc2dc2d98775452bde3a9f39964d948473699ff1f7cec8692a979c69ccf9a"
+  },
+  "scope": "Only xt calls kt with a snapshot restricted to each chart's current MainSeries symbols. Other native methods and events are unchanged."
+}

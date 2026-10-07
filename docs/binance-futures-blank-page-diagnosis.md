@@ -930,3 +930,49 @@ After stop, another interval change committed four native transactions and four
 writes while optimizer statistics stayed frozen. Chart data readiness was true
 throughout all three stages. The browser was closed. Evidence is retained in
 `/var/folders/99/d7dxx5j94_x8n09snmknq0x80000gn/T/binance-chart-storage-smoke-30Xntg/`.
+
+### Deleted drawings restored by other symbols: 2026-10-07 (Beijing)
+
+After v2.7.218, the user reported that removing all 20 MUBARAKUSDT drawings and
+waiting one, five or more than ten minutes still restored them after reload.
+Other trading tabs were open, each on a different symbol. Read-only inspection
+found 20 matching MUBARAK records in both chart databases. The MUBARAK serializer
+contained 893 drawings across 99 symbols; the GRIFFAIN serializer retained the
+same 20 MUBARAK drawing IDs as hidden sources, with shared ownerSource `ZmamTt`.
+The current page's two stored symbol keys and drawing symbols were uppercase,
+ruling out the separately reproduced mixed-case-key candidate for this incident.
+No user drawing was deleted and no user page was refreshed during diagnosis.
+The aggregate evidence is `/tmp/binance-drawing-ownership-VuHzpW/incident.json`.
+
+Native `zt` loads all historical symbol groups by ownerSource. Native `kt` then
+extracts all LineTool sources, including other symbols' invisible copies, and
+`xt` writes every group. Consequently, a different-symbol tab can overwrite an
+already committed deletion during its next save. Exact host callbacks and real
+IndexedDB reproduced 20 -> 0 -> 20 with both native and v2.7.218 writers. No
+interrupted save, duplicate-symbol tab or mirror-transaction failure was needed.
+
+Version 2.7.219 scopes the input of the native `kt` extractor to each chart's
+current MainSeries symbols, before global drawing-ID deduplication. Indicator
+panes inherit their own chart's symbols. The original extractor still writes an
+empty active-symbol array after deletion and preserves other symbols' database
+records. The complete pinned 76535 factory differs only at that input expression;
+its event handlers, source persistence sequence and load path remain native.
+Drawing protection has its own capture status and remains active after mirror
+optimization stops. Existing old-version tabs retain their old write behavior
+until they load the new version.
+
+The repaired real-IDB scenario stays at 20 -> 0 -> 0. Eleven deletion scenarios
+also cover multi-chart ownership before deduplication, indicator-pane drawings,
+current empty arrays, preservation of a newer unrelated-symbol record and invalid
+whole-chart ownership rejection before writes. A separate source-only cross-db
+interruption still permits native stale overwrite and is explicitly not this
+incident's root cause. All 2,167 Node/DOM and 143 chart-storage browser tests, test
+lint, build, syntax checks and independent source review passed.
+
+The complete v2.7.219 artifact passed anonymous Chrome verification with zero
+page errors, ready charts, five optimized transactions and four native commits
+after stop. Drawing protection remained active throughout. Screenshots were
+inspected and the anonymous browser was closed. This smoke did not create/delete
+drawings; deletion and reload integrity were exercised by the exact host/IDB
+scenarios. Its report is in
+`/var/folders/99/d7dxx5j94_x8n09snmknq0x80000gn/T/binance-chart-storage-smoke-R0V9Km/`.

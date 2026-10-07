@@ -135,7 +135,9 @@ for (const kind of ['source-mismatch', 'late-bootstrap']) {
       attempts: kind === 'source-mismatch' ? 1 : 0, matches: 0, executions: 0,
       writer: { acceptedBatches: 0, transactions: 0 },
     });
-    expect(storage).toMatchObject({ sameChunk: true, sameFactory: true, nativePush: true, nativeValue: 'native-chart-module' });
+    expect(storage).toMatchObject({ sameChunk: true, sameFactory: true,
+      nativePush: kind === 'late-bootstrap', nativeValue: 'native-chart-module' });
+    expect(storage.snapshot.drawingScope.status).toBe(kind === 'late-bootstrap' ? 'unavailable' : 'waiting');
     await expect(page.locator(PANEL)).toBeVisible();
     await expect(page.locator(INPUT)).toHaveValue('3');
     await expect(page.locator('#jh-binance-close-qty-final')).toHaveText('0.21');

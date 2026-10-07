@@ -17,17 +17,41 @@ behavior. Landing-to-trading SPA navigation does not re-run the storage installe
 only a fresh matching page starts early interception. It never places orders, changes leverage, reads credentials, changes
 the proxy, clears databases or replaces global storage methods.
 
-Only the pinned TradingView module `70940` mirror destination expression changes.
-The complete original factory must match before first execution. Late injection,
-source drift and a missing capture after a 30-second timer retire interception
-and leave native registration intact. Metadata does not guarantee early injection
-on every extension configuration; rejection remains a supported outcome.
+Two complete pinned factories are intercepted before their first execution:
+`70940` changes only the mirror destination expression, while `76535` restricts
+the native save extractor's input to each chart's current MainSeries symbols.
+One queue observer owns both targets. Capture, source rejection and deadline
+outcomes are independent; one changed upstream module does not cancel a matching
+other module. Late injection leaves both native. Metadata does not guarantee
+early injection on every extension configuration; rejection remains explicit.
+
+### Drawing ownership
+
+Native loading puts historical symbols' drawings into every chart that shares
+their ownerSource. A different symbol's tab can therefore retain an old invisible
+copy of drawings that another page has edited or deleted. The native extractor
+previously wrote all those groups back on every save, restoring deleted drawings.
+
+Before native drawing-ID deduplication, the scoped snapshot retains only drawings
+belonging to the current MainSeries symbols of their own chart. All indicator
+panes inherit that chart's symbol set. Other sources and drawing properties stay
+unchanged. Native extraction still produces an explicit empty array for a current
+symbol with no drawings, while unrelated symbols are not written. A whole chart
+containing drawings without any MainSeries is rejected before storage writes;
+an indicator pane without its own MainSeries is valid. The patch does not delete
+historical keys, replace save events or serialize charts through a new API.
+
+All concurrently open trading tabs need the new version; an old tab can still
+write its stale hidden copies. Same-symbol concurrent editors and source-only
+cross-database interruptions remain separate conflicts, not solved by ownership
+filtering. No trading action is needed to validate the fix.
 
 Each accepted mirror uses one IndexedDB read/write transaction and compares the
 destination values before writing. Equal JSON trees must retain signed zero,
 property order and dense array structure. Missing keys remain distinct from stored
-null. Ordinary saves, source reads, Basic chart settings and `clear()` retain
-their native implementations. No record cache persists between batches.
+null. Ordinary saves retain their native write sequence after drawing ownership
+filtering; source reads, Basic chart settings and `clear()` remain native. No
+record cache persists between batches.
 
 Input admission defaults to 512 entries, 4 MiB per batch and 16 pending batches
 with 64 MiB of copied input. Unsupported values, capacity limits, initialization
@@ -46,11 +70,14 @@ through its Promise boundary. Subsequent calls resume native handling.
 ## Lifecycle and diagnostics
 
 `self.__BINANCE_CHART_STORAGE__.snapshot()` returns fixed aggregate counters and
-startup status. `stop()` drains the current instance's accepted work, including
+startup status and an independent `drawingScope` status. `stop()` drains the current instance's accepted mirror work, including
 every member of an early-rejecting native Promise array. Calls arriving during
 drain wait for that finite fence, then run their native expression. After stop,
 native arrays and errors pass through synchronously and statistics freeze.
 The public interface exposes no stored keys, values or storage methods.
+Stopping mirror optimization does not remove drawing ownership protection. If
+that factory has not been captured, its original bounded startup observation
+continues; pagehide terminates outstanding observations for both targets.
 
 `acceptedBatches` counts created optimized transactions. `committedTransactions`
 counts real completion events, while `committedWrites` and `skippedWrites` count
@@ -79,6 +106,7 @@ to accept an unknown module. The generation command accepts an explicit output:
 
 ```sh
 node experiments/binance-chart-storage/generate-mirror-module.js /path/to/verified/TradingView.99bc5074.js src/binance-orderbook-trade/chart-storage/mirror-module.js
+node scripts/generate-chart-drawing-save-module.mjs /path/to/verified/36648.dd8ae7dc.js
 ```
 
 ## Validation and release
