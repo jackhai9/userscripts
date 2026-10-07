@@ -7510,6 +7510,7 @@
     const LADDER_BODY_ID = "jh-binance-ladder-body";
     const LADDER_STATUS_ID = "jh-binance-ladder-status";
     const LADDER_STATUS_ROW_ID = "jh-binance-ladder-status-row";
+    const AUTOMATIC_USDT_REBALANCE_STATUS_ID = "jh-binance-auto-rebalance-status";
     const USDT_REBALANCE_ACTION_ID = "jh-binance-usdt-rebalance-action";
     const MULTIPLIER_PRESS_FEEDBACK_ATTR = "data-jh-press-feedback";
     const ORDERBOOK_PRECISION_RECOMMENDATION_ID = "jh-binance-orderbook-precision-recommendation";
@@ -7686,6 +7687,8 @@
     let activeUiLocale = resolveUiLocaleFromPathname(location.pathname);
     let ladderStatusText = PANEL_COPY.state.idle;
     let ladderStatusTitle = PANEL_COPY.state.idle;
+    let automaticUsdtRebalanceStatusText = "";
+    let automaticUsdtRebalanceStatusTitle = "";
     let usdtRebalanceEligibilityTimer = 0;
     let usdtRebalanceEligibilityEpoch = 0;
     let usdtRebalanceEligibilityTask = null;
@@ -7693,6 +7696,7 @@
     let usdtRebalanceTask = null;
     let automaticUsdtRebalanceObservationTask = null;
     let automaticUsdtRebalanceLockController = null;
+    let automaticUsdtRebalanceStatusPending = false;
     let ladderPanelBodySignature = "";
     let panelPositionInvalidated = true;
     let panelObservedSize = "";
@@ -8203,6 +8207,20 @@
         if (statusEl.textContent !== renderedText) statusEl.textContent = renderedText;
         if (statusEl.title !== renderedTitle) statusEl.title = renderedTitle;
       }
+    }
+    function renderAutomaticUsdtRebalanceStatus(element) {
+      if (!element) return;
+      const text = ui(automaticUsdtRebalanceStatusText);
+      const title = ui(automaticUsdtRebalanceStatusTitle);
+      if (element.textContent !== text) element.textContent = text;
+      if (element.title !== title) element.title = title;
+      if (element.hidden !== (text === "")) element.hidden = text === "";
+    }
+    function setAutomaticUsdtRebalanceStatus(text, title = text, pending = false) {
+      automaticUsdtRebalanceStatusPending = pending;
+      automaticUsdtRebalanceStatusText = localizeKnownUiStatus(text);
+      automaticUsdtRebalanceStatusTitle = localizeKnownUiStatus(title);
+      renderAutomaticUsdtRebalanceStatus(document.getElementById(AUTOMATIC_USDT_REBALANCE_STATUS_ID));
     }
     function isValidMultiplier(value) {
       return /^\d+$/.test(String(value || "").trim()) && Number(value) > 0;
@@ -10282,12 +10300,6 @@
       });
     }
     async function startLadder(actionType, continuousProgress = null, chartSaveController = null) {
-      if (continuousProgress !== null) {
-        return runLadderWithAccountLock(actionType, continuousProgress, chartSaveController);
-      }
-      return withAccountOperationLock("shared", () => runLadderWithAccountLock(actionType));
-    }
-    async function runLadderWithAccountLock(actionType, continuousProgress = null, chartSaveController = null) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec) {
         setLadderStatus("未知阶梯动作");
@@ -10354,7 +10366,7 @@
         }
         setLadderStatus(singleStatus);
       };
-      const chartSaveRound = chartSaveController?.beginRound() || null;
+      let chartSaveRound = null;
       invalidateUsdtRebalanceEligibility();
       ladderAbortController = abortController;
       activeLadderActionType = actionType;
@@ -10370,6 +10382,8 @@
         localizedText("准备中", "Preparing")
       );
       const executeRound = async () => {
+        throwIfAborted(abortController.signal);
+        chartSaveRound = chartSaveController?.beginRound() || null;
         const {
           plan,
           done,
@@ -10398,7 +10412,7 @@
       const executionTask = (async () => {
         let result;
         try {
-          result = await executeRound();
+          result = await (continuousSession ? executeRound() : withAccountOperationLock("shared", executeRound));
         } catch (executionError) {
           if (chartSaveRound) {
             try {
@@ -10419,13 +10433,12 @@
         minimumMs: LADDER_ACTION_FEEDBACK_MIN_MS,
         now: () => performance.now(),
         delay
-      }).then(({
-        plan,
-        done,
-        repriceAttempts,
-        lastRepriceApiErrorCode,
-        wasStopped
-      }) => {
+      }).then((outcome) => {
+        if (outcome.status === "not_started") {
+          throwIfAborted(abortController.signal);
+          return outcome;
+        }
+        const { plan, done, repriceAttempts, lastRepriceApiErrorCode, wasStopped } = outcome;
         if (!isCurrentObservedSymbol(actionSymbol)) {
           if (!continuousSession) {
             setLadderStatus(formatInterruptedLadderProgress(
@@ -10626,11 +10639,8 @@
       }
     }
     async function startContinuousLadder(actionType) {
-      return withAccountOperationLock("shared", () => runContinuousLadderWithAccountLock(actionType));
-    }
-    async function runContinuousLadderWithAccountLock(actionType) {
       const spec = getLadderActionSpec2(actionType);
-      if (!spec || spec.mode !== "CLOSE") return runLadderWithAccountLock(actionType);
+      if (!spec || spec.mode !== "CLOSE") return startLadder(actionType);
       if (continuousLadderTask) return continuousLadderTask;
       const actionSymbol = getCurrentSymbol();
       if (!isCurrentObservedSymbol(actionSymbol)) {
@@ -10649,8 +10659,8 @@
       continuousChartSaveController = chartSaveCoalescer;
       activeContinuousLadderActionType = actionType;
       activeContinuousLadderProgress = continuousProgress;
-      const executionTask = (async () => {
-        await Promise.resolve();
+      const executionTask = withAccountOperationLock("shared", async () => {
+        throwIfAborted(abortController.signal);
         chartSaveCoalescer = await startContinuousChartSaveCoalescing(abortController.signal, actionSymbol);
         continuousChartSaveController = chartSaveCoalescer;
         throwIfAborted(abortController.signal);
@@ -10738,8 +10748,11 @@
           }
           continue;
         }
-      })();
-      continuousLadderTask = executionTask.catch((e) => {
+      });
+      continuousLadderTask = executionTask.then((outcome) => {
+        if (outcome.status === "not_started") throwIfAborted(abortController.signal);
+        return outcome;
+      }).catch((e) => {
         if (isLadderStoppedError(e)) {
           setContinuousLadderProgressStatus(spec.statusLabel, "stopped", continuousProgress);
           return { status: "stopped" };
@@ -13055,7 +13068,11 @@
             throw new Error("Automatic transfers may only withdraw Futures excess");
           }
           writeUsdtRebalanceEpisode(accountKey, "in_flight");
-          setLadderStatus(options.automatic ? `Automatic USDT transfer ${completed + 1}/${plan.transfers.length}` : `账户再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`);
+          if (options.automatic) {
+            setAutomaticUsdtRebalanceStatus(`Automatic USDT transfer ${completed + 1}/${plan.transfers.length}`);
+          } else {
+            setLadderStatus(`账户再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`);
+          }
           await submitUsdtRebalanceTransfer(transfer);
           completed += 1;
           expectedBalances = applyUsdtTransferToBalances(expectedBalances, transfer);
@@ -13068,18 +13085,25 @@
       }
       writeUsdtRebalanceEpisode(accountKey, "consumed");
       usdtRebalanceEligible = false;
-      setLadderStatus(options.automatic ? `Automatic USDT transfers completed: ${completed}/${plan.transfers.length}` : `账户再平衡已完成 · ${completed}/${plan.transfers.length} 笔`);
+      if (options.automatic) {
+        setAutomaticUsdtRebalanceStatus(`Automatic USDT transfers completed: ${completed}/${plan.transfers.length}`);
+      } else {
+        setLadderStatus(`账户再平衡已完成 · ${completed}/${plan.transfers.length} 笔`);
+      }
       return { status: "completed", plan, completed };
     }
     async function runAutomaticUsdtRebalance(epoch, signal) {
       return withAccountOperationLock("exclusive", async () => {
         const options = { epoch, automatic: true };
+        setAutomaticUsdtRebalanceStatus("Automatic USDT transfer: checking account", void 0, true);
         assertUsdtRebalanceLocalState(options);
         const accountKey = await readUsdtRebalanceAccountKey();
         const record = readUsdtRebalanceEpisode(accountKey);
         if (record.status !== "active") {
           if (record.status === "in_flight" || record.status === "blocked") {
-            setLadderStatus("Automatic USDT transfer blocked: previous outcome requires account review");
+            setAutomaticUsdtRebalanceStatus("Automatic USDT transfer blocked: previous outcome requires account review");
+          } else {
+            setAutomaticUsdtRebalanceStatus("Automatic USDT transfer already checked for this flat episode");
           }
           return { status: record.status };
         }
@@ -13088,7 +13112,10 @@
         assertUsdtRebalanceLocalState(options);
         const plan = buildAutomaticUsdtRebalancePlan(balances);
         writeUsdtRebalanceEpisode(accountKey, "consumed");
-        if (plan.transfers.length === 0) return { status: "no_excess", plan };
+        if (plan.transfers.length === 0) {
+          setAutomaticUsdtRebalanceStatus("Automatic USDT transfer: no Futures excess");
+          return { status: "no_excess", plan };
+        }
         return executeUsdtRebalancePlan(plan, accountKey, options);
       }, signal);
     }
@@ -13096,9 +13123,10 @@
       if (usdtRebalanceTask) return usdtRebalanceTask;
       const controller = new AbortController();
       automaticUsdtRebalanceLockController = controller;
+      setAutomaticUsdtRebalanceStatus("Automatic USDT transfer: waiting for account access", void 0, true);
       const task = runAutomaticUsdtRebalance(epoch, controller.signal).catch((error) => {
         if (controller.signal.aborted && error.name === "AbortError") return { status: "invalidated" };
-        setLadderStatus(`Automatic USDT transfer stopped: ${error.message}`, error.message);
+        setAutomaticUsdtRebalanceStatus(`Automatic USDT transfer stopped: ${error.message}`, error.message);
         return { status: "failed" };
       }).finally(() => {
         if (usdtRebalanceTask === task) usdtRebalanceTask = null;
@@ -13339,6 +13367,9 @@
       autoOpenLeveragePositionCheckTask = task;
     }
     function invalidateUsdtRebalanceEligibility() {
+      if (automaticUsdtRebalanceStatusPending) {
+        setAutomaticUsdtRebalanceStatus("Automatic USDT transfer paused: eligibility changed");
+      }
       const hadPendingTimer = usdtRebalanceEligibilityTimer !== 0;
       const wasEligible = usdtRebalanceEligible;
       window.clearTimeout(usdtRebalanceEligibilityTimer);
@@ -13365,19 +13396,20 @@
       if (positionState.status !== "flat") return false;
       assertUsdtRebalanceLocalState({ epoch });
       usdtRebalanceEligible = true;
-      setLadderStatus(PANEL_COPY.state.allPositionsClosed);
+      if (ladderStatusText === PANEL_COPY.state.idle) setLadderStatus(PANEL_COPY.state.allPositionsClosed);
       scheduleRenderPanel();
       await startAutomaticUsdtRebalance(epoch);
       return true;
     }
     function scheduleUsdtRebalanceEligibility() {
       invalidateUsdtRebalanceEligibility();
+      setAutomaticUsdtRebalanceStatus("Automatic USDT transfer: waiting for stable flat account", void 0, true);
       const epoch = usdtRebalanceEligibilityEpoch;
       usdtRebalanceEligibilityTimer = window.setTimeout(() => {
         usdtRebalanceEligibilityTimer = 0;
         let task = null;
         task = confirmUsdtRebalanceEligibility(epoch).catch((error) => {
-          setLadderStatus(`Automatic USDT eligibility check failed: ${error.message}`, error.message);
+          setAutomaticUsdtRebalanceStatus(`Automatic USDT eligibility check failed: ${error.message}`, error.message);
           return false;
         }).finally(() => {
           if (usdtRebalanceEligibilityTask === task) usdtRebalanceEligibilityTask = null;
@@ -13850,6 +13882,7 @@
         if (status.textContent !== renderedText) status.textContent = renderedText;
         if (status.title !== renderedTitle) status.title = renderedTitle;
       }
+      renderAutomaticUsdtRebalanceStatus(panel.querySelector(`#${AUTOMATIC_USDT_REBALANCE_STATUS_ID}`));
       if (rebalanceButton) {
         const shouldShow = usdtRebalanceEligible || Boolean(usdtRebalanceTask);
         const hidden = !shouldShow;
@@ -14180,7 +14213,8 @@
         `<div id="${LADDER_STATUS_ROW_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
         `<span id="${LADDER_STATUS_ID}" title="${initialStatus}" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">${initialStatus}</span>`,
         `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(PANEL_COPY.tooltip.accountRebalance)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
-        "</div>"
+        "</div>",
+        `<div id="${AUTOMATIC_USDT_REBALANCE_STATUS_ID}" hidden style="height:18px;margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`
       ].join("");
       panelPositionInvalidated = true;
       document.body.appendChild(panel);

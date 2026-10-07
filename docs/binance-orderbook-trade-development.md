@@ -330,6 +330,11 @@ Futures, sends only Futures excess toward Funding's 50% target, and sends the
 remainder to Spot. It never debits Funding or Spot, and never refills Futures.
 Targets display the balances actually reachable by these outward-only transfers.
 The manual action keeps its explicit confirmation and full 5:4:1 allocation.
+Automatic qualification, waiting, progress, completion, and failure messages use
+the separate `jh-binance-auto-rebalance-status` row. It starts hidden, uses safe
+text/title updates, and retains its status across locale-driven panel rebuilds.
+Automatic work never replaces a retained manual trading or cancellation result;
+the general flat-account message is shown only when the trading row is idle.
 
 All transfers hold the origin-wide exclusive Web Lock
 `userscripts:usdt-account-operation:v1`. Script single orders, cancellations,
@@ -337,7 +342,11 @@ ladders, and whole continuous sessions hold that lock in shared mode. A busy
 lock refuses a new manual or trading action immediately instead of queuing a stale click; automatic qualification alone waits for the exclusive lock with an
 epoch-bound AbortSignal, then rechecks every precondition after acquisition.
 Invalidating eligibility cancels a pending lock request;
-continuous rounds execute inside their session lock. Native Binance actions,
+continuous rounds execute inside their session lock. Ladder and continuous-task
+controllers are published synchronously before requesting the lock. Each acquired
+lock checks Stop before beginning chart coalescing or trade-form work, so a Stop
+in the click turn cannot be lost while the browser schedules its lock callback.
+Native Binance actions,
 other browsers, and devices are outside this script lock's scope.
 
 Inside the lock, the script reads `/bapi/accounts/v1/private/account/user/base-detail`

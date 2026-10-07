@@ -165,7 +165,7 @@ test('user never repeats a transfer with an unknown response after reloading', a
   // When the user reloads the page with the unresolved operation.
   await reloadPageWithCoverage(page);
   await becomeFlat(page);
-  await expect(page.locator('#jh-binance-ladder-status')).toContainText('previous outcome');
+  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('previous outcome');
 
   // Then no automatic retry can duplicate the unknown transaction.
   expect(transfers(api)).toHaveLength(1);
@@ -182,7 +182,7 @@ test('user keeps funds when the account identity indicates portfolio margin', as
   await becomeFlat(page);
 
   // Then the unverified account mode is refused before any wallet transfer.
-  await expect(page.locator('#jh-binance-ladder-status')).toContainText('identity');
+  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('identity');
   expect(transfers(api)).toEqual([]);
   expect(await episodes(page)).toEqual([]);
 });
@@ -225,7 +225,32 @@ test('user cannot auto-transfer from a copy-trading query route', async ({ page 
   await becomeFlat(page);
 
   // Then the unverified route is refused before any transfer.
-  await expect(page.locator('#jh-binance-ladder-status')).toContainText('ordinary');
+  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('ordinary');
+  expect(transfers(api)).toEqual([]);
+  expect(api.snapshot().balances).toEqual(EXCESS);
+});
+
+test('user sees a paused automatic check when new orders invalidate a pending transfer lock', async ({ page }) => {
+  // Given another operation owns the lock while this flat account waits for access.
+  const api = createAccountRebalanceApi(EXCESS);
+  await openAutomatic(page, api);
+  await page.evaluate(() => new Promise(resolve => {
+    navigator.locks.request('userscripts:usdt-account-operation:v1', () => new Promise(release => {
+      window.__RELEASE_TRANSFER_LOCK__ = release;
+      resolve();
+    }));
+  }));
+  await becomeFlat(page);
+  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('waiting for account access');
+
+  // When a new native order invalidates the pending flat qualification.
+  await page.evaluate(orders => window.__BINANCE_FIXTURE__.setOrders(orders), ORDER_SETS.current);
+  await page.clock.runFor(32);
+  await page.evaluate(() => window.__RELEASE_TRANSFER_LOCK__());
+
+  // Then the obsolete request is cancelled and the visible waiting state ends.
+  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('paused');
+  await expect.poll(() => page.evaluate(async () => (await navigator.locks.query()).pending.length)).toBe(0);
   expect(transfers(api)).toEqual([]);
   expect(api.snapshot().balances).toEqual(EXCESS);
 });

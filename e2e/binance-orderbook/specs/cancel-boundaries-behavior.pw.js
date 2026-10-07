@@ -51,6 +51,19 @@ function expectOriginalUi(state, scenario) {
   });
 }
 
+/** Start the shared-lock task before measuring its native UI acknowledgement deadline. */
+async function advancePendingCancellation(page, elapsed) {
+  const requestedAt = await page.evaluate(() => Date.now());
+  await page.locator(CANCEL).click();
+  await expect.poll(async () => {
+    await page.clock.runFor(16);
+    return page.locator(CANCEL).isDisabled();
+  }).toBe(true);
+  const elapsedSinceRequest = await page.evaluate(start => Date.now() - start, requestedAt);
+  expect(elapsedSinceRequest).toBeLessThan(elapsed);
+  await page.clock.runFor(elapsed - elapsedSinceRequest);
+}
+
 test('user keeps all orders when the current-orders tab is missing', async ({ page }) => {
   // Given both symbols have Basic and conditional orders but the current-orders tab is absent.
   const scenario = createCancelScenario({ positions: POSITION_SETS.both, orders: ALL_ORDERS });
@@ -86,8 +99,7 @@ test('user sees a bounded refusal when the current-orders tab never becomes sele
   });
 
   // When the user requests cancellation before the tab-selection deadline.
-  await page.locator(CANCEL).click();
-  await page.clock.runFor(2100);
+  await advancePendingCancellation(page, 2100);
 
   // Then selection remains pending and no confirmation or cancellation has occurred.
   await expect(page.locator(CANCEL)).toBeDisabled();
@@ -126,8 +138,7 @@ for (const scopeState of ['missing', 'duplicated']) {
     }, scopeState);
 
     // When the user requests cancellation before the unique-panel discovery deadline.
-    await page.locator(CANCEL).click();
-    await page.clock.runFor(2100);
+    await advancePendingCancellation(page, 2100);
 
     // Then the workflow remains pending without selecting an unverified cancellation scope.
     await expect(page.locator(CANCEL)).toBeDisabled();
@@ -191,8 +202,7 @@ test('user cannot cancel conditional orders when Basic selection never commits',
   });
 
   // When the user requests cancellation and Basic selection is still within its deadline.
-  await page.locator(CANCEL).click();
-  await page.clock.runFor(2100);
+  await advancePendingCancellation(page, 2100);
 
   // Then the action remains pending with conditional orders preserved and no confirmation.
   await expect(page.locator(CANCEL)).toBeDisabled();
@@ -257,8 +267,7 @@ test('user cannot cancel while the symbol checkbox ignores its requested change'
   await page.locator(FILTER).evaluate((filter) => filter.replaceWith(filter.cloneNode(true)));
 
   // When cancellation requests the filter but its one-second acknowledgement is still pending.
-  await page.locator(CANCEL).click();
-  await page.clock.runFor(900);
+  await advancePendingCancellation(page, 900);
 
   // Then no cancellation occurs while the checkbox still reports the original unchecked state.
   await expect(page.locator(CANCEL)).toBeDisabled();
@@ -301,8 +310,7 @@ test('user cannot cancel when a checked symbol filter still exposes another symb
   }, ORDER_SETS.both[1]);
 
   // When the user requests cancellation while the filtered-row settling deadline is still pending.
-  await page.locator(CANCEL).click();
-  await page.clock.runFor(1500);
+  await advancePendingCancellation(page, 1500);
 
   // Then the script waits for row evidence instead of trusting the checked box alone.
   await expect(page.locator(CANCEL)).toBeDisabled();
