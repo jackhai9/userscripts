@@ -127,7 +127,8 @@ export const PANEL_COPY = Object.freeze({
     waitingForAccess: localizedText('自动再平衡：等待账户操作完成', 'Automatic USDT transfer: waiting for account access'),
     checkingAccount: localizedText('自动再平衡：正在检查账户', 'Automatic USDT transfer: checking account'),
     blocked: localizedText('自动再平衡已阻止：请先核实上次划转结果', 'Automatic USDT transfer blocked: previous outcome requires account review'),
-    alreadyChecked: localizedText('本轮空仓已检查自动再平衡', 'Automatic USDT transfer already checked for this flat episode'),
+    completed: localizedText('已自动进行账户再平衡', 'Account automatically rebalanced'),
+    notRepeated: localizedText('本轮不再自动执行账户再平衡', 'No further automatic rebalance in this round'),
     noExcess: localizedText('自动再平衡：合约账户无多余 USDT', 'Automatic USDT transfer: no Futures excess'),
     paused: localizedText('自动再平衡已暂停：执行条件已变化', 'Automatic USDT transfer paused: eligibility changed'),
     stopped: localizedText('自动再平衡已停止：', 'Automatic USDT transfer stopped: '),
@@ -146,6 +147,7 @@ export const PANEL_COPY = Object.freeze({
     excessOnly: localizedText('自动划转仅可转出合约账户多余资金', 'Automatic transfers may only withdraw Futures excess'),
     flatRequired: localizedText('全账户持仓和当前委托必须为零', 'Account-wide positions and open orders must be zero'),
     accountNotFlat: localizedText('全账户仍有持仓或当前委托', 'Positions or open orders still exist in the account'),
+    invalidOutcome: localizedText('自动再平衡结果记录无效', 'Invalid automatic rebalance episode outcome'),
   }),
   tooltip: freezeCopy({
     singleOrder: localizedText(
