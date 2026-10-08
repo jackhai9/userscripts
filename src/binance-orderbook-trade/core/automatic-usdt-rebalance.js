@@ -5,6 +5,11 @@ export function readAutomaticRebalanceEpisode(serialized) {
   if (record?.version !== 1 || !['active', 'consumed', 'in_flight', 'blocked'].includes(record.status)) {
     throw new Error('Invalid automatic rebalance episode');
   }
+  // Deployed status-only records still prevent retries but cannot establish completion.
+  if (Object.hasOwn(record, 'outcome')
+    && (record.status !== 'consumed' || record.outcome !== 'automatic_completed')) {
+    throw new Error('Invalid automatic rebalance episode outcome');
+  }
   return record;
 }
 

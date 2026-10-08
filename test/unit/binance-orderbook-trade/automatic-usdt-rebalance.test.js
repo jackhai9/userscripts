@@ -23,6 +23,53 @@ for (const status of ['in_flight', 'blocked', 'consumed']) {
   });
 }
 
+test('user retains automatic completion across reloads and flat observations', () => {
+  // Given a persisted automatically completed episode
+  const record = { version: 1, status: 'consumed', outcome: 'automatic_completed' };
+  const serialized = JSON.stringify(record);
+  // When a reload reads it and observes the account still flat
+  const restored = readAutomaticRebalanceEpisode(serialized);
+  const next = observeAutomaticRebalanceActivity(restored, true);
+  // Then both the persisted outcome and consumed protection remain intact
+  assert.deepEqual(restored, record);
+  assert.deepEqual(next, record);
+});
+
+test('user clears automatic completion when a new active account episode starts', () => {
+  // Given an automatically completed episode restored from storage
+  const completed = readAutomaticRebalanceEpisode(JSON.stringify({
+    version: 1,
+    status: 'consumed',
+    outcome: 'automatic_completed',
+  }));
+  // When authoritative nonflat activity begins a new episode
+  const next = observeAutomaticRebalanceActivity(completed, false);
+  // Then the active episode contains no stale completion outcome
+  assert.deepEqual(next, { version: 1, status: 'active' });
+});
+
+for (const outcome of [null, '', 'null', 'undefined', 'manual_completed', false, 0, [], {}]) {
+  test(`user rejects ${JSON.stringify(outcome)} as a persisted automatic rebalance outcome`, () => {
+    // Given a consumed episode with an unsupported explicit outcome
+    const serialized = JSON.stringify({ version: 1, status: 'consumed', outcome });
+    // When qualification reads the stored episode
+    const read = () => readAutomaticRebalanceEpisode(serialized);
+    // Then the invalid outcome is surfaced without resetting protection
+    assert.throws(read, { message: 'Invalid automatic rebalance episode outcome' });
+  });
+}
+
+for (const status of ['active', 'in_flight', 'blocked']) {
+  test(`user rejects automatic completion on a persisted ${status} episode`, () => {
+    // Given a completion outcome attached to an uncompleted episode
+    const serialized = JSON.stringify({ version: 1, status, outcome: 'automatic_completed' });
+    // When qualification reads the stored episode
+    const read = () => readAutomaticRebalanceEpisode(serialized);
+    // Then the conflicting outcome is surfaced without changing the episode
+    assert.throws(read, { message: 'Invalid automatic rebalance episode outcome' });
+  });
+}
+
 for (const status of ['in_flight', 'blocked']) {
   test(`user cannot clear ${status} transfer uncertainty by opening another position`, () => {
     // Given an uncertain financial operation

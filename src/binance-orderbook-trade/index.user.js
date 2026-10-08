@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.223
+// @version      2.7.224
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -6801,8 +6801,8 @@ installChartStorageOptimizer();
     return readAutomaticRebalanceEpisode(localStorage.getItem(key));
   }
 
-  function writeUsdtRebalanceEpisode(key, status) {
-    const serialized = JSON.stringify({ version: 1, status });
+  function writeUsdtRebalanceEpisode(key, status, outcome) {
+    const serialized = JSON.stringify({ version: 1, status, outcome });
     localStorage.setItem(key, serialized);
     if (localStorage.getItem(key) !== serialized) throw new Error('Automatic transfer state could not be persisted');
   }
@@ -6902,13 +6902,11 @@ installChartStorageOptimizer();
       error.rebalanceCompleted = completed;
       throw error;
     }
-    writeUsdtRebalanceEpisode(accountKey, 'consumed');
+    // Success copy requires the complete plan and its final balance confirmation.
+    writeUsdtRebalanceEpisode(accountKey, 'consumed', options.automatic ? 'automatic_completed' : undefined);
     usdtRebalanceEligible = false;
     if (options.automatic) {
-      setAutomaticUsdtRebalanceStatus(localizedText(
-        `自动再平衡已完成 · ${completed}/${plan.transfers.length} 笔`,
-        `Automatic USDT transfers completed: ${completed}/${plan.transfers.length}`,
-      ));
+      setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.completed);
     } else {
       setLadderStatus(localizedText(
         `账户再平衡已完成 · ${completed}/${plan.transfers.length} 笔`,
@@ -6928,8 +6926,10 @@ installChartStorageOptimizer();
       if (record.status !== 'active') {
         if (record.status === 'in_flight' || record.status === 'blocked') {
           setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.blocked);
+        } else if (record.outcome === 'automatic_completed') {
+          setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.completed);
         } else {
-          setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.alreadyChecked);
+          setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.notRepeated);
         }
         return { status: record.status };
       }

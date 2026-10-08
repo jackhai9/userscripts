@@ -374,6 +374,15 @@ terminal across reloads and later activity; neither a timer nor another tab
 clears an uncertain outcome. There is no automatic retry or rollback. Missing
 Web Locks, digest support, storage, or identity contracts surface an error.
 
+The optional `outcome: 'automatic_completed'` belongs only to a `consumed` record
+and is written after every automatic transfer and its expected balance are
+confirmed. It preserves the completed Chinese/English message across reloads and
+currency tabs. Status-only records, including deployed records, manual transfers,
+zero-transfer episodes, and interrupted plans, retain their existing protection
+without claiming automatic success. New authoritative activity removes the
+completion marker together with the old episode; the marker never grants
+transfer eligibility.
+
 Every automatic attempt and every transfer step verifies all-symbol positions,
 POST `/bapi/futures/v1/private/future/order/open-orders` with `{}`, and POST
 `/bapi/futures/v1/private/future/order/open-algo-order` with
