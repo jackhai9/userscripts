@@ -62,7 +62,8 @@ test('user cannot start a ladder while another page owns the transfer lock', asy
   await expect.poll(async () => {
     await page.clock.runFor(16);
     return page.locator(STATUS).textContent();
-  }).toContain('another tab');
+  }).toBe('账户操作已阻止：其他标签页正在划转资金');
+  await expect(page.locator(STATUS)).toHaveAttribute('title', '账户操作已阻止：其他标签页正在划转资金');
   await page.clock.runFor(400);
 
   // Then the request is refused and no delayed order is queued behind the transfer.
