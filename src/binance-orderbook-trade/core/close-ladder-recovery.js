@@ -27,6 +27,8 @@ function recoveryFailure(reason, rejection) {
  * Spend one scoped replacement at an unchanged authoritative quantity, then
  * require a strict position decrease before spending another. Failed recovery
  * adapters cannot inherit the outer runner's unrelated retry permissions.
+ * Fills can precede the first position read, so cancellation must use a freshly
+ * built tail plan even when the subsequent position reads are unchanged.
  */
 export async function runCloseLadderWithPositionRecovery({
   buildPlan,
@@ -93,6 +95,8 @@ export async function runCloseLadderWithPositionRecovery({
             'Reduce-only conflict persists after replacement; position has not decreased; stopped',
           ), lastRejection);
         }
+        check();
+        plan = await buildPlan(qty);
         check();
         const result = await replaceOrders(plan);
         check();

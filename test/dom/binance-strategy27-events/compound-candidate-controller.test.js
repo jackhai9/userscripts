@@ -30,6 +30,7 @@ function harness(t, steps, { render, reconcile, createError, removeError, clearE
   const dom = loadFixtureDom('<div class="chart-widget-root"></div>');
   const panel = createStrategy27EventPanel(dom.window.document, dom.window.document.querySelector('.chart-widget-root'), {
     maxEvents: 8, maxCompoundEvents: 8, loadPosition: () => null, savePosition: () => {},
+    loadCollapsed: () => false, saveCollapsed: () => {},
   });
   panel.upsert('ordinary-owned', {
     title: '订单流观察', eventTimeMs: 1, markerColor: '#0ECB81', summary: 'ordinary sentinel',

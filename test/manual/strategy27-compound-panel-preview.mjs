@@ -25,6 +25,7 @@ try {
     const panel = createStrategy27EventPanel(document, document.querySelector('.chart-widget-root'), {
       maxEvents: 8, maxCompoundEvents: 8,
       loadPosition: () => ({ left: 40, top: 80 }), savePosition: () => {},
+      loadCollapsed: () => false, saveCollapsed: () => {},
     });
     window.fixturePanel = panel;
     for (let i = 0; i < 8; i += 1) {

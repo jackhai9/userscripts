@@ -1,8 +1,8 @@
 # Strategy31 volume reversal signals
 
 Source: `src/binance-strategy31-volume-reversal/`. Installer:
-`scripts/binance-strategy31-volume-reversal.user.js` (0.1.5).
-Install alongside CorsairQuant signal client 0.6.7, which owns private gateway
+`scripts/binance-strategy31-volume-reversal.user.js` (0.1.6).
+Install alongside CorsairQuant signal client 0.6.12, which owns private gateway
 authentication. The shared bridge explicitly advertises the `strategy31` capability.
 
 CorsairQuant confirms consecutive closed red/green candles when green base volume
@@ -35,6 +35,17 @@ diagnostics are not translated; the existing generic terminal failure message
 remains the public error contract.
 A transient native candle snapshot inconsistency retains existing arrows and
 waits for the next sample; malformed signal contracts still stop the observer.
+
+The status notice is independently draggable, with an opaque `#181A20` background
+and light text. Without a saved position it appears 16 pixels from the left and
+40 pixels above the bottom. Pointer release saves `{left, top}` under
+`strategy31StatusPosition` through this script's private `GM_getValue` and
+`GM_setValue` grants. The shared presentation module supplies code and styles;
+it does not combine this view or its storage with Strategy27. Text and locale
+updates retain the same drag owner and write no preference. Viewport changes
+keep the view in bounds. Route removal, disposal and unloading release pointer
+capture and listeners; a language change cannot recreate a removed notice.
+
 Loading earlier
 chart history makes matching retained server events eligible for rendering.
 

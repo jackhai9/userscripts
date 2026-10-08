@@ -13,17 +13,13 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.11 with orderbook 2.7.199 or later, or use it alone.
-Install CorsairQuant signal client 0.6.7 for the remote summary.
-Do not combine it with the embedded observer in orderbook 2.7.198.
-After updating/disabling the old script, reload the page. An embedded observer
-is an explicit conflict: Strategy29 stops and displays an upgrade/reload notice.
-If the old script loads later, the observer stops and clears its own overlay.
-This is not a supported compatibility mode; Strategy29 never removes old-script
-or user drawings.
+Install Strategy29 0.5.12 directly and reload the page. The current orderbook
+script is optional; install CorsairQuant signal client 0.6.12 for the remote
+summary. This personal-use project targets the current scripts, without
+old-version runtime branches or preference migration.
 
 The orderbook runs in page context. Strategy29 runs in a Tampermonkey
-sandbox with read access to its previous non-sensitive preferences, and passes
+sandbox with read/write access to its own panel preferences, and passes
 `unsafeWindow` explicitly to the chart runtime. Gateway credentials belong only
 to the separate unified client's private storage. The orderbook registers a
 synchronous boolean drawing-busy predicate under
@@ -84,6 +80,17 @@ The title bar captures the primary pointer so dragging continues across the char
 iframe. Pointer release, cancellation, lost capture and window blur finish once;
 destroying the panel releases capture and removes its listeners. Invalid persisted
 coordinates fail explicitly. No credentials cross the page boundary.
+
+The main summary starts collapsed when no preference has been saved. The header
+button saves the explicit collapsed or expanded boolean under the private key
+`strategy29SummaryPanelCollapsed`. Each newly created panel reads that preference
+across symbols and page reloads; an already open panel keeps its current state
+until it is rebuilt. Locale changes and arriving status or signals neither change
+the fold state nor save preferences. Collapsing the panel hides its contents while
+the observer and summary requests continue under their existing lifecycle rules.
+The restored fold state and `aria-expanded` are applied before the panel is
+inserted or measured, so a collapsed panel near the bottom of the viewport retains
+its saved position. Position and fold state remain separate private preferences.
 
 ## Automatic Cross-Timeframe Server Summary
 
@@ -152,15 +159,10 @@ running. The stopped module does not automatically retry invalid configuration.
 The shared provider preserves the Strategy27 installation namespace, update URL
 and private gateway keys. Update both existing scripts and reload. Both load
 orders are supported. Without the current provider, Strategy29 displays a localized
-update/reload notice while local chart detection continues. Previous host-owned
-summary releases do not receive the retired readiness handshake, so they cannot
-start a second panel beside the current Strategy29 runtime. Runtime version 4
-refuses to reuse the legacy singleton. The final position saved by the old
-Strategy27 host is handed back once as a strictly validated nonsecret coordinate
-record. Strategy29 saves its own completion version and position; later reloads
-preserve subsequent Strategy29 drags instead of reapplying the old host position.
-An invalid handoff stops only the remote summary without copying a position or
-completion marker. Credentials and the retired enable preference never migrate.
+client setup notice while local chart detection continues. Strategy29 reads its
+position and collapsed state directly from its own GM storage. No other script
+publishes coordinates or supplies a migration marker. The current page singleton
+prevents duplicate observers and timers when the script is injected twice.
 
 The public transport accepts only exact fixed status/event routes and validated
 query fields. Requests carry no caller-selected origin, headers or body. The
@@ -283,5 +285,5 @@ cross-page IndexedDB readback; these are not production database tests.
 
 Before a separately authorized installation/release, inspect both real installed
 sources, reload once, and verify both load orders, chart interval switches,
-hide/show, old-version conflict notice and the minimum non-financial orderbook
+hide/show, independent preference restoration and the minimum non-financial orderbook
 path. Fixture results do not certify the current native TradingView build.

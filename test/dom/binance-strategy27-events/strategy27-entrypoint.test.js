@@ -16,7 +16,7 @@ async function until(predicate) {
   }
 }
 
-async function harness(t, { generated = false, holdCandle = false, locale = 'zh-CN', migrationRecord, routeSymbol = 'BTCUSDT', candidateFixture = fixtures[0] } = {}) {
+async function harness(t, { generated = false, holdCandle = false, locale = 'zh-CN', routeSymbol = 'BTCUSDT', candidateFixture = fixtures[0], preferences = new Map() } = {}) {
   const host = createStrategy27OverlayHost({ symbol: routeSymbol,
     priceToCoordinate: price => 2000 - price * 10, coordinateToPrice: y => (2000 - y) / 10 });
   const { dom, chart, overlay } = host;
@@ -26,7 +26,6 @@ async function harness(t, { generated = false, holdCandle = false, locale = 'zh-
   const queries = observeStrategyQueries(page.document);
   const promptBoundary = createStrategyPromptBoundary();
   page.prompt = promptBoundary.pagePrompt;
-  if (migrationRecord !== undefined) Object.defineProperty(page, Symbol.for('jh-userscripts.strategy29-preferences-migration'), { value: migrationRecord });
   let candleHeld = holdCandle;
   let heldTime = null;
   overlay.timeScale.timePointToIndex = time => candleHeld || time === heldTime ? null : time;
@@ -37,11 +36,16 @@ async function harness(t, { generated = false, holdCandle = false, locale = 'zh-
   const menuIds = new Map();
   const requests = [];
   const prompts = promptBoundary.messages;
+  const preferenceWrites = [];
   const globals = {
     unsafeWindow: page,
     prompt: promptBoundary.sandboxPrompt,
-    GM_getValue: (key, initial) => key === 'strategy27GatewayAuthSecret' ? 'synthetic-test-value' : initial,
-    GM_setValue: () => { throw new Error('Unexpected settings write'); },
+    GM_getValue: (key, initial) => preferences.has(key) ? preferences.get(key) : key === 'strategy27GatewayAuthSecret' ? 'synthetic-test-value' : initial,
+    GM_setValue: (key, value) => {
+      if (!['strategy27StatusPosition', 'strategy27EventPanelCollapsed'].includes(key)) throw new Error('Unexpected settings write');
+      preferences.set(key, value);
+      preferenceWrites.push({ key, value });
+    },
     GM_registerMenuCommand: (name, callback, options = {}) => {
       const id = options.id ?? menuIds.size + 1;
       if (menuIds.has(id)) menus.delete(menuIds.get(id));
@@ -92,7 +96,7 @@ async function harness(t, { generated = false, holdCandle = false, locale = 'zh-
     await until(() => pending('compound').length === 1);
   }
   return {
-    page, chart, overlay, interval: host.interval, markers, requests, pending, respond, candidate, timers, menus, prompts, queries, promptBoundary,
+    page, chart, overlay, interval: host.interval, markers, requests, pending, respond, candidate, timers, menus, prompts, queries, promptBoundary, preferences, preferenceWrites,
     reset: () => respond('compound', { schema_version: 1, status: 'bootstrap', projection_kind: 'compound_candidates', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     ordinaryBootstrap: () => respond('ordinary', { schema_version: 1, status: 'bootstrap', projection_kind: 'strategy27_events', requested_cursor: null, next_cursor: '1-0', runtime_epoch: 'a'.repeat(32), last_sequence: 1, bootstrap_observed_at_ms: 7000, records: [] }),
     rows: () => page.document.querySelectorAll('[data-role="compound-row"]').length,
@@ -116,6 +120,74 @@ for (const generated of [false, true]) {
     assert.equal(h.page.document.getElementById('jh-strategy27-event-status'), null);
     assert.equal(h.requests.length, 0);
     assert.deepEqual([...h.markers().keys()], []);
+  });
+}
+
+for (const generated of [false, true]) {
+  test(`user retains the Strategy27 detail fold choice across chart contexts in the ${generated ? 'generated' : 'source'} entrypoint`, async t => {
+    // Given this installation has a saved collapsed event panel
+    const preferences = new Map([['strategy27EventPanelCollapsed', true]]);
+    const h = await harness(t, { generated, preferences });
+    const body = () => h.page.document.querySelector('#jh-strategy27-event-panel [data-role="panel-body"]');
+    assert.equal(body().style.display, 'none');
+
+    // When the user expands it and switches away from and back to the one-second chart
+    h.page.document.querySelector('#jh-strategy27-event-panel [data-role="collapse"]').click();
+    h.setResolution('5');
+    h.tick();
+    h.setResolution('1S');
+    h.tick();
+
+    // Then the recreated panel uses the saved expanded state and no position was changed
+    assert.equal(body().style.display, 'block');
+    assert.deepEqual(h.preferenceWrites, [{ key: 'strategy27EventPanelCollapsed', value: false }]);
+  });
+
+  test(`user drags and retains an independent readable Strategy27 status from the ${generated ? 'generated' : 'source'} entrypoint`, async t => {
+    // Given the script has its own saved status position
+    const preferences = new Map([['strategy27StatusPosition', { left: 120, top: 160 }]]);
+    const h = await harness(t, { generated, preferences });
+    const status = h.page.document.getElementById('jh-strategy27-event-status');
+    const captured = new Set();
+    status.setPointerCapture = id => captured.add(id);
+    status.hasPointerCapture = id => captured.has(id);
+    status.releasePointerCapture = id => captured.delete(id);
+    status.getBoundingClientRect = () => ({ left: parseFloat(status.style.left), top: parseFloat(status.style.top), width: 260, height: 32 });
+    const pointer = (type, x, y) => status.dispatchEvent(new h.page.PointerEvent(type, {
+      bubbles: true, pointerId: 27, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
+    }));
+
+    // When the user drags the status and its text changes on another interval
+    pointer('pointerdown', 130, 170);
+    pointer('pointermove', 190, 210);
+    pointer('pointerup', 190, 210);
+    h.setResolution('5');
+    h.tick();
+    h.page.history.pushState({}, '', '/en/futures/BTCUSDT');
+    h.tick();
+
+    // Then only its position is saved once and inactive text remains readable
+    assert.equal(status.style.left, '180px');
+    assert.equal(status.style.top, '200px');
+    assert.equal(status.style.background, 'rgb(24, 26, 32)');
+    assert.equal(status.style.color, 'rgb(221, 221, 221)');
+    assert.equal(status.style.pointerEvents, 'auto');
+    assert.equal(status.dataset.state, 'inactive');
+    assert.equal(status.textContent, 'Strategy 27 requires a one-second chart');
+    assert.deepEqual(h.preferenceWrites, [{ key: 'strategy27StatusPosition', value: { left: 180, top: 200 } }]);
+    assert.equal(captured.size, 0);
+
+    // When navigation removes the status during another drag
+    pointer('pointerdown', 190, 210);
+    h.page.history.pushState({}, '', '/zh-CN/futures/home');
+    pointer('pointermove', 290, 310);
+    pointer('pointerup', 290, 310);
+    h.page.dispatchEvent(new h.page.Event('blur'));
+
+    // Then removed status listeners cannot write a preference or retain capture
+    assert.equal(h.page.document.getElementById('jh-strategy27-event-status'), null);
+    assert.equal(captured.size, 0);
+    assert.equal(h.preferenceWrites.length, 1);
   });
 }
 
@@ -827,9 +899,9 @@ for (const generated of [false, true]) {
 }
 
 for (const generated of [false, true]) {
-  test(`user observes that ${generated ? 'generated' : 'source'} ignores retired preference records and provides only the shared transport`, async (t) => {
+  test(`user gets the shared transport without a Strategy29 panel from the ${generated ? 'generated' : 'source'} entrypoint`, async (t) => {
     // Given the Binance page, gateway requests and Strategy 27 installation
-    const h = await harness(t, { generated, migrationRecord: { version: 1, enabled: true, position: null, secret: 'synthetic-rejected-value' } });
+    const h = await harness(t, { generated });
     assert.equal(h.page[Symbol.for('jh-userscripts.signal-gateway')].version, 1);
     assert.equal(h.page.__TM_SIGNAL_CLIENT_DEBUG__, undefined);
     assert.equal(h.pending('ordinary').length, 1);
@@ -837,7 +909,7 @@ for (const generated of [false, true]) {
     // When h.ordinaryBootstrap processes the configured inputs
     await h.ordinaryBootstrap();
     await until(() => h.pending('ordinary').length === 1);
-    // Then user observes that the selected case ignores retired preference records and provides only the shared transport
+    // Then Strategy27 owns only its own panel while supplying shared transport
     assert.equal(h.pending('ordinary').length, 1);
     assert.equal(h.page.document.querySelectorAll('#jh-strategy29-summary-panel').length, 0);
   });

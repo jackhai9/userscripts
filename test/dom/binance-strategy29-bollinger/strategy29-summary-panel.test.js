@@ -7,7 +7,11 @@ import { createStrategy29SummaryPanel as createPanel } from '../../../src/binanc
 
 function createStrategy29SummaryPanel(document, symbol, options = {}) {
   let position = null;
-  return createPanel(document, symbol, { locale: 'en', loadPosition: () => position, savePosition: value => { position = value; }, ...options });
+  let collapsed = false;
+  return createPanel(document, symbol, {
+    locale: 'en', loadPosition: () => position, savePosition: value => { position = value; },
+    loadCollapsed: () => collapsed, saveCollapsed: value => { collapsed = value; }, ...options,
+  });
 }
 
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));

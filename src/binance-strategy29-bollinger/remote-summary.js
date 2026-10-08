@@ -13,6 +13,7 @@ import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures
 import { SUMMARY_COPY as COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 
 export const STRATEGY29_PANEL_POSITION_KEY = 'strategy29SummaryPanelPosition';
+export const STRATEGY29_PANEL_COLLAPSED_KEY = 'strategy29SummaryPanelCollapsed';
 export const STRATEGY29_REMOTE_POLL_INTERVAL_MS = 5_000;
 
 function abortError(view, message) {
@@ -67,6 +68,8 @@ export function createStrategy29RemoteSummary({
       locale,
       loadPosition: () => getValue(STRATEGY29_PANEL_POSITION_KEY, null),
       savePosition: position => setValue(STRATEGY29_PANEL_POSITION_KEY, position),
+      loadCollapsed: () => getValue(STRATEGY29_PANEL_COLLAPSED_KEY, true),
+      saveCollapsed: collapsed => setValue(STRATEGY29_PANEL_COLLAPSED_KEY, collapsed),
     });
     const AbortControllerConstructor = view.AbortController ?? AbortController;
     const context = {

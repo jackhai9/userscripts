@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.6.11
+// @version      0.6.12
 // @author       jackhai9
 // @description  Display Strategy 27 events and provide the shared private CorsairQuant gateway connection
 // @match        https://www.binance.com/*/futures/*
@@ -37,11 +37,8 @@ import {
 } from './core/event-annotation.js';
 import {
   createTradingViewEventLayer,
-  ensureStrategy27StatusView,
   findStrategy27ChartRoot,
   findStrategy27ChartTarget,
-  removeStrategy27StatusView,
-  setStrategy27Status,
 } from './dom/tradingview-event-layer.js';
 import { createStrategy27EventPanel } from './dom/strategy27-event-panel.js';
 import { createCompoundCandidateController } from './core/compound-candidate-controller.js';
@@ -51,7 +48,7 @@ import { createStrategy27Translator, localizeAnnotation, resolveUiLocaleFromPath
 import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
 import { SIGNAL_GATEWAY_ORIGIN, SIGNAL_GATEWAY_ORIGIN_KEY, SIGNAL_GATEWAY_SECRET_KEY } from '../shared/signal-client-settings.js';
 import { installSignalGatewayBridge } from '../shared/signal-gateway-bridge.js';
-import { publishStrategy29PanelPosition } from '../shared/strategy29-panel-position-handoff.js';
+import { createDraggableStatusView } from '../shared/draggable-status-view.js';
 
 const promptUser = globalThis.prompt.bind(globalThis);
 
@@ -62,6 +59,8 @@ const promptUser = globalThis.prompt.bind(globalThis);
   const GATEWAY_ORIGIN_KEY = SIGNAL_GATEWAY_ORIGIN_KEY;
   const GATEWAY_SECRET_KEY = SIGNAL_GATEWAY_SECRET_KEY;
   const PANEL_POSITION_KEY = 'strategy27EventPanelPosition';
+  const PANEL_COLLAPSED_KEY = 'strategy27EventPanelCollapsed';
+  const STATUS_POSITION_KEY = 'strategy27StatusPosition';
   const CONTEXT_CHECK_INTERVAL_MS = 1_000;
   const MAX_RETAINED_EVENTS = 80;
   const MAX_PANEL_EVENTS = 8;
@@ -70,12 +69,20 @@ const promptUser = globalThis.prompt.bind(globalThis);
   const pageDocument = page.document;
   const request = createGmJsonRequest(GM_xmlhttpRequest);
   let active = null;
-  let statusView = null;
+  let statusChartRoot = null;
   let uiLocale = resolveUiLocaleFromPathname(page.location.pathname);
   let t = createStrategy27Translator(uiLocale);
   let statusCopy = null;
-  publishStrategy29PanelPosition(page, GM_getValue);
   const gatewayBridge = installSignalGatewayBridge(page, { getValue: GM_getValue, gmXmlHttpRequest: GM_xmlhttpRequest });
+  const statusView = createDraggableStatusView(page, {
+    id: 'jh-strategy27-event-status',
+    loadPosition: () => GM_getValue(STATUS_POSITION_KEY, null),
+    savePosition: position => GM_setValue(STATUS_POSITION_KEY, position),
+    defaultPosition: node => {
+      const chartRect = statusChartRoot.getBoundingClientRect();
+      return { left: chartRect.right - node.getBoundingClientRect().width - 84, top: chartRect.top + 42 };
+    },
+  });
 
   function stopActive(resetReason) {
     if (!active) return;
@@ -89,14 +96,14 @@ const promptUser = globalThis.prompt.bind(globalThis);
   }
 
   function showStatus(chartRoot, text, state = 'normal') {
-    statusView = ensureStrategy27StatusView(pageDocument, chartRoot);
+    statusChartRoot = chartRoot;
     statusCopy = { text, state };
-    setStrategy27Status(statusView, text(uiLocale), state);
+    statusView.show(text(uiLocale), state);
   }
 
   function hideStatus() {
-    removeStrategy27StatusView(pageDocument);
-    statusView = null;
+    statusView.hide();
+    statusChartRoot = null;
     statusCopy = null;
   }
 
@@ -244,6 +251,8 @@ const promptUser = globalThis.prompt.bind(globalThis);
         maxCompoundEvents: MAX_PANEL_EVENTS,
         loadPosition: () => GM_getValue(PANEL_POSITION_KEY, null),
         savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position),
+        loadCollapsed: () => GM_getValue(PANEL_COLLAPSED_KEY, false),
+        saveCollapsed: collapsed => GM_setValue(PANEL_COLLAPSED_KEY, collapsed),
       }),
       candidatePresentations: new Map(),
       ordinaryHistory: new Map(),
@@ -303,7 +312,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
         active.panel.setLocale(uiLocale);
         active.compound.setLocale(uiLocale);
       }
-      if (statusView && statusCopy) setStrategy27Status(statusView, statusCopy.text(uiLocale), statusCopy.state);
+      if (statusView.visible && statusCopy) statusView.show(statusCopy.text(uiLocale), statusCopy.state);
     }
     synchronizeMenus();
     const routeSymbol = parseFuturesTradingSymbolFromPathname(page.location.pathname);
@@ -425,6 +434,7 @@ const promptUser = globalThis.prompt.bind(globalThis);
     removeRouteListener();
     gatewayBridge.dispose();
     stopActive('route_changed');
+    statusView.dispose();
   }, { once: true });
   synchronizeContext();
 })();

@@ -156,6 +156,8 @@ export function createStrategy27EventPanel(document, chartRoot, {
   maxCompoundEvents,
   loadPosition,
   savePosition,
+  loadCollapsed,
+  saveCollapsed,
   locale = 'zh-CN',
 }) {
   let t = createStrategy27Translator(locale);
@@ -168,6 +170,11 @@ export function createStrategy27EventPanel(document, chartRoot, {
   if (!Number.isInteger(maxCompoundEvents) || maxCompoundEvents < 1 || maxCompoundEvents > 8) throw new Error('Strategy 27 panel maxCompoundEvents is invalid');
   if (typeof loadPosition !== 'function') throw new Error('Strategy 27 panel loadPosition is invalid');
   if (typeof savePosition !== 'function') throw new Error('Strategy 27 panel savePosition is invalid');
+  if (typeof loadCollapsed !== 'function' || typeof saveCollapsed !== 'function') {
+    throw new TypeError('Strategy 27 panel collapse adapters are invalid');
+  }
+  let collapsed = loadCollapsed();
+  if (typeof collapsed !== 'boolean') throw new TypeError('Strategy 27 panel collapsed preference must be boolean');
   document.getElementById(PANEL_ID)?.remove();
 
   const panel = createElement(document, 'section', {
@@ -276,6 +283,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
   });
   body.append(monitoring, ordinaryConnection, detail, compoundTitle, compoundStatus, compoundRecent, recentTitle, recent);
   panel.appendChild(body);
+  renderCollapsed();
   document.body.appendChild(panel);
   const initialPosition = assertPanelPosition(loadPosition()) ?? createDefaultPosition(chartRoot);
   applyPanelPosition(panel, normalizePanelPosition(document, panel, initialPosition));
@@ -286,7 +294,12 @@ export function createStrategy27EventPanel(document, chartRoot, {
   let selectedEventId = null;
   let selectedKind = 'ordinary';
   let followLatest = true;
-  let collapsed = false;
+
+  function renderCollapsed() {
+    body.style.display = collapsed ? 'none' : 'block';
+    collapseButton.textContent = collapsed ? t('展开', 'Expand') : t('收起', 'Collapse');
+    collapseButton.setAttribute('aria-expanded', String(!collapsed));
+  }
 
   function orderedEntries(collection = records) {
     return [...collection.entries()].sort((left, right) => (
@@ -456,11 +469,13 @@ export function createStrategy27EventPanel(document, chartRoot, {
     selectLatest();
     render();
   });
-  collapseButton.addEventListener('click', () => {
-    collapsed = !collapsed;
-    body.style.display = collapsed ? 'none' : 'block';
-    collapseButton.textContent = collapsed ? t('展开', 'Expand') : t('收起', 'Collapse');
-  });
+  function onCollapse() {
+    const next = !collapsed;
+    saveCollapsed(next);
+    collapsed = next;
+    renderCollapsed();
+  }
+  collapseButton.addEventListener('click', onCollapse);
 
   render();
   function upsertRecord(collection, capacity, eventId, annotation, observedAtMs) {
@@ -485,7 +500,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
       header.title = t('拖动面板', 'Drag panel');
       heading.textContent = t('Strategy 27 事件', 'Strategy 27 events');
       latestButton.textContent = t('最新', 'Latest');
-      collapseButton.textContent = collapsed ? t('展开', 'Expand') : t('收起', 'Collapse');
+      renderCollapsed();
       recentTitle.textContent = t('最近事件', 'Recent events');
       compoundTitle.textContent = t('复合候选', 'Compound candidates');
       for (const collection of [records, compoundRecords]) {
@@ -558,6 +573,7 @@ export function createStrategy27EventPanel(document, chartRoot, {
     destroy() {
       records.clear();
       compoundRecords.clear();
+      collapseButton.removeEventListener('click', onCollapse);
       cleanupDrag();
       panel.remove();
     },

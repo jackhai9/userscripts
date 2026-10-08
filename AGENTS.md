@@ -2,6 +2,9 @@
 
 ## Scope and precedence
 
+- This is a personal-use project that upgrades directly to the current release.
+  Do not add or retain migration paths or compatibility branches for older
+  userscript releases. Current provider and exchange protocol validation remains required.
 - Codex global guidance applies before this file (a non-empty `AGENTS.override.md`
   in the Codex home takes precedence over `AGENTS.md` when present). This file adds only
   userscripts- and Binance-specific gates.

@@ -12,8 +12,10 @@ const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gate
 function fixture(locale = 'zh-CN', stored = { left: 100, top: 120 }) {
   const dom = new JSDOM('<body></body>', { url: `https://www.binance.com/${locale}/futures/BTCUSDT` });
   const saves = [];
+  const collapsedSaves = [];
   const controller = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', {
     locale, loadPosition: () => stored, savePosition: value => saves.push(value),
+    loadCollapsed: () => false, saveCollapsed: value => collapsedSaves.push(value),
   });
   const panel = dom.window.document.getElementById('jh-strategy29-summary-panel');
   const header = panel.querySelector('header');
@@ -26,7 +28,7 @@ function fixture(locale = 'zh-CN', stored = { left: 100, top: 120 }) {
     button: 0, buttons: type === 'pointerup' ? 0 : 1, ...overrides,
   }));
   const close = () => { controller.destroy(); dom.window.close(); };
-  return { dom, controller, panel, header, captured, fire, saves, close };
+  return { dom, controller, panel, header, captured, fire, saves, collapsedSaves, close };
 }
 
 test('user observes that Chinese panel translates retained status and signals and switches to English without losing rows', () => {
@@ -149,6 +151,7 @@ test('user observes that resize and content growth keep the panel visible, inclu
     assert.equal(f.panel.style.top, '100px');
     assert.equal(collapse.textContent, '收起');
     assert.deepEqual(f.saves, []);
+    assert.deepEqual(f.collapsedSaves, [true, false]);
   } finally { f.close(); }
 });
 
@@ -159,6 +162,7 @@ test('user observes that invalid persisted positions fail explicitly before inst
     // When the summary panel loads those persisted coordinates
     const failure = captureStrategyError(() => createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', {
       loadPosition: () => ({ left: 'bad', top: 10 }), savePosition() {},
+      loadCollapsed: () => true, saveCollapsed() {},
     }));
     // Then the invalid position is reported without installing a panel
     assert.match(failure.message, /position is invalid/);
