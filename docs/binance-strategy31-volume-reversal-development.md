@@ -1,8 +1,8 @@
 # Strategy31 volume reversal signals
 
 Source: `src/binance-strategy31-volume-reversal/`. Installer:
-`scripts/binance-strategy31-volume-reversal.user.js` (0.1.6).
-Install alongside CorsairQuant signal client 0.6.12, which owns private gateway
+`scripts/binance-strategy31-volume-reversal.user.js` (0.1.7).
+Install alongside CorsairQuant signal client 0.6.13, which owns private gateway
 authentication. The shared bridge explicitly advertises the `strategy31` capability.
 
 CorsairQuant confirms consecutive closed red/green candles when green base volume
@@ -42,8 +42,9 @@ and light text. Without a saved position it appears 16 pixels from the left and
 `strategy31StatusPosition` through this script's private `GM_getValue` and
 `GM_setValue` grants. The shared presentation module supplies code and styles;
 it does not combine this view or its storage with Strategy27. Text and locale
-updates retain the same drag owner and write no preference. Viewport changes
-keep the view in bounds. Route removal, disposal and unloading release pointer
+updates retain the same drag owner and write no preference. Intrinsic width is
+bounded by the viewport rather than the saved left offset, so shrinking the window
+keeps readable text and the view in bounds. Route removal, disposal and unloading release pointer
 capture and listeners; a language change cannot recreate a removed notice.
 
 Loading earlier

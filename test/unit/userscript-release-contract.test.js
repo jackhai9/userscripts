@@ -70,7 +70,7 @@ test('user identifies Strategy27 and its declared local gateway capabilities', (
   // Then the installer retains its identity and exact gateway capability boundary.
   assert.equal(contract.name, '【自写】Binance Strategy 27 事件标注');
   assert.equal(contract.namespace, 'binance.strategy27.events');
-  assert.equal(contract.version, '0.6.12');
+  assert.equal(contract.version, '0.6.13');
   assert.equal(contract.runAt, 'document-idle');
   assert.equal(contract.updateURL, contract.downloadURL);
   assert.deepEqual(contract.matches, [

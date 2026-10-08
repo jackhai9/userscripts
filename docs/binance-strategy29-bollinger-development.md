@@ -14,7 +14,7 @@ unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
 Install Strategy29 0.5.12 directly and reload the page. The current orderbook
-script is optional; install CorsairQuant signal client 0.6.12 for the remote
+script is optional; install CorsairQuant signal client 0.6.13 for the remote
 summary. This personal-use project targets the current scripts, without
 old-version runtime branches or preference migration.
 
