@@ -7,6 +7,8 @@ import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-cl
 const PREFIX = 'userscripts:automatic-usdt-rebalance:v1:';
 const EXCESS = { FUNDING: '0', MAIN: '0', UMFUTURE: '100' };
 const TARGET = { FUNDING: '50', MAIN: '40', UMFUTURE: '10' };
+const REPORTED_BALANCES = { FUNDING: '77.50900867', MAIN: '59.49944996', UMFUTURE: '15.22316207' };
+const REPORTED_TARGET = { FUNDING: '76.11581035', MAIN: '60.89264828', UMFUTURE: '15.22316207' };
 const transfers = api => api.snapshot().requests.filter(r => r.pathname === ACCOUNT_PATHS.transfer);
 
 async function episodeRecords(page) {
@@ -16,6 +18,14 @@ async function episodeRecords(page) {
 
 async function episodes(page) {
   return (await episodeRecords(page)).map(record => record.status);
+}
+
+async function seedEpisode(page, record) {
+  await page.evaluate(async ({ prefix, record }) => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fixture-account'));
+    const accountKey = prefix + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem(accountKey, JSON.stringify(record));
+  }, { prefix: PREFIX, record });
 }
 
 async function openAutomatic(page, api) {
@@ -228,61 +238,211 @@ test('user automatically withdraws excess once after a stable empty account with
   expect(api.snapshot().balances).toEqual(TARGET);
 });
 
-test('user keeps reserves after a loss and does not repeat an empty episode after reload', async ({ page }) => {
-  // Given Futures is below its allocation and reserves remain untouched.
+test('user automatically corrects Funding and Spot allocation when Futures is already on target', async ({ page }) => {
+  // Given the reported account has excess Funding and a matching Spot deficit while Futures is on target.
+  const api = createAccountRebalanceApi(REPORTED_BALANCES);
+  const { errors } = await openAutomatic(page, api);
+
+  // When native orders clear and the account stays empty for one millisecond less than two seconds.
+  await page.evaluate(() => window.__BINANCE_FIXTURE__.setOrders([]));
+  await page.clock.runFor(1999);
+
+  // Then the stability gate keeps every balance untouched and does not expose a premature manual action.
+  await expectAutomaticStatus(page, '自动再平衡：等待账户持续无持仓、无挂单');
+  await expect(page.locator('[data-usdt-rebalance]')).toBeHidden();
+  expect(transfers(api)).toEqual([]);
+  expect(api.snapshot().balances).toEqual(REPORTED_BALANCES);
+
+  // When the final millisecond qualifies the flat account through fresh API responses.
+  await page.clock.runFor(1);
+
+  // Then one exact Funding-to-Spot transfer reaches the complete allocation without a dialog or a trade.
+  await expect.poll(() => api.snapshot().balances).toEqual(REPORTED_TARGET);
+  await expectAutomaticStatus(page, '已自动进行账户再平衡');
+  expect(transfers(api).map(request => request.body)).toEqual([
+    { asset: 'USDT', amount: '1.39319832', kindType: 'CARD_MAIN' },
+  ]);
+  expect(await episodeRecords(page)).toEqual([
+    { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+  ]);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect((await readFixtureState(page)).events.filter(event => /order-submitted|cancel-requested/.test(event.type))).toEqual([]);
+
+  // When the user reloads and the same empty episode passes the full qualification window again.
+  await reloadPageWithCoverage(page);
+  await becomeFlat(page);
+
+  // Then the automatic completion remains durable without repeating the reserve correction.
+  await expectAutomaticStatus(page, '已自动进行账户再平衡');
+  expect(await episodeRecords(page)).toEqual([
+    { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+  ]);
+  expect(transfers(api)).toHaveLength(1);
+  expect(api.snapshot().balances).toEqual(REPORTED_TARGET);
+  expect((await readFixtureState(page)).events.filter(event => /order-submitted|cancel-requested/.test(event.type))).toEqual([]);
+
+  // When the completed episode's watchdog advances and the user requests the manual account plan.
+  await page.clock.runFor(5000);
+  await page.locator('[data-usdt-rebalance]').click();
+
+  // Then the public manual workflow reports an already balanced account without another transfer to confirm.
+  await expect(page.locator('#jh-binance-ladder-status')).toHaveText('USDT 已按 5:4:1 分配');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(transfers(api)).toHaveLength(1);
+  expect(api.snapshot().balances).toEqual(REPORTED_TARGET);
+  expect(errors).toEqual([]);
+});
+
+for (const allocation of [
+  {
+    name: 'Spot excess to Funding when Futures is on target',
+    before: { FUNDING: '40', MAIN: '50', UMFUTURE: '10' },
+    expectedTransfers: [{ asset: 'USDT', amount: '10', kindType: 'MAIN_CARD' }],
+  },
+  {
+    name: 'Funding and Futures excess to Spot',
+    before: { FUNDING: '60', MAIN: '20', UMFUTURE: '20' },
+    expectedTransfers: [
+      { asset: 'USDT', amount: '10', kindType: 'CARD_MAIN' },
+      { asset: 'USDT', amount: '10', kindType: 'FUTURE_MAIN' },
+    ],
+  },
+  {
+    name: 'Spot and Futures excess to Funding',
+    before: { FUNDING: '20', MAIN: '60', UMFUTURE: '20' },
+    expectedTransfers: [
+      { asset: 'USDT', amount: '20', kindType: 'MAIN_CARD' },
+      { asset: 'USDT', amount: '10', kindType: 'FUTURE_CARD' },
+    ],
+  },
+]) {
+  test(`user automatically transfers ${allocation.name}`, async ({ page }) => {
+    // Given a globally flat account can reach the complete allocation without replenishing Futures.
+    const api = createAccountRebalanceApi(allocation.before);
+    const { errors } = await openAutomatic(page, api);
+
+    // When the native account clears its last order and completes the qualification window.
+    await becomeFlat(page);
+
+    // Then the actual transfer requests reach every target once and preserve the completed episode.
+    await expect.poll(() => api.snapshot().balances).toEqual(TARGET);
+    await expectAutomaticStatus(page, '已自动进行账户再平衡');
+    expect(transfers(api).map(request => request.body)).toEqual(allocation.expectedTransfers);
+    expect(await episodeRecords(page)).toEqual([
+      { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+    ]);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect((await readFixtureState(page)).events.filter(event => /order-submitted|cancel-requested/.test(event.type))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+}
+
+test('user restores the complete allocation after a loss only once per empty episode', async ({ page }) => {
+  // Given Futures is below its allocation while Funding and Spot can restore the full ratio.
   const below = { FUNDING: '50', MAIN: '40', UMFUTURE: '0' };
   const api = createAccountRebalanceApi(below);
   await openAutomatic(page, api);
 
-  // When automatic qualification completes without any excess to transfer.
+  // When the globally flat account completes its automatic qualification window.
   await becomeFlat(page);
 
-  // Then no reserve funds are moved and the zero-transfer episode is consumed.
-  await expect.poll(() => episodes(page)).toEqual(['consumed']);
-  await expectAutomaticStatus(page, '自动再平衡：合约账户无多余 USDT');
-  expect(transfers(api)).toEqual([]);
-  expect(api.snapshot().balances).toEqual(below);
+  // Then Funding and Spot replenish Futures exactly once and the complete allocation is confirmed.
+  await expect.poll(() => api.snapshot().balances).toEqual({ FUNDING: '45', MAIN: '36', UMFUTURE: '9' });
+  await expectAutomaticStatus(page, '已自动进行账户再平衡');
+  expect(transfers(api).map(request => request.body)).toEqual([
+    { asset: 'USDT', amount: '5', kindType: 'CARD_FUTURE' },
+    { asset: 'USDT', amount: '4', kindType: 'MAIN_FUTURE' },
+  ]);
+  expect(await episodeRecords(page)).toEqual([
+    { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+  ]);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect((await readFixtureState(page)).events.filter(event => /order-submitted|cancel-requested/.test(event.type))).toEqual([]);
 
-  // When a manual deposit changes balances and the user reloads the same empty episode.
+  // When an external transfer changes balances and the user reloads the same empty episode.
   api.setBalances(EXCESS);
   await reloadPageWithCoverage(page);
   await becomeFlat(page);
   await expect(page.locator('[data-usdt-rebalance]')).toBeEnabled();
 
   // Then reloading never creates a second automatic execution entitlement.
-  await expectAutomaticStatus(page, '本轮不再自动执行账户再平衡');
-  expect(await episodes(page)).toEqual(['consumed']);
-  expect(transfers(api)).toEqual([]);
+  await expectAutomaticStatus(page, '已自动进行账户再平衡');
+  expect(await episodeRecords(page)).toEqual([
+    { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+  ]);
+  expect(transfers(api)).toHaveLength(2);
+  expect(api.snapshot().balances).toEqual(EXCESS);
 
-  // When the retained no-transfer episode is displayed in English.
+  // When the retained completion is displayed in English.
   await switchLocale(page, 'en');
 
-  // Then the message describes the episode without claiming a completed transfer or current balance.
-  await expectAutomaticStatus(page, 'No further automatic rebalance in this round');
-  expect(await episodeRecords(page)).toEqual([{ version: 1, status: 'consumed' }]);
+  // Then the historical completion translates without another replenishment or withdrawal.
+  await expectAutomaticStatus(page, 'Account automatically rebalanced');
   expect(api.snapshot().balances).toEqual(EXCESS);
-  expect(transfers(api)).toEqual([]);
+  expect(transfers(api)).toHaveLength(2);
 });
 
-test('user does not see a completed transfer inferred from an older episode record', async ({ page }) => {
-  // Given an earlier script stored a consumed episode without a financial outcome.
-  const api = createAccountRebalanceApi(EXCESS);
+test('user sees a localized no-transfer result for an already balanced automatic episode', async ({ page }) => {
+  // Given all three accounts already hold the exact full allocation.
+  const api = createAccountRebalanceApi(TARGET);
   await openAutomatic(page, api);
-  await page.evaluate(async prefix => {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fixture-account'));
-    const accountKey = prefix + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-    localStorage.setItem(accountKey, JSON.stringify({ version: 1, status: 'consumed' }));
-  }, PREFIX);
 
-  // When the current script observes the same empty episode.
+  // When the account becomes empty and qualifies for its automatic check.
   await becomeFlat(page);
 
-  // Then the old record remains protected without claiming success or moving funds.
-  await expectAutomaticStatus(page, '本轮不再自动执行账户再平衡');
-  expect(await episodeRecords(page)).toEqual([{ version: 1, status: 'consumed' }]);
+  // Then the Chinese result explains that no transfer was needed without marking a completed transfer.
+  await expectAutomaticStatus(page, '自动再平衡：无需划转');
   expect(transfers(api)).toEqual([]);
-  expect(api.snapshot().balances).toEqual(EXCESS);
+  expect(api.snapshot().balances).toEqual(TARGET);
+  expect(await episodeRecords(page)).toEqual([{ version: 1, status: 'consumed' }]);
+
+  // When the same no-transfer result is displayed in English.
+  await switchLocale(page, 'en');
+
+  // Then both the status and tooltip translate without moving any balance.
+  await expectAutomaticStatus(page, 'Automatic account rebalance: no transfer needed');
+  expect(transfers(api)).toEqual([]);
+  expect(api.snapshot().balances).toEqual(TARGET);
+
+  // When the user reloads the same already consumed episode.
+  await reloadPageWithCoverage(page);
+  await becomeFlat(page);
+
+  // Then the episode stays protected without inventing a successful financial operation.
+  await expectAutomaticStatus(page, 'No further automatic rebalance in this round');
+  expect(await episodeRecords(page)).toEqual([{ version: 1, status: 'consumed' }]);
+  expect(api.snapshot().balances).toEqual(TARGET);
+  expect(transfers(api)).toEqual([]);
 });
+
+for (const episode of [
+  {
+    name: 'status-only consumed',
+    record: { version: 1, status: 'consumed' },
+    expectedStatus: '本轮不再自动执行账户再平衡',
+  },
+  {
+    name: 'completed automatic',
+    record: { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+    expectedStatus: '已自动进行账户再平衡',
+  },
+]) {
+  test(`user keeps misallocated balances unchanged for a stored ${episode.name} episode`, async ({ page }) => {
+    // Given an earlier episode is consumed while the current Funding and Spot balances need correction.
+    const api = createAccountRebalanceApi(REPORTED_BALANCES);
+    await openAutomatic(page, api);
+    await seedEpisode(page, episode.record);
+
+    // When the current script observes the same empty episode with the stored record.
+    await becomeFlat(page);
+
+    // Then the stored outcome is preserved and no new allocation runs without verified account activity.
+    await expectAutomaticStatus(page, episode.expectedStatus);
+    expect(await episodeRecords(page)).toEqual([episode.record]);
+    expect(transfers(api)).toEqual([]);
+    expect(api.snapshot().balances).toEqual(REPORTED_BALANCES);
+  });
+}
 
 test('user sees a localized refusal for an invalid persisted completion outcome', async ({ page }) => {
   // Given a stored completion marker conflicts with its in-flight protection.
@@ -313,11 +473,12 @@ test('user sees a localized refusal for an invalid persisted completion outcome'
 });
 
 test('user does not see a manual rebalance reported as an automatic completion after reload', async ({ page }) => {
-  // Given automatic qualification left the reserves alone and the user reviewed a manual plan.
+  // Given the automatic episode is already consumed and the user reviews a manual plan.
   const api = createAccountRebalanceApi({ FUNDING: '100', MAIN: '0', UMFUTURE: '0' });
   await openAutomatic(page, api);
+  await seedEpisode(page, { version: 1, status: 'consumed' });
   await becomeFlat(page);
-  await expectAutomaticStatus(page, '自动再平衡：合约账户无多余 USDT');
+  await expectAutomaticStatus(page, '本轮不再自动执行账户再平衡');
   await page.clock.runFor(32);
   await expect(page.locator('[data-usdt-rebalance]')).toBeVisible();
   await page.locator('[data-usdt-rebalance]').click();
@@ -418,27 +579,53 @@ for (const kind of ['basic', 'conditional']) {
   });
 }
 
-test('user receives one automatic allocation across two simultaneous currency tabs', async ({ page, context }) => {
-  // Given two pages share one browser storage partition and one account.
-  const api = createAccountRebalanceApi(EXCESS);
-  await openAutomatic(page, api);
-  await page.clock.resume();
-  const second = await context.newPage();
-  await openAutomatic(second, api);
+for (const allocation of [
+  {
+    name: 'Futures withdrawals',
+    before: EXCESS,
+    target: TARGET,
+    expectedTransfers: [
+      { asset: 'USDT', amount: '50', kindType: 'FUTURE_CARD' },
+      { asset: 'USDT', amount: '40', kindType: 'FUTURE_MAIN' },
+    ],
+  },
+  {
+    name: 'Funding-to-Spot correction',
+    before: REPORTED_BALANCES,
+    target: REPORTED_TARGET,
+    expectedTransfers: [{ asset: 'USDT', amount: '1.39319832', kindType: 'CARD_MAIN' }],
+  },
+]) {
+  test(`user receives ${allocation.name} only once across two simultaneous currency tabs`, async ({ page, context }) => {
+    // Given two pages share one browser storage partition and the same account balances.
+    const api = createAccountRebalanceApi(allocation.before);
+    const firstLoaded = await openAutomatic(page, api);
+    await page.clock.resume();
+    const second = await context.newPage();
+    const secondLoaded = await openAutomatic(second, api);
 
-  // When both pages qualify for the same empty account at the same time.
-  await Promise.all([page, second].map(tab => tab.evaluate(() => window.__BINANCE_FIXTURE__.setOrders([]))));
-  await page.clock.runFor(2032);
-  await second.clock.runFor(2032);
+    // When both pages qualify for the same empty account at the same time.
+    await Promise.all([page, second].map(tab => tab.evaluate(() => window.__BINANCE_FIXTURE__.setOrders([]))));
+    await page.clock.runFor(2032);
+    await second.clock.runFor(2032);
 
-  // Then shared locking and durable state permit only the two planned transfers.
-  await expect.poll(() => api.snapshot().balances).toEqual(TARGET);
-  await expect.poll(() => episodes(page)).toEqual(['consumed']);
-  expect(transfers(api)).toHaveLength(2);
-  expect(await episodes(second)).toEqual(['consumed']);
-  await expectAutomaticStatus(page, '已自动进行账户再平衡');
-  await expectAutomaticStatus(second, '已自动进行账户再平衡');
-});
+    // Then shared locking and durable state permit exactly one complete allocation across both pages.
+    await expect.poll(() => api.snapshot().balances).toEqual(allocation.target);
+    await expectAutomaticStatus(page, '已自动进行账户再平衡');
+    await expectAutomaticStatus(second, '已自动进行账户再平衡');
+    expect(transfers(api).map(request => request.body)).toEqual(allocation.expectedTransfers);
+    expect(await episodeRecords(page)).toEqual([
+      { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+    ]);
+    expect(await episodeRecords(second)).toEqual([
+      { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+    ]);
+    expect((await readFixtureState(page)).events.filter(event => /order-submitted|cancel-requested/.test(event.type))).toEqual([]);
+    expect((await readFixtureState(second)).events.filter(event => /order-submitted|cancel-requested/.test(event.type))).toEqual([]);
+    expect(firstLoaded.errors).toEqual([]);
+    expect(secondLoaded.errors).toEqual([]);
+  });
+}
 
 test('user qualifies again only after independently verified new account activity', async ({ page }) => {
   // Given the first automatic episode has completed.

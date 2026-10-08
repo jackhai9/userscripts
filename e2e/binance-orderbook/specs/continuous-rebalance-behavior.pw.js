@@ -9,6 +9,10 @@ const ACTION = '[data-usdt-rebalance]';
 const STATUS = '#jh-binance-ladder-status';
 const OTHER_POSITION = { symbol: OTHER_SYMBOL, side: 'LONG', quantity: '1' };
 const API_OTHER_POSITION = { symbol: OTHER_SYMBOL, positionSide: 'LONG', positionAmount: '1' };
+const REBALANCE_TRANSFERS = [
+  { asset: 'USDT', amount: '40', kindType: 'CARD_MAIN' },
+  { asset: 'USDT', amount: '10', kindType: 'CARD_FUTURE' },
+];
 
 /** Keep the last acknowledgement pending while native account updates settle. */
 async function openPendingClose(page, side) {
@@ -56,17 +60,18 @@ async function finishClose(page, host) {
   );
 }
 
-async function expectNoAdditionalTrading(page, host) {
+async function expectNoAdditionalTrading(page, host, expectedTransfers = []) {
   const events = (await readFixtureState(page)).events;
   expect(events.filter(({ type }) => type === 'order-submitted').map(({ action }) => action))
     .toEqual(Array(3).fill(host.action));
   expect(events.filter(({ type }) => /cancel-requested/.test(type))).toEqual([]);
-  expect(host.api.snapshot().requests.filter(({ pathname }) => pathname === ACCOUNT_PATHS.transfer)).toEqual([]);
+  expect(host.api.snapshot().requests.filter(({ pathname }) => pathname === ACCOUNT_PATHS.transfer)
+    .map(({ body }) => body)).toEqual(expectedTransfers);
   expect(host.errors).toEqual([]);
 }
 
 for (const side of ['LONG', 'SHORT']) {
-  test(`user regains rebalance after continuous ${side} closing misses its flat check while busy`, async ({ page }) => {
+  test(`user automatically rebalances after continuous ${side} closing misses its flat check while busy`, async ({ page }) => {
     // Given the final close acknowledgement is held while the account becomes flat.
     const host = await openPendingClose(page, side);
     await publishAccount(page);
@@ -79,6 +84,7 @@ for (const side of ['LONG', 'SHORT']) {
     await expect(page.locator('[data-account-tab="openOrders"]')).toHaveText('当前委托(0)');
     await expect(page.getByRole('button', { name: `停止${host.action}`, exact: true })).toBeVisible();
     await expect(page.locator(ACTION)).toBeHidden();
+    await expectNoAdditionalTrading(page, host);
 
     // When the final acknowledgement arrives without another account-counter change.
     await finishClose(page, host);
@@ -110,14 +116,15 @@ for (const side of ['LONG', 'SHORT']) {
     await (await response).finished();
     await page.clock.runFor(32);
 
-    // Then the action returns automatically without any extra order or transfer.
-    await expect.poll(async () => {
-      await page.clock.runFor(32);
-      return page.locator(ACTION).isEnabled();
-    }).toBe(true);
-    await expect(page.locator(ACTION)).toBeVisible();
-    await expect(page.locator(ACTION)).toBeEnabled();
-    await expectNoAdditionalTrading(page, host);
+    // Then the account reaches its complete allocation without any extra order.
+    await expect(page.locator('#jh-binance-auto-rebalance-status')).toHaveText('已自动进行账户再平衡');
+    await page.clock.runFor(32);
+    await expect(page.locator(ACTION)).toBeHidden();
+    await expect(page.locator(STATUS)).toHaveText(
+      `连续阶梯${host.action} · 已结束 · 当前方向已无持仓 · 1/1 轮 · 累计 3 笔`,
+    );
+    expect(host.api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '40', UMFUTURE: '10' });
+    await expectNoAdditionalTrading(page, host, REBALANCE_TRANSFERS);
   });
 }
 
@@ -171,6 +178,7 @@ test('user qualifies after returning to a page where continuous closing finished
   // Then completion cannot start a hidden account qualification request.
   expect(host.api.snapshot().requests).toHaveLength(completedRequests);
   await expect(page.locator(ACTION)).toBeHidden();
+  await expectNoAdditionalTrading(page, host);
 
   // When the page returns and completes a fresh visible flat window.
   await setSimulatedVisibility(page, false);
@@ -185,7 +193,10 @@ test('user qualifies after returning to a page where continuous closing finished
   await (await response).finished();
   await page.clock.runFor(32);
 
-  // Then returning visibility restores the manual action without automatic transfers.
-  await expect(page.locator(ACTION)).toBeVisible();
-  await expectNoAdditionalTrading(page, host);
+  // Then returning visibility allows one complete allocation and consumes the account action.
+  await expect(page.locator('#jh-binance-auto-rebalance-status')).toHaveText('已自动进行账户再平衡');
+  await page.clock.runFor(32);
+  await expect(page.locator(ACTION)).toBeHidden();
+  expect(host.api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '40', UMFUTURE: '10' });
+  await expectNoAdditionalTrading(page, host, REBALANCE_TRANSFERS);
 });

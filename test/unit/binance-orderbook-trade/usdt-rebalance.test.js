@@ -5,7 +5,6 @@ import assert from 'node:assert/strict';
 import {
   applyUsdtTransferToBalances,
   areUsdtBalancesEqual,
-  buildAutomaticUsdtRebalancePlan,
   buildUsdtRebalancePlan,
   parseUsdtWalletBalances,
   resolveAllFuturesPositionStatus,
@@ -13,7 +12,55 @@ import {
   withFuturesTransferableBalance,
 } from '../../../src/binance-orderbook-trade/core/usdt-rebalance.js';
 
+test('user aligns funding and spot when futures already holds its target allocation', () => {
+  // Given futures already holds ten percent while funding exceeds its target
+  const balances = {
+    FUNDING: '77.50900867', MAIN: '59.49944996', UMFUTURE: '15.22316207',
+  };
+
+  // When the shared planner calculates and applies the remaining allocation
+  const plan = buildUsdtRebalancePlan(balances);
+  const finalBalances = plan.transfers.reduce(applyUsdtTransferToBalances, balances);
+
+  // Then one funding-to-spot transfer completes the exact allocation
+  assert.deepEqual(plan.transfers, [
+    { from: 'FUNDING', to: 'MAIN', kindType: 'CARD_MAIN', amount: '1.39319832' },
+  ]);
+  assert.deepEqual(finalBalances, {
+    FUNDING: '76.11581035', MAIN: '60.89264828', UMFUTURE: '15.22316207',
+  });
+  assert.deepEqual(plan.targets, finalBalances);
+  assert.deepEqual(buildUsdtRebalancePlan(finalBalances).transfers, []);
+});
+
 for (const { label, before, targets, transfers } of [
+  {
+    label: 'spot reserves into funding and depleted futures',
+    before: { FUNDING: '0', MAIN: '100', UMFUTURE: '0' },
+    targets: { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
+    transfers: [
+      { from: 'MAIN', to: 'FUNDING', kindType: 'MAIN_CARD', amount: '50' },
+      { from: 'MAIN', to: 'UMFUTURE', kindType: 'MAIN_FUTURE', amount: '10' },
+    ],
+  },
+  {
+    label: 'funding reserves into spot and underallocated futures',
+    before: { FUNDING: '95', MAIN: '0', UMFUTURE: '5' },
+    targets: { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
+    transfers: [
+      { from: 'FUNDING', to: 'MAIN', kindType: 'CARD_MAIN', amount: '40' },
+      { from: 'FUNDING', to: 'UMFUTURE', kindType: 'CARD_FUTURE', amount: '5' },
+    ],
+  },
+  {
+    label: 'both reserve surpluses into depleted futures',
+    before: { FUNDING: '50', MAIN: '40', UMFUTURE: '0' },
+    targets: { FUNDING: '45', MAIN: '36', UMFUTURE: '9' },
+    transfers: [
+      { from: 'FUNDING', to: 'UMFUTURE', kindType: 'CARD_FUTURE', amount: '5' },
+      { from: 'MAIN', to: 'UMFUTURE', kindType: 'MAIN_FUTURE', amount: '4' },
+    ],
+  },
   {
     label: 'all futures funds into the 5:4:1 allocation',
     before: { FUNDING: '0', MAIN: '0', UMFUTURE: '100' },
@@ -24,16 +71,28 @@ for (const { label, before, targets, transfers } of [
     ],
   },
   {
-    label: 'excess to spot without withdrawing overfunded funding reserves',
+    label: 'funding and futures excess into the spot deficit',
     before: { FUNDING: '70', MAIN: '10', UMFUTURE: '20' },
-    targets: { FUNDING: '70', MAIN: '20', UMFUTURE: '10' },
-    transfers: [{ from: 'UMFUTURE', to: 'MAIN', kindType: 'FUTURE_MAIN', amount: '10' }],
+    targets: { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
+    transfers: [
+      { from: 'FUNDING', to: 'MAIN', kindType: 'CARD_MAIN', amount: '20' },
+      { from: 'UMFUTURE', to: 'MAIN', kindType: 'FUTURE_MAIN', amount: '10' },
+    ],
   },
   {
-    label: 'excess to funding without withdrawing overfunded spot reserves',
+    label: 'spot and futures excess into the funding deficit',
     before: { FUNDING: '0', MAIN: '80', UMFUTURE: '20' },
-    targets: { FUNDING: '10', MAIN: '80', UMFUTURE: '10' },
-    transfers: [{ from: 'UMFUTURE', to: 'FUNDING', kindType: 'FUTURE_CARD', amount: '10' }],
+    targets: { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
+    transfers: [
+      { from: 'MAIN', to: 'FUNDING', kindType: 'MAIN_CARD', amount: '40' },
+      { from: 'UMFUTURE', to: 'FUNDING', kindType: 'FUTURE_CARD', amount: '10' },
+    ],
+  },
+  {
+    label: 'spot excess when futures already holds its target reserve',
+    before: { FUNDING: '0', MAIN: '90', UMFUTURE: '10' },
+    targets: { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
+    transfers: [{ from: 'MAIN', to: 'FUNDING', kindType: 'MAIN_CARD', amount: '50' }],
   },
   {
     label: 'only the funding deficit before directing the remaining excess to spot',
@@ -47,8 +106,20 @@ for (const { label, before, targets, transfers } of [
   {
     label: 'eight-decimal excess while preserving rounding dust in futures',
     before: { FUNDING: '70.00000001', MAIN: '10', UMFUTURE: '20' },
-    targets: { FUNDING: '70.00000001', MAIN: '19.99999999', UMFUTURE: '10.00000001' },
-    transfers: [{ from: 'UMFUTURE', to: 'MAIN', kindType: 'FUTURE_MAIN', amount: '9.99999999' }],
+    targets: { FUNDING: '50', MAIN: '40', UMFUTURE: '10.00000001' },
+    transfers: [
+      { from: 'FUNDING', to: 'MAIN', kindType: 'CARD_MAIN', amount: '20.00000001' },
+      { from: 'UMFUTURE', to: 'MAIN', kindType: 'FUTURE_MAIN', amount: '9.99999999' },
+    ],
+  },
+  {
+    label: 'four minimum units with the same rounded targets as manual allocation',
+    before: { FUNDING: '0', MAIN: '0', UMFUTURE: '0.00000004' },
+    targets: { FUNDING: '0.00000002', MAIN: '0.00000001', UMFUTURE: '0.00000001' },
+    transfers: [
+      { from: 'UMFUTURE', to: 'FUNDING', kindType: 'FUTURE_CARD', amount: '0.00000002' },
+      { from: 'UMFUTURE', to: 'MAIN', kindType: 'FUTURE_MAIN', amount: '0.00000001' },
+    ],
   },
   {
     label: 'a single transferable unit without rounding futures below its reserve',
@@ -57,57 +128,43 @@ for (const { label, before, targets, transfers } of [
     transfers: [{ from: 'UMFUTURE', to: 'FUNDING', kindType: 'FUTURE_CARD', amount: '0.00000001' }],
   },
 ]) {
-  test(`user automatically distributes ${label}`, () => {
-    // Given confirmed available balances with futures above its rounded reserve
+  test(`user distributes ${label}`, () => {
+    // Given confirmed available balances with at least one account outside its target
     const balances = { ...before };
 
-    // When automatic withdrawal-only distribution is planned and applied
-    const plan = buildAutomaticUsdtRebalancePlan(balances);
+    // When the shared account allocation is planned and applied
+    const plan = buildUsdtRebalancePlan(balances);
     const finalBalances = plan.transfers.reduce(applyUsdtTransferToBalances, balances);
 
-    // Then only futures donates and targets describe the actual conserved final balances
+    // Then all three accounts reach their conserved targets with no remaining transfer
     assert.deepEqual(plan.before, before);
     assert.deepEqual(plan.targets, targets);
     assert.deepEqual(plan.transfers, transfers);
     assert.deepEqual(finalBalances, targets);
+    assert.deepEqual(buildUsdtRebalancePlan(finalBalances).transfers, []);
     assert.equal(buildUsdtRebalancePlan(finalBalances).total, plan.total);
-    assert.deepEqual(buildAutomaticUsdtRebalancePlan(finalBalances).transfers, []);
     assert.deepEqual(balances, before);
   });
 }
 
 for (const balances of [
-  { FUNDING: '0', MAIN: '100', UMFUTURE: '0' },
-  { FUNDING: '95', MAIN: '0', UMFUTURE: '5' },
-  { FUNDING: '0', MAIN: '90', UMFUTURE: '10' },
   { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
   { FUNDING: '0', MAIN: '0', UMFUTURE: '0' },
   { FUNDING: '0', MAIN: '0', UMFUTURE: '0.00000001' },
 ]) {
-  test(`user never automatically refills futures or redistributes reserves at ${JSON.stringify(balances)}`, () => {
-    // Given futures has no excess over its rounded ten-percent reserve
+  test(`user skips transfers when balances already meet rounded targets at ${JSON.stringify(balances)}`, () => {
+    // Given all three accounts meet their exact eight-decimal targets
     const before = { ...balances };
 
-    // When automatic rebalancing evaluates the account
-    const plan = buildAutomaticUsdtRebalancePlan(before);
+    // When the shared rebalance planner evaluates the account
+    const plan = buildUsdtRebalancePlan(before);
 
-    // Then the account remains unchanged even if reserve wallets miss their nominal ratio
+    // Then the balanced account remains unchanged without a transfer
     assert.deepEqual(plan.transfers, []);
     assert.deepEqual(plan.before, balances);
     assert.deepEqual(plan.targets, balances);
   });
 }
-
-test('user rejects unsupported precision before planning automatic withdrawal', () => {
-  // Given futures has a balance finer than the supported USDT unit
-  const balances = { FUNDING: '0', MAIN: '0', UMFUTURE: '1.000000001' };
-
-  // When automatic rebalancing evaluates the balance
-  const failure = captureThrownError(() => buildAutomaticUsdtRebalancePlan(balances));
-
-  // Then precision is rejected rather than rounded into a transfer
-  assert.equal(failure.message, 'USDT 余额精度超过 8 位');
-});
 
 test("user sees that wallet response and private transfer use stable account codes from the current page bundle", () => {
   // Given the account identities shared by balance responses and transfer requests

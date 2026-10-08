@@ -69,7 +69,7 @@ export async function openAccountLifecycleHost(page, {
   orders = ORDER_SETS.current,
   apiPositions = [],
   leverage = 2,
-  balances = { FUNDING: '100', MAIN: '0', UMFUTURE: '0' },
+  balances = { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
 } = {}) {
   await installScenarioClock(page);
   const loaded = await openUserscriptScenario(page, createCancelScenario({

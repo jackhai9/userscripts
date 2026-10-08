@@ -332,14 +332,20 @@ and the evidence report contract are owned by
 
 Do not auto-confirm destructive Binance dialogs. The script may open Binance's native cancel confirmation, but final confirmation remains manual.
 
-USDT account rebalancing has separate automatic excess withdrawal and manual full-allocation paths. The inline `账户再平衡` action becomes available only after the account-order widget has continuously reported zero positions and zero open orders for two seconds, and a fresh all-symbol futures-position response also confirms that every position is flat. Starting any script trade or cancel task invalidates that eligibility immediately. When a cancellation or continuous-close task ends, readable zero account counters restart the same guarded eligibility window even if the counts did not change during the task or the earlier check was blocked by the running task. A continuous session restarts this window only after the whole session ends, not between rounds. Hidden pages defer qualification until the existing visibility lifecycle observes the account again. The action opens a script-owned native `<dialog>` styled with Binance color variables; it shows current and target balances plus the exact transfer plan, focuses Cancel by default, and proceeds only after an explicit confirmation. Escape and Cancel close it without transferring funds.
+USDT account rebalancing has automatic and manually confirmed paths that share the same full-allocation planner. The inline `账户再平衡` action becomes available only after the account-order widget has continuously reported zero positions and zero open orders for two seconds, and a fresh all-symbol futures-position response also confirms that every position is flat. Starting any script trade or cancel task invalidates that eligibility immediately. When a cancellation or continuous-close task ends, readable zero account counters restart the same guarded eligibility window even if the counts did not change during the task or the earlier check was blocked by the running task. A continuous session restarts this window only after the whole session ends, not between rounds. Hidden pages defer qualification until the existing visibility lifecycle observes the account again. The action opens a script-owned native `<dialog>` styled with Binance color variables; it shows current and target balances plus the exact transfer plan, focuses Cancel by default, and proceeds only after an explicit confirmation. Escape and Cancel close it without transferring funds.
 
-Automatic withdrawal runs once per verified globally flat episode after the same
-two-second zero-counter window. Its target keeps 10% of total available USDT in
-Futures, sends only Futures excess toward Funding's 50% target, and sends the
-remainder to Spot. It never debits Funding or Spot, and never refills Futures.
-Targets display the balances actually reachable by these outward-only transfers.
-The manual action keeps its explicit confirmation and full 5:4:1 allocation.
+Automatic rebalancing runs once per verified globally flat episode after the same
+two-second zero-counter window. Both paths allocate total available USDT to
+Funding 50%, Spot 40%, and Futures 10% through `buildUsdtRebalancePlan`.
+Funding and Spot targets are floored to eight decimals; Futures receives the
+remainder so the complete balance is conserved. Any of the three accounts may
+donate to an underallocated account, including refilling Futures after a loss
+once the account has no positions or open orders. Funding and Spot are adjusted
+even when Futures already holds its target. At most two sequential transfers
+complete the allocation, and unchanged final balances produce an empty plan for
+either entrypoint. An empty automatic plan reports that no transfer is needed;
+it does not record an automatic transfer completion. The manual action retains
+its explicit confirmation.
 Automatic qualification, waiting, progress, completion, and failure messages use
 the separate `jh-binance-auto-rebalance-status` row. It starts hidden, uses safe
 text/title updates, and retains paired Chinese/English status and progress across
@@ -383,6 +389,12 @@ without claiming automatic success. New authoritative activity removes the
 completion marker together with the old episode; the marker never grants
 transfer eligibility.
 
+Upgrading the allocation policy preserves existing episode records. A consumed
+episode, including an older completed outward-only plan, is not rerun because
+its balances miss the new targets. New authoritative account activity is still
+required before another automatic episode; an explicit manual rebalance can
+adjust the current balances in the meantime.
+
 Every automatic attempt and every transfer step verifies all-symbol positions,
 POST `/bapi/futures/v1/private/future/order/open-orders` with `{}`, and POST
 `/bapi/futures/v1/private/future/order/open-algo-order` with
@@ -400,7 +412,7 @@ The rebalance path is pinned to the current Binance page bundle contract instead
 
 For manual full rebalancing, the user must approve one native confirmation that shows the current balances, 5:4:1 targets, and exact transfer list. After confirmation, the script rechecks all positions, all open orders, and the exact three-account balance snapshot before every transfer. Each successful response must then be reflected by a fresh balance read before the next transfer starts. An intervening position, order, or balance change stops the task; a partial completion is reported explicitly and is never retried or rolled back automatically.
 
-Automatic withdrawal requires visibility again before each transfer. Hiding the tab after the user confirms a manual rebalance does not cancel its remaining transfers. The initial eligibility and preview still require a visible trading page; each confirmed transfer continues to require the same fresh account checks, matching balances, and current trading route while hidden.
+Automatic rebalancing requires visibility again before each transfer. Hiding the tab after the user confirms a manual rebalance does not cancel its remaining transfers. The initial eligibility and preview still require a visible trading page; each confirmed transfer continues to require the same fresh account checks, matching balances, and current trading route while hidden.
 
 Ladder replacement must stay scoped and direction-aware. Automatic replacement may cancel only visible basic open-order rows for the current symbol and the same plan direction (`开多`, `开空`, `平多`, or `平空`). It must not use current-symbol cancel-all for ladder replacement, must not touch conditional/protection orders, and must retry the ladder plan only after the replacement path is validated by current DOM rows.
 

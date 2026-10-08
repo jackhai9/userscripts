@@ -17,10 +17,18 @@ async function openRebalance(page, balances, options) {
     const response = api.handle({ pathname, method: request.method(), body });
     await route.fulfill({ status: response.status, contentType: 'application/json', body: JSON.stringify(response.body) });
   });
+  // Manual scenarios start after this empty episode has already been consumed.
+  await page.evaluate(async () => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fixture-account'));
+    const accountKey = 'userscripts:automatic-usdt-rebalance:v1:'
+      + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem(accountKey, JSON.stringify({ version: 1, status: 'consumed' }));
+  });
   await page.clock.runFor(2000);
   const action = page.locator('[data-usdt-rebalance]');
   await expect(action).toBeVisible();
   await expect(action).toBeEnabled();
+  await expect(page.locator('#jh-binance-auto-rebalance-status')).toHaveText('本轮不再自动执行账户再平衡');
   return { api, errors, action, status: page.locator('#jh-binance-ladder-status') };
 }
 
