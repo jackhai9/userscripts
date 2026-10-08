@@ -200,14 +200,15 @@ test('user keeps the original factory executable when strict source registration
 });
 
 /** Render-free factory execution proves the shared real Rspack registration path. */
-function registerNotificationFactories({ mismatchId } = {}) {
+function registerNotificationFactories({ mismatchId, moduleIds = ['30877', '39116', '55401'] } = {}) {
   const originals = Object.fromEntries([['30877', '37511'], ['39116', '3314'], ['55401', '29042']]
+    .filter(([id]) => moduleIds.includes(id))
     .map(([id, chunk]) => [id, createNativeOrderNotificationFactory(id, chunk,
       id === '39116' ? '5362a54e61f022714e673e166b62e3c22997084ca7a9f4e676475ec91cfcfaa8' : undefined)]));
   if (mismatchId) originals[mismatchId] = module => { module.exports = { nativeDrift: mismatchId }; };
   const inactiveIds = [61523, 64041, 51471, 40477, 16921, 72363, 70020];
   const inactive = Object.fromEntries(inactiveIds.map(id => [id, module => { module.exports = Object.freeze({}); }]));
-  globalThis[QUEUE].push([['notification-registration'], { ...inactive, ...originals }]);
+  globalThis[QUEUE].push([[`notification-registration-${moduleIds.join('-')}`], { ...inactive, ...originals }]);
   return originals;
 }
 
@@ -262,7 +263,7 @@ for (const mismatchId of ['30877', '39116', '55401']) {
   });
 }
 
-test('user sees independent notification expiry at the original shared capture deadline', async t => {
+test('user retains lazy notification capture after chart startup expires', async t => {
   // Given the notification targets have not registered and the mirror was stopped early.
   const page = installPage(t);
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -275,14 +276,118 @@ test('user sees independent notification expiry at the original shared capture d
   t.mock.timers.tick(10_000);
   const status = notifications.snapshot();
 
-  // Then no notification target activates or touches storage and the queue observer retires.
+  // Then lazy notifications still wait while the original chart deadline remains unchanged.
   assert.equal(status.toastActive, false);
   assert.equal(status.soundActive, false);
   for (const target of Object.values(status.modules)) {
-    assert.deepEqual(target, { status: 'unavailable', reason: 'capture_deadline', attempts: 0, matches: 0 });
+    assert.deepEqual(target, { status: 'waiting', reason: null, attempts: 0, matches: 0 });
+  }
+  assert.equal(typeof Object.getOwnPropertyDescriptor(globalThis[QUEUE], 'push').get, 'function');
+  assert.equal(session.snapshot().reason, 'manual');
+  assert.equal(session.snapshot().drawingScope.reason, 'capture_deadline');
+
+  // When native notification chunks arrive after the chart capture window has ended.
+  const host = registerPinnedChartFactories();
+  registerNotificationFactories();
+  host.require(55401);
+  host.require(30877);
+
+  // Then both reminder filters activate and release their completed observation.
+  assert.equal(notifications.snapshot().soundActive, true);
+  assert.equal(notifications.snapshot().toastActive, true);
+  assert.equal(Object.getOwnPropertyDescriptor(globalThis[QUEUE], 'push').get, undefined);
+  assert.equal(getEventListeners(page.events, 'pagehide').length, 0);
+});
+
+for (const delayedStage of ['registration', 'execution']) {
+  test(`user activates native sound filtering when player ${delayedStage} follows the chart deadline`, t => {
+    // Given AIA has captured its chart, toast and sound producer before the lazy player is ready.
+    const page = installPage(t, { url: 'https://www.binance.com/zh-CN/futures/AIAUSDT' });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const notifications = createOrderNotificationScope();
+    const session = page.start({ additionalTargets: notifications.targets });
+    const host = registerPinnedChartFactories();
+    host.require(70940);
+    registerNotificationFactories({ moduleIds: ['30877', '39116'] });
+    host.require(30877);
+    host.require(39116);
+    if (delayedStage === 'execution') registerNotificationFactories({ moduleIds: ['55401'] });
+
+    // When the chart capture deadline passes while the player is still pending.
+    t.mock.timers.tick(31_000);
+    const waiting = notifications.snapshot();
+
+    // Then the pending player retains its capture instead of permanently disabling sound filtering.
+    assert.equal(waiting.toastActive, true);
+    assert.equal(waiting.soundActive, false);
+    assert.deepEqual(waiting.modules['55401'], {
+      status: 'waiting', reason: null,
+      attempts: delayedStage === 'execution' ? 1 : 0,
+      matches: delayedStage === 'execution' ? 1 : 0,
+    });
+    assert.equal(session.snapshot().status, 'active');
+    assert.equal(session.snapshot().drawingScope.status, 'active');
+
+    // When the same complete native player finally registers and executes.
+    if (delayedStage === 'registration') registerNotificationFactories({ moduleIds: ['55401'] });
+    host.require(55401);
+
+    // Then all three filters activate once and the native queue dispatcher is restored.
+    assert.deepEqual(Object.values(notifications.snapshot().modules), [
+      { status: 'active', reason: null, attempts: 1, matches: 1 },
+      { status: 'active', reason: null, attempts: 1, matches: 1 },
+      { status: 'active', reason: null, attempts: 1, matches: 1 },
+    ]);
+    assert.equal(notifications.snapshot().soundActive, true);
+    assert.equal(Object.getOwnPropertyDescriptor(globalThis[QUEUE], 'push').get, undefined);
+  });
+}
+
+test('user retains native handling for a changed sound player arriving after chart startup', t => {
+  // Given chart capture is complete and the two other notification consumers are active.
+  const page = installPage(t);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const notifications = createOrderNotificationScope();
+  page.start({ additionalTargets: notifications.targets });
+  const host = registerPinnedChartFactories();
+  host.require(70940);
+  registerNotificationFactories({ moduleIds: ['30877', '39116'] });
+  host.require(30877);
+  host.require(39116);
+
+  // When an unsupported player arrives after the original thirty-second chart window.
+  t.mock.timers.tick(31_000);
+  registerNotificationFactories({ moduleIds: ['55401'], mismatchId: '55401' });
+  const nativePlayer = host.require(55401);
+
+  // Then the source guard rejects only that player and releases the completed queue observation.
+  assert.deepEqual(nativePlayer, { nativeDrift: '55401' });
+  assert.deepEqual(notifications.snapshot().modules['55401'], {
+    status: 'source_mismatch', reason: 'source_mismatch', attempts: 1, matches: 0,
+  });
+  assert.equal(notifications.snapshot().soundActive, false);
+  assert.equal(notifications.snapshot().toastActive, true);
+  assert.equal(Object.getOwnPropertyDescriptor(globalThis[QUEUE], 'push').get, undefined);
+});
+
+test('user releases pending lazy notifications when leaving after chart startup expires', async t => {
+  // Given notification modules remain unloaded after the chart capture deadline.
+  const page = installPage(t);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const notifications = createOrderNotificationScope();
+  const session = page.start({ additionalTargets: notifications.targets });
+  t.mock.timers.tick(31_000);
+
+  // When the user leaves the page before those lazy modules arrive.
+  page.events.dispatchEvent(new Event('pagehide'));
+  await session.stop();
+
+  // Then page lifecycle cleanup releases the queue and every pending notification target.
+  for (const target of Object.values(notifications.snapshot().modules)) {
+    assert.deepEqual(target, { status: 'unavailable', reason: 'pagehide', attempts: 0, matches: 0 });
   }
   assert.equal(Object.hasOwn(globalThis, QUEUE), false);
-  assert.equal(session.snapshot().reason, 'manual');
+  assert.equal(getEventListeners(page.events, 'pagehide').length, 0);
 });
 
 test('user gets explicit notification unavailability when injection is too late', async t => {

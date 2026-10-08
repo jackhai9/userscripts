@@ -5,6 +5,70 @@ import { readFixtureState } from '../helpers/userscript-page.js';
 const panel = '#jh-binance-close-qty-multiplier-panel';
 const currentSoundSourceSha256 = '0e53de2a0de8073e445688bdf6b858b9f0eb3c20b49ecda9f230418a7c85a2f8';
 
+test('user keeps AIA reminders scoped when the native sound player loads after the chart capture deadline', async ({ page }, testInfo) => {
+  // Given AIA has active native toast and sound consumers while the complete player chunk is still pending
+  const host = await openNotificationScenario(page, 'AIAUSDT', {
+    soundSourceSha256: currentSoundSourceSha256,
+    deferSoundPlayer: true,
+  });
+  expect(await page.evaluate(() => self.__BINANCE_ORDER_NOTIFICATIONS__.snapshot())).toMatchObject({
+    toastActive: true,
+    soundActive: false,
+    modules: {
+      30877: { status: 'active', attempts: 1, matches: 1 },
+      39116: { status: 'active', attempts: 1, matches: 1 },
+      55401: { status: 'waiting', reason: null, attempts: 0, matches: 0 },
+    },
+  });
+
+  // When the complete native player arrives after the chart deadline and receives a foreign ordinary fill
+  await page.clock.runFor(30_001);
+  const beforePlayer = await page.evaluate(() => ({
+    notifications: self.__BINANCE_ORDER_NOTIFICATIONS__.snapshot(),
+    storage: self.__BINANCE_CHART_STORAGE__.snapshot(),
+  }));
+  await page.evaluate(() => self.__NOTIFICATION_HOST__.loadSoundPlayer());
+  await page.waitForFunction(() => self.__NOTIFICATION_HOST__.ready());
+  await page.evaluate(() => self.__NOTIFICATION_HOST__.notify('币安人生USDT', 42));
+  await page.clock.runFor(500);
+
+  // Then the AIA page stays silent for the foreign fill and the late player completes notification capture
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(await readNotificationEffects(page)).toEqual({ audio: [], toasts: [] });
+  expect(beforePlayer.notifications.modules[55401]).toEqual({
+    status: 'waiting', reason: null, attempts: 0, matches: 0,
+  });
+  expect(beforePlayer.storage).toMatchObject({
+    reason: 'capture_deadline',
+    drawingScope: { status: 'unavailable', reason: 'capture_deadline' },
+  });
+  expect(await page.evaluate(() => self.__BINANCE_ORDER_NOTIFICATIONS__.snapshot())).toMatchObject({
+    toastActive: true,
+    soundActive: true,
+    modules: {
+      30877: { status: 'active', attempts: 1, matches: 1 },
+      39116: { status: 'active', attempts: 1, matches: 1 },
+      55401: { status: 'active', reason: null, attempts: 1, matches: 1 },
+    },
+  });
+
+  // When those same native account consumers receive an AIA fill on the matching route
+  await page.evaluate(() => self.__NOTIFICATION_HOST__.notify('AIAUSDT', 43));
+  await page.clock.runFor(500);
+
+  // Then AIA retains its native toast and both audio calls without any financial action
+  await expect(page.getByRole('alert')).toHaveText('LIMIT BUY Order Filled');
+  expect((await readNotificationEffects(page)).audio).toEqual([
+    { kind: 'load', pathname: '/zh-CN/futures/AIAUSDT' },
+    { kind: 'play', pathname: '/zh-CN/futures/AIAUSDT' },
+    { kind: 'play', pathname: '/zh-CN/futures/AIAUSDT' },
+  ]);
+  await expect(page.locator(panel)).toBeVisible();
+  expect(host.errors).toEqual([]);
+  expect((await readFixtureState(page)).events.filter((event) => ['order-submitted', 'cancel-requested'].includes(event.type))).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath('late-player-aia-native-reminder.png'), fullPage: true });
+});
+
 test('user keeps symbol-scoped reminders after native factories are independently renamed and formatted', async ({ page }, testInfo) => {
   // Given OUSDT loads the built userscript with independently repacked native modules
   const host = await openNotificationScenario(page, 'OUSDT', {

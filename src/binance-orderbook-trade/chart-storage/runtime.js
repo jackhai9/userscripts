@@ -4,13 +4,15 @@ import { replaceChartDrawingSaveFactory } from './drawing-save-module.js';
 import { createChartMirrorWriter } from './mirror-writer.js';
 import { isChartStoragePage } from './scope.js';
 
-const CAPTURE_DEADLINE_MS = 30_000;
+const CHART_CAPTURE_DEADLINE_MS = 30_000;
 const MIRROR_MODULE = '70940';
 const DRAWING_MODULE = '76535';
 
 /**
  * Mirror optimization is optional and drainable. Drawing ownership protection
  * remains installed after stop and gets the same finite startup capture window.
+ * Lazy notification modules can arrive later and remain observable until their
+ * independent capture completes or the page leaves.
  */
 export function startChartStorageOptimizer({ additionalTargets = {} } = {}) {
   if (!isChartStoragePage()) throw new Error('Chart storage requires a top-level Binance trading page');
@@ -128,9 +130,9 @@ export function startChartStorageOptimizer({ additionalTargets = {} } = {}) {
   if (!observationFinished) {
     self.addEventListener('pagehide', onPageHide, { once: true });
     timer = setTimeout(() => {
-      observer.stop('capture_deadline');
-      if (state.status === 'waiting') void stop('capture_deadline');
-    }, CAPTURE_DEADLINE_MS);
+      observer.stopTarget(MIRROR_MODULE, 'capture_deadline');
+      observer.stopTarget(DRAWING_MODULE, 'capture_deadline');
+    }, CHART_CAPTURE_DEADLINE_MS);
   }
   return Object.freeze({ snapshot, stop });
 }

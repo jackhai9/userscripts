@@ -89,11 +89,22 @@ account subscription or DOM notification removal is installed by this feature.
 Both sound factories must execute their verified replacements before either
 changes the native string queue to classified tokens. If either structure mismatches,
 both sides retain the original string contract. Pending native strings are also
-preserved during activation. Toast capture is independent. Late injection,
-unknown behavior or the original 30-second capture deadline leaves the affected
-path native and reports its reason; native reminders may therefore still repeat
-after a substantive upstream change. Local variable renaming alone does not
-require a new userscript release.
+preserved during activation. Toast capture is independent. Late injection or
+unknown behavior leaves the affected path native and reports its reason; native
+reminders may therefore still repeat after a substantive upstream change. Local
+variable renaming alone does not require a new userscript release.
+
+The 30-second chart capture deadline does not terminate notification targets.
+The native sound player is lazy and can register or first execute after that
+window. On 2026-10-08, AIAUSDT had active toast and sound-producer replacements
+but a player marked `unavailable/capture_deadline` with zero capture attempts.
+Both loaded sound factories exactly matched the supported sources. The shared
+deadline had retired the player before its later registration, leaving all
+ordinary sound native. Notification capture now lasts until each target succeeds
+or explicitly fails, with `pagehide` ending any remaining observation. This uses
+the existing fixed target set and queue callback, not polling or another account
+subscription. Once all chart and notification targets finish, native queue
+registration is restored.
 
 `self.__BINANCE_ORDER_NOTIFICATIONS__.snapshot()` exposes only capture status and
 aggregate scope-check counts. `suppressedChecks` is a check count, not a unique
