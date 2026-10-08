@@ -1,7 +1,15 @@
 import testPolicy from './scripts/test-policy/eslint-plugin.js';
+import uiCopy from './scripts/ui-copy-eslint-plugin.js';
 import { contractCallAllowances } from './scripts/test-policy/migration-inventory.js';
 
 export default [
+  {
+    name: 'localized-orderbook-status-copy',
+    files: ['src/binance-orderbook-trade/index.user.js'],
+    linterOptions: { noInlineConfig: true },
+    plugins: { 'ui-copy': uiCopy },
+    rules: { 'ui-copy/no-raw-status-copy': 'error' },
+  },
   {
     name: 'historical-install-artifacts',
     ignores: ['test/fixtures/**'],

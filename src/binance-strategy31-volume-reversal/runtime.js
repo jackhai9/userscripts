@@ -8,6 +8,16 @@ import { TradingViewBarSnapshotInconsistentError } from '../binance-strategy29-b
 import { createBollingerIntervalSession, createBollingerMarkerLayer, isBearishBollingerChartTargetCurrent,
   exportClosedTradingViewBars, tradingViewResolutionToSeconds } from '../binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
 import { parseStrategy31Events, STRATEGY31_PERIODS } from './event-contract.js';
+import { localizedText, formatLocalizedText, resolveUiLocaleFromPathname } from '../binance-orderbook-trade/contracts/panel-copy.js';
+
+const STATUS_COPY = Object.freeze({
+  unsupportedMarket: localizedText('策略31：不支持的交易市场', 'Strategy31: unsupported market'),
+  unsupportedInterval: localizedText('策略31：不支持的图表周期', 'Strategy31: unsupported interval'),
+  updateClient: localizedText('策略31：请更新 CorsairQuant 信号客户端', 'Strategy31: update CorsairQuant signal client'),
+  configureClient: localizedText('策略31：请配置 CorsairQuant 信号客户端', 'Strategy31: configure CorsairQuant signal client'),
+  unavailable: localizedText('策略31：信号服务不可用', 'Strategy31: signal service unavailable'),
+  stopped: localizedText('策略31已停止：图表或信号数据无效', 'Strategy31 stopped: invalid chart or signal data'),
+});
 
 /** Server signals only; this lifecycle owns neither market acquisition nor trading actions. */
 export function installStrategy31(view) {
@@ -16,6 +26,14 @@ export function installStrategy31(view) {
   let context = null, intervalOwner = null, inflight = null, disposed = false, failed = false;
   const retired = new Set();
   const document = view.document;
+  let statusText = '';
+  /** Retain both languages so a route change can update even a stopped or pending observer. */
+  function renderNotice() {
+    const node = document.getElementById('jh-strategy31-status');
+    if (!node) return;
+    const text = formatLocalizedText(statusText, resolveUiLocaleFromPathname(view.location.pathname));
+    if (node.textContent !== text) node.textContent = text;
+  }
   function notice(text) {
     if (!document.body || !parseFuturesTradingSymbolFromPathname(view.location.pathname)) return;
     let node = document.getElementById('jh-strategy31-status');
@@ -26,7 +44,8 @@ export function installStrategy31(view) {
       node.style.cssText = 'position:fixed;bottom:40px;left:16px;z-index:10000;padding:6px;background:#181a20;color:#ddd;font:12px sans-serif;pointer-events:none';
       document.body.append(node);
     }
-    node.textContent = text;
+    statusText = text;
+    renderNotice();
   }
   function retire() {
     if (context) { context.layer.clear(); retired.add(context.layer); context = null; }
@@ -59,7 +78,7 @@ export function installStrategy31(view) {
       return;
     }
     if (failed || document.hidden || inflight) return;
-    if (!route.endsWith('USDT')) { releaseChart(); cleanup(); notice('Strategy31: unsupported market'); return; }
+    if (!route.endsWith('USDT')) { releaseChart(); cleanup(); notice(STATUS_COPY.unsupportedMarket); return; }
     const symbol = usdtRouteToCanonical(route);
     const base = findBinanceTradingViewTarget(document);
     const chart = base?.tradingViewApi.activeChart?.();
@@ -70,10 +89,10 @@ export function installStrategy31(view) {
       intervalOwner = { chart, route, session: createBollingerIntervalSession(chart) };
     }
     const resolution = chart.resolution();
-    if (!/^\d+(?:S|H|D|W)?$/i.test(String(resolution))) { retire(); cleanup(); notice('Strategy31: unsupported interval'); return; }
+    if (!/^\d+(?:S|H|D|W)?$/i.test(String(resolution))) { retire(); cleanup(); notice(STATUS_COPY.unsupportedInterval); return; }
     const seconds = tradingViewResolutionToSeconds(resolution);
     const timeframe = Object.keys(STRATEGY31_PERIODS).find(period => STRATEGY31_PERIODS[period] === seconds);
-    if (!timeframe) { retire(); cleanup(); notice('Strategy31: unsupported interval'); return; }
+    if (!timeframe) { retire(); cleanup(); notice(STATUS_COPY.unsupportedInterval); return; }
     if (context && (context.target.chart !== chart || context.target.routeSymbol !== route
       || context.target.chartRoot !== base.chartRoot || context.target.tradingViewApi !== base.tradingViewApi
       || context.target.resolution !== resolution || context.revision !== context.session.revision)) retire();
@@ -90,9 +109,9 @@ export function installStrategy31(view) {
     const candidate = context;
     if (!current(candidate)) return;
     const provider = view[SIGNAL_GATEWAY_BRIDGE];
-    if (!provider?.capabilities?.includes('strategy31')) { notice('Strategy31: update CorsairQuant signal client'); return; }
+    if (!provider?.capabilities?.includes('strategy31')) { notice(STATUS_COPY.updateClient); return; }
     const state = provider.getState();
-    if (!state.configured || !state.available) { notice('Strategy31: configure CorsairQuant signal client'); return; }
+    if (!state.configured || !state.available) { notice(STATUS_COPY.configureClient); return; }
     const controller = new AbortController();
     const requestCurrent = () => current(candidate) && view[SIGNAL_GATEWAY_BRIDGE] === provider
       && provider.getState().settingsRevision === state.settingsRevision;
@@ -101,7 +120,7 @@ export function installStrategy31(view) {
       const path = `/v1/strategy31/events?${new URLSearchParams({ symbol, timeframe, limit: '200' })}`;
       const response = await provider.request(path, controller.signal);
       if (!requestCurrent()) return;
-      if (response.kind !== 'response' || response.status !== 200) { notice('Strategy31: signal service unavailable'); return; }
+      if (response.kind !== 'response' || response.status !== 200) { notice(STATUS_COPY.unavailable); return; }
       const signals = parseStrategy31Events(JSON.parse(response.responseText), symbol, timeframe);
       // Server history is projected only onto exact loaded candle times.
       let bars;
@@ -116,12 +135,15 @@ export function installStrategy31(view) {
       const loadedTimes = new Set(bars.map(bar => bar.time));
       const visible = signals.filter(signal => loadedTimes.has(signal.time));
       const rendered = await candidate.layer.render(visible, { isCurrent: requestCurrent });
-      if (rendered && requestCurrent()) notice(`Strategy31: ${visible.length} chart signals · ${timeframe}`);
+      if (rendered && requestCurrent()) notice(localizedText(
+        `策略31：${visible.length} 个图表信号 · ${timeframe}`,
+        `Strategy31: ${visible.length} chart signals · ${timeframe}`,
+      ));
     } finally { if (inflight === controller) inflight = null; }
   }
   function stopAfterFailure() {
     failed = true; releaseChart(); cleanup();
-    if (!disposed) notice('Strategy31 stopped: invalid chart or signal data');
+    if (!disposed) notice(STATUS_COPY.stopped);
   }
   function tick() {
     // Job boundary: invalid contracts stop this observer and expose a visible failure.
@@ -133,6 +155,7 @@ export function installStrategy31(view) {
   // Route cleanup must remain active after invalid contracts stop the sampling timer.
   const removeRouteListener = installSpaRouteChangeListener(view, () => {
     if (!parseFuturesTradingSymbolFromPathname(view.location.pathname)) void tick();
+    else renderNotice();
   });
   const runtime = Object.freeze({ sample: tick, dispose() {
     disposed = true; releaseChart(); cleanup();

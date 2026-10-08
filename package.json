@@ -26,6 +26,7 @@
     "check:m3u8-downloader": "node --check scripts/m3u8-downloader.user.js",
     "test": "node --test 'test/unit/**/*.test.js' 'test/dom/**/*.test.js'",
     "lint:tests": "eslint test e2e --max-warnings=0",
+    "lint:ui-copy": "eslint src/binance-orderbook-trade/index.user.js --max-warnings=0",
     "test:test-policy": "node --test test/unit/test-policy.test.js",
     "test:affected": "node scripts/test-selection/run.mjs",
     "test:coverage": "node scripts/test-coverage/run.mjs all",

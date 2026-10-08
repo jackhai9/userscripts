@@ -1,6 +1,6 @@
 import { test, expect, reloadPageWithCoverage } from '../test.js';
 import { ACCOUNT_PATHS, createAccountRebalanceApi } from '../fixtures/account-rebalance-api.js';
-import { createCancelScenario, ORDER_SETS } from '../scenarios/cancel-current-symbol.js';
+import { createCancelScenario, CURRENT_SYMBOL, ORDER_SETS } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
 
@@ -37,6 +37,161 @@ async function becomeFlat(page) {
   await page.clock.runFor(2000);
 }
 
+async function switchLocale(page, locale) {
+  await page.evaluate(({ locale, symbol }) => {
+    history.pushState({}, '', `/${locale}/futures/${symbol}`);
+    window.__TM_CLOSE_LONG_DEBUG__.renderPanel();
+  }, { locale, symbol: CURRENT_SYMBOL });
+}
+
+async function expectAutomaticStatus(page, text, title = text) {
+  const status = page.locator('#jh-binance-auto-rebalance-status');
+  await expect(status).toHaveText(text);
+  await expect(status).toHaveAttribute('title', title);
+}
+
+test('user sees a localized account lock refusal without starting an order', async ({ page }) => {
+  // Given another account operation holds the browser lock while orders prevent rebalancing.
+  const api = createAccountRebalanceApi(EXCESS);
+  await openAutomatic(page, api);
+  await page.evaluate(() => new Promise(resolve => {
+    navigator.locks.request('userscripts:usdt-account-operation:v1', () => new Promise(release => {
+      window.__RELEASE_TRANSFER_LOCK__ = release;
+      resolve();
+    }));
+  }));
+  try {
+    // When the user requests a ladder while that account operation is still pending.
+    await page.getByRole('button', { name: '阶梯开多', exact: true }).click();
+
+    // Then the refusal is Chinese and neither a trade nor transfer starts.
+    const status = page.locator('#jh-binance-ladder-status');
+    await expect(status).toHaveText('账户操作已阻止：其他标签页正在划转资金');
+    await expect(status).toHaveAttribute('title', '账户操作已阻止：其他标签页正在划转资金');
+    expect(transfers(api)).toEqual([]);
+    expect((await readFixtureState(page)).events.filter(e => /order-submitted|cancel-requested/.test(e.type))).toEqual([]);
+
+    // When the same refusal is retained through an English SPA route change.
+    await switchLocale(page, 'en');
+
+    // Then both text and tooltip translate without retrying the blocked operation.
+    await expect(status).toHaveText('Account operation blocked: another tab is transferring funds');
+    await expect(status).toHaveAttribute('title', 'Account operation blocked: another tab is transferring funds');
+    expect(transfers(api)).toEqual([]);
+    expect((await readFixtureState(page)).events.filter(e => /order-submitted|cancel-requested/.test(e.type))).toEqual([]);
+  } finally {
+    await page.evaluate(() => window.__RELEASE_TRANSFER_LOCK__());
+  }
+});
+
+test('user sees automatic rebalance status through SPA locale changes without repeating transfers', async ({ page }) => {
+  // Given a Chinese account page with an external transfer response held pending.
+  const api = createAccountRebalanceApi(EXCESS);
+  const { errors } = await openAutomatic(page, api);
+  let releaseTransfer;
+  const transferResponse = new Promise(resolve => { releaseTransfer = resolve; });
+  await page.route('https://www.binance.com' + ACCOUNT_PATHS.transfer, async route => {
+    await transferResponse;
+    await route.fallback();
+  });
+
+  try {
+    // When the account first becomes empty before its qualification deadline.
+    await page.evaluate(() => window.__BINANCE_FIXTURE__.setOrders([]));
+    await page.clock.runFor(32);
+
+    // Then the waiting status and tooltip use Chinese and no transfer has started.
+    await expectAutomaticStatus(page, '自动再平衡：等待账户持续无持仓、无挂单');
+    expect(transfers(api)).toEqual([]);
+
+    // When the empty account qualifies and its first transfer waits for the response.
+    await page.clock.runFor(2000);
+
+    // Then the progress text and tooltip use the Chinese page language.
+    await expectAutomaticStatus(page, '自动再平衡中 · 1/2 笔');
+    expect(await episodes(page)).toEqual(['in_flight']);
+
+    // When the same SPA page switches to English during the pending transfer.
+    await switchLocale(page, 'en');
+
+    // Then the rebuilt panel translates the retained progress and tooltip.
+    await expectAutomaticStatus(page, 'Automatic USDT transfer 1/2');
+
+    // When the same pending operation returns to the Chinese route.
+    await switchLocale(page, 'zh-CN');
+
+    // Then the retained progress returns to Chinese without a duplicate request.
+    await expectAutomaticStatus(page, '自动再平衡中 · 1/2 笔');
+    expect(transfers(api)).toEqual([]);
+
+    // When the external response is released and the automatic plan completes.
+    releaseTransfer();
+
+    // Then both planned withdrawals complete once and retain a Chinese result.
+    await expect.poll(() => api.snapshot().balances).toEqual(TARGET);
+    await expectAutomaticStatus(page, '自动再平衡已完成 · 2/2 笔');
+    expect(transfers(api)).toHaveLength(2);
+    expect(await episodes(page)).toEqual(['consumed']);
+
+    // When the completed account page switches to English without reloading.
+    await switchLocale(page, 'en');
+
+    // Then the completed result and tooltip translate while the episode stays consumed.
+    await expectAutomaticStatus(page, 'Automatic USDT transfers completed: 2/2');
+    expect(transfers(api)).toHaveLength(2);
+    expect(await episodes(page)).toEqual(['consumed']);
+
+    // When the completed account returns to Chinese and its watchdog advances.
+    await switchLocale(page, 'zh-CN');
+    await page.clock.runFor(5000);
+
+    // Then the result returns to Chinese and no repeated allocation occurs.
+    await expectAutomaticStatus(page, '自动再平衡已完成 · 2/2 笔');
+    expect(transfers(api)).toHaveLength(2);
+    expect(api.snapshot().balances).toEqual(TARGET);
+    expect(await episodes(page)).toEqual(['consumed']);
+    expect(errors).toEqual([]);
+  } finally {
+    releaseTransfer();
+  }
+});
+
+for (const diagnostic of [
+  { name: 'unknown raw', zh: 'Fixture transfer refusal <unrecognized>', en: 'Fixture transfer refusal <unrecognized>' },
+  { name: 'known localized', zh: '账户余额已变化，已停止账户再平衡', en: 'Account balances changed; account rebalance stopped' },
+]) {
+  test(`user retains ${diagnostic.name} diagnostics when automatic rebalance failure changes locale`, async ({ page }) => {
+    // Given the external transfer endpoint refuses with a concrete diagnostic.
+    const api = createAccountRebalanceApi(EXCESS);
+    api.failNext(ACCOUNT_PATHS.transfer, { status: 200, body: { success: false, message: diagnostic.zh } });
+    await openAutomatic(page, api);
+
+    // When the automatic workflow attempts its first withdrawal.
+    await becomeFlat(page);
+
+    // Then the Chinese failure prefix preserves the diagnostic in text and tooltip.
+    await expectAutomaticStatus(page, `自动再平衡已停止：${diagnostic.zh}`, diagnostic.zh);
+    expect(transfers(api)).toHaveLength(1);
+    expect(api.snapshot().balances).toEqual(EXCESS);
+    expect(await episodes(page)).toEqual(['in_flight']);
+
+    // When the failed account page switches to English without another transfer attempt.
+    await switchLocale(page, 'en');
+
+    // Then only known diagnostics translate and unknown details remain byte-for-byte intact.
+    await expectAutomaticStatus(page, `Automatic USDT transfer stopped: ${diagnostic.en}`, diagnostic.en);
+    expect(transfers(api)).toHaveLength(1);
+
+    // When the same failed operation returns to the Chinese route.
+    await switchLocale(page, 'zh-CN');
+
+    // Then the original Chinese status returns without clearing the unresolved episode.
+    await expectAutomaticStatus(page, `自动再平衡已停止：${diagnostic.zh}`, diagnostic.zh);
+    expect(transfers(api)).toHaveLength(1);
+    expect(await episodes(page)).toEqual(['in_flight']);
+  });
+}
+
 test('user automatically withdraws excess once after a stable empty account without a confirmation dialog', async ({ page }) => {
   // Given all funds are in Futures while a native order blocks qualification.
   const api = createAccountRebalanceApi(EXCESS);
@@ -68,6 +223,7 @@ test('user keeps reserves after a loss and does not repeat an empty episode afte
 
   // Then no reserve funds are moved and the zero-transfer episode is consumed.
   await expect.poll(() => episodes(page)).toEqual(['consumed']);
+  await expectAutomaticStatus(page, '自动再平衡：合约账户无多余 USDT');
   expect(transfers(api)).toEqual([]);
   expect(api.snapshot().balances).toEqual(below);
 
@@ -78,6 +234,7 @@ test('user keeps reserves after a loss and does not repeat an empty episode afte
   await expect(page.locator('[data-usdt-rebalance]')).toBeEnabled();
 
   // Then reloading never creates a second automatic execution entitlement.
+  await expectAutomaticStatus(page, '本轮空仓已检查自动再平衡');
   expect(await episodes(page)).toEqual(['consumed']);
   expect(transfers(api)).toEqual([]);
 });
@@ -165,7 +322,7 @@ test('user never repeats a transfer with an unknown response after reloading', a
   // When the user reloads the page with the unresolved operation.
   await reloadPageWithCoverage(page);
   await becomeFlat(page);
-  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('previous outcome');
+  await expectAutomaticStatus(page, '自动再平衡已阻止：请先核实上次划转结果');
 
   // Then no automatic retry can duplicate the unknown transaction.
   expect(transfers(api)).toHaveLength(1);
@@ -182,7 +339,7 @@ test('user keeps funds when the account identity indicates portfolio margin', as
   await becomeFlat(page);
 
   // Then the unverified account mode is refused before any wallet transfer.
-  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('identity');
+  await expectAutomaticStatus(page, '自动再平衡已停止：账户身份或模式不受支持或尚未核实', '账户身份或模式不受支持或尚未核实');
   expect(transfers(api)).toEqual([]);
   expect(await episodes(page)).toEqual([]);
 });
@@ -225,7 +382,7 @@ test('user cannot auto-transfer from a copy-trading query route', async ({ page 
   await becomeFlat(page);
 
   // Then the unverified route is refused before any transfer.
-  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('ordinary');
+  await expectAutomaticStatus(page, '自动再平衡已停止：自动划转仅支持普通 U 本位合约账户', '自动划转仅支持普通 U 本位合约账户');
   expect(transfers(api)).toEqual([]);
   expect(api.snapshot().balances).toEqual(EXCESS);
 });
@@ -241,7 +398,7 @@ test('user sees a paused automatic check when new orders invalidate a pending tr
     }));
   }));
   await becomeFlat(page);
-  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('waiting for account access');
+  await expectAutomaticStatus(page, '自动再平衡：等待账户操作完成');
 
   // When a new native order invalidates the pending flat qualification.
   await page.evaluate(orders => window.__BINANCE_FIXTURE__.setOrders(orders), ORDER_SETS.current);
@@ -249,7 +406,7 @@ test('user sees a paused automatic check when new orders invalidate a pending tr
   await page.evaluate(() => window.__RELEASE_TRANSFER_LOCK__());
 
   // Then the obsolete request is cancelled and the visible waiting state ends.
-  await expect(page.locator('#jh-binance-auto-rebalance-status')).toContainText('paused');
+  await expectAutomaticStatus(page, '自动再平衡已暂停：执行条件已变化');
   await expect.poll(() => page.evaluate(async () => (await navigator.locks.query()).pending.length)).toBe(0);
   expect(transfers(api)).toEqual([]);
   expect(api.snapshot().balances).toEqual(EXCESS);

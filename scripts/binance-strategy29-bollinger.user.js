@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.8
+// @version      0.5.9
 // @author       jackhai9
 // @description  Bollinger/SMA60 overlay markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -1816,6 +1816,31 @@
       transferHeading: localizedText("划转计划", "Transfer Plan"),
       cancel: localizedText("取消", "Cancel"),
       confirm: localizedText("确认再平衡", "Confirm Rebalance")
+    }),
+    automaticRebalance: freezeCopy({
+      waitingForFlat: localizedText("自动再平衡：等待账户持续无持仓、无挂单", "Automatic USDT transfer: waiting for stable flat account"),
+      waitingForAccess: localizedText("自动再平衡：等待账户操作完成", "Automatic USDT transfer: waiting for account access"),
+      checkingAccount: localizedText("自动再平衡：正在检查账户", "Automatic USDT transfer: checking account"),
+      blocked: localizedText("自动再平衡已阻止：请先核实上次划转结果", "Automatic USDT transfer blocked: previous outcome requires account review"),
+      alreadyChecked: localizedText("本轮空仓已检查自动再平衡", "Automatic USDT transfer already checked for this flat episode"),
+      noExcess: localizedText("自动再平衡：合约账户无多余 USDT", "Automatic USDT transfer: no Futures excess"),
+      paused: localizedText("自动再平衡已暂停：执行条件已变化", "Automatic USDT transfer paused: eligibility changed"),
+      stopped: localizedText("自动再平衡已停止：", "Automatic USDT transfer stopped: "),
+      eligibilityFailed: localizedText("自动再平衡资格检查失败：", "Automatic USDT eligibility check failed: "),
+      accountBusy: localizedText("账户操作已阻止：其他标签页正在划转资金", "Account operation blocked: another tab is transferring funds")
+    }),
+    rebalanceErrors: freezeCopy({
+      pageIneligible: localizedText("当前合约页面不符合账户划转条件", "Current futures page is not eligible for account transfers"),
+      ordinaryAccountRequired: localizedText("自动划转仅支持普通 U 本位合约账户", "Automatic transfers require an ordinary USD-M Futures account"),
+      eligibilityChanged: localizedText("划转前账户执行条件已变化", "Account eligibility changed before transfer"),
+      tradingTaskRunning: localizedText("当前仍有交易任务运行", "A trading task is still running"),
+      identityUnverified: localizedText("账户身份或模式不受支持或尚未核实", "Unsupported or unverified account identity"),
+      identityChanged: localizedText("账户身份已变化", "Account identity changed"),
+      identityChangedAfterConfirmation: localizedText("确认后账户身份已变化", "Account identity changed after confirmation"),
+      reviewRequired: localizedText("请先核实上次划转结果", "Previous transfer outcome requires account review"),
+      excessOnly: localizedText("自动划转仅可转出合约账户多余资金", "Automatic transfers may only withdraw Futures excess"),
+      flatRequired: localizedText("全账户持仓和当前委托必须为零", "Account-wide positions and open orders must be zero"),
+      accountNotFlat: localizedText("全账户仍有持仓或当前委托", "Positions or open orders still exist in the account")
     }),
     tooltip: freezeCopy({
       singleOrder: localizedText(

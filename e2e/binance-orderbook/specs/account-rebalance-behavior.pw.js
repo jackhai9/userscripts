@@ -98,6 +98,35 @@ test('user cancels an account preview without sending a transfer', async ({ page
   expect(errors).toEqual([]);
 });
 
+test('user sees a translated manual rebalance refusal after account identity changes', async ({ page }) => {
+  // Given the user previews a valid allocation under the original account identity.
+  const { api, errors, action, status } = await openRebalance(page, { FUNDING: '100', MAIN: '0', UMFUTURE: '0' });
+  await action.evaluate(button => button.click());
+  const dialog = page.getByRole('dialog', { name: '账户再平衡' });
+  await expect(dialog).toBeVisible();
+  api.setIdentity({ userId: 'changed-fixture-account', isExistFutureAccount: true, isPortfolioMarginRetailUser: false });
+
+  // When the user confirms after switching accounts outside the script.
+  await dialog.getByRole('button', { name: '确认再平衡', exact: true }).click();
+
+  // Then both the refusal body and tooltip explain the changed account in Chinese.
+  await expect(status).toHaveText('账户再平衡失败 · 确认后账户身份已变化');
+  await expect(status).toHaveAttribute('title', '确认后账户身份已变化');
+  expect(api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.transfer)).toEqual([]);
+
+  // When the same refused operation is retained on an English route.
+  await page.evaluate(() => {
+    history.pushState({}, '', location.pathname.replace('/zh-CN/', '/en/'));
+    window.__TM_CLOSE_LONG_DEBUG__.renderPanel();
+  });
+
+  // Then the body and tooltip translate without repeating the confirmation or transfer.
+  await expect(status).toHaveText('Account rebalance failed · Account identity changed after confirmation');
+  await expect(status).toHaveAttribute('title', 'Account identity changed after confirmation');
+  expect(api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.transfer)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('user with already balanced wallets receives a no-transfer result', async ({ page }) => {
   // Given a globally flat account already holds the exact desired ratio.
   const { api, errors, action, status } = await openRebalance(page, { FUNDING: '50', MAIN: '40', UMFUTURE: '10' });

@@ -17,6 +17,7 @@ Use the Node version pinned by `.nvmrc`. The relevant commands are:
 | Command | Evidence |
 | --- | --- |
 | `npm run lint:tests` | Test policy checks across `test/` and `e2e/`; zero warnings are allowed. |
+| `npm run lint:ui-copy` | Reject direct unpaired orderbook status text and titles; see the localization audit for the bounded scope. |
 | `npm run test:test-policy` | The ESLint rules accept valid programs and reject concrete invalid programs. |
 | `npm test` | Existing Node unit and JSDOM integration tests. |
 | `npm run test:ui` | Offline Playwright scenarios using the generated userscripts and controlled host fixtures. |

@@ -3,7 +3,7 @@
 // @namespace    binance.strategy31.volume-reversal
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.1.2
+// @version      0.1.3
 // @author       jackhai9
 // @description  Confirmed red-to-green volume signals from CorsairQuant
 // @match        https://www.binance.com/*/futures/*
@@ -711,13 +711,194 @@
     });
   }
 
+  // src/binance-orderbook-trade/contracts/panel-copy.js
+  var UI_LOCALE_ZH_CN = "zh-CN";
+  var UI_LOCALE_EN = "en";
+  var SUPPORTED_UI_LOCALES = Object.freeze([
+    UI_LOCALE_ZH_CN,
+    UI_LOCALE_EN
+  ]);
+  function localizedText(zhCN, en) {
+    if (typeof zhCN !== "string" || zhCN === "" || typeof en !== "string" || en === "") {
+      throw new Error("Localized UI text requires non-empty Chinese and English values");
+    }
+    return Object.freeze({ zhCN, en });
+  }
+  function isLocalizedText(value) {
+    return Boolean(
+      value && typeof value === "object" && typeof value.zhCN === "string" && typeof value.en === "string"
+    );
+  }
+  function formatLocalizedText(value, locale) {
+    if (typeof value === "string") return value;
+    if (!isLocalizedText(value)) throw new Error("Invalid localized UI text");
+    if (locale === UI_LOCALE_ZH_CN) return value.zhCN;
+    if (locale === UI_LOCALE_EN) return value.en;
+    throw new Error(`Unsupported UI locale: ${locale}`);
+  }
+  function resolveUiLocaleFromPathname(pathname) {
+    const firstSegment = String(pathname || "").split(/[?#]/, 1)[0].split("/").filter(Boolean)[0];
+    return firstSegment?.toLowerCase() === "zh-cn" ? UI_LOCALE_ZH_CN : UI_LOCALE_EN;
+  }
+  var freezeCopy = (copy) => Object.freeze(copy);
+  var PANEL_COPY = Object.freeze({
+    section: freezeCopy({
+      singleOrder: localizedText("单击下单", "Single Order"),
+      ladderMaker: localizedText("阶梯下单 · Maker", "Ladder Orders · Maker")
+    }),
+    field: freezeCopy({
+      clickOrderbook: localizedText("单击订单簿时", "On click"),
+      minimumOrderQuantity: localizedText("最小下单量的", "Minimum order qty"),
+      minimumOpenQuantity: localizedText("最小开仓量的", "Minimum open qty"),
+      minimumCloseQuantity: localizedText("最小平仓量的", "Minimum close qty"),
+      ratio: localizedText("比例", "Ratio"),
+      orderCount: localizedText("笔数", "Orders"),
+      interval: localizedText("间距", "Gap"),
+      pricePrecision: localizedText("精度", "Precision"),
+      multiplierUnit: localizedText("倍", "×")
+    }),
+    action: freezeCopy({
+      openLong: localizedText("阶梯开多", "Open Long"),
+      openShort: localizedText("阶梯开空", "Open Short"),
+      closeLong: localizedText("阶梯平多", "Close Long"),
+      closeShort: localizedText("阶梯平空", "Close Short"),
+      cancel: localizedText("撤单", "Cancel"),
+      cancelRunning: localizedText("撤单处理中", "Cancelling"),
+      noOrders: localizedText("无挂单", "No Orders"),
+      accountRebalance: localizedText("账户再平衡", "Account Rebalance"),
+      stopLadderByAction: freezeCopy({
+        OPEN_LONG: localizedText("停止开多", "Stop Open Long"),
+        OPEN_SHORT: localizedText("停止开空", "Stop Open Short"),
+        CLOSE_LONG: localizedText("停止平多", "Stop Close Long"),
+        CLOSE_SHORT: localizedText("停止平空", "Stop Close Short")
+      })
+    }),
+    side: freezeCopy({
+      long: localizedText("多", "Long"),
+      short: localizedText("空", "Short"),
+      openLong: localizedText("开多", "Open Long"),
+      openShort: localizedText("开空", "Open Short"),
+      closeLong: localizedText("平多", "Close Long"),
+      closeShort: localizedText("平空", "Close Short")
+    }),
+    state: freezeCopy({
+      idle: localizedText("空闲", "Idle"),
+      allPositionsClosed: localizedText("已全部平仓", "All positions closed"),
+      waitingTradeMode: localizedText("等待开仓/平仓状态", "Waiting for trade mode"),
+      waitingPricePrecision: localizedText("等待价格精度", "Waiting for precision"),
+      waitingPrecisionOptions: localizedText("等待精度档位", "Waiting for options"),
+      loadingPrecisionOptions: localizedText("读取精度档位", "Loading options"),
+      minimumQuantityLoading: localizedText("最小量读取中", "Loading minimum qty"),
+      positiveIntegerMultiplier: localizedText("请输入正整数倍数", "Enter a positive integer"),
+      noClosablePosition: localizedText("暂无可平仓位", "No position to close")
+    }),
+    status: freezeCopy({
+      precisionUpdated: localizedText("精度推荐已更新", "Precision recommendation updated"),
+      precisionOptionsUnavailable: localizedText("档位读取失败，请刷新", "Options unavailable. Refresh."),
+      precisionInsufficient: localizedText(
+        "近期价格变化不足，请稍后重试",
+        "Recent price movement is insufficient. Try again later."
+      )
+    }),
+    aria: freezeCopy({
+      decrementMultiplier: localizedText("减少倍数", "Decrease multiplier"),
+      incrementMultiplier: localizedText("增加倍数", "Increase multiplier")
+    }),
+    rebalanceDialog: freezeCopy({
+      targetSummary: localizedText(
+        "目标分配：资金 50% / 现货 40% / U本位 10%",
+        "Target allocation: Funding 50% / Spot 40% / USDⓈ-M Futures 10%"
+      ),
+      accountHeading: localizedText("账户", "Account"),
+      currentHeading: localizedText("当前 (USDT)", "Current (USDT)"),
+      targetHeading: localizedText("目标 (USDT)", "Target (USDT)"),
+      transferHeading: localizedText("划转计划", "Transfer Plan"),
+      cancel: localizedText("取消", "Cancel"),
+      confirm: localizedText("确认再平衡", "Confirm Rebalance")
+    }),
+    automaticRebalance: freezeCopy({
+      waitingForFlat: localizedText("自动再平衡：等待账户持续无持仓、无挂单", "Automatic USDT transfer: waiting for stable flat account"),
+      waitingForAccess: localizedText("自动再平衡：等待账户操作完成", "Automatic USDT transfer: waiting for account access"),
+      checkingAccount: localizedText("自动再平衡：正在检查账户", "Automatic USDT transfer: checking account"),
+      blocked: localizedText("自动再平衡已阻止：请先核实上次划转结果", "Automatic USDT transfer blocked: previous outcome requires account review"),
+      alreadyChecked: localizedText("本轮空仓已检查自动再平衡", "Automatic USDT transfer already checked for this flat episode"),
+      noExcess: localizedText("自动再平衡：合约账户无多余 USDT", "Automatic USDT transfer: no Futures excess"),
+      paused: localizedText("自动再平衡已暂停：执行条件已变化", "Automatic USDT transfer paused: eligibility changed"),
+      stopped: localizedText("自动再平衡已停止：", "Automatic USDT transfer stopped: "),
+      eligibilityFailed: localizedText("自动再平衡资格检查失败：", "Automatic USDT eligibility check failed: "),
+      accountBusy: localizedText("账户操作已阻止：其他标签页正在划转资金", "Account operation blocked: another tab is transferring funds")
+    }),
+    rebalanceErrors: freezeCopy({
+      pageIneligible: localizedText("当前合约页面不符合账户划转条件", "Current futures page is not eligible for account transfers"),
+      ordinaryAccountRequired: localizedText("自动划转仅支持普通 U 本位合约账户", "Automatic transfers require an ordinary USD-M Futures account"),
+      eligibilityChanged: localizedText("划转前账户执行条件已变化", "Account eligibility changed before transfer"),
+      tradingTaskRunning: localizedText("当前仍有交易任务运行", "A trading task is still running"),
+      identityUnverified: localizedText("账户身份或模式不受支持或尚未核实", "Unsupported or unverified account identity"),
+      identityChanged: localizedText("账户身份已变化", "Account identity changed"),
+      identityChangedAfterConfirmation: localizedText("确认后账户身份已变化", "Account identity changed after confirmation"),
+      reviewRequired: localizedText("请先核实上次划转结果", "Previous transfer outcome requires account review"),
+      excessOnly: localizedText("自动划转仅可转出合约账户多余资金", "Automatic transfers may only withdraw Futures excess"),
+      flatRequired: localizedText("全账户持仓和当前委托必须为零", "Account-wide positions and open orders must be zero"),
+      accountNotFlat: localizedText("全账户仍有持仓或当前委托", "Positions or open orders still exist in the account")
+    }),
+    tooltip: freezeCopy({
+      singleOrder: localizedText(
+        "单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。",
+        "Click a price in the order book to submit one order using the current side and quantity settings."
+      ),
+      ladderMaker: localizedText(
+        "根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。",
+        "Submit Post Only ladder orders sequentially using the current ratio, order count, gap, and precision."
+      ),
+      ratio: localizedText(
+        "本次阶梯下单使用可开/可平数量的百分比。",
+        "Percentage of the available open or close quantity used by this ladder."
+      ),
+      orderCount: localizedText(
+        "计划拆分成多少笔阶梯订单。",
+        "Number of orders in the ladder."
+      ),
+      interval: localizedText(
+        "相邻订单跨越多少个订单簿价格级别。",
+        "Number of order-book price levels between adjacent orders."
+      ),
+      pricePrecision: localizedText(
+        "与订单簿中的价格精度联动。黄点表示推荐值。比例、笔数、间距会随所选精度恢复对应设置。",
+        "Linked to the order-book price precision. The yellow dot marks the recommendation. Ratio, orders, and gap restore their saved values for the selected precision."
+      ),
+      continuousClose: localizedText(
+        "Option/Alt + 单击：连续交易",
+        "Option/Alt + click: continuous trading"
+      ),
+      accountRebalance: localizedText(
+        "将资金、现货和 U 本位账户的 USDT 按 5:4:1 分配",
+        "Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a 5:4:1 ratio"
+      )
+    })
+  });
+
   // src/binance-strategy31-volume-reversal/runtime.js
+  var STATUS_COPY = Object.freeze({
+    unsupportedMarket: localizedText("策略31：不支持的交易市场", "Strategy31: unsupported market"),
+    unsupportedInterval: localizedText("策略31：不支持的图表周期", "Strategy31: unsupported interval"),
+    updateClient: localizedText("策略31：请更新 CorsairQuant 信号客户端", "Strategy31: update CorsairQuant signal client"),
+    configureClient: localizedText("策略31：请配置 CorsairQuant 信号客户端", "Strategy31: configure CorsairQuant signal client"),
+    unavailable: localizedText("策略31：信号服务不可用", "Strategy31: signal service unavailable"),
+    stopped: localizedText("策略31已停止：图表或信号数据无效", "Strategy31 stopped: invalid chart or signal data")
+  });
   function installStrategy31(view) {
     const key = Symbol.for("jh-userscripts.strategy31");
     if (view[key]) return view[key];
     let context = null, intervalOwner = null, inflight = null, disposed = false, failed = false;
     const retired = /* @__PURE__ */ new Set();
     const document = view.document;
+    let statusText = "";
+    function renderNotice() {
+      const node = document.getElementById("jh-strategy31-status");
+      if (!node) return;
+      const text = formatLocalizedText(statusText, resolveUiLocaleFromPathname(view.location.pathname));
+      if (node.textContent !== text) node.textContent = text;
+    }
     function notice(text) {
       if (!document.body || !parseFuturesTradingSymbolFromPathname(view.location.pathname)) return;
       let node = document.getElementById("jh-strategy31-status");
@@ -728,7 +909,8 @@
         node.style.cssText = "position:fixed;bottom:40px;left:16px;z-index:10000;padding:6px;background:#181a20;color:#ddd;font:12px sans-serif;pointer-events:none";
         document.body.append(node);
       }
-      node.textContent = text;
+      statusText = text;
+      renderNotice();
     }
     function retire() {
       if (context) {
@@ -764,7 +946,7 @@
       if (!route.endsWith("USDT")) {
         releaseChart();
         cleanup();
-        notice("Strategy31: unsupported market");
+        notice(STATUS_COPY.unsupportedMarket);
         return;
       }
       const symbol = usdtRouteToCanonical(route);
@@ -783,7 +965,7 @@
       if (!/^\d+(?:S|H|D|W)?$/i.test(String(resolution))) {
         retire();
         cleanup();
-        notice("Strategy31: unsupported interval");
+        notice(STATUS_COPY.unsupportedInterval);
         return;
       }
       const seconds = tradingViewResolutionToSeconds(resolution);
@@ -791,7 +973,7 @@
       if (!timeframe) {
         retire();
         cleanup();
-        notice("Strategy31: unsupported interval");
+        notice(STATUS_COPY.unsupportedInterval);
         return;
       }
       if (context && (context.target.chart !== chart || context.target.routeSymbol !== route || context.target.chartRoot !== base.chartRoot || context.target.tradingViewApi !== base.tradingViewApi || context.target.resolution !== resolution || context.revision !== context.session.revision)) retire();
@@ -814,12 +996,12 @@
       if (!current(candidate)) return;
       const provider = view[SIGNAL_GATEWAY_BRIDGE];
       if (!provider?.capabilities?.includes("strategy31")) {
-        notice("Strategy31: update CorsairQuant signal client");
+        notice(STATUS_COPY.updateClient);
         return;
       }
       const state = provider.getState();
       if (!state.configured || !state.available) {
-        notice("Strategy31: configure CorsairQuant signal client");
+        notice(STATUS_COPY.configureClient);
         return;
       }
       const controller = new AbortController();
@@ -830,7 +1012,7 @@
         const response = await provider.request(path, controller.signal);
         if (!requestCurrent()) return;
         if (response.kind !== "response" || response.status !== 200) {
-          notice("Strategy31: signal service unavailable");
+          notice(STATUS_COPY.unavailable);
           return;
         }
         const signals = parseStrategy31Events(JSON.parse(response.responseText), symbol, timeframe);
@@ -845,7 +1027,10 @@
         const loadedTimes = new Set(bars.map((bar) => bar.time));
         const visible = signals.filter((signal) => loadedTimes.has(signal.time));
         const rendered = await candidate.layer.render(visible, { isCurrent: requestCurrent });
-        if (rendered && requestCurrent()) notice(`Strategy31: ${visible.length} chart signals · ${timeframe}`);
+        if (rendered && requestCurrent()) notice(localizedText(
+          `策略31：${visible.length} 个图表信号 · ${timeframe}`,
+          `Strategy31: ${visible.length} chart signals · ${timeframe}`
+        ));
       } finally {
         if (inflight === controller) inflight = null;
       }
@@ -854,7 +1039,7 @@
       failed = true;
       releaseChart();
       cleanup();
-      if (!disposed) notice("Strategy31 stopped: invalid chart or signal data");
+      if (!disposed) notice(STATUS_COPY.stopped);
     }
     function tick() {
       return sample().catch(stopAfterFailure);
@@ -869,6 +1054,7 @@
     document.addEventListener("visibilitychange", visibility);
     const removeRouteListener = installSpaRouteChangeListener(view, () => {
       if (!parseFuturesTradingSymbolFromPathname(view.location.pathname)) void tick();
+      else renderNotice();
     });
     const runtime = Object.freeze({ sample: tick, dispose() {
       disposed = true;

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.222
+// @version      2.7.223
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1111,6 +1111,31 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       transferHeading: localizedText("划转计划", "Transfer Plan"),
       cancel: localizedText("取消", "Cancel"),
       confirm: localizedText("确认再平衡", "Confirm Rebalance")
+    }),
+    automaticRebalance: freezeCopy({
+      waitingForFlat: localizedText("自动再平衡：等待账户持续无持仓、无挂单", "Automatic USDT transfer: waiting for stable flat account"),
+      waitingForAccess: localizedText("自动再平衡：等待账户操作完成", "Automatic USDT transfer: waiting for account access"),
+      checkingAccount: localizedText("自动再平衡：正在检查账户", "Automatic USDT transfer: checking account"),
+      blocked: localizedText("自动再平衡已阻止：请先核实上次划转结果", "Automatic USDT transfer blocked: previous outcome requires account review"),
+      alreadyChecked: localizedText("本轮空仓已检查自动再平衡", "Automatic USDT transfer already checked for this flat episode"),
+      noExcess: localizedText("自动再平衡：合约账户无多余 USDT", "Automatic USDT transfer: no Futures excess"),
+      paused: localizedText("自动再平衡已暂停：执行条件已变化", "Automatic USDT transfer paused: eligibility changed"),
+      stopped: localizedText("自动再平衡已停止：", "Automatic USDT transfer stopped: "),
+      eligibilityFailed: localizedText("自动再平衡资格检查失败：", "Automatic USDT eligibility check failed: "),
+      accountBusy: localizedText("账户操作已阻止：其他标签页正在划转资金", "Account operation blocked: another tab is transferring funds")
+    }),
+    rebalanceErrors: freezeCopy({
+      pageIneligible: localizedText("当前合约页面不符合账户划转条件", "Current futures page is not eligible for account transfers"),
+      ordinaryAccountRequired: localizedText("自动划转仅支持普通 U 本位合约账户", "Automatic transfers require an ordinary USD-M Futures account"),
+      eligibilityChanged: localizedText("划转前账户执行条件已变化", "Account eligibility changed before transfer"),
+      tradingTaskRunning: localizedText("当前仍有交易任务运行", "A trading task is still running"),
+      identityUnverified: localizedText("账户身份或模式不受支持或尚未核实", "Unsupported or unverified account identity"),
+      identityChanged: localizedText("账户身份已变化", "Account identity changed"),
+      identityChangedAfterConfirmation: localizedText("确认后账户身份已变化", "Account identity changed after confirmation"),
+      reviewRequired: localizedText("请先核实上次划转结果", "Previous transfer outcome requires account review"),
+      excessOnly: localizedText("自动划转仅可转出合约账户多余资金", "Automatic transfers may only withdraw Futures excess"),
+      flatRequired: localizedText("全账户持仓和当前委托必须为零", "Account-wide positions and open orders must be zero"),
+      accountNotFlat: localizedText("全账户仍有持仓或当前委托", "Positions or open orders still exist in the account")
     }),
     tooltip: freezeCopy({
       singleOrder: localizedText(
@@ -16050,8 +16075,11 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       ["Binance 登录态已失效", "Binance session has expired"],
       ["Binance 请求超时", "Binance request timed out"]
     ]);
+    const LOCALIZED_REBALANCE_ERRORS = new Map(Object.values(PANEL_COPY.rebalanceErrors).flatMap((copy) => [[copy.zhCN, copy], [copy.en, copy]]));
     function localizeKnownUiStatus(text) {
       if (typeof text !== "string") return text;
+      const rebalanceError = LOCALIZED_REBALANCE_ERRORS.get(text);
+      if (rebalanceError) return rebalanceError;
       const exactEnglish = LOCALIZED_STATUS_EXACT.get(text);
       if (exactEnglish) return localizedText(text, exactEnglish);
       let match = /^原交易对 (.+) 页面已离开，撤单确认跟踪已停止$/.exec(text);
@@ -16062,12 +16090,12 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       if (match) return localizedText(text, `Account rebalance completed · ${match[1]} transfers`);
       match = /^账户再平衡部分完成 · (\d+\/\d+) 笔 · (.+)$/.exec(text);
       if (match) return localizedText(
-        text,
+        `账户再平衡部分完成 · ${match[1]} 笔 · ${formatLocalizedText(localizeKnownUiStatus(match[2]), "zh-CN")}`,
         `Account rebalance partially completed · ${match[1]} transfers · ${formatLocalizedText(localizeKnownUiStatus(match[2]), "en")}`
       );
       match = /^账户再平衡失败 · (.+)$/.exec(text);
       if (match) return localizedText(
-        text,
+        `账户再平衡失败 · ${formatLocalizedText(localizeKnownUiStatus(match[1]), "zh-CN")}`,
         `Account rebalance failed · ${formatLocalizedText(localizeKnownUiStatus(match[1]), "en")}`
       );
       match = /^单击下单未执行：未找到可用(开仓|平仓)动作$/.exec(text);
@@ -18225,7 +18253,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         ...queuedSignal ? { signal: queuedSignal } : { ifAvailable: true }
       }, async (lock) => {
         if (!lock) {
-          if (reportUnavailable) setLadderStatus("Account operation blocked: another tab is transferring funds");
+          if (reportUnavailable) setLadderStatus(PANEL_COPY.automaticRebalance.accountBusy);
           return { status: "not_started" };
         }
         return operation();
@@ -18234,7 +18262,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     async function startLadder(actionType, continuousProgress = null, chartSaveController = null) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec) {
-        setLadderStatus("未知阶梯动作");
+        setLadderStatus(localizedText("未知阶梯动作", "Unknown ladder action"));
         return { status: "not_started" };
       }
       const continuousSession = continuousProgress !== null;
@@ -19900,7 +19928,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       const { waitUntilCleared = false } = options || {};
       const symbol = getCurrentSymbol();
       if (!symbol) {
-        setLadderStatus("未识别当前交易对");
+        setLadderStatus(localizedText("未识别当前交易对", "Current symbol not recognized"));
         return { ok: false, status: "no_symbol", message: "未识别当前交易对" };
       }
       if (!isCurrentObservedSymbol(symbol)) {
@@ -19909,7 +19937,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         return { ok: false, status: "symbol_changing", message };
       }
       if (getOpenOrdersTabCount() === 0) {
-        setLadderStatus("当前交易对无挂单");
+        setLadderStatus(localizedText("当前交易对无挂单", "No open orders for this symbol"));
         return { ok: true, status: "no_orders" };
       }
       const previousAccountOrdersTabIdentity = getAccountOrdersTabIdentity2(findSelectedAccountOrdersTab2());
@@ -19992,7 +20020,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           return { ok: false, status: "symbol_changed", message };
         }
         if (!openOrdersEvidence.hasOrders) {
-          setLadderStatus("当前交易对无挂单");
+          setLadderStatus(localizedText("当前交易对无挂单", "No open orders for this symbol"));
           return { ok: true, status: "no_orders" };
         }
         let cancelAllButton = openOrdersEvidence.cancelAllButton;
@@ -20046,7 +20074,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           dialogDecision = await waitForBinanceCancelAllDialogDecision(
             dialogDecisionWatcher.watcher,
             dialogDecisionWatcher.lifecycleSignal,
-            () => setLadderStatus("撤单确认弹窗已打开")
+            () => setLadderStatus(localizedText("撤单确认弹窗已打开", "Cancellation confirmation opened"))
           );
         } catch (error) {
           restoreTemporaryUiState = false;
@@ -20085,7 +20113,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           return { ok: false, status: "cancelled", message };
         }
         waitForTradeUiMutation({ timeoutMs: 800 });
-        setLadderStatus("撤单已确认，等待挂单清空");
+        setLadderStatus(localizedText("撤单已确认，等待挂单清空", "Cancellation confirmed; waiting for open orders to clear"));
         openOrdersScope = await waitForActiveOpenOrdersScope();
         if (!openOrdersScope || !isCurrentObservedSymbol(symbol)) {
           const message = "未找到当前委托面板";
@@ -20123,7 +20151,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         } catch (error) {
           chartSaveCoalescingSucceeded = false;
           emit("ERR", "撤单图表保存合并失败", error);
-          setLadderStatus("撤单已执行，但图表保存合并失败");
+          setLadderStatus(localizedText("撤单已执行，但图表保存合并失败", "Cancellation executed, but chart-save coalescing failed"));
         }
         let temporaryUiRestoreSucceeded = true;
         if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol)) {
@@ -20132,7 +20160,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
             const restored = await restoreOpenOrdersSymbolFilter(openOrdersScope, symbolFilterOriginalChecked, symbol);
             if (!restored) {
               temporaryUiRestoreSucceeded = false;
-              setLadderStatus("未能恢复隐藏其他合约状态");
+              setLadderStatus(localizedText("未能恢复隐藏其他合约状态", "Could not restore Hide Other Symbols"));
             }
           }
           if (previousOpenOrdersSubTabIdentity) {
@@ -21001,9 +21029,15 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           }
           writeUsdtRebalanceEpisode(accountKey, "in_flight");
           if (options.automatic) {
-            setAutomaticUsdtRebalanceStatus(`Automatic USDT transfer ${completed + 1}/${plan.transfers.length}`);
+            setAutomaticUsdtRebalanceStatus(localizedText(
+              `自动再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`,
+              `Automatic USDT transfer ${completed + 1}/${plan.transfers.length}`
+            ));
           } else {
-            setLadderStatus(`账户再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`);
+            setLadderStatus(localizedText(
+              `账户再平衡中 · ${completed + 1}/${plan.transfers.length} 笔`,
+              `Account rebalance · ${completed + 1}/${plan.transfers.length} transfers`
+            ));
           }
           await submitUsdtRebalanceTransfer(transfer);
           completed += 1;
@@ -21018,24 +21052,30 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       writeUsdtRebalanceEpisode(accountKey, "consumed");
       usdtRebalanceEligible = false;
       if (options.automatic) {
-        setAutomaticUsdtRebalanceStatus(`Automatic USDT transfers completed: ${completed}/${plan.transfers.length}`);
+        setAutomaticUsdtRebalanceStatus(localizedText(
+          `自动再平衡已完成 · ${completed}/${plan.transfers.length} 笔`,
+          `Automatic USDT transfers completed: ${completed}/${plan.transfers.length}`
+        ));
       } else {
-        setLadderStatus(`账户再平衡已完成 · ${completed}/${plan.transfers.length} 笔`);
+        setLadderStatus(localizedText(
+          `账户再平衡已完成 · ${completed}/${plan.transfers.length} 笔`,
+          `Account rebalance completed · ${completed}/${plan.transfers.length} transfers`
+        ));
       }
       return { status: "completed", plan, completed };
     }
     async function runAutomaticUsdtRebalance(epoch, signal) {
       return withAccountOperationLock("exclusive", async () => {
         const options = { epoch, automatic: true };
-        setAutomaticUsdtRebalanceStatus("Automatic USDT transfer: checking account", void 0, true);
+        setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.checkingAccount, void 0, true);
         assertUsdtRebalanceLocalState(options);
         const accountKey = await readUsdtRebalanceAccountKey();
         const record = readUsdtRebalanceEpisode(accountKey);
         if (record.status !== "active") {
           if (record.status === "in_flight" || record.status === "blocked") {
-            setAutomaticUsdtRebalanceStatus("Automatic USDT transfer blocked: previous outcome requires account review");
+            setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.blocked);
           } else {
-            setAutomaticUsdtRebalanceStatus("Automatic USDT transfer already checked for this flat episode");
+            setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.alreadyChecked);
           }
           return { status: record.status };
         }
@@ -21045,7 +21085,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         const plan = buildAutomaticUsdtRebalancePlan(balances);
         writeUsdtRebalanceEpisode(accountKey, "consumed");
         if (plan.transfers.length === 0) {
-          setAutomaticUsdtRebalanceStatus("Automatic USDT transfer: no Futures excess");
+          setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.noExcess);
           return { status: "no_excess", plan };
         }
         return executeUsdtRebalancePlan(plan, accountKey, options);
@@ -21055,10 +21095,13 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       if (usdtRebalanceTask) return usdtRebalanceTask;
       const controller = new AbortController();
       automaticUsdtRebalanceLockController = controller;
-      setAutomaticUsdtRebalanceStatus("Automatic USDT transfer: waiting for account access", void 0, true);
+      setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.waitingForAccess, void 0, true);
       const task = runAutomaticUsdtRebalance(epoch, controller.signal).catch((error) => {
         if (controller.signal.aborted && error.name === "AbortError") return { status: "invalidated" };
-        setAutomaticUsdtRebalanceStatus(`Automatic USDT transfer stopped: ${error.message}`, error.message);
+        setAutomaticUsdtRebalanceStatus(combineLocalizedText([
+          PANEL_COPY.automaticRebalance.stopped,
+          localizeKnownUiStatus(error.message)
+        ]), error.message);
         return { status: "failed" };
       }).finally(() => {
         if (usdtRebalanceTask === task) usdtRebalanceTask = null;
@@ -21124,7 +21167,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     }
     async function runUsdtRebalance() {
       let plan = null;
-      setLadderStatus("正在读取账户再平衡计划");
+      setLadderStatus(localizedText("正在读取账户再平衡计划", "Loading account rebalance plan"));
       try {
         const previewAccountKey = await readUsdtRebalanceAccountKey();
         await assertUsdtRebalanceTradingState();
@@ -21132,11 +21175,11 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         plan = buildUsdtRebalancePlan(initialBalances);
         if (plan.transfers.length === 0) {
           usdtRebalanceEligible = false;
-          setLadderStatus("USDT 已按 5:4:1 分配");
+          setLadderStatus(localizedText("USDT 已按 5:4:1 分配", "USDT is already allocated at 5:4:1"));
           return { status: "already_balanced", plan };
         }
         if (!await showUsdtRebalanceDialog(document, buildUsdtRebalanceDialogModel(plan))) {
-          setLadderStatus("账户再平衡已取消");
+          setLadderStatus(localizedText("账户再平衡已取消", "Account rebalance cancelled"));
           return { status: "cancelled", plan };
         }
         return await withAccountOperationLock("exclusive", async () => {
@@ -21300,7 +21343,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     }
     function invalidateUsdtRebalanceEligibility() {
       if (automaticUsdtRebalanceStatusPending) {
-        setAutomaticUsdtRebalanceStatus("Automatic USDT transfer paused: eligibility changed");
+        setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.paused);
       }
       const hadPendingTimer = usdtRebalanceEligibilityTimer !== 0;
       const wasEligible = usdtRebalanceEligible;
@@ -21335,13 +21378,16 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     }
     function scheduleUsdtRebalanceEligibility() {
       invalidateUsdtRebalanceEligibility();
-      setAutomaticUsdtRebalanceStatus("Automatic USDT transfer: waiting for stable flat account", void 0, true);
+      setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.waitingForFlat, void 0, true);
       const epoch = usdtRebalanceEligibilityEpoch;
       usdtRebalanceEligibilityTimer = window.setTimeout(() => {
         usdtRebalanceEligibilityTimer = 0;
         let task = null;
         task = confirmUsdtRebalanceEligibility(epoch).catch((error) => {
-          setAutomaticUsdtRebalanceStatus(`Automatic USDT eligibility check failed: ${error.message}`, error.message);
+          setAutomaticUsdtRebalanceStatus(combineLocalizedText([
+            PANEL_COPY.automaticRebalance.eligibilityFailed,
+            localizeKnownUiStatus(error.message)
+          ]), error.message);
           return false;
         }).finally(() => {
           if (usdtRebalanceEligibilityTask === task) usdtRebalanceEligibilityTask = null;
@@ -22733,12 +22779,12 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         const clickedSymbol = getCurrentSymbol();
         if (!isCurrentObservedSymbol(clickedSymbol)) {
           warn("交易对正在切换，已忽略本次点击");
-          setLadderStatus("单击下单未执行：交易对正在切换");
+          setLadderStatus(localizedText("单击下单未执行：交易对正在切换", "Single order not placed: symbol is changing"));
           return;
         }
         if (getActiveTradeMode() === "CLOSE" && !isCloseSnapshotReady(clickedSymbol)) {
           warn("仓位确认中");
-          setLadderStatus("单击下单未执行：仓位确认中");
+          setLadderStatus(localizedText("单击下单未执行：仓位确认中", "Single order not placed: confirming positions"));
           return;
         }
         if (CFG.DEBUG) {
@@ -22761,26 +22807,29 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         const qtyInput = findQtyInput();
         if (!qtyInput) {
           warn("未找到数量输入框");
-          setLadderStatus("单击下单未执行：未找到数量输入框");
+          setLadderStatus(localizedText("单击下单未执行：未找到数量输入框", "Single order not placed: quantity input not found"));
           return;
         }
         const priceInput = findPriceInput();
         if (!priceInput) {
           warn("未找到价格输入框");
-          setLadderStatus("单击下单未执行：未找到价格输入框");
+          setLadderStatus(localizedText("单击下单未执行：未找到价格输入框", "Single order not placed: price input not found"));
           return;
         }
         const action = resolveTradeAction();
         if (!action || !action.button) {
           const message = `未找到可用${getActiveTradeMode() === "OPEN" ? "开仓" : "平仓"}动作`;
           warn(message);
-          setLadderStatus(`单击下单未执行：${message}`);
+          setLadderStatus(localizedText(
+            `单击下单未执行：${message}`,
+            `Single order not placed: no available ${getActiveTradeMode() === "OPEN" ? "open" : "close"} action`
+          ));
           return;
         }
         const qtyPlan = resolveTargetQty(action.mode, clickedPrice);
         if (!qtyPlan || !qtyPlan.qty) {
           warn("未找到可用数量来源（数量倍率/有效最小量）");
-          setLadderStatus("单击下单未执行：数量规则读取中");
+          setLadderStatus(localizedText("单击下单未执行：数量规则读取中", "Single order not placed: loading quantity rules"));
           return;
         }
         if (ladderTask || continuousLadderTask || cancelCurrentSymbolOpenOrdersTask || singleOrderTask) {
@@ -22788,7 +22837,16 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         }
         lastTs = now;
         invalidateUsdtRebalanceEligibility();
-        setLadderStatus(`单击${action.side}准备中`);
+        const actionLabel = {
+          开多: PANEL_COPY.side.openLong,
+          开空: PANEL_COPY.side.openShort,
+          平多: PANEL_COPY.side.closeLong,
+          平空: PANEL_COPY.side.closeShort
+        }[action.side];
+        setLadderStatus(localizedText(
+          `单击${action.side}准备中`,
+          `${formatLocalizedText(actionLabel, "en")} single order preparing`
+        ));
         singleOrderTask = withAccountOperationLock("shared", async () => {
           await syncTradeInputs(clickedPrice, qtyPlan.qty, {
             priceLabel: "点击价",
@@ -22851,7 +22909,10 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           const submitCaptureId = beginLadderSubmitResponseCapture();
           try {
             currentAction.button.click();
-            setLadderStatus(`单击${action.side}确认中 · ${clickedPrice} × ${qtyPlan.qty}`);
+            setLadderStatus(localizedText(
+              `单击${action.side}确认中 · ${clickedPrice} × ${qtyPlan.qty}`,
+              `${formatLocalizedText(actionLabel, "en")} single order confirming · ${clickedPrice} × ${qtyPlan.qty}`
+            ));
             waitForTradeUiMutation({ timeoutMs: 400 });
             await waitForOrderSubmitAcknowledgement(
               currentAction.button,
@@ -22863,7 +22924,10 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           } finally {
             endLadderSubmitResponseCapture(submitCaptureId);
           }
-          setLadderStatus(`单击${action.side}已提交 · ${clickedPrice} × ${qtyPlan.qty}`);
+          setLadderStatus(localizedText(
+            `单击${action.side}已提交 · ${clickedPrice} × ${qtyPlan.qty}`,
+            `${formatLocalizedText(actionLabel, "en")} single order submitted · ${clickedPrice} × ${qtyPlan.qty}`
+          ));
           log(`单击${action.side}已确认提交`);
         });
         scheduleRenderPanel();
@@ -22871,7 +22935,10 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           await singleOrderTask;
         } catch (singleOrderError) {
           const message = singleOrderError?.message || "订单簿点击提交失败";
-          setLadderStatus(`单击${action.side}失败：${message}`, message);
+          setLadderStatus(localizedText(
+            `单击${action.side}失败：${message}`,
+            `${formatLocalizedText(actionLabel, "en")} single order failed: ${formatLocalizedText(localizeKnownUiStatus(message), "en")}`
+          ), message);
           err("single order submit failed:", singleOrderError);
           warn(message);
         } finally {
@@ -22884,7 +22951,10 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         const message = e2?.message || "订单簿点击提交失败";
         warn(message);
         if (!ladderTask && !continuousLadderTask && !cancelCurrentSymbolOpenOrdersTask && !singleOrderTask) {
-          setLadderStatus(`单击下单失败：${message}`, message);
+          setLadderStatus(localizedText(
+            `单击下单失败：${message}`,
+            `Single order failed: ${formatLocalizedText(localizeKnownUiStatus(message), "en")}`
+          ), message);
         }
       }
     }, true);

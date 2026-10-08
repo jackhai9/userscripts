@@ -1,7 +1,7 @@
 # Strategy31 volume reversal signals
 
 Source: `src/binance-strategy31-volume-reversal/`. Installer:
-`scripts/binance-strategy31-volume-reversal.user.js` (0.1.2).
+`scripts/binance-strategy31-volume-reversal.user.js` (0.1.3).
 Install alongside CorsairQuant signal client 0.6.7, which owns private gateway
 authentication. The shared bridge explicitly advertises the `strategy31` capability.
 
@@ -21,8 +21,18 @@ late responses. Repeated snapshots reconcile one arrow per stable event ID.
 Interval changes preserve the native data-completion subscription. Unsupported
 periods and non-USDT markets pause observation until a supported chart is selected.
 Non-trading routes remove the status and retire pending requests and chart
-ownership. Route observation remains available after a terminal failure solely
-to remove presentation on departure; it does not restart failed business work.
+ownership. Route observation remains available after a terminal failure to
+remove presentation on departure and redraw retained status when the language
+changes; it does not restart failed business work.
+A `/zh-CN/` route displays Chinese status messages; other routes use English,
+following the shared panel locale contract. Signal counts, unsupported markets
+and intervals, client setup requirements, service availability, and terminal
+failure notices retain both languages until rendering. SPA language changes
+immediately redraw the retained status, including while hidden, while a request
+is pending, or after terminal failure. This presentation update makes no request,
+restarts no observer, and does not replace chart markers. Gateway and parser
+diagnostics are not translated; the existing generic terminal failure message
+remains the public error contract.
 A transient native candle snapshot inconsistency retains existing arrows and
 waits for the next sample; malformed signal contracts still stop the observer.
 Loading earlier

@@ -237,7 +237,17 @@ The userscript UI supports exactly `zh-CN` and English. Resolve the locale from 
 
 Keep script-owned UI copy in `contracts/panel-copy.js` as paired `localizedText(zhCN, en)` values. Dynamic status formatters must retain both languages until render time so current order, round, and cancellation counters survive a locale switch. Raw technical exceptions, Binance response messages, error codes, and native `TypeError` text stay unchanged so they remain copyable for diagnosis.
 
-Strategy27 and Strategy29 also import this module's locale helpers. Changes to its initialized copy map affect all three generated artifacts; bump their source metadata and rebuild each affected script together.
+Strategy27, Strategy29, and Strategy31 also import this module's locale helpers. Changes to its initialized copy map affect all four generated artifacts; bump their source metadata and rebuild each affected script together.
+
+Run `npm run lint:ui-copy` for status changes. CI rejects direct unpaired text or
+titles at `setLadderStatus` and `setAutomaticUsdtRebalanceStatus`, including
+templates, concatenation, conditional branches, and localized compositions with
+raw authored words. Existing dynamic formatter returns and external diagnostics
+still require behavioral review: the rule does not infer arbitrary variable or
+function dataflow. Add observable `zh-CN` and English assertions, including
+retained text/title after a SPA locale switch, for a new status workflow.
+See [the localization audit](binance-ui-localization-audit.md) for coverage and
+the remaining historical gaps.
 
 Do not merge this contract with `contracts/binance-page-text.js`. `BINANCE_PAGE_TEXT` recognizes Binance-owned DOM in every supported page language; `PANEL_COPY` and localized status values render userscript-owned UI in the current two-language contract.
 
@@ -332,7 +342,9 @@ Targets display the balances actually reachable by these outward-only transfers.
 The manual action keeps its explicit confirmation and full 5:4:1 allocation.
 Automatic qualification, waiting, progress, completion, and failure messages use
 the separate `jh-binance-auto-rebalance-status` row. It starts hidden, uses safe
-text/title updates, and retains its status across locale-driven panel rebuilds.
+text/title updates, and retains paired Chinese/English status and progress across
+locale-driven panel rebuilds. Known script-owned account rejection reasons are
+localized at presentation; raw provider and browser diagnostics remain unchanged.
 Automatic work never replaces a retained manual trading or cancellation result;
 the general flat-account message is shown only when the trading row is idle.
 

@@ -30,6 +30,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint:tests
+      - run: npm run lint:ui-copy
       - run: npm run build:userscripts
       - run: git diff --exit-code -- 'scripts/*.user.js'
       - run: npm run check:binance-userscripts
