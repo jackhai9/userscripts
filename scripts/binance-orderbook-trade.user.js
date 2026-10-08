@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.224
+// @version      2.7.225
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1119,7 +1119,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       blocked: localizedText("自动再平衡已阻止：请先核实上次划转结果", "Automatic USDT transfer blocked: previous outcome requires account review"),
       completed: localizedText("已自动进行账户再平衡", "Account automatically rebalanced"),
       notRepeated: localizedText("本轮不再自动执行账户再平衡", "No further automatic rebalance in this round"),
-      noExcess: localizedText("自动再平衡：合约账户无多余 USDT", "Automatic USDT transfer: no Futures excess"),
+      noTransfer: localizedText("自动再平衡：无需划转", "Automatic account rebalance: no transfer needed"),
       paused: localizedText("自动再平衡已暂停：执行条件已变化", "Automatic USDT transfer paused: eligibility changed"),
       stopped: localizedText("自动再平衡已停止：", "Automatic USDT transfer stopped: "),
       eligibilityFailed: localizedText("自动再平衡资格检查失败：", "Automatic USDT eligibility check failed: "),
@@ -1134,7 +1134,6 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       identityChanged: localizedText("账户身份已变化", "Account identity changed"),
       identityChangedAfterConfirmation: localizedText("确认后账户身份已变化", "Account identity changed after confirmation"),
       reviewRequired: localizedText("请先核实上次划转结果", "Previous transfer outcome requires account review"),
-      excessOnly: localizedText("自动划转仅可转出合约账户多余资金", "Automatic transfers may only withdraw Futures excess"),
       flatRequired: localizedText("全账户持仓和当前委托必须为零", "Account-wide positions and open orders must be zero"),
       accountNotFlat: localizedText("全账户仍有持仓或当前委托", "Positions or open orders still exist in the account"),
       invalidOutcome: localizedText("自动再平衡结果记录无效", "Invalid automatic rebalance episode outcome")
@@ -1759,47 +1758,6 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       throw new Error("USDT 再平衡计划未闭合");
     }
     if (transfers.length > 2) throw new Error("USDT 再平衡计划超过两笔划转");
-    return {
-      total: unitsToDecimal(totalUnits),
-      before: Object.fromEntries(
-        ACCOUNT_ORDER.map((accountCode) => [accountCode, unitsToDecimal(beforeUnits[accountCode])])
-      ),
-      targets: Object.fromEntries(
-        ACCOUNT_ORDER.map((accountCode) => [accountCode, unitsToDecimal(targetUnits[accountCode])])
-      ),
-      transfers
-    };
-  }
-  function buildAutomaticUsdtRebalancePlan(rawBalances) {
-    const beforeUnits = Object.fromEntries(
-      ACCOUNT_ORDER.map((accountCode) => [accountCode, decimalToUnits(rawBalances[accountCode])])
-    );
-    const totalUnits = ACCOUNT_ORDER.reduce((sum, accountCode) => sum + beforeUnits[accountCode], 0n);
-    const fundingTarget = totalUnits * 50n / 100n;
-    const spotTarget = totalUnits * 40n / 100n;
-    const futuresTarget = totalUnits - fundingTarget - spotTarget;
-    const targetUnits = { ...beforeUnits };
-    const transfers = [];
-    if (beforeUnits.UMFUTURE > futuresTarget) {
-      const excess = beforeUnits.UMFUTURE - futuresTarget;
-      const fundingDeficit = fundingTarget > beforeUnits.FUNDING ? fundingTarget - beforeUnits.FUNDING : 0n;
-      const toFunding = excess < fundingDeficit ? excess : fundingDeficit;
-      const distributions = [
-        { accountCode: "FUNDING", amount: toFunding },
-        { accountCode: "MAIN", amount: excess - toFunding }
-      ];
-      for (const { accountCode, amount } of distributions) {
-        if (amount === 0n) continue;
-        transfers.push({
-          from: "UMFUTURE",
-          to: accountCode,
-          kindType: `${USDT_REBALANCE_ACCOUNTS.UMFUTURE.bapiCode}_${USDT_REBALANCE_ACCOUNTS[accountCode].bapiCode}`,
-          amount: unitsToDecimal(amount)
-        });
-        targetUnits[accountCode] += amount;
-        targetUnits.UMFUTURE -= amount;
-      }
-    }
     return {
       total: unitsToDecimal(totalUnits),
       before: Object.fromEntries(
@@ -21029,9 +20987,6 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           }
           if (await readUsdtRebalanceAccountKey() !== accountKey) throw new Error("Account identity changed");
           assertUsdtRebalanceLocalState(options);
-          if (options.automatic && (transfer.from !== "UMFUTURE" || !["FUNDING", "MAIN"].includes(transfer.to))) {
-            throw new Error("Automatic transfers may only withdraw Futures excess");
-          }
           writeUsdtRebalanceEpisode(accountKey, "in_flight");
           if (options.automatic) {
             setAutomaticUsdtRebalanceStatus(localizedText(
@@ -21086,11 +21041,11 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         await assertUsdtRebalanceTradingState(options);
         const balances = await readCurrentUsdtRebalanceBalances();
         assertUsdtRebalanceLocalState(options);
-        const plan = buildAutomaticUsdtRebalancePlan(balances);
+        const plan = buildUsdtRebalancePlan(balances);
         writeUsdtRebalanceEpisode(accountKey, "consumed");
         if (plan.transfers.length === 0) {
-          setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.noExcess);
-          return { status: "no_excess", plan };
+          setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.noTransfer);
+          return { status: "no_transfer", plan };
         }
         return executeUsdtRebalancePlan(plan, accountKey, options);
       }, signal);

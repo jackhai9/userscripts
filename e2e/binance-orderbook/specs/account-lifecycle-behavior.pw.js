@@ -362,18 +362,18 @@ for (const [name, response] of [
 }
 
 test('user previews balances published during qualification instead of an earlier account snapshot', async ({ page }) => {
-  // Given the account begins its flat window with one hundred USDT in Funding.
+  // Given already balanced accounts begin their flat qualification window.
   const host = await openSettledAccount(page);
   await host.setNativeOrders([]);
   await page.clock.runFor(1000);
 
-  // When a native wallet update moves twenty USDT to Spot before qualification completes.
-  host.api.setBalances({ FUNDING: '80', MAIN: '20', UMFUTURE: '0' });
+  // When a native wallet update doubles each balance before qualification completes.
+  host.api.setBalances({ FUNDING: '100', MAIN: '80', UMFUTURE: '20' });
   await page.clock.runFor(1000);
   await host.waitForPositionResponses(3);
   await expectEligible(page);
 
-  // Then automatic qualification reads current wallets without transferring a futures deficit.
+  // Then automatic qualification reads the still-balanced wallets without a transfer.
   const automaticWalletReads = host.api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length;
   expect(automaticWalletReads).toBe(1);
   await host.expectNoTradingActions();
