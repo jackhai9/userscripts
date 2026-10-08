@@ -14,7 +14,7 @@ V10 live projection. The VPS remains the only market-data and event-analysis
 authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
-Version 0.6.12 retains this installation's private gateway configuration and
+Version 0.6.13 retains this installation's private gateway configuration and
 provides a shared read-only transport. Strategy29 owns its own summary panel,
 lifecycle and panel position. The existing `strategy27GatewayOrigin` and
 `strategy27GatewayAuthSecret` storage keys remain the single credential source;
@@ -111,8 +111,10 @@ Manual clear remains available and does not dismiss a terminal error.
   Its initial position is near the chart's upper-right corner; dragging stores
   `{left, top}` under `strategy27StatusPosition` in this script's private GM
   storage. Strategy31 owns a different view and preference. Text updates do not
-  save coordinates or reinstall drag listeners. Viewport changes clamp the
-  notice, and removal or unloading releases pointer capture and listeners.
+  save coordinates or reinstall drag listeners. Width follows the text's intrinsic
+  size within the viewport cap, independent of the saved left offset. Viewport
+  changes clamp the notice without collapsing it into a narrow vertical strip.
+  Removal or unloading releases pointer capture and listeners.
 - The panel keeps the eight most recent events. It follows the newest event by
   default; selecting an older row pauses that behavior until `最新` is pressed.
 - Notional values use compact `K` and `M` suffixes. Ratios use at most two
@@ -194,7 +196,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, SVG chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.6.12 with identical metadata headers.
+generated install artifact are version 0.6.13 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired SVG markers, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout

@@ -317,19 +317,30 @@ for (const locale of ['zh-CN', 'en']) {
     expect((await snapshot(page)).writes).toEqual({ 27: [], 31: [] });
 
     // When the user places both statuses near the viewport edges before shrinking the window
-    await drag(page, '27', { left: 1050, top: 820 });
+    await drag(page, '27', { left: 1050, top: 520 });
     await drag(page, '31', { left: 1100, top: 900 });
     const beforeResize = await snapshot(page);
+    const beforeResizeGeometry = await geometry(page);
+    await page.evaluate(() => {
+      window.__STATUS_FIXTURE__.resizeCompleted = new Promise(resolve => {
+        window.addEventListener('resize', () => resolve(), { once: true });
+      });
+    });
     await page.setViewportSize({ width: 900, height: 650 });
+    await page.evaluate(() => window.__STATUS_FIXTURE__.resizeCompleted);
 
-    // Then each status remains within the viewport while automatic clamping leaves preferences unchanged
+    // Then both statuses stay readable and inside the viewport without changing the saved positions
     for (const id of ['27', '31']) {
       const box = await page.locator(selectors[id]).boundingBox();
+      const before = beforeResizeGeometry.statuses.find(status => status.id === selectors[id].slice(1));
+      expect(box.width).toBeCloseTo(before.width, 2);
+      expect(box.height).toBeCloseTo(before.height, 2);
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.y).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(900.01);
       expect(box.y + box.height).toBeLessThanOrEqual(650.01);
     }
+    await page.screenshot({ path: testInfo.outputPath(`strategy-status-resized-${locale}.png`), fullPage: false });
     expect((await snapshot(page)).writes).toEqual(beforeResize.writes);
     expect((await snapshot(page)).positions).toEqual(beforeResize.positions);
     expect(h.errors).toEqual([]);

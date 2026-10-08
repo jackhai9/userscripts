@@ -42,9 +42,10 @@ export function createDraggableStatusView(view, { id, loadPosition, savePosition
         node.id = id;
         node.setAttribute('role', 'status');
         node.setAttribute('aria-live', 'polite');
+        /** Keep intrinsic width independent of the saved left offset when the viewport shrinks. */
         Object.assign(node.style, {
           position: 'fixed', zIndex: '10000', boxSizing: 'border-box',
-          maxWidth: 'min(520px, calc(100vw - 16px))', padding: '6px 8px',
+          width: 'max-content', maxWidth: 'min(520px, calc(100vw - 16px))', padding: '6px 8px',
           border: '1px solid #474D57', borderRadius: '6px', background: '#181A20', color: '#DDD',
           font: '12px/18px BinancePlex, ui-sans-serif, system-ui, sans-serif',
           pointerEvents: 'auto', userSelect: 'none', whiteSpace: 'normal', overflowWrap: 'anywhere',
