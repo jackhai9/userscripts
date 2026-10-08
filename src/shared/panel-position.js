@@ -1,8 +1,11 @@
 /** Header-only dragging with userscript-owned position persistence and viewport bounds. */
 export function installPanelPosition(document, panel, header, { initialPosition, savePosition }) {
   const view = document.defaultView;
-  if (!view) throw new Error('Strategy 29 panel window is unavailable');
-  let position = initialPosition ?? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 };
+  if (!view) throw new Error('Panel window is unavailable');
+  if (!initialPosition || !Number.isFinite(initialPosition.left) || !Number.isFinite(initialPosition.top)) {
+    throw new TypeError('Panel initial position is invalid');
+  }
+  let position = { ...initialPosition };
   let drag = null;
   function apply(next) {
     const rect = panel.getBoundingClientRect();
@@ -13,6 +16,7 @@ export function installPanelPosition(document, panel, header, { initialPosition,
     panel.style.left = `${position.left}px`;
     panel.style.top = `${position.top}px`;
     panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
   }
   function clamp() { apply(position); }
   function onDown(event) {
@@ -53,6 +57,7 @@ export function installPanelPosition(document, panel, header, { initialPosition,
   view.addEventListener('resize', clamp);
   return Object.freeze({
     clamp,
+    get position() { return { ...position }; },
     destroy() {
       if (drag) release();
       header.removeEventListener('pointerdown', onDown);

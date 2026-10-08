@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect, reloadPageWithCoverage } from '../test.js';
 
-const source = await readFile(new URL('../../../src/binance-strategy29-bollinger/dom/panel-position.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../../../src/shared/panel-position.js', import.meta.url), 'utf8');
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const fixtureUrl = 'https://panel.example.test/';
 

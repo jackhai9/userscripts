@@ -56,7 +56,6 @@ export const SUMMARY_COPY = Object.freeze({
   disconnected: pair('网关连接失败，将在下次定时检查时重试', 'Gateway connection failed; next scheduled poll will retry'),
   stopped: detail => pair(`远程汇总已停止。技术详情：${detail}`, `Remote summary stopped: ${detail}`),
   localStopped: detail => pair(`Strategy 29 已停止。技术详情：${detail}`, `Strategy 29 stopped: ${detail}`),
-  conflict: pair('Strategy 29 已停止：请将订单簿脚本更新至 2.7.199 或更高版本，或禁用内嵌布林带观察器的旧版本，然后刷新页面。', 'Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.'),
 });
 export const SELECTION_REASONS = Object.freeze({
   current: pair('当前选币有效', 'Selection is current'),

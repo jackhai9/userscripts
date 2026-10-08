@@ -3,7 +3,7 @@
 // @namespace    binance.strategy31.volume-reversal
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.1.5
+// @version      0.1.6
 // @author       jackhai9
 // @description  Confirmed red-to-green volume signals from CorsairQuant
 // @match        https://www.binance.com/*/futures/*
@@ -14,6 +14,8 @@
 // @downloadURL  https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy31-volume-reversal.user.js
 // @run-at       document-start
 // @grant        unsafeWindow
+// @grant        GM_getValue
+// @grant        GM_setValue
 // ==/UserScript==
 (() => {
   // src/shared/canonical-symbol.js
@@ -96,6 +98,165 @@
       view.removeEventListener("popstate", listener);
       view.removeEventListener("hashchange", listener);
     };
+  }
+
+  // src/shared/panel-position.js
+  function installPanelPosition(document, panel, header, { initialPosition, savePosition }) {
+    const view = document.defaultView;
+    if (!view) throw new Error("Panel window is unavailable");
+    if (!initialPosition || !Number.isFinite(initialPosition.left) || !Number.isFinite(initialPosition.top)) {
+      throw new TypeError("Panel initial position is invalid");
+    }
+    let position = { ...initialPosition };
+    let drag = null;
+    function apply(next) {
+      const rect = panel.getBoundingClientRect();
+      position = {
+        left: Math.max(0, Math.min(next.left, Math.max(0, view.innerWidth - rect.width))),
+        top: Math.max(0, Math.min(next.top, Math.max(0, view.innerHeight - rect.height)))
+      };
+      panel.style.left = `${position.left}px`;
+      panel.style.top = `${position.top}px`;
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+    }
+    function clamp() {
+      apply(position);
+    }
+    function onDown(event) {
+      if (drag || !event.isPrimary || event.button !== 0 || event.buttons !== 1 || event.target.closest("button,a")) return;
+      const rect = panel.getBoundingClientRect();
+      header.setPointerCapture(event.pointerId);
+      drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+      event.preventDefault();
+    }
+    function onMove(event) {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      apply({ left: drag.left + event.clientX - drag.x, top: drag.top + event.clientY - drag.y });
+    }
+    function release() {
+      const { pointerId } = drag;
+      drag = null;
+      if (header.hasPointerCapture(pointerId)) header.releasePointerCapture(pointerId);
+    }
+    function finish() {
+      if (!drag) return;
+      release();
+      clamp();
+      savePosition({ ...position });
+    }
+    function onEnd(event) {
+      if (drag && event.pointerId === drag.pointerId) finish();
+    }
+    clamp();
+    header.style.cursor = "move";
+    header.style.touchAction = "none";
+    header.addEventListener("pointerdown", onDown);
+    header.addEventListener("pointermove", onMove);
+    header.addEventListener("pointerup", onEnd);
+    header.addEventListener("pointercancel", onEnd);
+    header.addEventListener("lostpointercapture", onEnd);
+    view.addEventListener("blur", finish);
+    view.addEventListener("resize", clamp);
+    return Object.freeze({
+      clamp,
+      get position() {
+        return { ...position };
+      },
+      destroy() {
+        if (drag) release();
+        header.removeEventListener("pointerdown", onDown);
+        header.removeEventListener("pointermove", onMove);
+        header.removeEventListener("pointerup", onEnd);
+        header.removeEventListener("pointercancel", onEnd);
+        header.removeEventListener("lostpointercapture", onEnd);
+        view.removeEventListener("blur", finish);
+        view.removeEventListener("resize", clamp);
+      }
+    });
+  }
+
+  // src/shared/draggable-status-view.js
+  function readPosition(loadPosition) {
+    const position = loadPosition();
+    if (position === null) return null;
+    if (!position || typeof position !== "object" || Object.keys(position).sort().join(",") !== "left,top" || !Number.isFinite(position.left) || !Number.isFinite(position.top)) {
+      throw new TypeError("Status position must contain finite left and top coordinates");
+    }
+    return { ...position };
+  }
+  function createDraggableStatusView(view, { id, loadPosition, savePosition, defaultPosition }) {
+    if (typeof id !== "string" || id.length === 0 || typeof loadPosition !== "function" || typeof savePosition !== "function" || typeof defaultPosition !== "function") {
+      throw new TypeError("Draggable status requires an ID and position adapters");
+    }
+    const document = view.document;
+    let position = readPosition(loadPosition);
+    let node = null;
+    let drag = null;
+    let disposed = false;
+    function hide() {
+      if (!node) return;
+      position = drag.position;
+      drag.destroy();
+      node.remove();
+      node = null;
+      drag = null;
+    }
+    return Object.freeze({
+      show(text, state = "normal") {
+        if (disposed) throw new Error("Cannot show a disposed status");
+        if (typeof text !== "string" || !["normal", "inactive", "error"].includes(state)) {
+          throw new TypeError("Status text or state is invalid");
+        }
+        if (!node) {
+          node = document.createElement("div");
+          node.id = id;
+          node.setAttribute("role", "status");
+          node.setAttribute("aria-live", "polite");
+          Object.assign(node.style, {
+            position: "fixed",
+            zIndex: "10000",
+            boxSizing: "border-box",
+            maxWidth: "min(520px, calc(100vw - 16px))",
+            padding: "6px 8px",
+            border: "1px solid #474D57",
+            borderRadius: "6px",
+            background: "#181A20",
+            color: "#DDD",
+            font: "12px/18px BinancePlex, ui-sans-serif, system-ui, sans-serif",
+            pointerEvents: "auto",
+            userSelect: "none",
+            whiteSpace: "normal",
+            overflowWrap: "anywhere"
+          });
+          node.textContent = text;
+          document.body.appendChild(node);
+          drag = installPanelPosition(document, node, node, {
+            initialPosition: position ?? defaultPosition(node),
+            savePosition(next) {
+              position = next;
+              savePosition(next);
+            }
+          });
+        } else if (node.textContent !== text) {
+          node.textContent = text;
+          drag.clamp();
+        }
+        if (node.title !== text) node.title = text;
+        if (node.dataset.state !== state) {
+          node.dataset.state = state;
+          node.style.borderColor = state === "error" ? "#F6465D" : "#474D57";
+        }
+      },
+      hide,
+      get visible() {
+        return node !== null;
+      },
+      dispose() {
+        hide();
+        disposed = true;
+      }
+    });
   }
 
   // src/shared/chart-mutation-owners.js
@@ -887,31 +1048,30 @@
     unavailable: localizedText("策略31：信号服务不可用", "Strategy31: signal service unavailable"),
     stopped: localizedText("策略31已停止：图表或信号数据无效", "Strategy31 stopped: invalid chart or signal data")
   });
-  function installStrategy31(view) {
+  function installStrategy31(view, { getValue, setValue }) {
     const key = Symbol.for("jh-userscripts.strategy31");
     if (view[key]) return view[key];
+    if (typeof getValue !== "function" || typeof setValue !== "function") {
+      throw new TypeError("Strategy31 requires private storage adapters");
+    }
     let context = null, intervalOwner = null, inflight = null, disposed = false, failed = false;
     const retired = /* @__PURE__ */ new Set();
     const document = view.document;
+    const status = createDraggableStatusView(view, {
+      id: "jh-strategy31-status",
+      loadPosition: () => getValue("strategy31StatusPosition", null),
+      savePosition: (position) => setValue("strategy31StatusPosition", position),
+      defaultPosition: (node) => ({ left: 16, top: view.innerHeight - node.getBoundingClientRect().height - 40 })
+    });
     let statusText = "";
     function renderNotice() {
-      const node = document.getElementById("jh-strategy31-status");
-      if (!node) return;
-      const text = formatLocalizedText(statusText, resolveUiLocaleFromPathname(view.location.pathname));
-      if (node.textContent !== text) node.textContent = text;
+      if (!status.visible) return;
+      status.show(formatLocalizedText(statusText, resolveUiLocaleFromPathname(view.location.pathname)));
     }
     function notice(text) {
       if (!document.body || !parseFuturesTradingSymbolFromPathname(view.location.pathname)) return;
-      let node = document.getElementById("jh-strategy31-status");
-      if (!node) {
-        node = document.createElement("div");
-        node.id = "jh-strategy31-status";
-        node.setAttribute("role", "status");
-        node.style.cssText = "position:fixed;bottom:40px;left:16px;z-index:10000;padding:6px;background:#181a20;color:#ddd;font:12px sans-serif;pointer-events:none";
-        document.body.append(node);
-      }
       statusText = text;
-      renderNotice();
+      status.show(formatLocalizedText(statusText, resolveUiLocaleFromPathname(view.location.pathname)));
     }
     function retire() {
       if (context) {
@@ -940,7 +1100,7 @@
       if (!route) {
         releaseChart();
         cleanup();
-        document.getElementById("jh-strategy31-status")?.remove();
+        status.hide();
         return;
       }
       if (failed || document.hidden || inflight) return;
@@ -1057,19 +1217,23 @@
       if (!parseFuturesTradingSymbolFromPathname(view.location.pathname)) void tick();
       else renderNotice();
     });
-    const runtime = Object.freeze({ sample: tick, dispose() {
+    function dispose() {
+      if (disposed) return;
       disposed = true;
       releaseChart();
       cleanup();
       removeRouteListener();
       document.removeEventListener("visibilitychange", visibility);
-      document.getElementById("jh-strategy31-status")?.remove();
-    } });
+      view.removeEventListener("beforeunload", dispose);
+      status.dispose();
+    }
+    view.addEventListener("beforeunload", dispose);
+    const runtime = Object.freeze({ sample: tick, dispose });
     Object.defineProperty(view, key, { value: runtime });
     void tick();
     return runtime;
   }
 
   // src/binance-strategy31-volume-reversal/index.user.js
-  installStrategy31(unsafeWindow);
+  installStrategy31(unsafeWindow, { getValue: GM_getValue, setValue: GM_setValue });
 })();

@@ -53,16 +53,36 @@ try {
   `);
   await page.evaluate(async ({ sourceUrl, status, events }) => {
     const { createStrategy29SummaryPanel } = await import(sourceUrl);
-    const panel = createStrategy29SummaryPanel(document, 'BTC/USDT:USDT', {
-      locale: 'en', loadPosition: () => null, savePosition: value => { window.fixturePosition = value; },
-    });
-    panel.setConnection('connected', { zhCN: '已连接', en: 'Connected' });
-    panel.renderStatus(status);
-    panel.addEvents(events.events, events.observed_at_ms);
-    window.fixturePanel = panel;
+    window.fixturePosition = null;
+    window.fixtureCollapsed = true;
+    window.fixtureCollapsedWrites = [];
+    window.fixtureCreatePanel = () => {
+      const panel = createStrategy29SummaryPanel(document, 'BTC/USDT:USDT', {
+        locale: 'en', loadPosition: () => window.fixturePosition, savePosition: value => { window.fixturePosition = value; },
+        loadCollapsed: () => window.fixtureCollapsed,
+        saveCollapsed: value => { window.fixtureCollapsed = value; window.fixtureCollapsedWrites.push(value); },
+      });
+      panel.setConnection('connected', { zhCN: '已连接', en: 'Connected' });
+      panel.renderStatus(status);
+      panel.addEvents(events.events, events.observed_at_ms);
+      window.fixturePanel = panel;
+    };
+    window.fixtureCreatePanel();
   }, { sourceUrl, status, events });
   const panel = page.locator('#jh-strategy29-summary-panel');
   await panel.waitFor({ state: 'visible' });
+  assert.equal(await panel.locator('[data-role="body"]').isVisible(), false);
+  assert.equal(await panel.locator('[data-role="collapse"]').getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(await page.evaluate(() => window.fixtureCollapsedWrites), []);
+  const initialBox = await panel.boundingBox();
+  assert.equal(initialBox.x, 1280 - initialBox.width - 84);
+  assert.equal(initialBox.y, 68);
+  await panel.screenshot({ path: join(output, 'collapsed-default.png') });
+  await panel.locator('[data-role="collapse"]').click();
+  await page.evaluate(() => { window.fixturePanel.destroy(); window.fixtureCreatePanel(); });
+  assert.equal(await panel.locator('[data-role="body"]').isVisible(), true);
+  assert.equal(await panel.locator('[data-role="collapse"]').getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(await page.evaluate(() => window.fixtureCollapsedWrites), [false]);
   assert.equal(await panel.locator('[data-role="unit"]').count(), 6);
   assert.equal(await panel.locator('[data-role="remote-event"]').count(), 18);
   assert.deepEqual(await panel.locator('[data-role="remote-event"] strong').allTextContents().then(values =>
@@ -130,8 +150,22 @@ try {
   });
   assert.match(await panel.locator('[data-role="connection"]').textContent(), /服务端尚未启用/);
   await panel.screenshot({ path: join(output, 'chinese-module-disabled.png') });
+  assert.deepEqual(await page.evaluate(() => window.fixtureCollapsedWrites), [false, true, false]);
+  await panel.locator('[data-role="collapse"]').click();
+  await page.evaluate(() => {
+    window.fixturePanel.destroy();
+    window.fixturePosition = { left: 10, top: 550 };
+    window.fixtureCreatePanel();
+  });
+  const restoredBottom = await panel.boundingBox();
+  assert.equal(restoredBottom.y, 550);
+  assert.equal(restoredBottom.y + restoredBottom.height <= 600, true);
+  assert.equal(await panel.locator('[data-role="body"]').isVisible(), false);
+  assert.equal(await panel.locator('[data-role="collapse"]').getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(await page.evaluate(() => window.fixtureCollapsedWrites), [false, true, false, true]);
+  await panel.screenshot({ path: join(output, 'collapsed-bottom-restored.png') });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ output, checked: ['six-timeframe-quotas', '18-retained-events', 'collapsed-diagnostics', 'duration-sorted-processing', 'visible-data-gap', 'global-delivery-label', 'separate-freshness', 'collapse', 'viewport', 'Chinese-English-retained-state', 'header-drag-position-storage', 'narrow-viewport'], pageErrors: errors }));
+  console.log(JSON.stringify({ output, checked: ['six-timeframe-quotas', '18-retained-events', 'collapsed-diagnostics', 'duration-sorted-processing', 'visible-data-gap', 'global-delivery-label', 'separate-freshness', 'default-collapsed', 'restored-expanded', 'click-only-fold-storage', 'bottom-fold-position', 'viewport', 'Chinese-English-retained-state', 'header-drag-position-storage', 'narrow-viewport'], pageErrors: errors }));
 } finally {
   await browser.close();
 }

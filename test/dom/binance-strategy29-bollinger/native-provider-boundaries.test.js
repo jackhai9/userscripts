@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createBollingerMonitor } from '../../../src/binance-strategy29-bollinger/monitor.js';
-import { createStrategy29RemoteSummary, STRATEGY29_PANEL_POSITION_KEY } from '../../../src/binance-strategy29-bollinger/remote-summary.js';
+import { createStrategy29RemoteSummary, STRATEGY29_PANEL_POSITION_KEY, STRATEGY29_PANEL_COLLAPSED_KEY } from '../../../src/binance-strategy29-bollinger/remote-summary.js';
 import { createStrategy29SummaryPanel } from '../../../src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js';
 import { createBollingerIntervalSession } from '../../../src/binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
 import { validateStrategy29EventsResponse, validateStrategy29StatusResponse } from '../../../src/binance-strategy29-bollinger/core/remote-summary-contract.js';
@@ -16,7 +16,11 @@ const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gate
 function remoteConfiguration(host, transport, reads, writes) {
   return {
     view: host.view, request: request => transport.request(request),
-    getValue(key) { assert.equal(key, STRATEGY29_PANEL_POSITION_KEY); reads.push(key); return null; },
+    getValue(key, initial) {
+      assert.equal([STRATEGY29_PANEL_POSITION_KEY, STRATEGY29_PANEL_COLLAPSED_KEY].includes(key), true);
+      reads.push(key);
+      return initial;
+    },
     setValue(key, value) { writes.push({ key, value }); },
     getGatewayState: () => ({ available: true, configured: true, settingsRevision: 1 }),
     pollIntervalMs: 1000,
@@ -56,10 +60,10 @@ for (const [label, changed, message] of [
     transport.respond(events);
     await remote.sample(status.observed_at_ms);
 
-    // Then the default client and panel connect normally using only the declared position key.
+    // Then the default client and panel connect normally using only the two declared preference keys.
     assert.equal(remote.diagnostics.state, 'connected');
     assert.equal(remote.diagnostics.cursor, 42);
-    assert.deepEqual(reads, [STRATEGY29_PANEL_POSITION_KEY]);
+    assert.deepEqual(reads.sort(), [STRATEGY29_PANEL_COLLAPSED_KEY, STRATEGY29_PANEL_POSITION_KEY]);
     assert.equal(host.document.querySelectorAll('[data-role=remote-event]').length, 2);
     assert.deepEqual(writes, []);
     remote.dispose();
@@ -70,6 +74,8 @@ for (const [label, mode, message] of [
   ['a body element', 'body', 'Strategy 29 summary panel requires document.body'],
   ['a nonempty symbol', 'symbol', 'Strategy 29 panel symbol is invalid'],
   ['position adapters', 'adapters', 'Strategy 29 panel position adapters are required'],
+  ['a collapsed preference reader', 'load-collapsed', 'Strategy 29 panel collapsed adapters are required'],
+  ['a collapsed preference writer', 'save-collapsed', 'Strategy 29 panel collapsed adapters are required'],
 ]) {
   test(`user requires ${label} before a summary panel is inserted`, (t) => {
     // Given a real document whose public panel initialization prerequisite is absent.
@@ -81,8 +87,12 @@ for (const [label, mode, message] of [
     const options = {
       locale: 'en', loadPosition: () => { reads.push('position'); return null; },
       savePosition: position => writes.push(position),
+      loadCollapsed: () => { reads.push('collapsed'); return true; },
+      saveCollapsed: collapsed => writes.push(collapsed),
     };
     if (mode === 'adapters') options.loadPosition = null;
+    if (mode === 'load-collapsed') options.loadCollapsed = null;
+    if (mode === 'save-collapsed') options.saveCollapsed = null;
 
     // When the public panel factory is called before that prerequisite is satisfied.
     const error = captureStrategyError(() => createStrategy29SummaryPanel(host.document, mode === 'symbol' ? '' : 'BTC/USDT:USDT', options));
@@ -102,6 +112,7 @@ test('user cannot mutate a destroyed summary panel through any retained public u
   const writes = [];
   const panel = createStrategy29SummaryPanel(host.document, 'BTC/USDT:USDT', {
     locale: 'en', loadPosition: () => null, savePosition: value => writes.push(value),
+    loadCollapsed: () => false, saveCollapsed: value => writes.push(value),
   });
   const validatedStatus = validateStrategy29StatusResponse(status, 200);
   const validatedEvents = validateStrategy29EventsResponse(events, 200);
@@ -119,6 +130,7 @@ test('user cannot mutate a destroyed summary panel through any retained public u
     () => panel.addEvents(validatedEvents.events, validatedEvents.observed_at_ms),
     () => panel.clearEvents(),
   ].map(operation => captureStrategyError(operation));
+  element.querySelector('[data-role=collapse]').click();
 
   // Then every late update is explicitly rejected and no DOM or persistence state changes.
   assert.deepEqual(errors.map(error => error.message), Array(5).fill('Strategy 29 summary panel is destroyed'));

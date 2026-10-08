@@ -295,12 +295,24 @@ and reads that quantity again. Confirmed flat ends normally; an increased
 position stops the round. A strict decrease permits rebuilding without cancelling.
 
 An unchanged quantity permits one confirmed replacement through the existing
-current-symbol, same-close-direction Basic-order workflow. Rejection after that
+current-symbol, same-close-direction Basic-order workflow. Before selecting
+orders to cancel, rebuild the complete ladder plan using the confirmed quantity
+and the latest valid DOM closeable quantity. Fills may have reduced the position
+before the first recovery read, so unchanged reads do not make the rejected
+plan's original total a valid cancellation target. The usual quantity rules and
+automatic level reduction apply to this fresh plan. Rejection after that
 replacement triggers another cooldown and position read, not another immediate
 replacement. If the position still has not decreased, recovery ends with the
 native error and a no-progress explanation. Further replacements require a strict
 decrease in authoritative position quantity. Submissions and cancellations do not
 count as position progress. The guard lasts for the whole active round.
+
+Planning for cancellation does not reset submission progress. Initialize the
+new plan's counters only when its execution starts; preflight, cancellation, or
+post-cancellation planning failures retain the previous partial count and the
+cumulative confirmed submissions. After cancellation, wait and reread the
+position before building the execution plan, including a normal finish when
+the position has become flat.
 
 Recovery rebuilds use the smaller of the confirmed API position quantity and the
 latest valid DOM closeable quantity. Missing DOM quantity never falls back to the

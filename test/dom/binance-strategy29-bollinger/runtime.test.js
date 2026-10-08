@@ -22,6 +22,22 @@ function fixture(t) {
     hide(value) { hidden = value; view.document.dispatchEvent(new view.Event('visibilitychange')); } };
 }
 
+function installFailingIntervalChart(view) {
+  const root = view.document.createElement('div');
+  root.className = 'chart-widget-root';
+  root.innerHTML = '<iframe></iframe>';
+  root.getClientRects = () => [{ width: 800, height: 600 }];
+  root.getBoundingClientRect = () => ({ width: 800, height: 600 });
+  view.document.body.append(root);
+  const chart = {
+    symbol: () => 'BTRUSDT@PRICETYPE=LAST', resolution: () => '1',
+    hasModel: () => true, dataReady: () => true,
+    onIntervalChanged() { throw new Error('synthetic interval subscription failure'); },
+    onDataLoaded() {}, exportData() {},
+  };
+  root.querySelector('iframe').contentWindow.tradingViewApi = { activeChart: () => chart };
+}
+
 test('user observes that standalone injection is single-instance and pauses/resumes/disposes its only timer', (t) => {
   // Given the standalone Strategy 29 page and runtime dependencies
   const f = fixture(t);
@@ -30,6 +46,7 @@ test('user observes that standalone injection is single-instance and pauses/resu
   const observedResult = installStrategy29(f.view);
   // Then user observes that standalone injection is single-instance and pauses/resumes/disposes its only timer
   assert.equal(observedResult, runtime);
+  assert.equal(f.view[Symbol.for('jh-userscripts.strategy29-bollinger')] === runtime, true);
   assert.equal(f.timers.size, 1);
   f.hide(true);
   assert.equal(f.timers.size, 0);
@@ -47,10 +64,7 @@ test('user observes that standalone injection is single-instance and pauses/resu
 test('user observes that remote transport failure never stops the local observer timer', async (t) => {
   // Given the standalone Strategy 29 page and runtime dependencies
   const f = fixture(t);
-  const values = new Map([
-    ['strategy29GatewayAuthSecret', 'synthetic-secret'],
-    ['strategy29GatewayOrigin', 'http://127.0.0.1:8729'],
-  ]);
+  const values = new Map();
   // When installStrategy29 processes the configured inputs
   const runtime = installStrategy29(f.view, {
     request: async () => { throw new Error('synthetic remote failure'); },
@@ -78,10 +92,7 @@ for (const [name, remoteResponse, expectedState] of [
   test(`user observes that ${name} remains a remote-only state while the local timer continues`, async (t) => {
     // Given the standalone Strategy 29 page and runtime dependencies
     const f = fixture(t);
-    const values = new Map([
-      ['strategy29GatewayAuthSecret', 'synthetic-secret'],
-      ['strategy29GatewayOrigin', 'http://127.0.0.1:8729'],
-    ]);
+    const values = new Map();
     // When installStrategy29 processes the configured inputs
     const runtime = installStrategy29(f.view, {
       request: async () => remoteResponse,
@@ -103,10 +114,7 @@ for (const [name, remoteResponse, expectedState] of [
 test('user observes that hiding the page aborts the remote request and resumes with one shared runtime timer', async (t) => {
   // Given the standalone Strategy 29 page and runtime dependencies
   const f = fixture(t);
-  const values = new Map([
-    ['strategy29GatewayAuthSecret', 'synthetic-secret'],
-    ['strategy29GatewayOrigin', 'http://127.0.0.1:8729'],
-  ]);
+  const values = new Map();
   let aborts = 0;
   // When installStrategy29 processes the configured inputs
   const runtime = installStrategy29(f.view, {
@@ -135,9 +143,7 @@ test('user observes that hiding the page aborts the remote request and resumes w
 test('user observes that actual remote client retains rows and cursor across visibility and bootstraps a new route', async (t) => {
   // Given the standalone Strategy 29 page and runtime dependencies
   const f = fixture(t);
-  const values = new Map([
-    ['strategy29GatewayAuthSecret', 'synthetic-secret'],
-  ]);
+  const values = new Map();
   const urls = [];
   const first = { ...gatewayEvents.events[0], symbol: 'BTR/USDT:USDT', sequence: 900 };
   const second = { ...gatewayEvents.events[1], symbol: 'BTR/USDT:USDT', sequence: 901 };
@@ -183,104 +189,71 @@ test('user observes that actual remote client retains rows and cursor across vis
   f.dom.window.close();
 });
 
-for (const failure of ['embedded conflict', 'interval subscription failure']) {
-  test(`user observes that permanent ${failure} retires the populated remote panel and request`, async (t) => {
-    // Given the standalone Strategy 29 page and runtime dependencies
-    const f = fixture(t);
-    const values = new Map([
-      ['strategy29GatewayAuthSecret', 'synthetic-secret'],
-    ]);
-    let requests = 0, aborts = 0;
-    let releaseLate;
-    let lateDelivered = false;
-    // When installStrategy29 processes the configured inputs
-    const runtime = installStrategy29(f.view, {
-      request: ({ path: url, signal }) => {
-        requests += 1;
-        if (requests > 2) return new Promise(resolve => {
-          releaseLate = resolve;
-          signal.addEventListener('abort', () => { aborts += 1; }, { once: true });
-        }).then(response => {
-          lateDelivered = true;
-          return response;
-        });
-        const body = url.includes('/status') ? gatewayStatus : {
-          ...gatewayEvents,
-          events: [{ ...gatewayEvents.events[0], symbol: 'BTR/USDT:USDT' }],
-          has_more: false,
-        };
-        return Promise.resolve({ status: 200, responseText: JSON.stringify(body) });
-      },
-      getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
-      setValue: (key, value) => values.set(key, value),
-      registerMenuCommand() {}, getGatewayState() { return { available: true, configured: true, settingsRevision: 0 }; },
-    });
-    try {
-      await observeStrategyCondition(() => runtime.diagnostics.remoteSummary.state === 'connected' && !runtime.diagnostics.remoteSummary.inFlight, 'populated remote panel');
-      const panel = f.view.document.getElementById('jh-strategy29-summary-panel');
-      // Then user observes that permanent the selected case retires the populated remote panel and request
-      assert.equal(panel.querySelectorAll('[data-role=remote-event]').length, 1);
-      assert.equal(runtime.diagnostics.remoteSummary.state, 'connected');
-      f.hide(true); f.hide(false);
-      assert.equal(requests, 3);
-      if (failure === 'embedded conflict') {
-        f.view.__TM_CLOSE_LONG_DEBUG__ = { bollingerAlertState: {} };
-      } else {
-        const root = f.view.document.createElement('div');
-        root.className = 'chart-widget-root';
-        root.innerHTML = '<iframe></iframe>';
-        root.getClientRects = () => [{ width: 800, height: 600 }];
-        root.getBoundingClientRect = () => ({ width: 800, height: 600 });
-        f.view.document.body.append(root);
-        const chart = {
-          symbol: () => 'BTRUSDT@PRICETYPE=LAST', resolution: () => '1',
-          hasModel: () => true, dataReady: () => true,
-          onIntervalChanged() { throw new Error('synthetic interval subscription failure'); },
-          onDataLoaded() {}, createShape() {}, exportData() {},
-          getAllShapes() {}, getShapeById() {}, removeEntity() {},
-        };
-        root.querySelector('iframe').contentWindow.tradingViewApi = { activeChart: () => chart };
-      }
-      f.tick();
-      await observeStrategyCondition(() => runtime.diagnostics.runtimeFailure !== null && !runtime.diagnostics.remoteSummary.contextPresent, 'permanent runtime failure');
-      assert.match(runtime.diagnostics.runtimeFailure, failure === 'embedded conflict' ? /update Orderbook/ : /synthetic interval subscription failure/);
-      assert.equal(aborts, 1);
-      assert.equal(panel.isConnected, false);
-      assert.equal(runtime.diagnostics.remoteSummary.contextPresent, false);
-      assert.equal(f.timers.size, 0);
-      releaseLate({ status: 200, responseText: JSON.stringify(gatewayStatus) });
-      f.hide(true); f.hide(false);
-      f.view.dispatchEvent(new f.view.Event('pageshow'));
-      await observeStrategyCondition(() => lateDelivered, 'retired host response delivered');
-      assert.equal(requests, 3);
-      assert.equal(f.view.document.getElementById('jh-strategy29-summary-panel'), null);
-      assert.equal(f.timers.size, 0);
-    } finally {
-      runtime.dispose();
-      f.dom.window.close();
-    }
+test('user observes that a permanent interval subscription failure retires the populated remote panel and request', async (t) => {
+  // Given the standalone Strategy 29 page and runtime dependencies
+  const f = fixture(t);
+  const values = new Map();
+  let requests = 0, aborts = 0;
+  let releaseLate;
+  let lateDelivered = false;
+  // When the actual runtime consumes a status and event snapshot
+  const runtime = installStrategy29(f.view, {
+    request: ({ path: url, signal }) => {
+      requests += 1;
+      if (requests > 2) return new Promise(resolve => {
+        releaseLate = resolve;
+        signal.addEventListener('abort', () => { aborts += 1; }, { once: true });
+      }).then(response => {
+        lateDelivered = true;
+        return response;
+      });
+      const body = url.includes('/status') ? gatewayStatus : {
+        ...gatewayEvents,
+        events: [{ ...gatewayEvents.events[0], symbol: 'BTR/USDT:USDT' }],
+        has_more: false,
+      };
+      return Promise.resolve({ status: 200, responseText: JSON.stringify(body) });
+    },
+    getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
+    setValue: (key, value) => values.set(key, value),
+    getGatewayState() { return { available: true, configured: true, settingsRevision: 0 }; },
   });
-}
+  try {
+    await observeStrategyCondition(() => runtime.diagnostics.remoteSummary.state === 'connected' && !runtime.diagnostics.remoteSummary.inFlight, 'populated remote panel');
+    const panel = f.view.document.getElementById('jh-strategy29-summary-panel');
+    // Then the running remote context has retained signal rows before the local failure
+    assert.equal(panel.querySelectorAll('[data-role=remote-event]').length, 1);
+    assert.equal(runtime.diagnostics.remoteSummary.state, 'connected');
+    f.hide(true); f.hide(false);
+    assert.equal(requests, 3);
 
-for (const legacyFirst of [true, false]) {
-  test(`user observes that legacy embedded observer refuses coexistence (legacy first=${legacyFirst})`, (t) => {
-    // Given the standalone Strategy 29 page and runtime dependencies
-    const f = fixture(t);
-    const legacy = {};
-    Object.defineProperty(legacy, 'bollingerAlertState', { get() { throw new Error('Do not inspect legacy runtime data'); } });
-    if (legacyFirst) f.view.__TM_CLOSE_LONG_DEBUG__ = legacy;
-    // When installStrategy29 processes the configured inputs
-    const runtime = installStrategy29(f.view);
-    if (!legacyFirst) { f.view.__TM_CLOSE_LONG_DEBUG__ = legacy; f.tick(); }
-    // Then user observes that legacy embedded observer refuses coexistence (legacy first=the selected case)
-    assert.match(runtime.diagnostics.runtimeFailure, /update Orderbook to 2.7.199/);
-    assert.equal(runtime.diagnostics.failed, null);
+    // When a native chart appears whose interval subscription fails
+    installFailingIntervalChart(f.view);
+    f.tick();
+    await observeStrategyCondition(() => runtime.diagnostics.runtimeFailure !== null && !runtime.diagnostics.remoteSummary.contextPresent, 'permanent runtime failure');
+
+    // Then local failure retires the remote request and panel before any late response can publish
+    assert.match(runtime.diagnostics.runtimeFailure, /synthetic interval subscription failure/);
+    assert.equal(aborts, 1);
+    assert.equal(panel.isConnected, false);
+    assert.equal(runtime.diagnostics.remoteSummary.contextPresent, false);
     assert.equal(f.timers.size, 0);
-    assert.match(f.view.document.querySelector('[role=status]').textContent, /reload/);
-    assert.equal(f.view.__TM_CLOSE_LONG_DEBUG__, legacy);
-    runtime.dispose(); f.dom.window.close();
-  });
-}
+
+    // When the retired response arrives and stale browser lifecycle events try to resume work
+    releaseLate({ status: 200, responseText: JSON.stringify(gatewayStatus) });
+    f.hide(true); f.hide(false);
+    f.view.dispatchEvent(new f.view.Event('pageshow'));
+    await observeStrategyCondition(() => lateDelivered, 'retired host response delivered');
+
+    // Then no request, panel or observation timer is recreated
+    assert.equal(requests, 3);
+    assert.equal(f.view.document.getElementById('jh-strategy29-summary-panel'), null);
+    assert.equal(f.timers.size, 0);
+  } finally {
+    runtime.dispose();
+    f.dom.window.close();
+  }
+});
 
 test('user observes that invalid shared gateway state remains isolated from the local observer at startup', (t) => {
   // Given the standalone Strategy 29 page and runtime dependencies
@@ -419,12 +392,13 @@ test('user defers hidden-page route sampling until visibility returns', (t) => {
   assert.equal(f.view.document.querySelectorAll('#jh-strategy29-client-upgrade').length, 1);
 });
 
-test('user sees a stopped-runtime notice restored after the host replaces its DOM', (t) => {
-  // Given a detected embedded observer has permanently stopped the new runtime
+test('user sees a stopped-runtime notice restored after the host replaces its DOM', async (t) => {
+  // Given a native interval subscription failure has permanently stopped the runtime
   const f = fixture(t);
-  f.view.__TM_CLOSE_LONG_DEBUG__ = { bollingerAlertState: {} };
+  installFailingIntervalChart(f.view);
   const runtime = installStrategy29(f.view);
   t.after(() => { runtime.dispose(); f.dom.window.close(); });
+  await observeStrategyCondition(() => runtime.diagnostics.runtimeFailure !== null, 'native interval subscription failure');
   const notice = f.view.document.getElementById('jh-strategy29-bollinger-status');
   const originalText = notice.textContent;
   const originalFailure = runtime.diagnostics.runtimeFailure;
@@ -438,28 +412,30 @@ test('user sees a stopped-runtime notice restored after the host replaces its DO
   assert.notEqual(restored, notice);
   assert.equal(restored.getAttribute('role'), 'status');
   assert.notEqual(restored.textContent, originalText);
-  assert.match(restored.textContent, /2\.7\.199/);
+  assert.match(restored.textContent, /Strategy 29 已停止/);
+  assert.match(restored.textContent, /synthetic interval subscription failure/);
   assert.equal(runtime.diagnostics.runtimeFailure, originalFailure);
   assert.equal(f.view.document.querySelectorAll('#jh-strategy29-bollinger-status').length, 1);
   assert.equal(f.timers.size, 0);
 });
 
-test('user sees an early runtime failure when the native document body becomes available', (t) => {
-  // Given document-start injection detects a conflict before the body exists
+test('user sees a retained runtime failure when a replacement document body becomes available', async (t) => {
+  // Given the host removes its body before an interval subscription failure is reported
   const f = fixture(t);
-  f.view.document.body.remove();
-  f.view.__TM_CLOSE_LONG_DEBUG__ = { bollingerAlertState: {} };
+  installFailingIntervalChart(f.view);
   const runtime = installStrategy29(f.view);
+  f.view.document.body.remove();
   t.after(() => { runtime.dispose(); f.dom.window.close(); });
+  await observeStrategyCondition(() => runtime.diagnostics.runtimeFailure !== null, 'failure while the body is unavailable');
   assert.equal(f.view.document.getElementById('jh-strategy29-bollinger-status'), null);
 
-  // When the real document lifecycle exposes its body
+  // When the host exposes its replacement body and changes the route locale
   f.view.document.documentElement.append(f.view.document.createElement('body'));
-  f.view.document.dispatchEvent(new f.view.Event('DOMContentLoaded'));
+  f.view.history.pushState({}, '', '/zh-CN/futures/BTRUSDT');
 
   // Then the retained failure is presented once and sampling remains stopped
   const notice = f.view.document.getElementById('jh-strategy29-bollinger-status');
-  assert.match(notice.textContent, /update Orderbook to 2\.7\.199/);
+  assert.match(notice.textContent, /synthetic interval subscription failure/);
   assert.equal(notice.getAttribute('role'), 'status');
   assert.equal(f.view.document.querySelectorAll('#jh-strategy29-bollinger-status').length, 1);
   assert.equal(f.timers.size, 0);

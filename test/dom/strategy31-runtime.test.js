@@ -5,7 +5,7 @@ import { installStrategy31 } from '../../src/binance-strategy31-volume-reversal/
 import { SIGNAL_GATEWAY_BRIDGE } from '../../src/shared/signal-gateway-bridge.js';
 import { registerChartMutationOwner } from '../../src/shared/chart-mutation-owners.js';
 
-function fixture({ pathname = '/en/futures/BTRUSDT', hiddenDuringInstall = true } = {}) {
+function fixture({ pathname = '/en/futures/BTRUSDT', hiddenDuringInstall = true, preferences = new Map() } = {}) {
   const host = createStrategy29ChartHost({ resolution: '5', bars: [
     { time: 300, open: 10, high: 13, low: 9, close: 12 },
   ] });
@@ -17,6 +17,18 @@ function fixture({ pathname = '/en/futures/BTRUSDT', hiddenDuringInstall = true 
     timeframe: '5m', observed_at_ms: 600000, events: [event] };
   let nextResponse = null, revision = 0;
   const requests = [];
+  const preferenceReads = [];
+  const preferenceWrites = [];
+  const storage = {
+    getValue(key, initial) {
+      preferenceReads.push({ key, initial });
+      return preferences.has(key) ? structuredClone(preferences.get(key)) : initial;
+    },
+    setValue(key, value) {
+      preferenceWrites.push({ key, value: structuredClone(value) });
+      preferences.set(key, structuredClone(value));
+    },
+  };
   host.view[SIGNAL_GATEWAY_BRIDGE] = { version: 1, capabilities: ['strategy31'],
     getState: () => ({ available: true, configured: true, settingsRevision: revision }),
     request: (path, signal) => {
@@ -24,10 +36,189 @@ function fixture({ pathname = '/en/futures/BTRUSDT', hiddenDuringInstall = true 
       return nextResponse ?? Promise.resolve({ kind: 'response', status: 200, responseText: JSON.stringify(payload) });
     } };
   host.setHidden(hiddenDuringInstall);
-  const runtime = installStrategy31(host.view);
+  const runtime = installStrategy31(host.view, storage);
   host.setHidden(false);
-  return { ...host, runtime, requests, hold(promise) { nextResponse = promise; }, changeSettings() { revision += 1; }, payload };
+  return { ...host, runtime, requests, preferences, preferenceReads, preferenceWrites,
+    hold(promise) { nextResponse = promise; }, changeSettings() { revision += 1; }, payload };
 }
+
+/** JSDOM supplies pointer events but has no layout engine or native pointer capture. */
+function attachStatusPointerHost(f) {
+  const node = f.document.getElementById('jh-strategy31-status');
+  const captured = new Set();
+  node.setPointerCapture = pointerId => captured.add(pointerId);
+  node.hasPointerCapture = pointerId => captured.has(pointerId);
+  node.releasePointerCapture = pointerId => captured.delete(pointerId);
+  node.getBoundingClientRect = () => new f.view.DOMRect(
+    Number.parseFloat(node.style.left), Number.parseFloat(node.style.top), 320, 24,
+  );
+  return {
+    node, captured,
+    fire(type, clientX, clientY) {
+      const event = new f.view.PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 31, isPrimary: true,
+        button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX, clientY,
+      });
+      node.dispatchEvent(event);
+    },
+  };
+}
+
+test('user restores Strategy31 status from its private position without writing during status updates', async (t) => {
+  // Given separate stored coordinates for Strategy31 and an unrelated strategy panel
+  const preferences = new Map([
+    ['strategy31StatusPosition', { left: 120, top: 100 }],
+    ['strategy27StatusPosition', { left: 600, top: 400 }],
+  ]);
+  const f = fixture({ preferences });
+  t.after(() => { f.runtime.dispose(); f.close(); });
+
+  // When the runtime renders signals and then an unsupported interval in another language
+  await f.runtime.sample();
+  const status = f.document.getElementById('jh-strategy31-status');
+  f.changeInterval('1M');
+  f.finishData();
+  await f.runtime.sample();
+  f.view.history.pushState({}, '', '/zh-CN/futures/BTRUSDT');
+
+  // Then its position loads once and the same independent status changes without persisting anything
+  assert.deepEqual(f.preferenceReads, [{ key: 'strategy31StatusPosition', initial: null }]);
+  assert.equal(f.document.getElementById('jh-strategy31-status'), status);
+  assert.equal(status.style.left, '120px');
+  assert.equal(status.style.top, '100px');
+  assert.equal(status.textContent, '策略31：不支持的图表周期');
+  assert.equal(status.dataset.state, 'normal');
+  assert.equal(f.view.getComputedStyle(status).backgroundColor, 'rgb(24, 26, 32)');
+  assert.equal(f.view.getComputedStyle(status).color, 'rgb(221, 221, 221)');
+  assert.deepEqual(f.preferenceWrites, []);
+  assert.deepEqual(preferences.get('strategy27StatusPosition'), { left: 600, top: 400 });
+  assert.equal(f.requests.length, 1);
+});
+
+test('user remembers a completed Strategy31 status drag after the script is recreated', async (t) => {
+  // Given a live status restored from its script-local preference store
+  const preferences = new Map([['strategy31StatusPosition', { left: 120, top: 100 }]]);
+  const f = fixture({ preferences });
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  await f.runtime.sample();
+  const pointer = attachStatusPointerHost(f);
+
+  // When a primary pointer moves the status and finishes the drag
+  pointer.fire('pointerdown', 130, 110);
+  pointer.fire('pointermove', 220, 170);
+  pointer.fire('pointermove', 250, 190);
+  assert.equal(pointer.captured.size, 1);
+  assert.deepEqual(f.preferenceWrites, []);
+  pointer.fire('pointerup', 250, 190);
+
+  // Then one completed position is stored with no retained pointer capture
+  assert.equal(pointer.node.style.left, '240px');
+  assert.equal(pointer.node.style.top, '180px');
+  assert.equal(pointer.captured.size, 0);
+  assert.deepEqual(f.preferenceWrites, [{ key: 'strategy31StatusPosition', value: { left: 240, top: 180 } }]);
+
+  // When a new script instance starts with the same private GM preferences
+  f.runtime.dispose();
+  const restored = fixture({ preferences });
+  t.after(() => { restored.runtime.dispose(); restored.close(); });
+  await restored.runtime.sample();
+
+  // Then it restores the dragged coordinates without performing another preference write
+  const status = restored.document.getElementById('jh-strategy31-status');
+  assert.equal(status.style.left, '240px');
+  assert.equal(status.style.top, '180px');
+  assert.deepEqual(restored.preferenceReads, [{ key: 'strategy31StatusPosition', initial: null }]);
+  assert.deepEqual(restored.preferenceWrites, []);
+});
+
+test('user leaves a Strategy31 drag without storing it or reviving the removed status on a language change', async (t) => {
+  // Given a visible status with an unfinished primary pointer drag
+  const f = fixture({ preferences: new Map([['strategy31StatusPosition', { left: 120, top: 100 }]]) });
+  t.after(() => { f.runtime.dispose(); f.close(); });
+  await f.runtime.sample();
+  const pointer = attachStatusPointerHost(f);
+  pointer.fire('pointerdown', 130, 110);
+  pointer.fire('pointermove', 250, 190);
+  assert.equal(pointer.captured.size, 1);
+
+  // When SPA navigation leaves the chart and returns in another language before any sample
+  f.view.history.pushState({}, '', '/en/futures/');
+  pointer.fire('pointerup', 250, 190);
+  f.view.history.pushState({}, '', '/zh-CN/futures/BTRUSDT');
+
+  // Then detached drag handlers cannot save and a language-only update does not revive the status
+  assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+  assert.equal(pointer.captured.size, 0);
+  assert.deepEqual(f.preferenceWrites, []);
+  assert.equal(f.requests.length, 1);
+
+  // When normal chart sampling resumes on the trading route
+  await f.runtime.sample();
+
+  // Then the retained in-page position returns with no storage reread or implicit write
+  const status = f.document.getElementById('jh-strategy31-status');
+  assert.equal(status.style.left, '240px');
+  assert.equal(status.style.top, '180px');
+  assert.equal(status.textContent, '策略31：1 个图表信号 · 5m');
+  assert.deepEqual(f.preferenceReads, [{ key: 'strategy31StatusPosition', initial: null }]);
+  assert.deepEqual(f.preferenceWrites, []);
+});
+
+for (const shutdown of ['dispose', 'beforeunload']) {
+  test(`user releases Strategy31 drag and pending signals on ${shutdown}`, async (t) => {
+    // Given a visible status drag and a signal request still waiting at the gateway boundary
+    const f = fixture({ preferences: new Map([['strategy31StatusPosition', { left: 120, top: 100 }]]) });
+    t.after(() => { f.runtime.dispose(); f.close(); });
+    await f.runtime.sample();
+    const pointer = attachStatusPointerHost(f);
+    pointer.fire('pointerdown', 130, 110);
+    pointer.fire('pointermove', 250, 190);
+    assert.equal(pointer.captured.size, 1);
+    const response = Promise.withResolvers();
+    f.hold(response.promise);
+    const sample = f.runtime.sample();
+
+    // When disposal or browser unload retires the runtime before drag and request completion
+    if (shutdown === 'dispose') f.runtime.dispose();
+    else f.view.dispatchEvent(new f.view.Event('beforeunload'));
+    pointer.fire('pointerup', 250, 190);
+    response.resolve({ kind: 'response', status: 200, responseText: JSON.stringify(f.payload) });
+    await sample;
+    f.view.history.pushState({}, '', '/zh-CN/futures/BTRUSDT');
+    await f.runtime.sample();
+
+    // Then owned UI and capture are removed without saving or restarting signal work
+    assert.equal(f.document.getElementById('jh-strategy31-status'), null);
+    assert.equal(pointer.captured.size, 0);
+    assert.deepEqual(f.preferenceWrites, []);
+    assert.equal(f.requests[1].signal.aborted, true);
+    assert.equal(f.requests.length, 2);
+    assert.equal(f.overlay.markers().length, 0);
+    assert.equal(f.intervalChanged.size, 0);
+    assert.equal(f.dataLoaded.size, 0);
+  });
+}
+
+test('user rejects an invalid Strategy31 stored position before starting chart sampling', (t) => {
+  // Given an invalid value returned by this script's private GM position preference
+  const host = createStrategy29ChartHost();
+  host.setHidden(true);
+  const writes = [];
+  t.after(() => { host.view[Symbol.for('jh-userscripts.strategy31')]?.dispose(); host.close(); });
+  const storage = {
+    getValue: () => ({ left: '120', top: 100 }),
+    setValue: (key, value) => writes.push({ key, value }),
+  };
+
+  // When installation reads the preference outside the asynchronous signal failure boundary
+  assert.throws(() => installStrategy31(host.view, storage), /position/i);
+
+  // Then no status, marker owner, or preference write is created from the invalid contract
+  assert.equal(host.document.getElementById('jh-strategy31-status'), null);
+  assert.equal(host.intervalChanged.size, 0);
+  assert.equal(host.dataLoaded.size, 0);
+  assert.deepEqual(writes, []);
+});
 
 test('user sees no Strategy31 status or signal requests on a non-trading page', async (t) => {
   // Given the observer starts on a visible futures landing page

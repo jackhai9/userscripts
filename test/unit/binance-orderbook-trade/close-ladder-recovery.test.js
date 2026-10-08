@@ -16,6 +16,7 @@ function rejection() {
 
 function scenario({ quantities, failures = [rejection()], replaceResult = { ok: true }, onWait = () => {} }) {
   const events = [];
+  const replacementPlans = [];
   let readIndex = 0;
   let executionIndex = 0;
   const signal = new AbortController();
@@ -39,7 +40,8 @@ function scenario({ quantities, failures = [rejection()], replaceResult = { ok: 
       events.push(['position', qty]);
       return qty;
     },
-    replaceOrders: async () => {
+    replaceOrders: async (plan) => {
+      replacementPlans.push(plan);
       events.push(['replace']);
       return replaceResult;
     },
@@ -48,8 +50,80 @@ function scenario({ quantities, failures = [rejection()], replaceResult = { ok: 
       onWait(signal);
     },
   };
-  return { options, events };
+  return { options, events, replacementPlans };
 }
+
+test('user replaces only the smaller tail when fills precede the first recovery position read', async () => {
+  // Given a round planned from 100 units but both confirmed recovery reads already show one unit.
+  const { options, events, replacementPlans } = scenario({ quantities: ['1', '1', '1'] });
+
+  // When the unchanged tail needs scoped replacement after the native reduce-only rejection.
+  const result = await runCloseLadderWithPositionRecovery(options);
+
+  // Then cancellation uses the current one-unit plan and the confirmed replacement executes that tail.
+  assert.deepEqual(replacementPlans.map((plan) => plan.baseQty), ['1']);
+  assert.equal(result.plan.baseQty, '1');
+  assert.equal(result.done, 3);
+  assert.equal(events.filter(([type]) => type === 'execute').length, 2);
+});
+
+test('user keeps existing orders when fresh tail planning cannot read closeable quantity', async () => {
+  // Given confirmed tail positions but the native closeable quantity disappears before replacement.
+  const { options, events, replacementPlans } = scenario({ quantities: ['1', '1', '1'] });
+  options.buildPlan = async (positionQty) => ({
+    spec: { mode: 'CLOSE' },
+    baseQty: positionQty === null ? '100' : capCloseLadderBaseQty(null, positionQty),
+  });
+
+  // When recovery attempts to prepare a replacement from the unread native quantity.
+  const completion = runCloseLadderWithPositionRecovery(options);
+
+  // Then the quantity error ends recovery before any cancellation or second submission.
+  await assert.rejects(completion, /Invalid close recovery quantity.*90802022/);
+  assert.deepEqual(replacementPlans, []);
+  assert.equal(events.filter(([type]) => type === 'execute').length, 1);
+});
+
+test('user can stop while the fresh tail replacement plan is being prepared', async () => {
+  // Given a Stop signal delivered after the planner starts building the smaller tail.
+  const { options, events, replacementPlans } = scenario({ quantities: ['1', '1', '1'] });
+  const controller = new AbortController();
+  const stopped = Object.assign(new Error('Stopped'), { name: 'LadderStoppedError' });
+  options.signal = controller.signal;
+  options.buildPlan = async (positionQty) => {
+    if (positionQty !== null) controller.abort(stopped);
+    return { spec: { mode: 'CLOSE' }, baseQty: positionQty ?? '100' };
+  };
+
+  // When recovery resumes after the planner yields with the Stop signal active.
+  const completion = runCloseLadderWithPositionRecovery(options);
+
+  // Then Stop propagates before cancellation and preserves the single executed plan.
+  await assert.rejects(completion, (error) => error === stopped);
+  assert.deepEqual(replacementPlans, []);
+  assert.equal(events.filter(([type]) => type === 'execute').length, 1);
+});
+
+test('user keeps orders when the trading context changes during tail replacement planning', async () => {
+  // Given the original context changes while the planner prepares the confirmed one-unit tail.
+  const { options, events, replacementPlans } = scenario({ quantities: ['1', '1', '1'] });
+  let contextChanged = false;
+  options.buildPlan = async (positionQty) => {
+    if (positionQty !== null) contextChanged = true;
+    return { spec: { mode: 'CLOSE' }, baseQty: positionQty ?? '100' };
+  };
+  options.assertContext = () => {
+    if (contextChanged) throw new Error('Symbol changed');
+  };
+
+  // When recovery revalidates the completed replacement plan against the active context.
+  const completion = runCloseLadderWithPositionRecovery(options);
+
+  // Then the context error ends the round before cancellation or another submission.
+  await assert.rejects(completion, /Symbol changed.*90802022/);
+  assert.deepEqual(replacementPlans, []);
+  assert.equal(events.filter(([type]) => type === 'execute').length, 1);
+});
 
 test('user finishes close recovery immediately when the position is confirmed flat', async () => {
   // Given a reduce-only rejection followed by an authoritative zero position.
@@ -90,7 +164,7 @@ test('user can replace conflicting close orders once at an unchanged position', 
   assert.equal(result.done, 3);
   assert.deepEqual(events, [
     ['build', '100'], ['execute'], ['position', '100'], ['wait'], ['position', '100'],
-    ['replace'], ['wait'], ['position', '100'], ['build', '100'], ['execute'],
+    ['build', '100'], ['replace'], ['wait'], ['position', '100'], ['build', '100'], ['execute'],
   ]);
 });
 
@@ -127,7 +201,8 @@ test('user can replace close orders again only after a confirmed position decrea
   assert.equal(result.done, 3);
   assert.equal(events.filter(([type]) => type === 'replace').length, 2);
   assert.deepEqual(events.filter(([type]) => type === 'build'), [
-    ['build', '100'], ['build', '100'], ['build', '80'], ['build', '80'],
+    ['build', '100'], ['build', '100'], ['build', '100'],
+    ['build', '80'], ['build', '80'], ['build', '80'],
   ]);
 });
 
@@ -268,9 +343,9 @@ test('user caps a recovery plan by both fresh closeable quantity and the confirm
   invalidActions.forEach((action) => assert.throws(action, /quantity/i));
 });
 
-for (const { name, quantities, replacements, waits } of [
-  { name: 'during the initial recovery wait', quantities: ['100', '0'], replacements: 0, waits: 1 },
-  { name: 'after the scoped replacement', quantities: ['100', '100', '0'], replacements: 1, waits: 2 },
+for (const { name, quantities, replacements, waits, plannedQuantities } of [
+  { name: 'during the initial recovery wait', quantities: ['100', '0'], replacements: 0, waits: 1, plannedQuantities: ['100'] },
+  { name: 'after the scoped replacement', quantities: ['100', '100', '0'], replacements: 1, waits: 2, plannedQuantities: ['100', '100'] },
 ]) {
   test(`user finishes the close round when the position becomes flat ${name}`, async () => {
     // Given a reduce-only rejection and authoritative position reads that become zero.
@@ -279,12 +354,12 @@ for (const { name, quantities, replacements, waits } of [
     // When the close round performs its allowed recovery steps.
     const result = await runCloseLadderWithPositionRecovery(options);
 
-    // Then the flat result ends recovery without rebuilding or submitting another order.
+    // Then the flat result ends recovery without executing another order plan.
     assert.deepEqual(result, { status: 'position_closed' });
     assert.equal(events.filter(([type]) => type === 'execute').length, 1);
     assert.equal(events.filter(([type]) => type === 'replace').length, replacements);
     assert.equal(events.filter(([type]) => type === 'wait').length, waits);
-    assert.deepEqual(events.filter(([type]) => type === 'build'), [['build', '100']]);
+    assert.deepEqual(events.filter(([type]) => type === 'build').map(([, qty]) => qty), plannedQuantities);
   });
 }
 
@@ -328,7 +403,7 @@ test('user stops recovery if the position increases after replacement', async ()
   // When the post-replacement position is revalidated.
   const completion = runCloseLadderWithPositionRecovery(options);
 
-  // Then the increased position ends the round with no additional plan or submission.
+  // Then the increased position never becomes a new plan or an additional submission.
   await assert.rejects(completion, (error) => {
     assert.match(formatLocalizedText(error.localizedText, 'en'), /Position increased/);
     assert.match(error.message, /90802022/);
@@ -336,5 +411,5 @@ test('user stops recovery if the position increases after replacement', async ()
   });
   assert.equal(events.filter(([type]) => type === 'execute').length, 1);
   assert.equal(events.filter(([type]) => type === 'replace').length, 1);
-  assert.deepEqual(events.filter(([type]) => type === 'build'), [['build', '100']]);
+  assert.deepEqual(events.filter(([type]) => type === 'build'), [['build', '100'], ['build', '100']]);
 });

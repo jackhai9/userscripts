@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.11
+// @version      0.5.12
 // @author       jackhai9
 // @description  Bollinger/SMA60 overlay markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -1934,8 +1934,7 @@
     incompatible: pair("服务端与本地规格不一致", "Server and local specs are incompatible"),
     disconnected: pair("网关连接失败，将在下次定时检查时重试", "Gateway connection failed; next scheduled poll will retry"),
     stopped: (detail) => pair(`远程汇总已停止。技术详情：${detail}`, `Remote summary stopped: ${detail}`),
-    localStopped: (detail) => pair(`Strategy 29 已停止。技术详情：${detail}`, `Strategy 29 stopped: ${detail}`),
-    conflict: pair("Strategy 29 已停止：请将订单簿脚本更新至 2.7.199 或更高版本，或禁用内嵌布林带观察器的旧版本，然后刷新页面。", "Strategy 29 stopped: update Orderbook to 2.7.199 or disable its embedded Bollinger version, then reload this page.")
+    localStopped: (detail) => pair(`Strategy 29 已停止。技术详情：${detail}`, `Strategy 29 stopped: ${detail}`)
   });
   var SELECTION_REASONS = Object.freeze({
     current: pair("当前选币有效", "Selection is current"),
@@ -1976,11 +1975,14 @@
     return formatLocalizedText(pair(`技术详情：${reason}`, `Details: ${reason}`), locale);
   }
 
-  // src/binance-strategy29-bollinger/dom/panel-position.js
+  // src/shared/panel-position.js
   function installPanelPosition(document, panel, header, { initialPosition, savePosition }) {
     const view = document.defaultView;
-    if (!view) throw new Error("Strategy 29 panel window is unavailable");
-    let position = initialPosition ?? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 };
+    if (!view) throw new Error("Panel window is unavailable");
+    if (!initialPosition || !Number.isFinite(initialPosition.left) || !Number.isFinite(initialPosition.top)) {
+      throw new TypeError("Panel initial position is invalid");
+    }
+    let position = { ...initialPosition };
     let drag = null;
     function apply(next) {
       const rect = panel.getBoundingClientRect();
@@ -1991,6 +1993,7 @@
       panel.style.left = `${position.left}px`;
       panel.style.top = `${position.top}px`;
       panel.style.right = "auto";
+      panel.style.bottom = "auto";
     }
     function clamp() {
       apply(position);
@@ -2032,6 +2035,9 @@
     view.addEventListener("resize", clamp);
     return Object.freeze({
       clamp,
+      get position() {
+        return { ...position };
+      },
       destroy() {
         if (drag) release();
         header.removeEventListener("pointerdown", onDown);
@@ -2092,14 +2098,25 @@
     const part = (name) => parts.find((item) => item.type === name)?.value;
     return `${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")} UTC+08`;
   }
-  function createStrategy29SummaryPanel(document, canonicalSymbol, { locale = resolveUiLocaleFromPathname(document.location.pathname), loadPosition, savePosition } = {}) {
+  function createStrategy29SummaryPanel(document, canonicalSymbol, {
+    locale = resolveUiLocaleFromPathname(document.location.pathname),
+    loadPosition,
+    savePosition,
+    loadCollapsed,
+    saveCollapsed
+  } = {}) {
     if (!document?.body) throw new Error("Strategy 29 summary panel requires document.body");
     if (typeof canonicalSymbol !== "string" || canonicalSymbol.length === 0) throw new Error("Strategy 29 panel symbol is invalid");
     const text = (value) => formatLocalizedText(value, locale);
     text(SUMMARY_COPY.waiting);
     if (typeof loadPosition !== "function" || typeof savePosition !== "function") throw new TypeError("Strategy 29 panel position adapters are required");
+    if (typeof loadCollapsed !== "function" || typeof saveCollapsed !== "function") throw new TypeError("Strategy 29 panel collapsed adapters are required");
+    let collapsed = loadCollapsed();
+    if (typeof collapsed !== "boolean") throw new TypeError("Strategy 29 panel collapsed preference is invalid");
     const stored = loadPosition();
     if (stored !== null && (!stored || typeof stored !== "object" || !Number.isFinite(stored.left) || !Number.isFinite(stored.top))) throw new TypeError("Strategy 29 panel position is invalid");
+    const view = document.defaultView;
+    if (!view) throw new Error("Strategy 29 panel window is unavailable");
     document.getElementById(PANEL_ID)?.remove();
     const panel = element(document, "section", {
       styles: {
@@ -2170,9 +2187,16 @@
     diagnosticOverview.append(spec, reference, statusFreshness, selectionDetails, selectionRefresh);
     diagnostics.append(diagnosticsTitle, diagnosticOverview, unitsTitle, units, delivery);
     body.append(overview, eventsTitle, eventsHint, events, missingSignals, diagnostics);
+    function renderCollapsed() {
+      body.style.display = collapsed ? "none" : "block";
+      collapse.textContent = text(collapsed ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
+      collapse.setAttribute("aria-expanded", String(!collapsed));
+    }
+    renderCollapsed();
     panel.append(header, body);
     document.body.appendChild(panel);
-    const position = installPanelPosition(document, panel, header, { initialPosition: stored, savePosition });
+    const initialPosition = stored === null ? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 } : stored;
+    const position = installPanelPosition(document, panel, header, { initialPosition, savePosition });
     const eventRecords = /* @__PURE__ */ new Map();
     let configuredTimeframes = null;
     let statusMessages = [];
@@ -2238,12 +2262,13 @@
       renderMissingSignals();
       renderNotices();
     }
-    collapse.addEventListener("click", () => {
-      const collapsed = body.style.display !== "none";
-      body.style.display = collapsed ? "none" : "block";
-      collapse.textContent = text(collapsed ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
+    function onCollapse() {
+      collapsed = !collapsed;
+      renderCollapsed();
       position.clamp();
-    });
+      saveCollapsed(collapsed);
+    }
+    collapse.addEventListener("click", onCollapse);
     diagnostics.addEventListener("toggle", () => {
       if (!destroyed) position.clamp();
     });
@@ -2256,7 +2281,7 @@
         locale = nextLocale;
         heading.textContent = text(SUMMARY_COPY.title);
         header.title = text(SUMMARY_COPY.drag);
-        collapse.textContent = text(body.style.display === "none" ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
+        renderCollapsed();
         connection.textContent = text(connectionCopy);
         reference.textContent = text(SUMMARY_COPY.reference(STRATEGY29_REFERENCE_SHA256));
         diagnosticsTitle.textContent = text(SUMMARY_COPY.diagnostics);
@@ -2395,6 +2420,7 @@
         if (destroyed) return;
         destroyed = true;
         eventRecords.clear();
+        collapse.removeEventListener("click", onCollapse);
         position.destroy();
         panel.remove();
       },
@@ -2408,6 +2434,7 @@
 
   // src/binance-strategy29-bollinger/remote-summary.js
   var STRATEGY29_PANEL_POSITION_KEY = "strategy29SummaryPanelPosition";
+  var STRATEGY29_PANEL_COLLAPSED_KEY = "strategy29SummaryPanelCollapsed";
   var STRATEGY29_REMOTE_POLL_INTERVAL_MS = 5e3;
   function abortError(view, message) {
     const ErrorConstructor = view.DOMException ?? DOMException;
@@ -2459,7 +2486,9 @@
       const panel = createPanel(view.document, canonicalSymbol, {
         locale,
         loadPosition: () => getValue(STRATEGY29_PANEL_POSITION_KEY, null),
-        savePosition: (position) => setValue(STRATEGY29_PANEL_POSITION_KEY, position)
+        savePosition: (position) => setValue(STRATEGY29_PANEL_POSITION_KEY, position),
+        loadCollapsed: () => getValue(STRATEGY29_PANEL_COLLAPSED_KEY, true),
+        saveCollapsed: (collapsed) => setValue(STRATEGY29_PANEL_COLLAPSED_KEY, collapsed)
       });
       const AbortControllerConstructor = view.AbortController ?? AbortController;
       const context = {
@@ -2667,17 +2696,8 @@
 
   // src/binance-strategy29-bollinger/runtime.js
   var INSTANCE = Symbol.for("jh-userscripts.strategy29-bollinger");
-  var RUNTIME_VERSION = 4;
-  var CONFLICT = SUMMARY_COPY.conflict;
-  function hasEmbeddedBollinger(view) {
-    const debug = view.__TM_CLOSE_LONG_DEBUG__;
-    return !!debug && Object.getOwnPropertyDescriptor(debug, "bollingerAlertState") !== void 0;
-  }
   function installStrategy29(view, remoteAdapters = null) {
-    if (view[INSTANCE] !== void 0) {
-      if (view[INSTANCE].version !== RUNTIME_VERSION) throw new Error("Incompatible Strategy 29 runtime; reload the page");
-      return view[INSTANCE].runtime;
-    }
+    if (view[INSTANCE] !== void 0) return view[INSTANCE];
     const document = view.document;
     let timer = null;
     let failed = null;
@@ -2718,7 +2738,7 @@
       document,
       getCurrentSymbol: () => parseFuturesTradingSymbolFromPathname(view.location.pathname),
       isFuturesTradingPage: () => !disposed && !failed && isFuturesTradingPathname(view.location.pathname),
-      isTradingViewDrawingMutationBusy: () => hasEmbeddedBollinger(view) || isChartMutationBlocked(view),
+      isTradingViewDrawingMutationBusy: () => isChartMutationBlocked(view),
       err: (...args) => view.console.error("[Strategy29]", ...args),
       warn: (...args) => view.console.warn("[Strategy29]", ...args)
     });
@@ -2739,10 +2759,6 @@
       showUpgradeNotice();
       if (failed) {
         showFailure();
-        return;
-      }
-      if (hasEmbeddedBollinger(view)) {
-        fail(CONFLICT);
         return;
       }
       ensureSpaRouteChangePatched(view);
@@ -2794,7 +2810,7 @@
         document.getElementById(upgradeNoticeId)?.remove();
       }
     });
-    Object.defineProperty(view, INSTANCE, { value: Object.freeze({ version: RUNTIME_VERSION, runtime }) });
+    Object.defineProperty(view, INSTANCE, { value: runtime });
     Object.defineProperty(view, "__TM_STRATEGY29_DEBUG__", { value: runtime });
     removeRouteListener = installSpaRouteChangeListener(view, sample);
     document.addEventListener("visibilitychange", onVisibility);
@@ -2845,39 +2861,10 @@
     });
   }
 
-  // src/shared/strategy29-panel-position-handoff.js
-  var HANDOFF = Symbol.for("jh-userscripts.strategy29-panel-position-handoff");
-  var POSITION_KEY = "strategy29SummaryPanelPosition";
-  var VERSION_KEY = "strategy29PanelPositionHandoffVersion";
-  function copyPosition(value) {
-    if (value === null) return null;
-    if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== "left,top" || !Number.isFinite(value.left) || !Number.isFinite(value.top)) {
-      throw new TypeError("Previous Strategy 29 panel position is invalid");
-    }
-    return Object.freeze({ left: value.left, top: value.top });
-  }
-  function createStrategy29PositionReader(view, getValue, setValue) {
-    return (key, initial) => {
-      if (key !== POSITION_KEY) throw new TypeError("Strategy29 position reader received an unexpected key");
-      const version = getValue(VERSION_KEY, null);
-      if (version !== null && version !== 1) throw new TypeError("Strategy29 position handoff version is invalid");
-      if (version === null) {
-        const record = view[HANDOFF];
-        if (!record || record.version !== 1 || Object.keys(record).sort().join(",") !== "position,version") {
-          throw new TypeError("Previous Strategy 29 panel position handoff is invalid");
-        }
-        const position = copyPosition(record.position);
-        if (position !== null) setValue(POSITION_KEY, { ...position });
-        setValue(VERSION_KEY, 1);
-      }
-      return getValue(key, initial);
-    };
-  }
-
   // src/binance-strategy29-bollinger/index.user.js
   installStrategy29(unsafeWindow, {
     ...createSharedGatewayClient(unsafeWindow),
-    getValue: createStrategy29PositionReader(unsafeWindow, GM_getValue, GM_setValue),
+    getValue: GM_getValue,
     setValue: GM_setValue
   });
 })();

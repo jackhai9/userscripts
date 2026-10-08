@@ -107,7 +107,9 @@ async function summary(revision) {
   const fixture = JSON.parse(readFileSync(join(root, 'test/fixtures/strategy29-gateway-events.json'), 'utf8'));
   const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTCUSDT' });
   const document = dom.window.document;
-  const panel = createStrategy29SummaryPanel(document, 'BTC/USDT:USDT', { loadPosition: () => null, savePosition() {} });
+  const panel = createStrategy29SummaryPanel(document, 'BTC/USDT:USDT', {
+    loadPosition: () => null, savePosition() {}, loadCollapsed: () => false, saveCollapsed() {},
+  });
   try {
     panel.addEvents(Array.from({ length: 20 }, (_, index) => ({
       ...fixture.events[0], event_id: `performance-${index}`, sequence: index + 1,

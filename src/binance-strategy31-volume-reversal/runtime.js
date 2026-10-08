@@ -1,6 +1,7 @@
 import { SIGNAL_GATEWAY_BRIDGE } from '../shared/signal-gateway-bridge.js';
 import { parseFuturesTradingSymbolFromPathname } from '../shared/binance-futures-route.js';
 import { installSpaRouteChangeListener } from '../shared/spa-route-change.js';
+import { createDraggableStatusView } from '../shared/draggable-status-view.js';
 import { isChartMutationBlocked } from '../shared/chart-mutation-owners.js';
 import { findBinanceTradingViewTarget } from '../shared/tradingview-target.js';
 import { usdtRouteToCanonical } from '../shared/canonical-symbol.js';
@@ -20,32 +21,32 @@ const STATUS_COPY = Object.freeze({
 });
 
 /** Server signals only; this lifecycle owns neither market acquisition nor trading actions. */
-export function installStrategy31(view) {
+export function installStrategy31(view, { getValue, setValue }) {
   const key = Symbol.for('jh-userscripts.strategy31');
   if (view[key]) return view[key];
+  if (typeof getValue !== 'function' || typeof setValue !== 'function') {
+    throw new TypeError('Strategy31 requires private storage adapters');
+  }
   let context = null, intervalOwner = null, inflight = null, disposed = false, failed = false;
   const retired = new Set();
   const document = view.document;
+  /** Invalid preferences fail at installation, outside the signal job's failure-notice boundary. */
+  const status = createDraggableStatusView(view, {
+    id: 'jh-strategy31-status',
+    loadPosition: () => getValue('strategy31StatusPosition', null),
+    savePosition: position => setValue('strategy31StatusPosition', position),
+    defaultPosition: node => ({ left: 16, top: view.innerHeight - node.getBoundingClientRect().height - 40 }),
+  });
   let statusText = '';
   /** Retain both languages so a route change can update even a stopped or pending observer. */
   function renderNotice() {
-    const node = document.getElementById('jh-strategy31-status');
-    if (!node) return;
-    const text = formatLocalizedText(statusText, resolveUiLocaleFromPathname(view.location.pathname));
-    if (node.textContent !== text) node.textContent = text;
+    if (!status.visible) return;
+    status.show(formatLocalizedText(statusText, resolveUiLocaleFromPathname(view.location.pathname)));
   }
   function notice(text) {
     if (!document.body || !parseFuturesTradingSymbolFromPathname(view.location.pathname)) return;
-    let node = document.getElementById('jh-strategy31-status');
-    if (!node) {
-      node = document.createElement('div');
-      node.id = 'jh-strategy31-status';
-      node.setAttribute('role', 'status');
-      node.style.cssText = 'position:fixed;bottom:40px;left:16px;z-index:10000;padding:6px;background:#181a20;color:#ddd;font:12px sans-serif;pointer-events:none';
-      document.body.append(node);
-    }
     statusText = text;
-    renderNotice();
+    status.show(formatLocalizedText(statusText, resolveUiLocaleFromPathname(view.location.pathname)));
   }
   function retire() {
     if (context) { context.layer.clear(); retired.add(context.layer); context = null; }
@@ -74,7 +75,7 @@ export function installStrategy31(view) {
     // Leaving the chart must retire pending work before request or visibility gates can defer cleanup.
     if (!route) {
       releaseChart(); cleanup();
-      document.getElementById('jh-strategy31-status')?.remove();
+      status.hide();
       return;
     }
     if (failed || document.hidden || inflight) return;
@@ -157,12 +158,16 @@ export function installStrategy31(view) {
     if (!parseFuturesTradingSymbolFromPathname(view.location.pathname)) void tick();
     else renderNotice();
   });
-  const runtime = Object.freeze({ sample: tick, dispose() {
+  function dispose() {
+    if (disposed) return;
     disposed = true; releaseChart(); cleanup();
     removeRouteListener();
     document.removeEventListener('visibilitychange', visibility);
-    document.getElementById('jh-strategy31-status')?.remove();
-  } });
+    view.removeEventListener('beforeunload', dispose);
+    status.dispose();
+  }
+  view.addEventListener('beforeunload', dispose);
+  const runtime = Object.freeze({ sample: tick, dispose });
   Object.defineProperty(view, key, { value: runtime });
   void tick();
   return runtime;

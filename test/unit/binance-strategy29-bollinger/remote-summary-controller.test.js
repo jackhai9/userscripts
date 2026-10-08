@@ -7,12 +7,9 @@ import {
 import { formatLocalizedText } from '../../../src/binance-strategy29-bollinger/ui-copy.js';
 import { Strategy29GatewayTransportError } from '../../../src/binance-strategy29-bollinger/core/remote-summary-client.js';
 
-function fixture({ available = true, authSecret = 'synthetic-secret', poll } = {}) {
-  const values = new Map([
-    ['strategy29GatewayAuthSecret', authSecret],
-    ['strategy29GatewayOrigin', 'http://127.0.0.1:8729'],
-  ]);
-  const gatewayState = { available, configured: authSecret.length > 0, settingsRevision: 0 };
+function fixture({ available = true, configured = true, poll } = {}) {
+  const values = new Map();
+  const gatewayState = { available, configured, settingsRevision: 0 };
   const menus = [];
   const panels = [];
   const prompts = [];
@@ -199,7 +196,7 @@ for (const error of [
 
 test('user observes that missing secret creates a visible configuration state without constructing a client', async () => {
   // Given the current route, summary panel and remote client
-  const f = fixture({ authSecret: '' });
+  const f = fixture({ configured: false });
   // When f.summary.sample processes the configured inputs
   await f.summary.sample(0);
   // Then user observes that missing secret creates a visible configuration state without constructing a client
@@ -268,7 +265,7 @@ test('user observes that locale switches preserve the pending request, client cu
 
 test('user observes that no-auth locale change updates the existing panel and localized prompts without creating a client', () => {
   // Given the current route, summary panel and remote client
-  const f = fixture({ authSecret: '' });
+  const f = fixture({ configured: false });
   // When f.summary.sample processes the configured inputs
   f.summary.sample(0);
   f.view.location.pathname = '/zh-CN/futures/BTRUSDT';
@@ -294,6 +291,6 @@ test('user observes that position adapters persist only the dedicated coordinate
   f.view.location.pathname = '/en/futures/ETHUSDT';
   await f.summary.sample(1);
   assert.deepEqual(f.panels[1].options.loadPosition(), { left: 72, top: 124 });
-  assert.equal(f.values.get('strategy29GatewayAuthSecret'), 'synthetic-secret');
+  assert.deepEqual([...f.values], [['strategy29SummaryPanelPosition', { left: 72, top: 124 }]]);
   f.summary.dispose();
 });

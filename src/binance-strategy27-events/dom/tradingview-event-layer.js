@@ -1,7 +1,6 @@
 import { createChartMarkerOverlay } from '../../shared/chart-marker-overlay.js';
 
 const CHART_ROOT_SELECTOR = '.chart-widget-root';
-const STATUS_ID = 'jh-strategy27-event-status';
 const DIRECTIONAL_MARKER_GAP_PX = 8;
 const DEFAULT_CANDLE_WAIT_MS = 3_000;
 const EXACT_TIME_MATCH_MODE = 0;
@@ -304,42 +303,4 @@ export function createTradingViewEventLayer(target, {
     },
     get size() { return registry.size; },
   });
-}
-
-export function ensureStrategy27StatusView(document, chartRoot) {
-  const existing = document.getElementById(STATUS_ID);
-  if (existing && existing.parentElement === chartRoot) return existing;
-  existing?.remove();
-  const status = document.createElement('div');
-  status.id = STATUS_ID;
-  status.setAttribute('aria-live', 'polite');
-  Object.assign(status.style, {
-    position: 'absolute',
-    zIndex: '8',
-    right: '84px',
-    top: '42px',
-    maxWidth: '520px',
-    padding: '4px 8px',
-    borderRadius: '6px',
-    background: 'rgba(24, 26, 32, .82)',
-    color: '#EAECEF',
-    font: '12px/18px BinancePlex, ui-sans-serif, system-ui, sans-serif',
-    pointerEvents: 'none',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  });
-  chartRoot.appendChild(status);
-  return status;
-}
-
-export function setStrategy27Status(status, text, state = 'normal') {
-  status.textContent = text;
-  status.title = text;
-  status.dataset.state = state;
-  status.style.color = state === 'error' ? '#F6465D' : state === 'inactive' ? '#848E9C' : '#EAECEF';
-}
-
-export function removeStrategy27StatusView(document) {
-  document.getElementById(STATUS_ID)?.remove();
 }

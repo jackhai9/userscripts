@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.6.11
+// @version      0.6.12
 // @author       jackhai9
 // @description  Display Strategy 27 events and provide the shared private CorsairQuant gateway connection
 // @match        https://www.binance.com/*/futures/*
@@ -1456,7 +1456,6 @@
 
   // src/binance-strategy27-events/dom/tradingview-event-layer.js
   var CHART_ROOT_SELECTOR = ".chart-widget-root";
-  var STATUS_ID = "jh-strategy27-event-status";
   var DIRECTIONAL_MARKER_GAP_PX = 8;
   var DEFAULT_CANDLE_WAIT_MS = 3e3;
   var EXACT_TIME_MATCH_MODE = 0;
@@ -1735,41 +1734,6 @@
       }
     });
   }
-  function ensureStrategy27StatusView(document, chartRoot) {
-    const existing = document.getElementById(STATUS_ID);
-    if (existing && existing.parentElement === chartRoot) return existing;
-    existing?.remove();
-    const status = document.createElement("div");
-    status.id = STATUS_ID;
-    status.setAttribute("aria-live", "polite");
-    Object.assign(status.style, {
-      position: "absolute",
-      zIndex: "8",
-      right: "84px",
-      top: "42px",
-      maxWidth: "520px",
-      padding: "4px 8px",
-      borderRadius: "6px",
-      background: "rgba(24, 26, 32, .82)",
-      color: "#EAECEF",
-      font: "12px/18px BinancePlex, ui-sans-serif, system-ui, sans-serif",
-      pointerEvents: "none",
-      whiteSpace: "nowrap",
-      overflow: "hidden",
-      textOverflow: "ellipsis"
-    });
-    chartRoot.appendChild(status);
-    return status;
-  }
-  function setStrategy27Status(status, text, state = "normal") {
-    status.textContent = text;
-    status.title = text;
-    status.dataset.state = state;
-    status.style.color = state === "error" ? "#F6465D" : state === "inactive" ? "#848E9C" : "#EAECEF";
-  }
-  function removeStrategy27StatusView(document) {
-    document.getElementById(STATUS_ID)?.remove();
-  }
 
   // src/binance-strategy27-events/dom/strategy27-event-panel.js
   var PANEL_ID = "jh-strategy27-event-panel";
@@ -1906,6 +1870,8 @@
     maxCompoundEvents,
     loadPosition,
     savePosition,
+    loadCollapsed,
+    saveCollapsed,
     locale = "zh-CN"
   }) {
     let t = createStrategy27Translator(locale);
@@ -1918,6 +1884,11 @@
     if (!Number.isInteger(maxCompoundEvents) || maxCompoundEvents < 1 || maxCompoundEvents > 8) throw new Error("Strategy 27 panel maxCompoundEvents is invalid");
     if (typeof loadPosition !== "function") throw new Error("Strategy 27 panel loadPosition is invalid");
     if (typeof savePosition !== "function") throw new Error("Strategy 27 panel savePosition is invalid");
+    if (typeof loadCollapsed !== "function" || typeof saveCollapsed !== "function") {
+      throw new TypeError("Strategy 27 panel collapse adapters are invalid");
+    }
+    let collapsed = loadCollapsed();
+    if (typeof collapsed !== "boolean") throw new TypeError("Strategy 27 panel collapsed preference must be boolean");
     document.getElementById(PANEL_ID)?.remove();
     const panel = createElement(document, "section", {
       styles: {
@@ -2024,6 +1995,7 @@
     });
     body.append(monitoring, ordinaryConnection, detail, compoundTitle, compoundStatus, compoundRecent, recentTitle, recent);
     panel.appendChild(body);
+    renderCollapsed();
     document.body.appendChild(panel);
     const initialPosition = assertPanelPosition(loadPosition()) ?? createDefaultPosition(chartRoot);
     applyPanelPosition(panel, normalizePanelPosition(document, panel, initialPosition));
@@ -2033,7 +2005,11 @@
     let selectedEventId = null;
     let selectedKind = "ordinary";
     let followLatest = true;
-    let collapsed = false;
+    function renderCollapsed() {
+      body.style.display = collapsed ? "none" : "block";
+      collapseButton.textContent = collapsed ? t("展开", "Expand") : t("收起", "Collapse");
+      collapseButton.setAttribute("aria-expanded", String(!collapsed));
+    }
     function orderedEntries(collection = records) {
       return [...collection.entries()].sort((left, right) => right[1].annotation.eventTimeMs - left[1].annotation.eventTimeMs || right[1].observedAtMs - left[1].observedAtMs);
     }
@@ -2187,11 +2163,13 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       selectLatest();
       render();
     });
-    collapseButton.addEventListener("click", () => {
-      collapsed = !collapsed;
-      body.style.display = collapsed ? "none" : "block";
-      collapseButton.textContent = collapsed ? t("展开", "Expand") : t("收起", "Collapse");
-    });
+    function onCollapse() {
+      const next = !collapsed;
+      saveCollapsed(next);
+      collapsed = next;
+      renderCollapsed();
+    }
+    collapseButton.addEventListener("click", onCollapse);
     render();
     function upsertRecord(collection, capacity, eventId, annotation, observedAtMs) {
       collection.set(eventId, { annotation, observedAtMs });
@@ -2213,7 +2191,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
         header.title = t("拖动面板", "Drag panel");
         heading.textContent = t("Strategy 27 事件", "Strategy 27 events");
         latestButton.textContent = t("最新", "Latest");
-        collapseButton.textContent = collapsed ? t("展开", "Expand") : t("收起", "Collapse");
+        renderCollapsed();
         recentTitle.textContent = t("最近事件", "Recent events");
         compoundTitle.textContent = t("复合候选", "Compound candidates");
         for (const collection of [records, compoundRecords]) {
@@ -2286,6 +2264,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       destroy() {
         records.clear();
         compoundRecords.clear();
+        collapseButton.removeEventListener("click", onCollapse);
         cleanupDrag();
         panel.remove();
       },
@@ -3305,25 +3284,163 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     });
   }
 
-  // src/shared/strategy29-panel-position-handoff.js
-  var HANDOFF = Symbol.for("jh-userscripts.strategy29-panel-position-handoff");
-  var POSITION_KEY = "strategy29SummaryPanelPosition";
-  function copyPosition(value) {
-    if (value === null) return null;
-    if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== "left,top" || !Number.isFinite(value.left) || !Number.isFinite(value.top)) {
-      throw new TypeError("Previous Strategy 29 panel position is invalid");
+  // src/shared/panel-position.js
+  function installPanelPosition(document, panel, header, { initialPosition, savePosition }) {
+    const view = document.defaultView;
+    if (!view) throw new Error("Panel window is unavailable");
+    if (!initialPosition || !Number.isFinite(initialPosition.left) || !Number.isFinite(initialPosition.top)) {
+      throw new TypeError("Panel initial position is invalid");
     }
-    return Object.freeze({ left: value.left, top: value.top });
+    let position = { ...initialPosition };
+    let drag = null;
+    function apply(next) {
+      const rect = panel.getBoundingClientRect();
+      position = {
+        left: Math.max(0, Math.min(next.left, Math.max(0, view.innerWidth - rect.width))),
+        top: Math.max(0, Math.min(next.top, Math.max(0, view.innerHeight - rect.height)))
+      };
+      panel.style.left = `${position.left}px`;
+      panel.style.top = `${position.top}px`;
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+    }
+    function clamp2() {
+      apply(position);
+    }
+    function onDown(event) {
+      if (drag || !event.isPrimary || event.button !== 0 || event.buttons !== 1 || event.target.closest("button,a")) return;
+      const rect = panel.getBoundingClientRect();
+      header.setPointerCapture(event.pointerId);
+      drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+      event.preventDefault();
+    }
+    function onMove(event) {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      apply({ left: drag.left + event.clientX - drag.x, top: drag.top + event.clientY - drag.y });
+    }
+    function release() {
+      const { pointerId } = drag;
+      drag = null;
+      if (header.hasPointerCapture(pointerId)) header.releasePointerCapture(pointerId);
+    }
+    function finish() {
+      if (!drag) return;
+      release();
+      clamp2();
+      savePosition({ ...position });
+    }
+    function onEnd(event) {
+      if (drag && event.pointerId === drag.pointerId) finish();
+    }
+    clamp2();
+    header.style.cursor = "move";
+    header.style.touchAction = "none";
+    header.addEventListener("pointerdown", onDown);
+    header.addEventListener("pointermove", onMove);
+    header.addEventListener("pointerup", onEnd);
+    header.addEventListener("pointercancel", onEnd);
+    header.addEventListener("lostpointercapture", onEnd);
+    view.addEventListener("blur", finish);
+    view.addEventListener("resize", clamp2);
+    return Object.freeze({
+      clamp: clamp2,
+      get position() {
+        return { ...position };
+      },
+      destroy() {
+        if (drag) release();
+        header.removeEventListener("pointerdown", onDown);
+        header.removeEventListener("pointermove", onMove);
+        header.removeEventListener("pointerup", onEnd);
+        header.removeEventListener("pointercancel", onEnd);
+        header.removeEventListener("lostpointercapture", onEnd);
+        view.removeEventListener("blur", finish);
+        view.removeEventListener("resize", clamp2);
+      }
+    });
   }
-  function publishStrategy29PanelPosition(view, getValue) {
-    let record;
-    try {
-      record = { version: 1, position: copyPosition(getValue(POSITION_KEY, null)) };
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      record = { version: 1, error: "invalid_position" };
+
+  // src/shared/draggable-status-view.js
+  function readPosition(loadPosition) {
+    const position = loadPosition();
+    if (position === null) return null;
+    if (!position || typeof position !== "object" || Object.keys(position).sort().join(",") !== "left,top" || !Number.isFinite(position.left) || !Number.isFinite(position.top)) {
+      throw new TypeError("Status position must contain finite left and top coordinates");
     }
-    Object.defineProperty(view, HANDOFF, { value: Object.freeze(record) });
+    return { ...position };
+  }
+  function createDraggableStatusView(view, { id, loadPosition, savePosition, defaultPosition }) {
+    if (typeof id !== "string" || id.length === 0 || typeof loadPosition !== "function" || typeof savePosition !== "function" || typeof defaultPosition !== "function") {
+      throw new TypeError("Draggable status requires an ID and position adapters");
+    }
+    const document = view.document;
+    let position = readPosition(loadPosition);
+    let node = null;
+    let drag = null;
+    let disposed = false;
+    function hide() {
+      if (!node) return;
+      position = drag.position;
+      drag.destroy();
+      node.remove();
+      node = null;
+      drag = null;
+    }
+    return Object.freeze({
+      show(text, state = "normal") {
+        if (disposed) throw new Error("Cannot show a disposed status");
+        if (typeof text !== "string" || !["normal", "inactive", "error"].includes(state)) {
+          throw new TypeError("Status text or state is invalid");
+        }
+        if (!node) {
+          node = document.createElement("div");
+          node.id = id;
+          node.setAttribute("role", "status");
+          node.setAttribute("aria-live", "polite");
+          Object.assign(node.style, {
+            position: "fixed",
+            zIndex: "10000",
+            boxSizing: "border-box",
+            maxWidth: "min(520px, calc(100vw - 16px))",
+            padding: "6px 8px",
+            border: "1px solid #474D57",
+            borderRadius: "6px",
+            background: "#181A20",
+            color: "#DDD",
+            font: "12px/18px BinancePlex, ui-sans-serif, system-ui, sans-serif",
+            pointerEvents: "auto",
+            userSelect: "none",
+            whiteSpace: "normal",
+            overflowWrap: "anywhere"
+          });
+          node.textContent = text;
+          document.body.appendChild(node);
+          drag = installPanelPosition(document, node, node, {
+            initialPosition: position ?? defaultPosition(node),
+            savePosition(next) {
+              position = next;
+              savePosition(next);
+            }
+          });
+        } else if (node.textContent !== text) {
+          node.textContent = text;
+          drag.clamp();
+        }
+        if (node.title !== text) node.title = text;
+        if (node.dataset.state !== state) {
+          node.dataset.state = state;
+          node.style.borderColor = state === "error" ? "#F6465D" : "#474D57";
+        }
+      },
+      hide,
+      get visible() {
+        return node !== null;
+      },
+      dispose() {
+        hide();
+        disposed = true;
+      }
+    });
   }
 
   // src/binance-strategy27-events/index.user.js
@@ -3334,6 +3451,8 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     const GATEWAY_ORIGIN_KEY = SIGNAL_GATEWAY_ORIGIN_KEY;
     const GATEWAY_SECRET_KEY = SIGNAL_GATEWAY_SECRET_KEY;
     const PANEL_POSITION_KEY = "strategy27EventPanelPosition";
+    const PANEL_COLLAPSED_KEY = "strategy27EventPanelCollapsed";
+    const STATUS_POSITION_KEY = "strategy27StatusPosition";
     const CONTEXT_CHECK_INTERVAL_MS = 1e3;
     const MAX_RETAINED_EVENTS = 80;
     const MAX_PANEL_EVENTS = 8;
@@ -3342,12 +3461,20 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
     const pageDocument = page.document;
     const request = createGmJsonRequest(GM_xmlhttpRequest);
     let active = null;
-    let statusView = null;
+    let statusChartRoot = null;
     let uiLocale = resolveUiLocaleFromPathname(page.location.pathname);
     let t = createStrategy27Translator(uiLocale);
     let statusCopy = null;
-    publishStrategy29PanelPosition(page, GM_getValue);
     const gatewayBridge = installSignalGatewayBridge(page, { getValue: GM_getValue, gmXmlHttpRequest: GM_xmlhttpRequest });
+    const statusView = createDraggableStatusView(page, {
+      id: "jh-strategy27-event-status",
+      loadPosition: () => GM_getValue(STATUS_POSITION_KEY, null),
+      savePosition: (position) => GM_setValue(STATUS_POSITION_KEY, position),
+      defaultPosition: (node) => {
+        const chartRect = statusChartRoot.getBoundingClientRect();
+        return { left: chartRect.right - node.getBoundingClientRect().width - 84, top: chartRect.top + 42 };
+      }
+    });
     function stopActive(resetReason) {
       if (!active) return;
       active.intervalEvent.unsubscribe(active.intervalOwner, active.onIntervalChanged);
@@ -3359,13 +3486,13 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       active = null;
     }
     function showStatus(chartRoot, text, state = "normal") {
-      statusView = ensureStrategy27StatusView(pageDocument, chartRoot);
+      statusChartRoot = chartRoot;
       statusCopy = { text, state };
-      setStrategy27Status(statusView, text(uiLocale), state);
+      statusView.show(text(uiLocale), state);
     }
     function hideStatus() {
-      removeStrategy27StatusView(pageDocument);
-      statusView = null;
+      statusView.hide();
+      statusChartRoot = null;
       statusCopy = null;
     }
     function removeOrdinaryEvent(context, eventId) {
@@ -3500,7 +3627,9 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
           maxEvents: MAX_PANEL_EVENTS,
           maxCompoundEvents: MAX_PANEL_EVENTS,
           loadPosition: () => GM_getValue(PANEL_POSITION_KEY, null),
-          savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position)
+          savePosition: (position) => GM_setValue(PANEL_POSITION_KEY, position),
+          loadCollapsed: () => GM_getValue(PANEL_COLLAPSED_KEY, false),
+          saveCollapsed: (collapsed) => GM_setValue(PANEL_COLLAPSED_KEY, collapsed)
         }),
         candidatePresentations: /* @__PURE__ */ new Map(),
         ordinaryHistory: /* @__PURE__ */ new Map(),
@@ -3565,7 +3694,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
           active.panel.setLocale(uiLocale);
           active.compound.setLocale(uiLocale);
         }
-        if (statusView && statusCopy) setStrategy27Status(statusView, statusCopy.text(uiLocale), statusCopy.state);
+        if (statusView.visible && statusCopy) statusView.show(statusCopy.text(uiLocale), statusCopy.state);
       }
       synchronizeMenus();
       const routeSymbol = parseFuturesTradingSymbolFromPathname(page.location.pathname);
@@ -3674,6 +3803,7 @@ ${t("候选", "Candidate")} ${annotation.candidateId}`,
       removeRouteListener();
       gatewayBridge.dispose();
       stopActive("route_changed");
+      statusView.dispose();
     }, { once: true });
     synchronizeContext();
   })();

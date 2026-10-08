@@ -218,6 +218,7 @@ test('user keeps existing rows when applying the same locale and clamps diagnost
   const saved = [];
   const controller = createStrategy29SummaryPanel(host.document, 'BTC/USDT:USDT', {
     locale: 'en', loadPosition: () => ({ left: 800, top: 600 }), savePosition: value => saved.push(value),
+    loadCollapsed: () => false, saveCollapsed: value => saved.push(value),
   });
   t.after(() => { controller.destroy(); host.close(); });
   controller.renderStatus(validateStrategy29StatusResponse(status, 200));

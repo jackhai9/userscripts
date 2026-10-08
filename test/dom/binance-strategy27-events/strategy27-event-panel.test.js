@@ -33,9 +33,76 @@ function panelOptions(maxEvents, overrides = {}) {
     maxCompoundEvents: maxEvents,
     loadPosition: () => null,
     savePosition: () => {},
+    loadCollapsed: () => false,
+    saveCollapsed: () => {},
     ...overrides,
   };
 }
+
+test('user restores the last Strategy 27 collapse choice after recreating the panel', () => {
+  // Given the event panel has its own persistent collapse preference
+  const dom = loadFixtureDom('<div class="chart-widget-root"></div>');
+  const { document } = dom.window;
+  const chartRoot = document.querySelector('.chart-widget-root');
+  let collapsed = false;
+  const writes = [];
+  const options = panelOptions(2, {
+    loadCollapsed: () => collapsed,
+    saveCollapsed: value => { collapsed = value; writes.push(value); },
+  });
+  let panel = createStrategy27EventPanel(document, chartRoot, options);
+
+  // When the user collapses the panel and another chart context recreates it
+  document.querySelector('[data-role="collapse"]').click();
+  panel.destroy();
+  panel = createStrategy27EventPanel(document, chartRoot, { ...options, locale: 'en' });
+  panel.setOrdinaryConnection('connected');
+  panel.upsert('event-a', annotation(), 1000);
+
+  // Then the new panel stays collapsed and updates do not overwrite that choice
+  assert.equal(document.querySelector('[data-role="panel-body"]').style.display, 'none');
+  assert.equal(document.querySelector('[data-role="collapse"]').textContent, 'Expand');
+  assert.equal(document.querySelector('[data-role="collapse"]').getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(writes, [true]);
+
+  // When the user expands it and reloads into the Chinese locale
+  document.querySelector('[data-role="collapse"]').click();
+  panel.destroy();
+  panel = createStrategy27EventPanel(document, chartRoot, options);
+  panel.setLocale('en');
+  panel.setLocale('zh-CN');
+
+  // Then an explicit expanded preference is restored without extra writes
+  assert.equal(document.querySelector('[data-role="panel-body"]').style.display, 'block');
+  assert.equal(document.querySelector('[data-role="collapse"]').textContent, '收起');
+  assert.equal(document.querySelector('[data-role="collapse"]').getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(writes, [true, false]);
+  panel.destroy();
+  dom.window.close();
+});
+
+test('user keeps the current collapse preference when a retired panel button receives a late click', () => {
+  // Given a previous chart context has been destroyed and a new panel is expanded
+  const dom = loadFixtureDom('<div class="chart-widget-root"></div>');
+  const { document } = dom.window;
+  const root = document.querySelector('.chart-widget-root');
+  const writes = [];
+  const options = panelOptions(2, { saveCollapsed: value => writes.push(value) });
+  const retired = createStrategy27EventPanel(document, root, options);
+  const oldButton = document.querySelector('[data-role="collapse"]');
+  retired.destroy();
+  const current = createStrategy27EventPanel(document, root, options);
+
+  // When an already retired control receives a late click
+  oldButton.click();
+
+  // Then it cannot write or change the active panel's expanded preference
+  assert.equal(oldButton.isConnected, false);
+  assert.deepEqual(writes, []);
+  assert.equal(document.querySelector('[data-role="panel-body"]').style.display, 'block');
+  current.destroy();
+  dom.window.close();
+});
 
 test('user renders one fixed detail panel and a bounded recent-event list', () => {
   // Given the Strategy 27 panel and its event records

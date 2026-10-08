@@ -29,7 +29,11 @@ function fixture(locale) {
     },
   };
   host.setHidden(true);
-  const runtime = installStrategy31(host.view);
+  const preferences = new Map();
+  const runtime = installStrategy31(host.view, {
+    getValue: (key, initial) => preferences.has(key) ? preferences.get(key) : initial,
+    setValue: (key, value) => preferences.set(key, structuredClone(value)),
+  });
   host.setHidden(false);
   return { ...host, runtime, requests, payload,
     setCapabilities(value) { capabilities = value; },

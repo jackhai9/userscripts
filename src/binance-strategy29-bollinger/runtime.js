@@ -8,21 +8,10 @@ import { SIGNAL_GATEWAY_BRIDGE } from '../shared/signal-gateway-bridge.js';
 import { SUMMARY_COPY as COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 
 const INSTANCE = Symbol.for('jh-userscripts.strategy29-bollinger');
-const RUNTIME_VERSION = 4;
-const CONFLICT = COPY.conflict;
-
-/** This is a migration refusal, not compatibility with the old independently owned save wrapper. */
-export function hasEmbeddedBollinger(view) {
-  const debug = view.__TM_CLOSE_LONG_DEBUG__;
-  return !!debug && Object.getOwnPropertyDescriptor(debug, 'bollingerAlertState') !== undefined;
-}
 
 /** Page-context singleton with no exchange/account operations and an optional loopback read projection. */
 export function installStrategy29(view, remoteAdapters = null) {
-  if (view[INSTANCE] !== undefined) {
-    if (view[INSTANCE].version !== RUNTIME_VERSION) throw new Error('Incompatible Strategy 29 runtime; reload the page');
-    return view[INSTANCE].runtime;
-  }
+  if (view[INSTANCE] !== undefined) return view[INSTANCE];
   const document = view.document;
   let timer = null;
   let failed = null;
@@ -65,7 +54,7 @@ export function installStrategy29(view, remoteAdapters = null) {
     document,
     getCurrentSymbol: () => parseFuturesTradingSymbolFromPathname(view.location.pathname),
     isFuturesTradingPage: () => !disposed && !failed && isFuturesTradingPathname(view.location.pathname),
-    isTradingViewDrawingMutationBusy: () => hasEmbeddedBollinger(view) || isChartMutationBlocked(view),
+    isTradingViewDrawingMutationBusy: () => isChartMutationBlocked(view),
     err: (...args) => view.console.error('[Strategy29]', ...args),
     warn: (...args) => view.console.warn('[Strategy29]', ...args),
   });
@@ -85,7 +74,6 @@ export function installStrategy29(view, remoteAdapters = null) {
     if (disposed || document.hidden) return;
     showUpgradeNotice();
     if (failed) { showFailure(); return; }
-    if (hasEmbeddedBollinger(view)) { fail(CONFLICT); return; }
     ensureSpaRouteChangePatched(view);
     void remoteSummary?.sample(Date.now());
     if (!isFuturesTradingPathname(view.location.pathname)) { monitor.stop(); return; }
@@ -125,7 +113,7 @@ export function installStrategy29(view, remoteAdapters = null) {
       document.getElementById(upgradeNoticeId)?.remove();
     },
   });
-  Object.defineProperty(view, INSTANCE, { value: Object.freeze({ version: RUNTIME_VERSION, runtime }) });
+  Object.defineProperty(view, INSTANCE, { value: runtime });
   Object.defineProperty(view, '__TM_STRATEGY29_DEBUG__', { value: runtime });
   removeRouteListener = installSpaRouteChangeListener(view, sample);
   document.addEventListener('visibilitychange', onVisibility);

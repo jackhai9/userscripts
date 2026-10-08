@@ -1,7 +1,7 @@
 import { STRATEGY29_REFERENCE_SHA256, STRATEGY29_API_SPEC_VERSION, STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME, compareStrategy29Timeframes } from '../core/remote-summary-contract.js';
 
 import { SUMMARY_COPY as COPY, SELECTION_REASONS, STATUS_LABELS, SIGNAL_LABELS, processingReason, formatLocalizedText, resolveUiLocaleFromPathname } from '../ui-copy.js';
-import { installPanelPosition } from './panel-position.js';
+import { installPanelPosition } from '../../shared/panel-position.js';
 
 const PANEL_ID = 'jh-strategy29-summary-panel';
 
@@ -50,14 +50,22 @@ function formatClock(timestampMs) {
   return `${part('month')}-${part('day')} ${part('hour')}:${part('minute')}:${part('second')} UTC+08`;
 }
 
-export function createStrategy29SummaryPanel(document, canonicalSymbol, { locale = resolveUiLocaleFromPathname(document.location.pathname), loadPosition, savePosition } = {}) {
+export function createStrategy29SummaryPanel(document, canonicalSymbol, {
+  locale = resolveUiLocaleFromPathname(document.location.pathname),
+  loadPosition, savePosition, loadCollapsed, saveCollapsed,
+} = {}) {
   if (!document?.body) throw new Error('Strategy 29 summary panel requires document.body');
   if (typeof canonicalSymbol !== 'string' || canonicalSymbol.length === 0) throw new Error('Strategy 29 panel symbol is invalid');
   const text = value => formatLocalizedText(value, locale);
   text(COPY.waiting);
   if (typeof loadPosition !== 'function' || typeof savePosition !== 'function') throw new TypeError('Strategy 29 panel position adapters are required');
+  if (typeof loadCollapsed !== 'function' || typeof saveCollapsed !== 'function') throw new TypeError('Strategy 29 panel collapsed adapters are required');
+  let collapsed = loadCollapsed();
+  if (typeof collapsed !== 'boolean') throw new TypeError('Strategy 29 panel collapsed preference is invalid');
   const stored = loadPosition();
   if (stored !== null && (!stored || typeof stored !== 'object' || !Number.isFinite(stored.left) || !Number.isFinite(stored.top))) throw new TypeError('Strategy 29 panel position is invalid');
+  const view = document.defaultView;
+  if (!view) throw new Error('Strategy 29 panel window is unavailable');
   document.getElementById(PANEL_ID)?.remove();
 
   const panel = element(document, 'section', {
@@ -118,10 +126,20 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { locale
   diagnosticOverview.append(spec, reference, statusFreshness, selectionDetails, selectionRefresh);
   diagnostics.append(diagnosticsTitle, diagnosticOverview, unitsTitle, units, delivery);
   body.append(overview, eventsTitle, eventsHint, events, missingSignals, diagnostics);
+  function renderCollapsed() {
+    body.style.display = collapsed ? 'none' : 'block';
+    collapse.textContent = text(collapsed ? COPY.expand : COPY.collapse);
+    collapse.setAttribute('aria-expanded', String(!collapsed));
+  }
+  /** The saved position must be clamped against the restored height on its first layout. */
+  renderCollapsed();
   panel.append(header, body);
   document.body.appendChild(panel);
 
-  const position = installPanelPosition(document, panel, header, { initialPosition: stored, savePosition });
+  const initialPosition = stored === null
+    ? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 }
+    : stored;
+  const position = installPanelPosition(document, panel, header, { initialPosition, savePosition });
   const eventRecords = new Map();
   let configuredTimeframes = null;
   let statusMessages = [];
@@ -188,12 +206,13 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { locale
     renderNotices();
   }
 
-  collapse.addEventListener('click', () => {
-    const collapsed = body.style.display !== 'none';
-    body.style.display = collapsed ? 'none' : 'block';
-    collapse.textContent = text(collapsed ? COPY.expand : COPY.collapse);
+  function onCollapse() {
+    collapsed = !collapsed;
+    renderCollapsed();
     position.clamp();
-  });
+    saveCollapsed(collapsed);
+  }
+  collapse.addEventListener('click', onCollapse);
   diagnostics.addEventListener('toggle', () => { if (!destroyed) position.clamp(); });
   renderEvents([]);
 
@@ -205,7 +224,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { locale
       locale = nextLocale;
       heading.textContent = text(COPY.title);
       header.title = text(COPY.drag);
-      collapse.textContent = text(body.style.display === 'none' ? COPY.expand : COPY.collapse);
+      renderCollapsed();
       connection.textContent = text(connectionCopy);
       reference.textContent = text(COPY.reference(STRATEGY29_REFERENCE_SHA256));
       diagnosticsTitle.textContent = text(COPY.diagnostics);
@@ -350,6 +369,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, { locale
       if (destroyed) return;
       destroyed = true;
       eventRecords.clear();
+      collapse.removeEventListener('click', onCollapse);
       position.destroy();
       panel.remove();
     },

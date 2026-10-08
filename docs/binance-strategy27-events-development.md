@@ -14,15 +14,14 @@ V10 live projection. The VPS remains the only market-data and event-analysis
 authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
-Version 0.6.11 retains this installation's private gateway configuration and
+Version 0.6.12 retains this installation's private gateway configuration and
 provides a shared read-only transport. Strategy29 owns its own summary panel,
 lifecycle and panel position. The existing `strategy27GatewayOrigin` and
 `strategy27GatewayAuthSecret` storage keys remain the single credential source;
 no second setup or credential transfer is required. Installation identity and
-update URLs remain unchanged. A one-time nonsecret coordinate handoff preserves
-the last Strategy29 panel position saved by the former host; this does not give
-Strategy27 ownership of the new panel. Invalid old coordinates are reported to
-Strategy29 without preventing the shared provider or Strategy27 from starting.
+update URLs remain unchanged. Each script reads only its own panel preferences.
+Installation upgrades use the current scripts directly, without old-version
+coordinate handoffs, preference migration, or mixed-version support.
 
 The page-visible `jh-userscripts.signal-gateway` capability exposes only fixed
 Strategy29 status/event reads and bounded Strategy31 event snapshots. It is
@@ -102,6 +101,18 @@ Manual clear remains available and does not dismiss a terminal error.
   its last position in Tampermonkey private storage. This prevents persistent
   multiline notes from overlapping one-second bars while preserving the
   operator's preferred placement across chart context changes and reloads.
+- The detail panel stores its collapsed/expanded choice separately under
+  `strategy27EventPanelCollapsed`. With no preference it starts expanded. Newly
+  created panels restore the saved choice before measuring their position;
+  language and event updates do not change it. Only a user toggle writes the
+  preference, and other already open panels keep their current state.
+- The small status notice is a separate draggable view. It uses an opaque
+  `#181A20` background and light text for both normal and inactive messages.
+  Its initial position is near the chart's upper-right corner; dragging stores
+  `{left, top}` under `strategy27StatusPosition` in this script's private GM
+  storage. Strategy31 owns a different view and preference. Text updates do not
+  save coordinates or reinstall drag listeners. Viewport changes clamp the
+  notice, and removal or unloading releases pointer capture and listeners.
 - The panel keeps the eight most recent events. It follows the newest event by
   default; selecting an older row pauses that behavior until `最新` is pressed.
 - Notional values use compact `K` and `M` suffixes. Ratios use at most two
@@ -183,7 +194,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, SVG chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.6.11 with identical metadata headers.
+generated install artifact are version 0.6.12 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired SVG markers, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
