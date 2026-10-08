@@ -6,6 +6,7 @@ import { build, transform } from 'esbuild';
 import { nativeOrderNotificationSources } from '../../../test/fixtures/binance-order-notifications/original-factories.js';
 import { openUserscriptScenario } from './userscript-page.js';
 import { createCancelScenario } from '../scenarios/cancel-current-symbol.js';
+import { installScenarioClock, pauseScenarioClock } from './scenario-clock.js';
 
 let dependenciesSource;
 
@@ -29,8 +30,9 @@ async function readReactDependencies() {
 }
 
 /** Native code owns all classification, events, throttles and playback scheduling. */
-function installNotificationHost(nativeFactories) {
+function installNotificationHost(nativeFactories, { deferSoundPlayer }) {
   const { React, createRoot, flushSync, jsx, jsxs } = self.__NOTIFICATION_REACT__;
+  const { 55401: soundPlayerFactory, ...startupFactories } = nativeFactories;
   const channels = new Map([[false, new Set()], [true, new Set()]]);
   const audio = [];
   const toasts = [];
@@ -127,7 +129,7 @@ function installNotificationHost(nativeFactories) {
     95541: { CX: cmBatcher, kc: () => umBatcher },
   };
   const hostFactories = Object.fromEntries(Object.entries(dependencies).map(([id, value]) => [id, (module) => { module.exports = value; }]));
-  self.webpackChunkfutures_trade_ui.push([['notification-host'], { ...hostFactories, ...nativeFactories }, (require) => {
+  self.webpackChunkfutures_trade_ui.push([['notification-host'], { ...hostFactories, ...startupFactories }, (require) => {
     const NativeEmitter = require(22584).b;
     const emitter = new NativeEmitter();
     require.m[71822] = (module) => { module.exports = { J: emitter }; };
@@ -135,7 +137,7 @@ function installNotificationHost(nativeFactories) {
     for (const isCM of [false, true]) {
       nativeOrders.$t({ enabled: true, isCM, isPM2: false, getSDK, queryClient, copyTradingPayload: parameters });
     }
-    const Provider = require(55401).SoundNotificationProvider;
+    require(39116);
     const Register = require(34122).OrderToastNotifyRegister;
     const mount = () => {
       const presentation = document.createElement('section');
@@ -146,9 +148,21 @@ function installNotificationHost(nativeFactories) {
       rootElement.id = 'native-order-notification-provider';
       document.body.append(presentation, rootElement);
       const root = createRoot(rootElement);
-      flushSync(() => root.render(React.createElement(Provider, null, React.createElement(Register))));
+      let soundPlayerLoaded = false;
+      const loadSoundPlayer = () => {
+        if (soundPlayerLoaded) throw new Error('The native sound player chunk must load exactly once');
+        // Keep the complete captured factory on the real queue so delayed arrival exercises capture.
+        self.webpackChunkfutures_trade_ui.push([['notification-sound-player'], { 55401: soundPlayerFactory }, (requirePlayer) => {
+          const Provider = requirePlayer(55401).SoundNotificationProvider;
+          flushSync(() => root.render(React.createElement(Provider, null, React.createElement(Register))));
+        }]);
+        soundPlayerLoaded = true;
+      };
+      if (deferSoundPlayer) flushSync(() => root.render(React.createElement(Register)));
+      else loadSoundPlayer();
       self.__NOTIFICATION_HOST__ = {
-        ready: () => channels.get(false).size === 2 && channels.get(true).size === 2,
+        ready: () => [false, true].every((isCM) => channels.get(isCM).size === (soundPlayerLoaded ? 2 : 1)),
+        loadSoundPlayer,
         notify(symbol, orderId) {
           const order = { symbol, orderId, clientOrderId: `manual-${orderId}`, type: 'LIMIT', orderType: 'LIMIT', origType: 'LIMIT', side: 'BUY', operate: 'TRADE', status: 'FILLED' };
           flushSync(() => {
@@ -171,6 +185,7 @@ function installNotificationHost(nativeFactories) {
 export async function openNotificationScenario(page, symbol, {
   soundSourceSha256 = '5362a54e61f022714e673e166b62e3c22997084ca7a9f4e676475ec91cfcfaa8',
   repackNativeFactories = false,
+  deferSoundPlayer = false,
 } = {}) {
   await page.route('**/*', (route) => route.abort('blockedbyclient'));
   const [artifact, runtime, react] = await Promise.all([
@@ -178,6 +193,7 @@ export async function openNotificationScenario(page, symbol, {
     readFile(new URL('../../../test/fixtures/binance-chart-storage/webpack-runtime.js', import.meta.url), 'utf8'),
     readReactDependencies(),
   ]);
+  await installScenarioClock(page);
   await page.addInitScript({ content: `self.__NOTIFICATION_EARLY_ROOT__=Boolean(document.documentElement);\n${artifact}` });
   const ids = new Set(['30877', '39116', '55401', '40477', '70020', '22584', '34122', '4189']);
   const selectedSources = nativeOrderNotificationSources.filter((entry) => ids.has(entry.id)
@@ -213,12 +229,11 @@ export async function openNotificationScenario(page, symbol, {
     factoryObject = code.slice(expression.start, expression.end);
   }
   const host = await openUserscriptScenario(page, createCancelScenario({ currentSymbol: symbol }), {
-    beforeOrderbook: `${react}\n${runtime}\n(${installNotificationHost.toString()})(${factoryObject});\nif(false){`,
+    beforeOrderbook: `${react}\n${runtime}\n(${installNotificationHost.toString()})(${factoryObject}, ${JSON.stringify({ deferSoundPlayer })});\nif(false){`,
     afterOrderbook: '}',
   });
   await page.waitForFunction(() => self.__NOTIFICATION_HOST__?.ready() === true);
-  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') });
-  await page.clock.pauseAt(new Date('2026-10-07T12:00:01Z'));
+  await pauseScenarioClock(page);
   return host;
 }
 

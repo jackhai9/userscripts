@@ -29,8 +29,11 @@ The orderbook installer also supplies independently tracked
 [notification targets](binance-order-notifications.md) to this same observer.
 `startChartStorageOptimizer({ additionalTargets })` accepts explicit
 `replace`, `onCapture` and `onFailure` callbacks for each non-storage module ID;
-storage IDs cannot be replaced by those descriptors. They share the original
-capture deadline, but mirror `stop()` does not stop their capture or handling.
+storage IDs cannot be replaced by those descriptors. The original 30-second
+capture deadline applies only to the two storage targets. Lazy notification
+targets remain observable until capture, an explicit failure, or `pagehide`;
+mirror `stop()` does not stop their capture or handling. The shared queue
+observer restores native registration once every target has finished.
 
 ### Drawing ownership
 
