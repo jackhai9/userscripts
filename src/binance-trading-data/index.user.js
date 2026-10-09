@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.1.17
+// @version      1.1.18
 // @author       jackhai9
 // @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
 // @match        https://www.binance.com/*/futures/*
@@ -424,14 +424,13 @@ import {
     panel = document.createElement('div');
     panel.id = PANEL_ID;
 
-    const savedPos = normalizeSavedPosition(loadPosition(), PANEL_WIDTH);
     const collapsed = loadCollapsed();
 
     Object.assign(panel.style, {
       position: 'fixed',
-      top:    savedPos ? savedPos.top + 'px'  : '60px',
-      left:   savedPos ? savedPos.left + 'px' : 'auto',
-      right:  savedPos ? 'auto' : '16px',
+      top:    '60px',
+      left:   'auto',
+      right:  '16px',
       width:  PANEL_WIDTH + 'px',
       zIndex: '999998',
       background:   C.bg,
@@ -482,18 +481,9 @@ import {
 
     document.body.appendChild(panel);
     keepPanelInViewport(panel);
-    savePanelPosition(panel);
     cleanupPanelDrag();
     dragCleanup = setupDrag(panel);
     setupCollapseAndClose(panel);
-    cleanupPanelUnload();
-    const onBeforeUnload = function () {
-      savePanelPosition(panel);
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    unloadCleanup = function cleanupUnload() {
-      window.removeEventListener('beforeunload', onBeforeUnload);
-    };
 
     return panel;
   }
@@ -599,18 +589,19 @@ import {
     const header = panel.querySelector('#' + PANEL_ID + '-header');
     if (!header) return null;
 
-    let dragging = false, startX, startY, startLeft, startTop, saveQueued = false;
-    const queuePositionSave = function () {
-      if (saveQueued) return;
-      saveQueued = true;
-      window.requestAnimationFrame(function () {
-        saveQueued = false;
-        savePanelPosition(panel);
-      });
+    let dragging = false, startX, startY, startLeft, startTop;
+    const cancelDrag = function () {
+      if (!dragging) return;
+      dragging = false;
+      keepPanelInViewport(panel);
+    };
+    const onResize = function () {
+      dragging = false;
+      keepPanelInViewport(panel);
     };
 
     const onMouseDown = function (e) {
-      if (e.target.tagName === 'BUTTON') return;
+      if (e.button !== 0 || e.target.closest('button,a')) return;
       dragging = true;
       const rect = panel.getBoundingClientRect();
       startX = e.clientX;
@@ -622,29 +613,37 @@ import {
 
     const onMouseMove = function (e) {
       if (!dragging) return;
+      if ((e.buttons & 1) === 0) {
+        cancelDrag();
+        return;
+      }
       const newLeft = Math.max(0, Math.min(startLeft + (e.clientX - startX), window.innerWidth - panel.offsetWidth));
       const newTop  = Math.max(0, Math.min(startTop + (e.clientY - startY), window.innerHeight - panel.offsetHeight));
       panel.style.left  = newLeft + 'px';
       panel.style.top   = newTop + 'px';
       panel.style.right = 'auto';
-      queuePositionSave();
     };
 
-    const onMouseUp = function () {
-      if (!dragging) return;
+    const onMouseUp = function (e) {
+      if (!dragging || e.button !== 0) return;
       dragging = false;
-      savePanelPosition(panel);
+      const rect = panel.getBoundingClientRect();
+      if (rect.left !== startLeft || rect.top !== startTop) savePanelPosition(panel);
     };
 
     header.addEventListener('mousedown', onMouseDown);
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('blur', cancelDrag);
+    window.addEventListener('resize', onResize);
 
     return function cleanupDrag() {
       dragging = false;
       header.removeEventListener('mousedown', onMouseDown);
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('blur', cancelDrag);
+      window.removeEventListener('resize', onResize);
     };
   }
 
@@ -687,14 +686,14 @@ import {
     };
   }
 
+  /** Project the saved preference without letting smaller windows overwrite it. */
   function keepPanelInViewport(panel) {
-    const rect = panel.getBoundingClientRect();
-    const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
-    if (!normalized) return;
+    const width = panel.offsetWidth || PANEL_WIDTH;
+    const normalized = normalizeSavedPosition(loadPosition(), width)
+      || normalizeSavedPosition({ left: window.innerWidth - width - 16, top: 60 }, width);
     panel.style.left = normalized.left + 'px';
     panel.style.top = normalized.top + 'px';
     panel.style.right = 'auto';
-    savePosition(normalized.left, normalized.top);
   }
 
   function savePanelPosition(panel) {
@@ -739,7 +738,6 @@ import {
   let agoTimer = null;
   let serverTimeTimer = null;
   let dragCleanup = null;
-  let unloadCleanup = null;
   let panelClosed = false;
   let lastUpdateTs = 0;
   let fetching = 0; // 0=空闲, 非零=正在拉取的 epoch
@@ -935,15 +933,8 @@ import {
     dragCleanup = null;
   }
 
-  function cleanupPanelUnload() {
-    if (!unloadCleanup) return;
-    unloadCleanup();
-    unloadCleanup = null;
-  }
-
   function removePanel() {
     cleanupPanelDrag();
-    cleanupPanelUnload();
     var panel = document.getElementById(PANEL_ID);
     if (panel) panel.remove();
   }
@@ -1010,11 +1001,6 @@ import {
       } else {
         stopLoop();
       }
-    });
-
-    window.addEventListener('resize', function () {
-      var panel = document.getElementById(PANEL_ID);
-      if (panel) keepPanelInViewport(panel);
     });
 
     // SPA 切换交易对检测（初始就在后台时延迟到前台再启动）

@@ -170,12 +170,16 @@ for (const kind of ['trading', 'cmc']) {
     if (kind === 'trading') await activateTrading(host);
     else await completeCmcData(host);
     const panel = host.panel();
-    const mouse = (target, type, x, y) => target.dispatchEvent(new host.window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y }));
+    const mouse = (target, type, x, y) => target.dispatchEvent(new host.window.MouseEvent(type, {
+      bubbles: true, clientX: x, clientY: y, button: 0, buttons: type === 'mouseup' ? 0 : 1,
+    }));
 
     // When dragging updates the position and navigation removes the panel
     mouse(host.element('header'), 'mousedown', 10, 10);
     mouse(host.document, 'mousemove', 100, 120);
     mouse(host.document, 'mousemove', 130, 150);
+    assert.equal(panel.style.left, '120px');
+    assert.equal(panel.style.top, '140px');
     host.clock.tick(16);
     mouse(host.document, 'mouseup', 130, 150);
     host.window.dispatchEvent(new host.window.Event('beforeunload'));

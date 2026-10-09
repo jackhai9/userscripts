@@ -85,10 +85,10 @@ for (const kind of ['trading', 'cmc']) {
   });
 
   for (const viewport of [
-    { name: 'document client dimensions', clientWidth: 640, clientHeight: 360 },
-    { name: 'an unavailable viewport', clientWidth: 0, clientHeight: 0 },
+    { name: 'document client dimensions', clientWidth: 640, clientHeight: 360, displayed: { left: '400px', top: '312px' } },
+    { name: 'an unavailable viewport', clientWidth: 0, clientHeight: 0, displayed: { left: '0px', top: '32px' } },
   ]) {
-    test(`user retains a finite ${kind} panel position with ${viewport.name}`, { timeout: 5_000 }, async t => {
+    test(`user keeps the saved ${kind} preference while ${viewport.name} constrain its display`, { timeout: 5_000 }, async t => {
       // Given window dimensions are temporarily zero while the document reports the specified viewport
       const prefix = kind === 'trading' ? 'jh_binance_trading_data' : 'jh_binance_cmc_data';
       const host = createDataPanelHost(t, kind, { storage: { [`${prefix}_pos`]: '{"left":900,"top":900}' } });
@@ -107,11 +107,11 @@ for (const kind of ['trading', 'cmc']) {
       host.navigate('/zh-CN/futures');
       host.window.dispatchEvent(new host.window.Event('resize'));
 
-      // Then real JSDOM zero-area layout persists finite origin coordinates and removal creates no replacement
-      assert.deepEqual(position, { left: 0, top: 0 });
-      assert.deepEqual(panelPosition, { left: '0px', top: '0px' });
+      // Then the viewport affects displayed styles without saving them and removal creates no replacement
+      assert.deepEqual(position, { left: 900, top: 900 });
+      assert.deepEqual(panelPosition, viewport.displayed);
       assert.equal(host.panel(), null);
-      assert.equal(host.window.localStorage.getItem(`${prefix}_pos`), '{"left":0,"top":0}');
+      assert.equal(host.window.localStorage.getItem(`${prefix}_pos`), '{"left":900,"top":900}');
       assert.deepEqual(host.errors, []);
     });
   }
