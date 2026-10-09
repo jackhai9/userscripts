@@ -85,7 +85,7 @@ for (const kind of ['trading', 'cmc']) {
   });
 
   for (const viewport of [
-    { name: 'document client dimensions', clientWidth: 640, clientHeight: 360, displayed: { left: '400px', top: '312px' } },
+    { name: 'document client dimensions', clientWidth: 640, clientHeight: 360, displayed: { left: '256px', top: '312px' } },
     { name: 'an unavailable viewport', clientWidth: 0, clientHeight: 0, displayed: { left: '0px', top: '32px' } },
   ]) {
     test(`user keeps the saved ${kind} preference while ${viewport.name} constrain its display`, { timeout: 5_000 }, async t => {
@@ -109,8 +109,7 @@ for (const kind of ['trading', 'cmc']) {
 
       // Then the viewport affects displayed styles without saving them and removal creates no replacement
       assert.deepEqual(position, { left: 900, top: 900 });
-      const expectedLeft = viewport.clientWidth ? String(viewport.clientWidth - (kind === 'trading' ? 480 : 500)) + 'px' : '0px';
-      assert.deepEqual(panelPosition, { ...viewport.displayed, left: expectedLeft });
+      assert.deepEqual(panelPosition, viewport.displayed);
       assert.equal(host.panel(), null);
       assert.equal(host.window.localStorage.getItem(`${prefix}_pos`), '{"left":900,"top":900}');
       assert.deepEqual(host.errors, []);

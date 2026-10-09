@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.0
+// @version      1.2.1
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -406,6 +406,7 @@
     title: localizedText("交易数据", "Trading data"),
     metric: localizedText("指标", "Metric"),
     history: localizedText("历史趋势", "History"),
+    historyNote: localizedText("趋势按5分钟采样；费率曲线为历史结算。", "History: 5m samples; funding shows settlements."),
     value: localizedText("数值", "Value"),
     collapse: localizedText("收起面板", "Collapse panel"),
     expand: localizedText("展开面板", "Expand panel"),
@@ -722,6 +723,34 @@ ${item.value}`;
     return { element: button, count: observations.length, destroy };
   }
 
+  // src/shared/data-panel-layout.js
+  var DATA_PANEL_LAYOUT_EVENT = "jh-data-panels-layout-change";
+  var DATA_PANEL_WIDTH = 384;
+  var PANEL_IDS = Object.freeze({
+    trading: "jh-binance-trading-data-panel",
+    cmc: "jh-binance-cmc-data-panel"
+  });
+  var TWO_COLUMN_WIDTH = DATA_PANEL_WIDTH * 2 + 48;
+  function hasVisibleDataPanelPeer(document2, kind) {
+    const peer = document2.getElementById(PANEL_IDS[kind === "trading" ? "cmc" : "trading"]);
+    return peer !== null && peer.style.display !== "none";
+  }
+  function calculateDataPanelLayout({ kind, panelWidth, viewportWidth, viewportHeight, savedPosition, hasPeer }) {
+    if (kind !== "trading" && kind !== "cmc") throw new Error("Unknown data panel kind");
+    if (savedPosition !== null) {
+      return { ...savedPosition, maxHeight: Math.max(48, viewportHeight - savedPosition.top - 8) };
+    }
+    const stacked = hasPeer && viewportWidth < TWO_COLUMN_WIDTH;
+    const sectionHeight = Math.max(48, Math.floor((viewportHeight - 24) / 2));
+    const targetTop = stacked ? kind === "trading" ? 8 : 16 + sectionHeight : 60;
+    const top = Math.max(0, Math.min(targetTop, viewportHeight - 48));
+    const peerWidth = hasPeer && !stacked && kind === "cmc" ? DATA_PANEL_WIDTH + 16 : 0;
+    const targetLeft = viewportWidth - panelWidth - 16 - peerWidth;
+    const left = Math.max(0, Math.min(Math.max(stacked ? 8 : 16, targetLeft), viewportWidth - panelWidth));
+    const availableHeight = Math.max(48, viewportHeight - top - 8);
+    return { left, top, maxHeight: stacked ? Math.min(sectionHeight, availableHeight) : availableHeight };
+  }
+
   // src/binance-trading-data/panel-view.js
   var PANEL_ID = "jh-binance-trading-data-panel";
   var INITIAL_FUNDING_STATE = Object.freeze({
@@ -754,19 +783,19 @@ ${item.value}`;
       border: 1px solid var(--td-border);
       border-radius: 10px;
       box-shadow: 0 6px 24px #00000020;
-      font: 400 13px/1.45 BinancePlex, system-ui, -apple-system, sans-serif;
+      font: 400 13px/1.35 BinancePlex, system-ui, -apple-system, sans-serif;
       text-align: left;
       overflow: hidden;
     }
     ${scope} * { box-sizing: border-box; }
     ${scope} [hidden] { display: none !important; }
     ${scope} #${PANEL_ID}-header {
-      display: flex; align-items: center; gap: 7px; min-height: 49px;
-      padding: 10px 12px; flex: 0 0 auto; cursor: move; user-select: none;
+      display: flex; align-items: center; gap: 6px; min-height: 35px;
+      padding: 5px 8px; flex: 0 0 auto; cursor: move; user-select: none;
       border-bottom: 1px solid var(--td-border); background: var(--td-head);
     }
-    ${scope} .td-grip { color: var(--td-muted); font-size: 16px; flex: 0 0 auto; }
-    ${scope} .td-title { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
+    ${scope} .td-grip { color: var(--td-muted); font-size: 14px; flex: 0 0 auto; }
+    ${scope} .td-title { margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; }
     ${scope} #${PANEL_ID}-symbol {
       min-width: 0; color: var(--td-muted); font-size: 12px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -775,31 +804,31 @@ ${item.value}`;
     ${scope} button { font: inherit; cursor: pointer; border: 0; color: inherit; background: transparent; }
     ${scope} .td-actions button {
       display: flex; align-items: center; justify-content: center;
-      width: 26px; height: 26px; padding: 2px; border-radius: 4px;
+      width: 24px; height: 24px; padding: 2px; border-radius: 4px;
       color: var(--td-muted); font-size: 17px;
     }
     ${scope} button:hover { background: var(--td-highlight); }
     ${scope} button:focus-visible { outline: 2px solid var(--td-focus); outline-offset: 2px; }
     ${scope} #${PANEL_ID}-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
     ${scope} table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-    ${scope} .td-name-col { width: 36%; }
-    ${scope} .td-trend-col { width: 31%; }
-    ${scope} .td-value-col { width: 33%; }
+    ${scope} .td-name-col { width: 42%; }
+    ${scope} .td-trend-col { width: 28%; }
+    ${scope} .td-value-col { width: 30%; }
     ${scope} thead { position: sticky; top: 0; z-index: 1; background: var(--td-head); }
-    ${scope} thead th { color: var(--td-muted); font-size: 11px; font-weight: 500; padding: 8px 10px; text-align: left; }
+    ${scope} thead th { color: var(--td-muted); font-size: 11px; font-weight: 500; padding: 4px 6px; text-align: left; }
     ${scope} thead th:nth-child(2) { text-align: center; }
     ${scope} thead th:last-child { text-align: right; }
-    ${scope} tbody th, ${scope} tbody td { padding: 10px; vertical-align: middle; border-top: 1px solid var(--td-border); }
+    ${scope} tbody th, ${scope} tbody td { padding: 4px 6px; vertical-align: middle; border-top: 1px solid var(--td-border); }
     ${scope} .td-name { color: var(--td-muted); text-align: left; font-weight: 400; overflow-wrap: anywhere; }
-    ${scope} .td-trend { padding: 8px 3px; text-align: center; }
+    ${scope} .td-trend { padding: 4px 2px; text-align: center; }
     ${scope} .td-value { text-align: right; font-variant-numeric: tabular-nums; }
     ${scope} .td-number { font-weight: 500; overflow-wrap: anywhere; }
     ${scope} .jh-td-flash { animation: jh-td-value-change 1s ease-out; }
     @keyframes jh-td-value-change { from { background: color-mix(in srgb, var(--td-chart) 25%, transparent); } to { background: transparent; } }
-    ${scope} small { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; color: var(--td-muted); }
-    ${scope} .td-value small { line-height: 1.4; }
+    ${scope} small { display: block; margin-top: 1px; font-size: 11px; font-weight: 400; color: var(--td-muted); }
+    ${scope} .td-value small { line-height: 1.35; }
     ${scope} .td-spark-button { display: block; width: 100%; padding: 0; border-radius: 4px; color: var(--td-chart); touch-action: pan-y; }
-    ${scope} .td-sparkline { display: block; width: 100%; height: 44px; overflow: visible; }
+    ${scope} .td-sparkline { display: block; width: 100%; height: 26px; overflow: visible; }
     ${scope} .td-spark-path { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
     ${scope} .td-spark-reference { stroke: var(--td-border); stroke-width: 1; }
     ${scope} .td-spark-guide { stroke: var(--td-muted); stroke-width: 1; pointer-events: none; }
@@ -807,11 +836,11 @@ ${item.value}`;
     ${scope} .td-spark-hit { fill: transparent; pointer-events: all; }
     ${scope} .td-buy-bar { fill: var(--td-buy); }
     ${scope} .td-sell-bar { fill: var(--td-sell); }
-    ${scope} .td-no-history { display: block; padding: 9px 0; color: var(--td-muted); font-size: 11px; }
+    ${scope} .td-no-history { display: block; padding: 3px 0; color: var(--td-muted); font-size: 11px; }
     ${scope} .td-trend-caption, ${scope} .td-last-settled { font-size: 11px; }
     ${scope} .td-last-settled { display: block; margin-top: 2px; color: var(--td-text); font-variant-numeric: tabular-nums; }
     ${scope} .td-last-value { display: inline-block; white-space: nowrap; }
-    ${scope} .td-legend { display: flex; justify-content: center; gap: 9px; margin-top: 3px; color: var(--td-muted); font-size: 11px; }
+    ${scope} .td-legend { display: flex; justify-content: center; gap: 6px; margin-top: 1px; color: var(--td-muted); font-size: 11px; }
     ${scope} .td-legend span { display: inline-flex; align-items: center; gap: 3px; }
     ${scope} .td-legend i { display: inline-block; width: 5px; height: 7px; background: var(--td-buy); }
     ${scope} .td-legend span:last-child i { background: var(--td-sell); }
@@ -825,30 +854,29 @@ ${item.value}`;
     ${scope} .td-funding-row { background: var(--td-highlight); }
     ${scope} .td-funding-row .td-name { color: var(--td-text); font-weight: 500; }
     ${scope} .td-funding-row .td-number { font-size: 14px; font-weight: 600; }
-    ${scope} .td-current-label { color: var(--td-text); margin: 0 0 3px; }
+    ${scope} .td-current-label { color: var(--td-text); margin: 0 0 1px; }
     ${scope} .td-countdown { font-variant-numeric: tabular-nums; }
-    ${scope} .td-history-detail td { padding: 10px 12px; background: var(--td-head); }
+    ${scope} .td-history-detail td { padding: 6px 8px; background: var(--td-head); }
     ${scope} .td-history-inspection { display: flex; flex-wrap: wrap; gap: 5px 12px; font-size: 11px; color: var(--td-muted); user-select: text; }
     ${scope} .td-history-inspection strong { flex: 1 0 100%; color: var(--td-text); font-size: 12px; font-weight: 500; }
     ${scope} .td-history-value { color: var(--td-text); font-variant-numeric: tabular-nums; }
-    ${scope} #${PANEL_ID}-composite { padding: 12px; border-top: 1px solid var(--td-border); }
-    ${scope} .td-composite-line { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+    ${scope} #${PANEL_ID}-composite { padding: 6px 8px; border-top: 1px solid var(--td-border); }
+    ${scope} .td-composite-line { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; list-style: none; cursor: pointer; }
+    ${scope} .td-composite-line::-webkit-details-marker { display: none; }
+    ${scope} .td-composite-line:focus-visible { outline: 2px solid var(--td-focus); outline-offset: 2px; }
+    ${scope} .td-composite-info { margin-left: 4px; color: var(--td-muted); font-size: 11px; font-weight: 400; }
     ${scope} .td-bias { white-space: nowrap; }
-    ${scope} .td-vote-track { display: flex; height: 5px; margin-top: 10px; border-radius: 5px; overflow: hidden; background: var(--td-border); }
+    ${scope} .td-vote-track { display: flex; height: 3px; margin-top: 4px; border-radius: 3px; overflow: hidden; background: var(--td-border); }
     ${scope} .td-vote-track span:first-child { background: var(--td-buy); }
     ${scope} .td-vote-track span:last-child { background: var(--td-sell); margin-left: auto; }
-    ${scope} .td-composite-votes { margin-top: 8px; }
-    ${scope} .td-method-note { line-height: 1.5; }
-    ${scope} #${PANEL_ID}-footer { padding: 9px 12px; color: var(--td-muted); font-size: 11px; border-top: 1px solid var(--td-border); font-variant-numeric: tabular-nums; }
-    ${scope} .td-footer-line { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px 10px; }
+    ${scope} .td-composite-votes { margin-top: 3px; }
+    ${scope} .td-method-note { margin-top: 4px; line-height: 1.4; }
+    ${scope} #${PANEL_ID}-footer { padding: 5px 8px; color: var(--td-muted); font-size: 11px; border-top: 1px solid var(--td-border); font-variant-numeric: tabular-nums; }
+    ${scope} .td-footer-line { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px 8px; }
     @media (max-width: 540px) {
       ${scope} { font-size: 12px; }
-      ${scope} #${PANEL_ID}-header { padding: 9px 10px; gap: 6px; }
-      ${scope} .td-title { font-size: 14px; }
-      ${scope} .td-name-col { width: 34%; }
-      ${scope} .td-value-col { width: 35%; }
-      ${scope} thead th, ${scope} tbody th, ${scope} tbody td { padding: 9px 5px; }
-      ${scope} .td-trend { padding: 8px 3px; }
+      ${scope} thead th, ${scope} tbody th, ${scope} tbody td { padding: 4px; }
+      ${scope} .td-trend { padding: 4px 2px; }
       ${scope} .td-funding-row .td-number { font-size: 13px; }
     }
   `;
@@ -858,7 +886,7 @@ ${item.value}`;
     style.textContent = styles();
     panel.append(style);
     Object.assign(panel.style, {
-      width: "480px",
+      width: `${DATA_PANEL_WIDTH}px`,
       maxWidth: "calc(100vw - 16px)",
       maxHeight: "calc(100vh - 24px)",
       display: "flex",
@@ -913,7 +941,8 @@ ${item.value}`;
     const footer = identify(node("footer"), "footer");
     const footerLine = node("div", "td-footer-line");
     footerLine.append(role(node("span"), "updated-at"), role(node("span"), "elapsed"));
-    footer.append(footerLine);
+    const historyNote = node("small", "td-history-note");
+    footer.append(footerLine, historyNote);
     body.append(table, composite, footer);
     panel.append(header, body);
     let currentModel = null;
@@ -935,6 +964,7 @@ ${item.value}`;
       panel.setAttribute("aria-label", panelTitle);
       table.setAttribute("aria-label", panelTitle);
       setText(title, panelTitle);
+      setText(historyNote, tradingText("historyNote", locale));
       for (const heading of headings) setText(heading, tradingText(heading.dataset.copy, locale));
       const collapseTitle = tradingText(collapsed ? "expand" : "collapse", locale);
       collapseButton.title = collapseTitle;
@@ -1024,7 +1054,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
         indicator,
         locale,
         onInspect(record, action) {
-          setText(detailTitle, `${record.name} · ${record.label}`);
+          setText(detailTitle, `${record.name} · ${formatHistoryCount(id, chart.count, locale)}`);
           setText(detailTime, record.time);
           detailTime.dateTime = new Date(record.timestamp).toISOString();
           setText(detailValue, record.value);
@@ -1039,8 +1069,9 @@ ${formatHistoryTime(state.current.time, locale)}`;
       });
       charts.push(chart);
       if (chart.count > 0) chart.element.setAttribute("aria-controls", detailRow.id);
-      trend.append(chart.element, node("small", "td-trend-caption", formatHistoryCount(id, chart.count, locale)));
+      trend.append(chart.element);
       if (isFunding) {
+        trend.append(node("small", "td-trend-caption", formatHistoryCount(id, chart.count, locale)));
         const settled = node("span", "td-last-settled");
         settled.append(document2.createTextNode(`${tradingText("last", locale)} `), node("span", "td-last-value", indicator.display));
         trend.append(settled);
@@ -1088,8 +1119,15 @@ ${formatHistoryTime(state.current.time, locale)}`;
     }
     function renderComposite(model) {
       const signal = model.longCount === model.shortCount ? "neutral" : model.longCount > model.shortCount ? "long" : "short";
-      const line = node("div", "td-composite-line");
-      line.append(node("span", "", tradingText("composite", locale)), node("span", `td-bias td-signal-${signal}`, `${tradingText(signal, locale)} ${model.longCount}:${model.shortCount}`));
+      const method = node("details", "td-method");
+      method.open = composite.querySelector(".td-method")?.open === true;
+      const line = node("summary", "td-composite-line");
+      const label = node("span", "", tradingText("composite", locale));
+      const info = node("span", "td-composite-info", "ⓘ");
+      info.setAttribute("aria-hidden", "true");
+      label.append(info);
+      line.append(label, node("span", `td-bias td-signal-${signal}`, `${tradingText(signal, locale)} ${model.longCount}:${model.shortCount}`));
+      method.append(line, node("small", "td-method-note", tradingText("simplifiedNote", locale)));
       const track = node("div", "td-vote-track");
       const votes = formatVotes(model, locale);
       track.setAttribute("role", "img");
@@ -1099,7 +1137,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
         bar.style.width = `${model.total > 0 ? count / model.total * 100 : 0}%`;
         track.append(bar);
       }
-      composite.replaceChildren(line, track, node("small", "td-composite-votes", votes), node("small", "td-method-note", tradingText("simplifiedNote", locale)));
+      composite.replaceChildren(method, track, node("small", "td-composite-votes", votes));
     }
     function render(model) {
       const previousValues = new Map(currentModel !== null && currentModel.symbol === model.symbol ? currentModel.indicators.map((indicator) => [indicator.id, indicator.value]) : []);
@@ -1145,33 +1183,6 @@ ${formatHistoryTime(state.current.time, locale)}`;
     };
   }
 
-  // src/shared/data-panel-layout.js
-  var DATA_PANEL_LAYOUT_EVENT = "jh-data-panels-layout-change";
-  var PANEL_IDS = Object.freeze({
-    trading: "jh-binance-trading-data-panel",
-    cmc: "jh-binance-cmc-data-panel"
-  });
-  var TWO_COLUMN_WIDTH = 480 + 500 + 48;
-  function hasVisibleDataPanelPeer(document2, kind) {
-    const peer = document2.getElementById(PANEL_IDS[kind === "trading" ? "cmc" : "trading"]);
-    return peer !== null && peer.style.display !== "none";
-  }
-  function calculateDataPanelLayout({ kind, panelWidth, viewportWidth, viewportHeight, savedPosition, hasPeer }) {
-    if (kind !== "trading" && kind !== "cmc") throw new Error("Unknown data panel kind");
-    if (savedPosition !== null) {
-      return { ...savedPosition, maxHeight: Math.max(48, viewportHeight - savedPosition.top - 8) };
-    }
-    const stacked = hasPeer && viewportWidth < TWO_COLUMN_WIDTH;
-    const sectionHeight = Math.max(48, Math.floor((viewportHeight - 24) / 2));
-    const targetTop = stacked ? kind === "trading" ? 8 : 16 + sectionHeight : 60;
-    const top = Math.max(0, Math.min(targetTop, viewportHeight - 48));
-    const peerWidth = hasPeer && !stacked && kind === "cmc" ? 480 + 16 : 0;
-    const targetLeft = viewportWidth - panelWidth - 16 - peerWidth;
-    const left = Math.max(0, Math.min(Math.max(stacked ? 8 : 16, targetLeft), viewportWidth - panelWidth));
-    const availableHeight = Math.max(48, viewportHeight - top - 8);
-    return { left, top, maxHeight: stacked ? Math.min(sectionHeight, availableHeight) : availableHeight };
-  }
-
   // src/binance-trading-data/index.user.js
   (function() {
     "use strict";
@@ -1182,7 +1193,6 @@ ${formatHistoryTime(state.current.time, locale)}`;
     const PANEL_ID2 = "jh-binance-trading-data-panel";
     const STORAGE_POS_KEY = "jh_binance_trading_data_pos";
     const STORAGE_COLLAPSED_KEY = "jh_binance_trading_data_collapsed";
-    const PANEL_WIDTH = 480;
     const DEBUG = false;
     const PERIOD_MS = 5 * 60 * 1e3;
     const FIRST_DELAY = 5e3;
@@ -1606,7 +1616,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       };
     }
     function keepPanelInViewport(panel) {
-      const width = panel.offsetWidth || PANEL_WIDTH;
+      const width = panel.offsetWidth || DATA_PANEL_WIDTH;
       const normalized = calculateDataPanelLayout({
         kind: "trading",
         panelWidth: width,
@@ -1623,7 +1633,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
     function savePanelPosition(panel) {
       if (!panel) return;
       const rect = panel.getBoundingClientRect();
-      const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
+      const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || DATA_PANEL_WIDTH);
       if (!normalized) return;
       savePosition(normalized.left, normalized.top);
       keepPanelInViewport(panel);

@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.0
+// @version      0.2.1
 // @author       jackhai9
 // @description  Show localized CoinMarketCap valuation, supply, and metric interpretations on Binance futures pages
 // @match        https://www.binance.com/*/futures/*
@@ -30,7 +30,7 @@ import {
 import { buildCmcMetricRows, numberOrNull } from './metrics.js';
 import { CMC_COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 import { cmcPanelStyles } from './panel-styles.js';
-import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, hasVisibleDataPanelPeer } from '../shared/data-panel-layout.js';
+import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as PANEL_WIDTH, hasVisibleDataPanelPeer } from '../shared/data-panel-layout.js';
 
 (function () {
   'use strict';
@@ -42,7 +42,6 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, hasVisibleDataPanelP
   const PANEL_ID = 'jh-binance-cmc-data-panel';
   const STORAGE_POS_KEY = 'jh_binance_cmc_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_cmc_data_collapsed';
-  const PANEL_WIDTH = 500;
   const REFRESH_MS = 30 * 1000;
   const ROUTE_WATCHDOG_MS = 5_000;
   const CMC_MAP_API = 'https://api.coinmarketcap.com/data-api/v1/cryptocurrency/map';
@@ -437,11 +436,11 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, hasVisibleDataPanelP
             '<td class="cmc-value"><span class="cmc-number" data-role="metric-value">', escapeHtml(row.value), '</span>',
               row.unit ? '<small class="cmc-unit">' + escapeHtml(row.unit) + '</small>' : '', change,
             '</td>',
-            '<td><button type="button" class="cmc-reading-button" data-expand-metric="', row.id, '" aria-expanded="', String(expanded), '" aria-controls="', detailId, '" aria-label="', escapeHtml(row.label + ' · ' + uiText(CMC_COPY.details)), '">',
+            '<td><button type="button" class="cmc-reading-button" data-expand-metric="', row.id, '" aria-expanded="', String(expanded), '" aria-controls="', detailId, '" aria-label="', escapeHtml(row.label + ' · ' + uiText(CMC_COPY.details)), '" title="', escapeHtml(row.note), '">',
               '<span class="cmc-reading-text">', escapeHtml(row.interpretation), '</span><span class="cmc-info" aria-hidden="true">ⓘ</span>',
-            '</button><small>', escapeHtml(row.note), '</small></td>',
+            '</button></td>',
           '</tr>',
-          '<tr id="', detailId, '" class="cmc-explanation"', expanded ? '' : ' hidden', '><td colspan="3"><strong>', escapeHtml(row.label), '</strong>', escapeHtml(row.explanation), '</td></tr>',
+          '<tr id="', detailId, '" class="cmc-explanation"', expanded ? '' : ' hidden', '><td colspan="3"><strong>', escapeHtml(row.label), '</strong>', escapeHtml(row.explanation), '<small>', escapeHtml(row.note), '</small></td></tr>',
         ].join('');
       }).join('');
       rowsEl.innerHTML = lastRowsHtml;

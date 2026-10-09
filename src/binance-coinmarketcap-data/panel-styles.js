@@ -26,7 +26,7 @@ export function cmcPanelStyles(panelId) {
       box-shadow: 0 6px 24px #00000020;
       font-family: BinancePlex, system-ui, -apple-system, sans-serif;
       font-size: 12px;
-      line-height: 1.4;
+      line-height: 1.35;
       text-align: left;
       overflow: hidden;
       user-select: none;
@@ -38,7 +38,7 @@ export function cmcPanelStyles(panelId) {
       align-items: center;
       justify-content: space-between;
       gap: 6px;
-      padding: 8px 10px;
+      padding: 5px 8px;
       flex: 0 0 auto;
       cursor: move;
       background: var(--cmc-head);
@@ -49,47 +49,46 @@ export function cmcPanelStyles(panelId) {
     ${scope} #${panelId}-symbol { color: var(--cmc-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     ${scope} .cmc-controls { display: flex; gap: 2px; flex: 0 0 auto; }
     ${scope} button { font: inherit; cursor: pointer; color: inherit; background: transparent; border: 0; }
-    ${scope} .cmc-controls button { min-width: 25px; min-height: 26px; font-size: 16px; padding: 2px 4px; color: var(--cmc-muted); }
+    ${scope} .cmc-controls button { min-width: 24px; min-height: 24px; font-size: 16px; padding: 2px 4px; color: var(--cmc-muted); }
     ${scope} button:focus-visible, ${scope} a:focus-visible { outline: 2px solid var(--cmc-accent); outline-offset: 2px; border-radius: 3px; }
     ${scope} #${panelId}-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
-    ${scope} table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-    ${scope} .cmc-name-col { width: 31%; }
+    /* Reserve space for complete prices and changes before wrapping the surrounding prose. */
+    ${scope} table { width: 100%; table-layout: auto; border-collapse: collapse; }
+    ${scope} .cmc-name-col { width: 33%; }
     ${scope} .cmc-value-col { width: 26%; }
-    ${scope} .cmc-reading-col { width: 43%; }
+    ${scope} .cmc-reading-col { width: 41%; }
     ${scope} thead { position: sticky; top: 0; z-index: 1; background: var(--cmc-head); }
-    ${scope} thead th { color: var(--cmc-muted); font-size: 11px; font-weight: 500; padding: 7px 10px; text-align: left; }
+    ${scope} thead th { color: var(--cmc-muted); font-size: 11px; font-weight: 500; padding: 4px 6px; text-align: left; }
     ${scope} thead th:nth-child(2) { text-align: right; }
-    ${scope} tbody th, ${scope} tbody td { padding: 9px 10px; border-top: 1px solid var(--cmc-border); vertical-align: middle; overflow-wrap: anywhere; }
+    ${scope} tbody th, ${scope} tbody td { padding: 4px 6px; border-top: 1px solid var(--cmc-border); vertical-align: middle; overflow-wrap: anywhere; }
     ${scope} .cmc-name { text-align: left; font-weight: 500; }
-    ${scope} small { display: block; margin-top: 3px; font-size: 11px; line-height: 1.4; color: var(--cmc-muted); }
+    ${scope} small { display: block; margin-top: 1px; font-size: 11px; line-height: 1.35; color: var(--cmc-muted); }
     ${scope} .cmc-value { text-align: right; font-variant-numeric: tabular-nums; }
-    ${scope} .cmc-number { display: block; font-weight: 650; white-space: nowrap; }
+    ${scope} .cmc-number { display: inline-block; font-weight: 650; white-space: nowrap; }
+    ${scope} .cmc-unit { display: inline-block; margin: 0 0 0 4px; }
     ${scope} .cmc-change { font-size: 11px; white-space: nowrap; }
     ${scope} .cmc-change[data-tone="positive"], ${scope} [data-tone="positive"] .cmc-reading-text { color: var(--cmc-buy); }
     ${scope} .cmc-change[data-tone="negative"], ${scope} [data-tone="negative"] .cmc-reading-text { color: var(--cmc-sell); }
     ${scope} .cmc-change[data-tone="neutral"] { color: var(--cmc-muted); }
     ${scope} .cmc-key { background: color-mix(in srgb, var(--color-PrimaryYellow, #f0b90b) 7%, var(--cmc-bg)); }
     ${scope} .cmc-group th, ${scope} .cmc-group td { border-top-width: 2px; }
-    ${scope} .cmc-reading-button { display: flex; align-items: flex-start; justify-content: space-between; gap: 5px; width: 100%; padding: 0; line-height: inherit; text-align: left; }
+    ${scope} .cmc-reading-button { display: flex; align-items: center; justify-content: space-between; gap: 3px; width: 100%; min-height: 24px; padding: 0; line-height: inherit; text-align: left; }
     ${scope} .cmc-reading-text { font-weight: 500; }
     ${scope} [data-tone="missing"] .cmc-reading-text { color: var(--cmc-muted); }
     ${scope} [data-tone="active"] .cmc-reading-text { color: var(--cmc-accent); }
     ${scope} .cmc-info { color: var(--cmc-muted); flex: 0 0 auto; font-size: 11px; }
-    ${scope} .cmc-explanation td { padding: 10px 12px; color: var(--cmc-muted); background: var(--cmc-head); font-size: 11px; line-height: 1.6; user-select: text; }
+    ${scope} .cmc-explanation td { padding: 6px 8px; color: var(--cmc-muted); background: var(--cmc-head); font-size: 11px; line-height: 1.5; user-select: text; }
     ${scope} .cmc-explanation strong { color: var(--cmc-text); margin-right: 8px; font-weight: 600; }
     ${scope} .cmc-status { padding: 10px 0; color: var(--cmc-muted); }
     ${scope} .cmc-error-title { font-weight: 600; color: var(--cmc-sell); margin-bottom: 4px; }
-    ${scope} #${panelId}-footer { padding: 8px 10px; color: var(--cmc-muted); font-size: 11px; border-top: 1px solid var(--cmc-border); }
-    ${scope} .cmc-source-line { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px 10px; }
+    ${scope} #${panelId}-footer { padding: 5px 8px; color: var(--cmc-muted); font-size: 11px; border-top: 1px solid var(--cmc-border); }
+    ${scope} .cmc-source-line { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 3px 8px; }
     ${scope} #${panelId}-footer a { color: var(--cmc-accent); text-decoration: none; }
     ${scope} .cmc-times { font-variant-numeric: tabular-nums; }
     @media (max-width: 540px) {
       ${scope} { font-size: 11px; }
-      ${scope} tbody th, ${scope} tbody td { padding: 8px 6px; }
-      ${scope} thead th { padding: 7px 6px; }
-      ${scope} .cmc-name-col { width: 31%; }
-      ${scope} .cmc-value-col { width: 27%; }
-      ${scope} .cmc-reading-col { width: 42%; }
+      ${scope} tbody th, ${scope} tbody td { padding: 4px; }
+      ${scope} thead th { padding: 4px; }
       ${scope} .cmc-info { display: none; }
     }
   `;
