@@ -65,21 +65,34 @@ export function createDataMediaNetwork() {
       listeners.add(listener);
     });
   }
-  function fetch(url) {
+  function fetch(url, { signal } = {}) {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
+      const complete = () => {
+        assert.equal(request.settled, false, 'each HTTP request has one terminal outcome');
+        request.settled = true;
+        signal?.removeEventListener('abort', abort);
+      };
+      const abort = () => {
+        complete();
+        request.aborted = true;
+        reject(signal.reason);
+      };
       const request = {
-        url: new URL(url), kind: 'fetch', settled: false,
+        url: new URL(url), kind: 'fetch', settled: false, aborted: false,
         respond(body, status = 200) {
-          assert.equal(request.settled, false, 'each HTTP request has one terminal outcome');
-          request.settled = true;
+          complete();
           resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
         },
         fail(error = new Error('fixture network unavailable')) {
-          assert.equal(request.settled, false);
-          request.settled = true;
+          complete();
           reject(error);
         },
       };
+      signal?.addEventListener('abort', abort, { once: true });
       publish(request);
     });
   }
@@ -148,30 +161,48 @@ export function createDataPanelHost(t, kind, {
 export function tradingDataset(timestamp, {
   oi = 2_000_000, previousOi = 1_000_000, supply = 10_000_000,
   ratio = 1.5, basis = 0.01, funding = -0.0002,
+  symbol = 'BTCUSDT', currentFunding = 0.0000378, intervalHours = 4,
 } = {}) {
   return {
     openInterestHist: Array.from({ length: 7 }, (_, index) => ({
-      timestamp, sumOpenInterest: String(index === 6 ? oi : previousOi),
+      timestamp: timestamp - (6 - index) * 300_000, sumOpenInterest: String(index === 6 ? oi : previousOi),
       sumOpenInterestValue: '100000000', CMCCirculatingSupply: String(supply),
     })),
     topLongShortAccountRatio: [{ timestamp, longShortRatio: String(ratio) }],
     topLongShortPositionRatio: [{ timestamp, longShortRatio: String(ratio) }],
     globalLongShortAccountRatio: [{ timestamp, longShortRatio: String(ratio) }],
-    takerlongshortRatio: [{ timestamp, buySellRatio: String(ratio) }],
+    takerlongshortRatio: [{ timestamp, buySellRatio: String(ratio), buyVol: String(100 * ratio), sellVol: '100' }],
     basis: [{ timestamp, basisRate: String(basis) }],
-    fundingRate: [{ fundingRate: String(funding) }],
+    fundingRate: [{ symbol, fundingTime: timestamp, fundingRate: String(funding) }],
+    premiumIndex: { symbol, lastFundingRate: String(currentFunding), time: timestamp, nextFundingTime: timestamp + 14_400_000 },
+    fundingInfo: intervalHours === null ? [] : [{ symbol, fundingIntervalHours: intervalHours }],
   };
 }
 
-export async function completeTradingBatch(host, dataset, { symbol = 'BTCUSDT', status = {} } = {}) {
+export function isTradingHistoryRequest(request) {
+  return request.url.pathname.startsWith('/futures/data/') || request.url.pathname.endsWith('/fundingRate');
+}
+
+export async function completeTradingBatch(host, dataset, { symbol = 'BTCUSDT', status = {}, includeInterval = true } = {}) {
   const pending = await host.network.waitForRequest(request => !request.settled && request.url.pathname.endsWith('/fundingRate') && request.url.searchParams.get('symbol') === symbol);
   assert.equal(pending.kind, 'fetch');
-  const batch = host.network.requests.filter(request => !request.settled && (request.url.searchParams.get('symbol') || request.url.searchParams.get('pair')) === symbol);
+  const batch = host.network.requests.filter(request => !request.settled
+    && isTradingHistoryRequest(request)
+    && (request.url.searchParams.get('symbol') || request.url.searchParams.get('pair')) === symbol);
   assert.equal(batch.length, 7);
+  if (includeInterval) {
+    const interval = host.network.requests.slice(host.network.requests.indexOf(pending) + 1)
+      .find(request => !request.settled && request.url.pathname.endsWith('/fundingInfo'));
+    assert.ok(interval, 'the historical refresh also requests funding metadata');
+    batch.push(interval);
+  }
   for (const request of batch) {
     const key = request.url.pathname.split('/').at(-1);
     request.respond(dataset[key], status[key] ?? 200);
   }
+  const current = host.network.requests.find(request => !request.settled
+    && request.url.pathname.endsWith('/premiumIndex') && request.url.searchParams.get('symbol') === symbol);
+  if (current) current.respond(dataset.premiumIndex, status.premiumIndex ?? 200);
   return batch;
 }
 
@@ -179,7 +210,6 @@ export async function activateTradingData(host, dataset = tradingDataset(Date.no
   const time = await host.network.waitForRequest(request => !request.settled && request.url.pathname.endsWith('/time'));
   time.respond({ serverTime: Date.now() });
   await completeTradingBatch(host, dataset, options);
-  await host.rendered(panel => panel?.querySelector('[data-role="updated-at"]')?.textContent.startsWith('更新于'));
   await afterDataMediaResponseTurn();
 }
 
@@ -190,7 +220,7 @@ export function cmcDetail(overrides = {}) {
     statistics: {
       price: 60_000, priceChangePercentage24h: 2.5, marketCap: 1_200_000_000_000,
       marketCapChangePercentage24h: -1, ucm: 1_000_000_000, volume24h: 100_000_000,
-      turnover: 0.05, fullyDilutedMarketCap: 1_300_000_000_000,
+      turnover: 100_000_000 / 1_200_000_000_000, fullyDilutedMarketCap: 1_300_000_000_000,
       fullyDilutedMarketCapChangePercentage24h: 0, liquidityMcapRatio: 0.03,
       totalSupply: 21_000_000, maxSupply: 21_000_000, circulatingSupply: 20_000_000,
       rank: 1,

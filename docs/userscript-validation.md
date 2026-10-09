@@ -94,15 +94,32 @@ primary button already released is canceled without saving.
 
 For every resize, project the saved preference into the current viewport while
 keeping the header reachable. Enlarging the viewport restores the saved
-coordinates. Without a saved preference, use the current viewport's right edge
-with a 16 px margin and the separate default top offsets (trading data: 60 px;
-CoinMarketCap: 360 px); do not persist those defaults. Existing stored coordinates
-remain the user's preference; an already overwritten earlier position cannot be
-reconstructed.
+coordinates. The trading panel is 480 px wide and the CMC panel is 500 px wide,
+each limited by the viewport. Without a saved preference, one panel uses the
+right edge with a 16 px margin and a 60 px top offset. When both are present,
+viewports at least 1028 px wide place them side by side, with CMC to the left of
+trading and a 16 px gap. Smaller viewports split the available height into two
+scrollable panels with 8 px outer margins and an 8 px vertical gap. These defaults
+are never persisted. Saved positions remain authoritative, even when a user's
+chosen positions overlap; an overwritten earlier position cannot be reconstructed.
+
+`src/shared/data-panel-layout.js` owns this presentation calculation. Mount,
+close, and removal notify the other panel through the local
+`jh-data-panels-layout-change` event. Reflow cancels an active drag before
+projecting coordinates, so an automatic move cannot become a saved drag when the
+mouse is released. The event only reflows existing panels; it does not start
+business work or broadcast again. Close and removal clean up the listener.
+Completing a real drag saves once and recalculates the available body height.
 
 `e2e/binance-orderbook/specs/data-panel-position.pw.js` covers this contract with
 the generated scripts, real browser geometry, native storage, and isolated data
 providers. JSDOM lifecycle tests do not establish viewport geometry.
+
+Both panels use the existing pathname locale contract: `/zh-CN/` selects Chinese;
+English and other supported routes select English. Names, controls, explanations,
+status text, number units, and time formatting change together. Ordinary ratios
+and percentages use two decimal places; funding percentages and small token
+prices retain enough significant digits to distinguish nonzero values from zero.
 
 ## Binance Trading Data Panel
 
@@ -123,6 +140,78 @@ a newer symbol or lifecycle epoch. 4xx parameter/authentication failures are not
 treated as transient network failures; any recovery behavior must remain explicit
 in the source contract.
 
+### History and current funding
+
+The table has metric, historical trend, and value columns. Names follow the
+approved Binance data-page terminology. Each chart uses the observations' actual
+timestamps, rather than equally spaced synthetic timestamps. Missing observations
+break the line. One observation is a point, and an empty series stays unavailable.
+Taker activity uses separate buy and sell volume bars; its numeric field is clearly
+labelled as the buy/sell ratio. Click or focus a chart to inspect its values and
+dated observations; arrow keys select points and Escape closes the detail.
+
+All Binance requests use the existing `https://www.binance.com` origin:
+
+| Display | Endpoint | Source fields |
+| --- | --- | --- |
+| Open interest | `/futures/data/openInterestHist` | `timestamp`, `sumOpenInterest` |
+| Top trader account ratio | `/futures/data/topLongShortAccountRatio` | `timestamp`, `longShortRatio` |
+| Top trader position ratio | `/futures/data/topLongShortPositionRatio` | `timestamp`, `longShortRatio` |
+| Global account ratio | `/futures/data/globalLongShortAccountRatio` | `timestamp`, `longShortRatio` |
+| Taker volume and buy/sell ratio | `/futures/data/takerlongshortRatio` | `timestamp`, `buyVol`, `sellVol`, `buySellRatio` |
+| Basis rate | `/futures/data/basis` | `timestamp`, `basisRate`; requests use `pair` and `contractType=PERPETUAL` |
+| Settled funding history | `/fapi/v1/fundingRate` | `fundingTime`, `fundingRate`; up to 40 settlements |
+| Current funding and next settlement | `/fapi/v1/premiumIndex` | `symbol`, `lastFundingRate`, `time`, `nextFundingTime` |
+| Current settlement interval | `/fapi/v1/fundingInfo` | the unique matching `symbol` and `fundingIntervalHours` |
+
+The six five-minute series retain `period=5m`, `limit=30`, the publication grace
+period, and the existing delayed-publication retry schedule. History parsing
+requires finite numeric values and increasing timestamps. Malformed values do
+not become zero or fresh votes. The open-interest-to-market-cap row divides
+`sumOpenInterest` by `CMCCirculatingSupply` in the same contract base unit; it does
+not apply another multiplier to 1000-token contracts.
+
+The single funding row combines the last settled rate and its historical chart
+with the separate current rate, interval, and countdown. Only the settled value
+participates in the existing simplified funding vote. Current funding refreshes
+15 seconds after each request completes, with a 10-second request deadline.
+Interval metadata refreshes independently at activation and each full historical
+cycle, also with a 10-second deadline. It must never block a historical refresh.
+An absent metadata row means an unknown interval, not an assumed eight hours.
+
+Requests and responses retain session, path, and symbol ownership. Changing
+routes, hiding, or closing aborts the current-rate, interval, and clock requests;
+superseded responses cannot publish. A failed current refresh can retain an actual
+previous quote with a visible cache/error label. A first failure without data is
+labelled unavailable rather than cached. Metadata cache status is independent.
+
+Server-clock requests have a five-second deadline. Samples whose round trip
+exceeds two seconds are rejected; accepted samples use the request/response
+midpoint to estimate offset. The countdown states when calibration is unavailable.
+At the supplied settlement time it shows waiting for update and withdraws the old
+current quote until a new authoritative next settlement arrives. The one-second
+display timer updates existing value/status nodes. Current and clock updates do
+not recreate historical charts or reset the history footer's receipt timestamp.
+
+### Public provider evidence
+
+`test/unit/binance-trading-data-market.test.js` retains numeric samples observed
+at `2026-10-09T07:16:15Z`: STRK current funding was `0.00005000`, while the latest
+settled rate was `0.00000029` at `1791518400000`; the next settlement was
+`1791532800000`, with a reported four-hour interval. These are dated fixture
+values, not current quotes. A 1000PEPE sample had OI `17073744019` and Binance CMC
+supply `413772355107.944`; CMC's underlying PEPE supply was
+`413772355107943.94`. Their ratio requires no additional 1000 multiplier and
+displays `4.13%`.
+
+Public GETs on the scripts' actual `www.binance.com` origin were also checked at
+`2026-10-09T09:05:25Z`: `premiumIndex?symbol=STRKUSDT` and `fundingInfo` both
+returned HTTP 200, and STRK's unique interval row reported four hours. Protocol
+reference: [official Binance market-data SDK](https://github.com/binance/binance-connector-python/blob/master/clients/derivatives_trading_usds_futures/src/binance_sdk_derivatives_trading_usds_futures/rest_api/api/market_data_api.py).
+SDK titles establish API meaning, not exact website text. The approved English
+labels still need a verbatim check against the live native data page; that visual
+check and installed Tampermonkey verification are separate from offline tests.
+
 ## Binance CoinMarketCap Panel
 
 The panel runs only on a matching futures route and resolves the current Binance
@@ -137,6 +226,50 @@ Route changes, hidden documents, panel close, and panel removal invalidate the
 refresh epoch and clean up timers and DOM listeners. A route watcher may remain
 to detect a later matching page, but it must not continue the business refresh
 loop while paused.
+
+The CMC table has metric, value, and interpretation columns, with expandable
+definitions. A short name and separate qualifier identify each ratio's numerator,
+denominator, period, and unit. The display uses CMC-reported turnover and liquidity
+ratios rather than recomputing them from potentially asynchronous fields. FDV's
+comparison is the snapshot's FDV divided by circulating market cap; supply share
+uses circulating divided by total supply. Missing or non-positive comparison
+denominators do not produce a ratio. Null, empty, or invalid provider numbers stay
+unavailable, while genuine zero stays zero. Treasury holdings retain their token
+unit and cannot become a holder-address count.
+
+Interpretations describe what the value supports. The volume ratio's 50% threshold
+is explicitly a descriptive convention, not a statistical anomaly or trading
+signal. Valuation comparisons need peers, volume changes need history, DEX
+liquidity is not Binance order-book depth, and profile disclosure scores do not
+establish project safety. The existing 30-second refresh, mapping rules, source
+timestamps, and API/page-snapshot provenance remain separate from presentation.
+
+For a browser-openable offline implementation preview, run
+`node e2e/binance-orderbook/helpers/data-panels-preview.mjs` after the two builds
+and open `output/data-panels-preview/index.html` with a `file://` URL. The generator
+embeds unchanged generated artifacts and labelled example data. It supports both
+languages, light/dark themes, and each panel separately, without external network
+requests. It is not live Binance or Tampermonkey evidence.
+
+### Data-panel implementation validation (2026-10-09)
+
+The trading-data `1.2.0` and CMC-data `0.2.0` implementations passed independent
+source review, both builds, generated syntax checks, test lint, metadata/install
+URL checks, and exact preview-to-artifact comparison. Full `npm test` passed
+2501 tests. The four rendered preview combinations cover Chinese/English,
+light/dark themes, desktop, and 390/320 px widths; they have no default panel
+overlap, horizontal overflow, page errors, or external HTTP requests.
+
+Full `npm run test:ui` passed 605 of 606 cases, including all 33 data-panel
+position/presentation cases. The remaining failure is in
+`active-ladder-context-behavior.pw.js`, before its saved-order-count change:
+the existing `pauseScenarioClock` reads page time and then calls
+`pauseAt(pageNow + 100)` across process boundaries. The recorded delay exceeded
+that margin, producing `Cannot fast-forward to the past`. The scenario, helper,
+fixture, orderbook artifact, and package inputs match the unchanged base commit
+`6b0f788e`; this is an outstanding browser-test timing failure, not a passed
+scenario. Live native-page comparison and Tampermonkey installation remain
+unverified, including verbatim English labels.
 
 ## Auto Refresh
 
@@ -166,6 +299,12 @@ claim live behavior from source inspection alone.
   preference may change. Complete a drag; only that panel's position is saved.
 - Interrupt a drag by resizing, switching window focus, or releasing the mouse
   outside the document; later movement cannot continue or save the old drag.
+- Mount or close the other panel while the header is held without movement;
+  releasing it must not save the resulting automatic layout.
+- Check both installation orders, a single panel, and both panels at desktop and
+  narrow widths. Defaults must not cover each other or write position preferences.
+- Collapse, drag to a lower position, and expand; content scrolls inside the
+  remaining height without an extra position write.
 
 ### Binance trading data
 
@@ -180,6 +319,16 @@ claim live behavior from source inspection alone.
   excluded from directional vote totals while missing rows remain explicit.
 - Navigate from a non-trading route to a futures route and back; only the
   matching route owns a panel and active business loop.
+- Switch Chinese/English routes and themes; inspect metric names, ratio units,
+  controls, errors, timestamps, and keyboard chart details in both languages.
+- Compare current funding with the native top-of-page quote and settled points
+  with the native data chart at matching times. Check the reported interval and
+  countdown, including settlement expiry, unavailable metadata, and calibration
+  failure. Do not compare quotes captured at different times as equal snapshots.
+- Delay or fail the current funding and interval endpoints; history must still
+  render. Current-only refreshes must preserve the historical chart and footer.
+- Check a tiny nonzero settled rate, genuine zero, missing data, and a 1000-token
+  contract; none may acquire a fabricated zero, interval, or multiplier.
 
 ### Binance CoinMarketCap data
 
@@ -192,6 +341,10 @@ claim live behavior from source inspection alone.
   survives removal.
 - Navigate between matching and non-matching Binance routes and verify the
   route watcher does not leave a business loop running off-route.
+- Expand interpretations for FDV, volume/cap, liquidity/cap, supply, holders, and
+  profile score; their stated bases must agree with the displayed data.
+- Check partial/missing fields and very small token prices in both languages;
+  unavailable values and genuine zero must remain distinguishable.
 
 ### Auto refresh
 

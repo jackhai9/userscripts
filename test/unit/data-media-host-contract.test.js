@@ -73,6 +73,53 @@ test('user receives distinct GM response, network failure, and timeout callbacks
   assert.equal(network.requests.every(request => request.settled), true);
 });
 
+test('user aborts a pending fetch once without delivering a later response', async () => {
+  // Given an HTTP request is pending with the browser AbortSignal contract
+  const network = createDataMediaNetwork();
+  const controller = new AbortController();
+  const pending = network.fetch('https://example.test/funding', { signal: controller.signal });
+  const rejection = assert.rejects(pending, { name: 'AbortError' });
+
+  // When the request owner aborts before the response is available
+  controller.abort();
+  await rejection;
+
+  // Then cancellation is terminal and a late response cannot be delivered
+  assert.equal(network.requests[0].settled, true);
+  assert.equal(network.requests[0].aborted, true);
+  assert.throws(() => network.requests[0].respond({ late: true }), /one terminal outcome/);
+});
+
+test('user does not start a fetch with an already cancelled signal', async () => {
+  // Given the browser signal already records a specific timeout reason
+  const network = createDataMediaNetwork();
+  const controller = new AbortController();
+  controller.abort(new DOMException('Funding request timed out', 'TimeoutError'));
+
+  // When the external fetch boundary receives the cancelled signal
+  const pending = network.fetch('https://example.test/funding', { signal: controller.signal });
+
+  // Then the original timeout is preserved without issuing a request
+  await assert.rejects(pending, { name: 'TimeoutError', message: 'Funding request timed out' });
+  assert.equal(network.requests.length, 0);
+});
+
+test('user keeps a completed fetch successful when its signal is cancelled later', async () => {
+  // Given a fetch owns a signal that is still active when its response arrives
+  const network = createDataMediaNetwork();
+  const controller = new AbortController();
+  const pending = network.fetch('https://example.test/funding', { signal: controller.signal });
+  network.requests[0].respond({ value: 7 });
+
+  // When the owner cancels after completion
+  controller.abort();
+  const response = await pending;
+
+  // Then the completed response remains successful and is not marked aborted
+  assert.deepEqual(await response.json(), { value: 7 });
+  assert.equal(network.requests[0].aborted, false);
+});
+
 test('user waits for matching DOM content without waiting for elapsed wall time', async t => {
   // Given a document whose completion text is not yet present
   const dom = new JSDOM('<body><div id="status">Loading</div></body>');

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   activateTradingData, afterDataMediaResponseTurn, completeCmcData,
-  completeTradingBatch, createDataPanelHost, cmcDetail, tradingDataset,
+  completeTradingBatch, createDataPanelHost, cmcDetail, tradingDataset, isTradingHistoryRequest,
 } from '../helpers/data-media-migration-host.js';
 
 async function finishInitial(host, kind) {
@@ -26,7 +26,7 @@ for (const kind of ['trading', 'cmc']) {
     // Then the current Bitcoin panel renders one initial request batch
     assert.match(host.element('symbol').textContent, /^BTC/);
     assert.equal(host.document.querySelectorAll(`#${host.panelId}`).length, 1);
-    assert.equal(host.network.requests.length, kind === 'trading' ? 8 : 3);
+    assert.equal(host.network.requests.length, kind === 'trading' ? 10 : 3);
   });
 
   test(`user operates a ${kind} header control without dragging or saving a new position`, { timeout: 5_000 }, async t => {
@@ -119,7 +119,7 @@ for (const kind of ['trading', 'cmc']) {
     else await completeCmcData(host, cmcDetail(), { map: false });
 
     // Then a new current-symbol refresh renders after route reactivation
-    assert.equal(host.panel().style.width, '240px');
+    assert.equal(host.panel().style.width, kind === 'trading' ? '480px' : '500px');
     assert.match(host.element('symbol').textContent, /^BTC/);
     assert.ok(host.network.requests.length > beforePause);
   });
@@ -151,19 +151,15 @@ for (const kind of ['trading', 'cmc']) {
     await finishInitial(host, kind);
     const firstRow = host.element('rows').firstElementChild;
 
-    // Then the actual styles reserve stable label and value space inside 240 pixels
-    assert.equal(host.panel().style.width, '240px');
-    assert.equal(firstRow.children[1].style.fontVariantNumeric, 'tabular-nums');
-    assert.equal(firstRow.children[1].style.textAlign, 'right');
-    if (kind === 'trading') {
-      assert.equal(firstRow.children[0].style.minWidth, '90px');
-      assert.equal(firstRow.children[1].style.flex, '1 1 0%');
-    } else {
-      assert.equal(firstRow.children[0].style.overflow, 'hidden');
-      assert.equal(firstRow.children[0].style.textOverflow, 'ellipsis');
-      assert.equal(firstRow.children[1].style.whiteSpace, 'nowrap');
-      assert.equal(firstRow.children[1].style.flex, '0 0 auto');
-    }
+    // Then the table keeps three semantic columns and aligned tabular numeric values
+    assert.equal(host.panel().style.width, kind === 'trading' ? '480px' : '500px');
+    assert.equal(host.element('rows').tagName, 'TBODY');
+    assert.equal(firstRow.children.length, 3);
+    assert.equal(firstRow.firstElementChild.getAttribute('scope'), 'row');
+    const value = firstRow.querySelector(kind === 'trading' ? '.td-value' : '.cmc-value');
+    const styles = host.window.getComputedStyle(value);
+    assert.equal(styles.fontVariantNumeric, 'tabular-nums');
+    assert.equal(styles.textAlign, 'right');
   });
 
   test(`user keeps the new symbol when a superseded ${kind} response arrives late`, { timeout: 5_000 }, async t => {
@@ -178,8 +174,8 @@ for (const kind of ['trading', 'cmc']) {
     // When Ethereum renders before the old Bitcoin request is allowed to finish
     host.navigate('/zh-CN/futures/ETHUSDT');
     if (kind === 'trading') {
-      await activateTradingData(host, tradingDataset(Date.now(), { oi: 3000 }), { symbol: 'ETHUSDT' });
-      await completeTradingBatch(host, tradingDataset(Date.now()), { symbol: 'BTCUSDT' });
+      await activateTradingData(host, tradingDataset(Date.now(), { symbol: 'ETHUSDT', oi: 3000 }), { symbol: 'ETHUSDT' });
+      await completeTradingBatch(host, tradingDataset(Date.now()), { symbol: 'BTCUSDT', includeInterval: false });
     } else {
       await completeCmcData(host, cmcDetail({ id: 2, symbol: 'ETH' }), { symbol: 'ETH', slug: 'ethereum' });
       await completeCmcData(host);
@@ -188,28 +184,30 @@ for (const kind of ['trading', 'cmc']) {
 
     // Then the late response cannot replace the displayed Ethereum identity or data
     assert.match(host.element('symbol').textContent, /^ETH/);
-    if (kind === 'trading') assert.match(host.element('rows').textContent, /3K ▼/);
+    if (kind === 'trading') assert.match(host.element('rows').textContent, /3000 ▼/);
     else assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/zh/currencies/ethereum/');
   });
 }
 
 for (const state of ['hidden', 'off-route']) {
   test(`user starts no trading data batch when server synchronization finishes after becoming ${state}`, { timeout: 5_000 }, async t => {
-    // Given the initial server-time request is still pending before the panel mounts
+    // Given initial server time is pending while the panel shows its loading state
     const host = createDataPanelHost(t, 'trading');
     await host.start();
     const timeRequest = host.network.requests[0];
-    assert.equal(host.panel(), null);
+    const panel = host.panel();
+    const initialRows = host.element('rows').innerHTML;
 
     // When the route or document becomes inactive before synchronization completes
     if (state === 'hidden') host.setHidden(true);
     else host.navigate('/zh-CN/futures');
-    timeRequest.respond({ serverTime: Date.now() });
     await afterDataMediaResponseTurn();
     host.clock.tick(60_000);
 
-    // Then synchronization cannot mount a panel or start any period endpoints
-    assert.equal(host.panel(), null);
+    // Then cancellation prevents data requests and leaves no late render
+    assert.equal(timeRequest.aborted, true);
+    assert.equal(host.panel(), state === 'hidden' ? panel : null);
+    if (state === 'hidden') assert.equal(host.element('rows').innerHTML, initialRows);
     assert.deepEqual(host.network.requests.map(request => request.url.pathname), ['/fapi/v1/time']);
   });
 }
@@ -247,7 +245,7 @@ for (const state of ['closed', 'hidden', 'off-route', 'new symbol']) {
     await activateTradingData(host);
     host.clock.tick(305_000);
     await host.network.waitForRequest(request => !request.settled && request.url.pathname.endsWith('/fundingRate'));
-    const oldRequests = host.network.requests.filter(request => !request.settled);
+    const oldRequests = host.network.requests.filter(request => !request.settled && isTradingHistoryRequest(request));
     assert.equal(oldRequests.length, 7);
     const oldPanel = host.panel();
     const oldRows = host.element('rows');
@@ -258,7 +256,7 @@ for (const state of ['closed', 'hidden', 'off-route', 'new symbol']) {
     else if (state === 'off-route') host.navigate('/zh-CN/futures');
     else {
       host.navigate('/zh-CN/futures/ETHUSDT');
-      await activateTradingData(host, tradingDataset(Date.now(), { oi: 3000 }), { symbol: 'ETHUSDT' });
+      await activateTradingData(host, tradingDataset(Date.now(), { symbol: 'ETHUSDT', oi: 3000 }), { symbol: 'ETHUSDT' });
     }
     const rows = state === 'new symbol' ? host.element('rows') : oldRows;
     const before = rows.innerHTML;
@@ -271,7 +269,7 @@ for (const state of ['closed', 'hidden', 'off-route', 'new symbol']) {
     assert.equal(oldPanel.isConnected, state !== 'off-route');
     if (state === 'new symbol') {
       assert.match(host.element('symbol').textContent, /^ETH/);
-      assert.match(rows.textContent, /3K ▼/);
+      assert.match(rows.textContent, /3000 ▼/);
     }
     if (state === 'closed') assert.equal(oldPanel.style.display, 'none');
   });
@@ -286,16 +284,17 @@ for (const state of ['closed', 'hidden', 'off-route']) {
     await host.network.waitForRequest(request => request.url.pathname.endsWith('/fundingRate'));
     const panel = host.panel();
     const rows = host.element('rows');
+    const initialRows = rows.innerHTML;
 
     // When the lifecycle is invalidated before the pending responses finish
     if (state === 'closed') host.element('close').click();
     else if (state === 'hidden') host.setHidden(true);
     else host.navigate('/zh-CN/futures');
-    await completeTradingBatch(host, tradingDataset(Date.now()));
+    await completeTradingBatch(host, tradingDataset(Date.now()), { includeInterval: false });
     await afterDataMediaResponseTurn();
 
     // Then the pending request cannot write its rows into the inactive panel
-    assert.equal(rows.innerHTML, '');
+    assert.equal(rows.innerHTML, initialRows);
     assert.equal(panel.isConnected, state !== 'off-route');
     if (state === 'closed') assert.equal(panel.style.display, 'none');
   });

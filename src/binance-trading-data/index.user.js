@@ -3,9 +3,9 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.1.18
+// @version      1.2.0
 // @author       jackhai9
-// @description  在合约交易页面叠加浮动面板，定时拉取交易数据（持仓量、多空比、资金费率等）并显示当前值 + 多空信号
+// @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
 // @match        https://www.binance.com/futures/*
 // @exclude      https://www.binance.com/*/my/wallet/futures/*
@@ -24,6 +24,10 @@ import {
   ensureSpaRouteChangePatched,
   installSpaRouteChangeListener,
 } from '../shared/spa-route-change.js';
+import { resolveUiLocaleFromPathname } from '../binance-orderbook-trade/contracts/panel-copy.js';
+import { computeTradingSignals, parseCurrentFunding, parseFundingInterval, parseHistory } from './market-data.js';
+import { createTradingDataView } from './panel-view.js';
+import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, hasVisibleDataPanelPeer } from '../shared/data-panel-layout.js';
 
 (function () {
   'use strict';
@@ -38,7 +42,7 @@ import {
   const PANEL_ID = 'jh-binance-trading-data-panel';
   const STORAGE_POS_KEY = 'jh_binance_trading_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_trading_data_collapsed';
-  const PANEL_WIDTH = 240;
+  const PANEL_WIDTH = 480;
   const DEBUG = false;
 
   const PERIOD_MS = 5 * 60 * 1000;  // 数据周期 5 分钟
@@ -48,8 +52,11 @@ import {
   const ROUTE_WATCHDOG_MS = 5_000;
   const DEFAULT_PERIOD = '5m';
   const DATA_LIMIT = 30;
-  const OI_TREND_PERIODS = 6;
-  const FUNDING_RATE_THRESHOLD = 0.0001; // 0.01%
+  const FUNDING_HISTORY_LIMIT = 40;
+  const CURRENT_FUNDING_REFRESH_MS = 15_000;
+  const FUNDING_REQUEST_TIMEOUT_MS = 10_000;
+  const CLOCK_REQUEST_TIMEOUT_MS = 5_000;
+  const CLOCK_MAX_ROUND_TRIP_MS = 2_000;
 
   const API_BASE = 'https://www.binance.com';
   const API_PATHS = {
@@ -60,6 +67,8 @@ import {
     takerRatio:         '/futures/data/takerlongshortRatio',
     basis:              '/futures/data/basis',
     fundingRate:        '/fapi/v1/fundingRate',
+    currentFunding:     '/fapi/v1/premiumIndex',
+    fundingInterval:    '/fapi/v1/fundingInfo',
     serverTime:         '/fapi/v1/time',
   };
 
@@ -90,20 +99,21 @@ import {
 
   /* ========== API 层 ========== */
 
-  async function fetchJson(path, params) {
+  async function fetchJson(path, params, signal) {
     const url = new URL(path, API_BASE);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     const href = url.toString();
     try {
-      const resp = await fetch(href);
+      const resp = await fetch(href, { signal });
       if (!resp.ok) throw Object.assign(new Error(`HTTP ${resp.status}`), { status: resp.status });
       return await resp.json();
     } catch (e1) {
+      if (signal?.aborted) throw e1;
       // 4xx 是确定性失败（参数错误、限流），不重试
       if (e1.status && e1.status >= 400 && e1.status < 500) throw e1;
       // 网络错误或 5xx，重试一次
       log('重试:', path);
-      const resp = await fetch(href);
+      const resp = await fetch(href, { signal });
       if (!resp.ok) throw new Error(`HTTP ${resp.status} (retry)`);
       return await resp.json();
     }
@@ -128,7 +138,7 @@ import {
     return fetchJson(API_PATHS.basis, { pair: symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT, contractType: 'PERPETUAL' });
   }
   function fetchFundingRate(symbol) {
-    return fetchJson(API_PATHS.fundingRate, { symbol, limit: 1 });
+    return fetchJson(API_PATHS.fundingRate, { symbol, limit: FUNDING_HISTORY_LIMIT });
   }
 
   // key -> fetcher 映射
@@ -144,17 +154,51 @@ import {
   /* ========== 服务器时间 ========== */
 
   let serverOffset = 0; // serverTime - localTime
+  let clockCalibrated = false;
+  let sessionGeneration = 0;
+  let clockRequestId = 0;
+  let serverTimeRequest = null;
 
-  async function syncServerTime() {
+  function currentSession() {
+    return { generation: sessionGeneration, path: location.pathname, symbol: getCurrentSymbol() };
+  }
+
+  function sessionIsCurrent(session) {
+    return session.generation === sessionGeneration
+      && session.path === location.pathname
+      && session.symbol === getCurrentSymbol()
+      && isActiveTradingPage();
+  }
+
+  async function syncServerTime(session) {
+    const requestId = ++clockRequestId;
+    const startedAt = Date.now();
+    const request = { controller: new AbortController(), timeout: null };
+    serverTimeRequest = request;
+    request.timeout = setTimeout(function () {
+      request.controller.abort(new DOMException('Server time request timed out', 'TimeoutError'));
+    }, CLOCK_REQUEST_TIMEOUT_MS);
     try {
-      const resp = await fetch(API_BASE + API_PATHS.serverTime);
+      const resp = await fetch(API_BASE + API_PATHS.serverTime, { signal: request.controller.signal });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const json = await resp.json();
-      serverOffset = json.serverTime - Date.now();
+      if (!Number.isSafeInteger(json.serverTime) || json.serverTime <= 0) throw new TypeError('Invalid server time');
+      if (!sessionIsCurrent(session) || requestId !== clockRequestId) return;
+      const receivedAt = Date.now();
+      const roundTrip = receivedAt - startedAt;
+      if (roundTrip < 0 || roundTrip > CLOCK_MAX_ROUND_TRIP_MS) throw new Error('Server time round trip exceeded the calibration limit');
+      // The midpoint bounds network transit error; slow samples cannot certify a countdown.
+      serverOffset = json.serverTime - (startedAt + receivedAt) / 2;
+      clockCalibrated = true;
       log('服务器时间偏移:', serverOffset + 'ms');
     } catch (e) {
-      err('获取服务器时间失败，使用本地时间');
+      if (!sessionIsCurrent(session) || requestId !== clockRequestId) return;
+      err('获取服务器时间失败，使用本地时间', e.message);
       serverOffset = 0;
+      clockCalibrated = false;
+    } finally {
+      clearTimeout(request.timeout);
+      if (serverTimeRequest === request) serverTimeRequest = null;
     }
   }
 
@@ -167,6 +211,8 @@ import {
   let dataStore = {};   // symbol -> { key: responseData } 当前展示用
   let dataCache = {};   // symbol -> { key: responseData } 失败回退用
   let failedKeys = new Set(); // 当前使用回退缓存的 key
+  let endpointErrors = {};
+  const historyUpdatedAt = {};
 
   // 提取接口返回的最新数据点时间戳
   function extractEndpointTs(data) {
@@ -177,21 +223,21 @@ import {
   // 纯函数：拉取指定 5m 接口，返回结果但不写全局状态
   async function fetchPeriodData(symbol, keys) {
     if (!keys || keys.length === 0) return {};
-    var fetchers = keys.map(function (k) { return FETCHER_MAP[k](symbol); });
+    var fetchers = keys.map(async function (k) { return parseHistory(k, await FETCHER_MAP[k](symbol), symbol); });
     var results = await Promise.allSettled(fetchers);
     var backup = dataCache[symbol] || {};
     var entries = {};
 
     keys.forEach(function (key, i) {
       if (results[i].status === 'fulfilled') {
-        entries[key] = { data: results[i].value, cached: false };
+        entries[key] = { data: results[i].value, cached: false, error: null };
       } else {
         err(key + ' 请求失败:', results[i].reason?.message || results[i].reason);
         if (backup[key]) {
-          entries[key] = { data: backup[key], cached: true };
+          entries[key] = { data: backup[key], cached: true, error: String(results[i].reason?.message || results[i].reason) };
           log(key + ' 使用缓存数据');
         } else {
-          entries[key] = { data: null, cached: true };
+          entries[key] = { data: null, cached: true, error: String(results[i].reason?.message || results[i].reason) };
         }
       }
     });
@@ -202,11 +248,11 @@ import {
   async function fetchFundingRateData(symbol) {
     var backup = dataCache[symbol] || {};
     try {
-      var data = await fetchFundingRate(symbol);
-      return { data: data, cached: false };
+      var data = parseHistory('fundingRate', await fetchFundingRate(symbol), symbol);
+      return { data: data, cached: false, error: null };
     } catch (e) {
       err('fundingRate 请求失败:', e);
-      return { data: backup.fundingRate || null, cached: true };
+      return { data: backup.fundingRate || null, cached: true, error: String(e.message || e) };
     }
   }
 
@@ -219,6 +265,7 @@ import {
       for (var key in periodEntries) {
         var e = periodEntries[key];
         dataStore[symbol][key] = e.data;
+        endpointErrors[key] = e.error;
         if (!e.cached) {
           dataCache[symbol][key] = e.data;
           failedKeys.delete(key);
@@ -230,6 +277,7 @@ import {
 
     if (fundingEntry) {
       dataStore[symbol].fundingRate = fundingEntry.data;
+      endpointErrors.fundingRate = fundingEntry.error;
       if (!fundingEntry.cached) {
         dataCache[symbol].fundingRate = fundingEntry.data;
         failedKeys.delete('fundingRate');
@@ -237,6 +285,10 @@ import {
         failedKeys.add('fundingRate');
       }
     }
+    const freshHistory = (periodEntries && Object.values(periodEntries).some(entry => !entry.cached))
+      || (fundingEntry && !fundingEntry.cached);
+    if (freshHistory) historyUpdatedAt[symbol] = Date.now();
+    lastUpdateTs = historyUpdatedAt[symbol] || 0;
   }
 
   // 哪些 5m 接口的最新数据时间戳还没到 targetTs
@@ -247,340 +299,155 @@ import {
     });
   }
 
-  /* ========== 数据处理 ========== */
+  /* ========== Panel presentation ========== */
 
-  function parseOpenInterest(data) {
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const latest = data[data.length - 1];
-    const value = parseFloat(latest.sumOpenInterest);
-    const valueUsd = parseFloat(latest.sumOpenInterestValue);
-    let trend = null;
-    if (data.length > OI_TREND_PERIODS) {
-      const prev = parseFloat(data[data.length - 1 - OI_TREND_PERIODS].sumOpenInterest);
-      trend = value > prev ? 'up' : value < prev ? 'down' : 'neutral';
-    }
-    return { value, valueUsd, trend };
+  let panelView = null;
+
+  function uiLocale() {
+    return resolveUiLocaleFromPathname(location.pathname);
   }
 
-  function parseOIMarketCapRatio(data) {
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const latest = data[data.length - 1];
-    const oi = parseFloat(latest.sumOpenInterest);
-    const supply = parseFloat(latest.CMCCirculatingSupply);
-    if (!supply || supply === 0) return null;
-    return { value: oi / supply };
+  function fundingClock() {
+    return { now: serverNow(), calibrated: clockCalibrated, localNow: Date.now() };
   }
-
-  function parseRatio(data, field) {
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const latest = data[data.length - 1];
-    return { value: parseFloat(latest[field]) };
-  }
-
-  function parseBasis(data) {
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const latest = data[data.length - 1];
-    return { value: parseFloat(latest.basisRate) };
-  }
-
-  function parseFundingRate(data) {
-    if (!Array.isArray(data) || data.length === 0) return null;
-    return { value: parseFloat(data[0].fundingRate) };
-  }
-
-  /* ========== 信号计算 ========== */
-
-  function signalOpenInterest(parsed) {
-    if (!parsed || !parsed.trend) return 'neutral';
-    return parsed.trend === 'up' ? 'long' : parsed.trend === 'down' ? 'short' : 'neutral';
-  }
-
-  function signalRatio(parsed) {
-    if (!parsed) return 'neutral';
-    return parsed.value > 1 ? 'long' : parsed.value < 1 ? 'short' : 'neutral';
-  }
-
-  function signalBasis(parsed) {
-    if (!parsed) return 'neutral';
-    return parsed.value > 0 ? 'long' : parsed.value < 0 ? 'short' : 'neutral';
-  }
-
-  function signalFundingRate(parsed) {
-    if (!parsed) return 'neutral';
-    // 反向指标：高正费率 = 偏空，高负费率 = 偏多
-    if (parsed.value < -FUNDING_RATE_THRESHOLD) return 'long';
-    if (parsed.value > FUNDING_RATE_THRESHOLD) return 'short';
-    return 'neutral';
-  }
-
-  function computeSignals(data, cachedKeys) {
-    const oi = parseOpenInterest(data.openInterest);
-    const oiMcRatio = parseOIMarketCapRatio(data.openInterest);
-    const topAccount = parseRatio(data.topAccountRatio, 'longShortRatio');
-    const topPosition = parseRatio(data.topPositionRatio, 'longShortRatio');
-    const globalAccount = parseRatio(data.globalAccountRatio, 'longShortRatio');
-    const taker = parseRatio(data.takerRatio, 'buySellRatio');
-    const basis = parseBasis(data.basis);
-    const funding = parseFundingRate(data.fundingRate);
-    const c = cachedKeys || new Set();
-
-    const indicators = [
-      { name: '合约持仓量',     signal: signalOpenInterest(oi),     display: fmtOI(oi),             vote: true,  cached: c.has('openInterest') },
-      { name: '大户账户多空比', signal: signalRatio(topAccount),     display: fmtRatio(topAccount),   vote: true,  cached: c.has('topAccountRatio') },
-      { name: '大户持仓多空比', signal: signalRatio(topPosition),    display: fmtRatio(topPosition),  vote: true,  cached: c.has('topPositionRatio') },
-      { name: '多空账户数比',   signal: signalRatio(globalAccount),  display: fmtRatio(globalAccount), vote: true, cached: c.has('globalAccountRatio') },
-      { name: '主动买卖比',     signal: signalRatio(taker),          display: fmtRatio(taker),        vote: true,  cached: c.has('takerRatio') },
-      { name: '基差',           signal: signalBasis(basis),          display: fmtBasis(basis),        vote: true,  cached: c.has('basis') },
-      { name: '资金费率',       signal: signalFundingRate(funding),  display: fmtFunding(funding),    vote: true,  cached: c.has('fundingRate') },
-      { name: '未平仓量/市值',  signal: 'neutral',                   display: fmtOIMarketCap(oiMcRatio), vote: false, cached: c.has('openInterest') },
-    ];
-
-    const voters = indicators.filter(i => i.vote && !i.cached);
-    const total = voters.length;
-    const longCount = voters.filter(i => i.signal === 'long').length;
-    const shortCount = voters.filter(i => i.signal === 'short').length;
-
-    return { indicators, longCount, shortCount, total };
-  }
-
-  /* ========== 格式化 ========== */
-
-  function fmtOI(parsed) {
-    if (!parsed) return '--';
-    const v = parsed.value;
-    const arrow = parsed.trend === 'up' ? ' ▲' : parsed.trend === 'down' ? ' ▼' : '';
-    if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B' + arrow;
-    if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M' + arrow;
-    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K' + arrow;
-    return v.toFixed(2) + arrow;
-  }
-
-  function fmtRatio(parsed) {
-    if (!parsed) return '--';
-    return parsed.value.toFixed(4);
-  }
-
-  function fmtBasis(parsed) {
-    if (!parsed) return '--';
-    const sign = parsed.value >= 0 ? '+' : '';
-    return sign + (parsed.value * 100).toFixed(4) + '%';
-  }
-
-  function fmtFunding(parsed) {
-    if (!parsed) return '--';
-    return (parsed.value * 100).toFixed(4) + '%';
-  }
-
-  function fmtOIMarketCap(parsed) {
-    if (!parsed) return '--';
-    return (parsed.value * 100).toFixed(2) + '%';
-  }
-
-  /* ========== 闪烁样式注入 ========== */
-
-  const FLASH_STYLE_ID = 'jh-trading-data-flash-style';
-  function injectFlashStyle() {
-    if (document.getElementById(FLASH_STYLE_ID)) return;
-    const style = document.createElement('style');
-    style.id = FLASH_STYLE_ID;
-    style.textContent = [
-      '@keyframes jh-td-flash {',
-      '  0%, 100% { background: transparent; }',
-      '  50% { background: rgba(240, 160, 0, 0.45); }',
-      '}',
-      '.jh-td-flash { animation: jh-td-flash 1s ease-in-out 5; }',
-    ].join('\n');
-    (document.head || document.documentElement).appendChild(style);
-  }
-
-  /* ========== 数据变化追踪 ========== */
-
-  let prevDisplayValues = {}; // name -> display string
-
-  /* ========== 颜色 ========== */
-
-  const C = {
-    long:    'var(--color-Buy, #0ecb81)',
-    short:   'var(--color-Sell, #f6465d)',
-    neutral: '#76808f',
-    bg:      '#ffffff',
-    text:    '#1e2329',
-    sub:     '#5e6673',
-    border:  '#eaecef',
-  };
-
-  function signalColor(s) {
-    return s === 'long' ? C.long : s === 'short' ? C.short : C.neutral;
-  }
-
-  /* ========== 面板 UI ========== */
 
   function ensurePanel() {
     let panel = document.getElementById(PANEL_ID);
     if (panel) return panel;
-
-    injectFlashStyle();
-
-    panel = document.createElement('div');
+    panel = document.createElement('section');
     panel.id = PANEL_ID;
-
-    const collapsed = loadCollapsed();
-
-    Object.assign(panel.style, {
-      position: 'fixed',
-      top:    '60px',
-      left:   'auto',
-      right:  '16px',
-      width:  PANEL_WIDTH + 'px',
-      zIndex: '999998',
-      background:   C.bg,
-      border:       '1px solid ' + C.border,
-      borderRadius: '8px',
-      boxShadow:    '0 2px 8px rgba(0,0,0,0.08)',
-      fontFamily:   'BinancePlex, system-ui, -apple-system, sans-serif',
-      fontSize:     '13px',
-      color:        C.text,
-      userSelect:   'none',
-      overflow:     'hidden',
-    });
-
-    panel.innerHTML = [
-      // --- header ---
-      '<div id="', PANEL_ID, '-header" style="',
-        'display:flex;align-items:center;justify-content:space-between;',
-        'padding:8px 12px;cursor:move;',
-        'background:#fafafa;border-bottom:1px solid ', C.border, ';',
-      '">',
-        '<div style="display:flex;align-items:center;gap:6px;">',
-          '<span style="font-size:15px;cursor:move;">&#9776;</span>',
-          '<span style="font-weight:600;font-size:14px;">交易数据</span>',
-          '<span id="', PANEL_ID, '-symbol" style="color:', C.sub, ';font-size:13px;"></span>',
-        '</div>',
-        '<div style="display:flex;gap:4px;">',
-          '<button id="', PANEL_ID, '-collapse" title="折叠/展开" style="',
-            'background:none;border:none;cursor:pointer;font-size:15px;',
-            'color:', C.sub, ';padding:0 4px;line-height:1;',
-          '">', collapsed ? '&#9633;' : '&#95;', '</button>',
-          '<button id="', PANEL_ID, '-close" title="关闭" style="',
-            'background:none;border:none;cursor:pointer;font-size:15px;',
-            'color:', C.sub, ';padding:0 4px;line-height:1;',
-          '">&times;</button>',
-        '</div>',
-      '</div>',
-      // --- body ---
-      '<div id="', PANEL_ID, '-body" style="display:', collapsed ? 'none' : 'block', ';">',
-        '<div id="', PANEL_ID, '-rows" style="padding:8px 12px;"></div>',
-        '<div id="', PANEL_ID, '-composite" style="padding:8px 12px;border-top:1px solid ', C.border, ';"></div>',
-        '<div id="', PANEL_ID, '-footer" style="padding:6px 12px;color:', C.sub, ';font-size:12px;border-top:1px solid ', C.border, ';">',
-          '<div style="display:flex;justify-content:space-between;">',
-            '<span data-role="updated-at"></span><span data-role="elapsed"></span>',
-          '</div>',
-        '</div>',
-      '</div>',
-    ].join('');
-
+    Object.assign(panel.style, { position: 'fixed', top: '60px', right: '16px', zIndex: '999998' });
     document.body.appendChild(panel);
+    panelView = createTradingDataView({
+      document, panel, locale: uiLocale(), collapsed: loadCollapsed(),
+      onCollapse(collapsed) {
+        saveCollapsed(collapsed);
+        keepPanelInViewport(panel);
+      },
+      onClose() {
+        panel.style.display = 'none';
+        panelClosed = true;
+        stopLoop();
+        cleanupPanelDrag();
+        panelView.destroy();
+        window.dispatchEvent(new CustomEvent(DATA_PANEL_LAYOUT_EVENT));
+      },
+    });
     keepPanelInViewport(panel);
     cleanupPanelDrag();
     dragCleanup = setupDrag(panel);
-    setupCollapseAndClose(panel);
-
+    window.dispatchEvent(new CustomEvent(DATA_PANEL_LAYOUT_EVENT));
     return panel;
   }
 
-  function renderPanel(result, symbolOverride) {
-    if (!isActiveTradingPage()) return;
+  function renderPanel(result, symbol) {
+    if (!isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
     const panel = ensurePanel();
-    const { indicators, longCount, shortCount, total } = result;
-    const symbol = symbolOverride || getCurrentSymbol();
-    if (!symbol) return;
+    panelView.setLocale(uiLocale());
+    panelView.render(result);
+    panelView.setFunding(currentFundingState, fundingClock());
+    const footer = panel.querySelector('#' + PANEL_ID + '-footer');
+    if (footer) updateFooter(footer);
+  }
 
-    // 检测哪些指标的值发生了变化
-    const changed = {};
-    for (const ind of indicators) {
-      if (prevDisplayValues[ind.name] !== undefined && prevDisplayValues[ind.name] !== ind.display) {
-        changed[ind.name] = true;
-      }
+  /** Funding updates and clock ticks must not refresh the historical data timestamp. */
+  function startDisplayClock() {
+    if (agoTimer) return;
+    agoTimer = setInterval(function () {
+      if (!isActiveTradingPage() || !panelView) return;
+      const footer = document.getElementById(PANEL_ID + '-footer');
+      if (footer) updateFooter(footer);
+      panelView.updateClock(fundingClock());
+    }, 1000);
+  }
+
+  function updateFooter(el) {
+    const locale = uiLocale();
+    let updatedText = locale === 'zh-CN' ? '等待数据' : 'Waiting for data';
+    let elapsedText = '';
+    if (lastUpdateTs) {
+      const clock = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(lastUpdateTs);
+      const ago = Math.max(0, Math.floor((Date.now() - lastUpdateTs) / 1000));
+      updatedText = (locale === 'zh-CN' ? '更新于 ' : 'Updated ') + clock;
+      elapsedText = locale === 'zh-CN' ? ago + '秒前' : ago + 's ago';
     }
-    // 更新缓存
-    for (const ind of indicators) {
-      prevDisplayValues[ind.name] = ind.display;
-    }
+    const updated = el.querySelector('[data-role="updated-at"]');
+    const elapsed = el.querySelector('[data-role="elapsed"]');
+    if (updated.textContent !== updatedText) updated.textContent = updatedText;
+    if (elapsed.textContent !== elapsedText) elapsed.textContent = elapsedText;
+  }
 
-    // symbol
-    const symbolEl = panel.querySelector('#' + PANEL_ID + '-symbol');
-    if (symbolEl) symbolEl.textContent = symbol || '';
+  /* ========== Current funding feed ========== */
 
-    // rows
-    const rowsEl = panel.querySelector('#' + PANEL_ID + '-rows');
-    if (rowsEl) {
-      rowsEl.innerHTML = indicators.map(function (ind) {
-        const valColor = ind.signal === 'long' ? C.long : ind.signal === 'short' ? C.short : C.text;
-        const dotColor = signalColor(ind.signal);
-        const dotStyle = ind.cached
-          ? 'display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid ' + dotColor + ';background:transparent;'
-          : 'display:inline-block;width:10px;height:10px;border-radius:50%;background:' + dotColor + ';';
-        const flashClass = changed[ind.name] ? ' jh-td-flash' : '';
-        return [
-          '<div class="', flashClass, '" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-radius:4px;">',
-            '<span style="color:', C.sub, ';min-width:90px;">', ind.name, '</span>',
-            '<span style="font-weight:500;font-variant-numeric:tabular-nums;flex:1;text-align:right;margin-right:8px;color:', valColor, ';">', ind.display, '</span>',
-            '<span style="', dotStyle, '"></span>',
-          '</div>',
-        ].join('');
-      }).join('');
-    }
+  let currentFundingTimer = null;
+  let currentFundingRequest = null;
+  let fundingIntervalRequest = null;
+  let currentFundingState = emptyCurrentFundingState(null);
 
-    // composite
-    const compositeEl = panel.querySelector('#' + PANEL_ID + '-composite');
-    if (compositeEl) {
-      const neutral = longCount === shortCount;
-      const biasLong = longCount > shortCount;
-      const biasLabel = neutral ? '中性' : biasLong ? '偏多' : '偏空';
-      const biasColor = neutral ? C.neutral : biasLong ? C.long : C.short;
-      const longPct = total > 0 ? Math.round(longCount / total * 100) : 0;
-      const shortPct = total > 0 ? Math.round(shortCount / total * 100) : 0;
+  function emptyCurrentFundingState(symbol) {
+    const interval = symbol ? dataCache[symbol]?.fundingInterval : null;
+    return {
+      current: null, intervalHours: interval ?? null, receivedAt: null,
+      cached: false, error: null, intervalCached: interval !== undefined && interval !== null,
+      intervalError: null,
+    };
+  }
 
-      compositeEl.innerHTML = [
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">',
-          '<span style="font-weight:600;">复合信号</span>',
-          '<span style="color:', biasColor, ';font-weight:600;">', biasLabel, ' ', longCount, ':', shortCount, '</span>',
-        '</div>',
-        '<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:', C.border, ';">',
-          '<div style="height:100%;width:', longPct, '%;border-radius:3px 0 0 3px;background:', C.long, ';"></div>',
-          '<div style="flex:1;"></div>',
-          '<div style="height:100%;width:', shortPct, '%;border-radius:0 3px 3px 0;background:', C.short, ';"></div>',
-        '</div>',
-      ].join('');
-    }
-
-    // footer
-    const footerEl = panel.querySelector('#' + PANEL_ID + '-footer');
-    if (footerEl) {
-      lastUpdateTs = Date.now();
-      updateFooter(footerEl);
-      if (!agoTimer && !document.hidden) {
-        agoTimer = setInterval(function () {
-          const el = document.querySelector('#' + PANEL_ID + '-footer');
-          if (el && lastUpdateTs) updateFooter(el);
-        }, 1000);
+  async function refreshCurrentFunding(session) {
+    if (!sessionIsCurrent(session) || currentFundingRequest) return;
+    const request = { controller: new AbortController(), timeout: null };
+    currentFundingRequest = request;
+    request.timeout = setTimeout(function () {
+      request.controller.abort(new DOMException('Funding request timed out', 'TimeoutError'));
+    }, FUNDING_REQUEST_TIMEOUT_MS);
+    try {
+      const payload = await fetchJson(API_PATHS.currentFunding, { symbol: session.symbol }, request.controller.signal);
+      const current = parseCurrentFunding(payload, session.symbol);
+      if (!sessionIsCurrent(session) || currentFundingRequest !== request) return;
+      currentFundingState = { ...currentFundingState, current, receivedAt: Date.now(), cached: false, error: null };
+    } catch (error) {
+      if (!sessionIsCurrent(session) || currentFundingRequest !== request) return;
+      currentFundingState = { ...currentFundingState, cached: currentFundingState.current !== null, error: String(error.message || error) };
+      err('Current funding request failed:', error.message);
+    } finally {
+      clearTimeout(request.timeout);
+      if (sessionIsCurrent(session) && currentFundingRequest === request) {
+        currentFundingRequest = null;
+        panelView.setFunding(currentFundingState, fundingClock());
+        currentFundingTimer = setTimeout(function () {
+          refreshCurrentFunding(session);
+        }, CURRENT_FUNDING_REFRESH_MS);
       }
     }
   }
 
-  function updateFooter(el) {
-    const d = new Date(lastUpdateTs);
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    const ss = String(d.getSeconds()).padStart(2, '0');
-    const ago = Math.floor((Date.now() - lastUpdateTs) / 1000);
-    const updatedText = '更新于 ' + hh + ':' + mm + ':' + ss;
-    const elapsedText = ago + '秒前';
-    const updated = el.querySelector('[data-role="updated-at"]');
-    const elapsed = el.querySelector('[data-role="elapsed"]');
-    // The second timer changes text only; retained elements avoid reparsing the footer on every tick.
-    if (updated.textContent !== updatedText) updated.textContent = updatedText;
-    if (elapsed.textContent !== elapsedText) elapsed.textContent = elapsedText;
+  /** Optional interval metadata publishes independently and cannot delay historical data. */
+  async function refreshFundingInterval(session) {
+    if (!sessionIsCurrent(session) || fundingIntervalRequest) return;
+    const request = { controller: new AbortController(), timeout: null };
+    fundingIntervalRequest = request;
+    request.timeout = setTimeout(function () {
+      request.controller.abort(new DOMException('Funding interval request timed out', 'TimeoutError'));
+    }, FUNDING_REQUEST_TIMEOUT_MS);
+    try {
+      const payload = await fetchJson(API_PATHS.fundingInterval, {}, request.controller.signal);
+      const intervalHours = parseFundingInterval(payload, session.symbol);
+      if (!sessionIsCurrent(session) || fundingIntervalRequest !== request) return;
+      if (!dataCache[session.symbol]) dataCache[session.symbol] = {};
+      dataCache[session.symbol].fundingInterval = intervalHours;
+      currentFundingState = { ...currentFundingState, intervalHours, intervalCached: false, intervalError: null };
+    } catch (error) {
+      if (!sessionIsCurrent(session) || fundingIntervalRequest !== request) return;
+      const intervalHours = dataCache[session.symbol]?.fundingInterval ?? null;
+      currentFundingState = { ...currentFundingState, intervalHours, intervalCached: intervalHours !== null, intervalError: String(error.message || error) };
+      err('Funding interval request failed:', error.message);
+    } finally {
+      clearTimeout(request.timeout);
+      if (sessionIsCurrent(session) && fundingIntervalRequest === request) {
+        fundingIntervalRequest = null;
+        panelView.setFunding(currentFundingState, fundingClock());
+      }
+    }
   }
 
   /* ========== 拖拽 ========== */
@@ -636,6 +503,7 @@ import {
     document.addEventListener('mouseup', onMouseUp);
     window.addEventListener('blur', cancelDrag);
     window.addEventListener('resize', onResize);
+    window.addEventListener(DATA_PANEL_LAYOUT_EVENT, onResize);
 
     return function cleanupDrag() {
       dragging = false;
@@ -644,32 +512,8 @@ import {
       document.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('blur', cancelDrag);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener(DATA_PANEL_LAYOUT_EVENT, onResize);
     };
-  }
-
-  /* ========== 折叠 & 关闭 ========== */
-
-  function setupCollapseAndClose(panel) {
-    const collapseBtn = panel.querySelector('#' + PANEL_ID + '-collapse');
-    const closeBtn    = panel.querySelector('#' + PANEL_ID + '-close');
-    const body        = panel.querySelector('#' + PANEL_ID + '-body');
-
-    if (collapseBtn && body) {
-      collapseBtn.addEventListener('click', function () {
-        const isHidden = body.style.display === 'none';
-        body.style.display = isHidden ? 'block' : 'none';
-        collapseBtn.innerHTML = isHidden ? '&#95;' : '&#9633;';
-        saveCollapsed(!isHidden);
-      });
-    }
-
-    if (closeBtn) {
-      closeBtn.addEventListener('click', function () {
-        panel.style.display = 'none';
-        panelClosed = true;
-        stopLoop();
-      });
-    }
   }
 
   function clampNumber(value, min, max) {
@@ -689,10 +533,16 @@ import {
   /** Project the saved preference without letting smaller windows overwrite it. */
   function keepPanelInViewport(panel) {
     const width = panel.offsetWidth || PANEL_WIDTH;
-    const normalized = normalizeSavedPosition(loadPosition(), width)
-      || normalizeSavedPosition({ left: window.innerWidth - width - 16, top: 60 }, width);
+    const normalized = calculateDataPanelLayout({
+      kind: 'trading', panelWidth: width,
+      viewportWidth: window.innerWidth || document.documentElement.clientWidth || width,
+      viewportHeight: window.innerHeight || document.documentElement.clientHeight || 80,
+      savedPosition: normalizeSavedPosition(loadPosition(), width),
+      hasPeer: hasVisibleDataPanelPeer(document, 'trading'),
+    });
     panel.style.left = normalized.left + 'px';
     panel.style.top = normalized.top + 'px';
+    panel.style.maxHeight = normalized.maxHeight + 'px';
     panel.style.right = 'auto';
   }
 
@@ -702,6 +552,7 @@ import {
     const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
     if (!normalized) return;
     savePosition(normalized.left, normalized.top);
+    keepPanelInViewport(panel);
   }
 
   /* ========== localStorage ========== */
@@ -747,7 +598,7 @@ import {
   function renderAll(symbol) {
     if (!isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
     var data = dataStore[symbol] || {};
-    var result = computeSignals(data, failedKeys);
+    var result = computeTradingSignals(data, failedKeys, uiLocale(), symbol, endpointErrors);
     renderPanel(result, symbol);
   }
 
@@ -761,16 +612,16 @@ import {
 
     if (symbol !== lastSymbol) {
       lastSymbol = symbol;
-      failedKeys = new Set();
-      prevDisplayValues = {};
       log('交易对:', symbol);
     }
     fetching = myEpoch;
     try {
-      var [periodEntries, fundingEntry] = await Promise.all([
+      var history = Promise.all([
         fetchPeriodData(symbol, PERIOD_KEYS),
         fetchFundingRateData(symbol),
       ]);
+      refreshFundingInterval(currentSession());
+      var [periodEntries, fundingEntry] = await history;
       if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return; // 已被更新的调用取代
       applyResults(symbol, periodEntries, fundingEntry);
       renderAll(symbol);
@@ -836,7 +687,6 @@ import {
     if (symbol !== lastSymbol) {
       lastSymbol = symbol;
       failedKeys = new Set();
-      prevDisplayValues = {};
       log('交易对:', symbol);
     }
 
@@ -847,10 +697,12 @@ import {
     try {
       var periodEntries, fundingEntry;
       if (attempt === 0) {
-        [periodEntries, fundingEntry] = await Promise.all([
+        var history = Promise.all([
           fetchPeriodData(symbol, PERIOD_KEYS),
           fetchFundingRateData(symbol),
         ]);
+        refreshFundingInterval(currentSession());
+        [periodEntries, fundingEntry] = await history;
       } else {
         var pending = getPendingKeys(symbol, targetTs);
         if (pending.length === 0) {
@@ -904,12 +756,29 @@ import {
     clearTimeout(retryTimer);  retryTimer = null;
     if (agoTimer)  { clearInterval(agoTimer);  agoTimer = null; }
     if (serverTimeTimer) { clearInterval(serverTimeTimer); serverTimeTimer = null; }
+    if (serverTimeRequest) {
+      clearTimeout(serverTimeRequest.timeout);
+      serverTimeRequest.controller.abort();
+      serverTimeRequest = null;
+    }
+    clearTimeout(currentFundingTimer); currentFundingTimer = null;
+    if (currentFundingRequest) {
+      clearTimeout(currentFundingRequest.timeout);
+      currentFundingRequest.controller.abort();
+      currentFundingRequest = null;
+    }
+    if (fundingIntervalRequest) {
+      clearTimeout(fundingIntervalRequest.timeout);
+      fundingIntervalRequest.controller.abort();
+      fundingIntervalRequest = null;
+    }
+    clockCalibrated = false;
   }
 
   function startServerTimeLoop() {
     if (serverTimeTimer) return;
     serverTimeTimer = setInterval(function () {
-      if (isActiveTradingPage()) syncServerTime();
+      if (isActiveTradingPage()) syncServerTime(currentSession());
     }, 60 * 60 * 1000);
   }
 
@@ -922,6 +791,7 @@ import {
   }
 
   function stopLoop() {
+    sessionGeneration++;
     epoch++;
     stopBusinessLoop();
     stopRouteWatcher();
@@ -935,11 +805,17 @@ import {
 
   function removePanel() {
     cleanupPanelDrag();
+    if (panelView) panelView.destroy();
+    panelView = null;
     var panel = document.getElementById(PANEL_ID);
-    if (panel) panel.remove();
+    if (panel) {
+      panel.remove();
+      window.dispatchEvent(new CustomEvent(DATA_PANEL_LAYOUT_EVENT));
+    }
   }
 
   function pauseForNonTradingPage() {
+    sessionGeneration++;
     epoch++;
     stopBusinessLoop();
     lastSymbol = null;
@@ -948,14 +824,26 @@ import {
 
   async function activateTradingPage() {
     if (!isActiveTradingPage()) return;
-    await syncServerTime();
-    if (!isActiveTradingPage()) return;
-    ensurePanel();
-    startServerTimeLoop();
-    var symbol = getCurrentSymbol();
+    sessionGeneration++;
+    epoch++;
+    stopBusinessLoop();
+    fetching = 0;
+    const session = currentSession();
+    const symbol = session.symbol;
     if (!symbol) return;
+    failedKeys = new Set([...PERIOD_KEYS, 'fundingRate']);
+    endpointErrors = {};
+    currentFundingState = emptyCurrentFundingState(symbol);
+    lastUpdateTs = historyUpdatedAt[symbol] || 0;
+    ensurePanel();
+    renderAll(symbol);
+    await syncServerTime(session);
+    if (!sessionIsCurrent(session)) return;
+    startServerTimeLoop();
+    startDisplayClock();
+    refreshCurrentFunding(session);
     await initialFetch(symbol);
-    if (!isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
+    if (!sessionIsCurrent(session)) return;
     scheduleCycle();
   }
 

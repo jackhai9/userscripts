@@ -1,173 +1,15 @@
-import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
 import { test, expect, reloadPageWithCoverage } from '../test.js';
-import { cmcDetail, tradingDataset } from '../../../test/helpers/data-media-migration-host.js';
+import {
+  DATA_PANEL_NOW as NOW, DATA_PANELS as PANELS, POSITION_AUDIT_KEY as AUDIT_KEY,
+  CMC_HEADERS, createDataPanelsFixture as createFixture, installDataPanels as installPanels,
+} from '../helpers/data-panels-host.js';
 
-const ORIGIN = 'https://www.binance.com';
-const FIXTURE_URL = `${ORIGIN}/zh-CN/futures/BTCUSDT`;
-const NOW = Date.UTC(2026, 9, 9, 0, 0, 0);
-const AUDIT_KEY = '__data_panel_fixture_position_writes__';
 const LARGE = { width: 1600, height: 1200 };
 const SMALL = { width: 640, height: 420 };
 const INITIAL = {
-  trading: { left: 1250, top: 700 },
-  cmc: { left: 930, top: 620 },
+  trading: { left: 1080, top: 700 },
+  cmc: { left: 530, top: 620 },
 };
-const PANELS = [
-  {
-    name: 'trading', id: 'jh-binance-trading-data-panel',
-    key: 'jh_binance_trading_data_pos', artifact: 'binance-trading-data',
-  },
-  {
-    name: 'cmc', id: 'jh-binance-cmc-data-panel',
-    key: 'jh_binance_cmc_data_pos', artifact: 'binance-coinmarketcap-data',
-  },
-];
-const CMC_HEADERS = {
-  Accept: 'application/json, text/plain, */*',
-  'Cache-Control': 'no-cache',
-  Pragma: 'no-cache',
-};
-
-/** Exercise the current successful requestJson boundary; unmodeled requests fail. */
-async function createFixture(context) {
-  const requests = [];
-  const gmRequests = [];
-  const errors = [];
-  const dataset = tradingDataset(NOW);
-  const map = { data: [{ id: 1, symbol: 'BTC', slug: 'bitcoin', is_active: 1 }] };
-
-  await context.exposeBinding('__dataPanelFixtureCmcResponse', (_source, request) => {
-    assert.deepEqual(Object.keys(request).sort(), ['headers', 'method', 'timeout', 'url']);
-    assert.equal(request.method, 'GET');
-    assert.equal(request.timeout, 20_000);
-    assert.deepEqual(request.headers, CMC_HEADERS);
-    gmRequests.push(request);
-    const url = new URL(request.url);
-    let body;
-    if (url.origin === 'https://api.coinmarketcap.com' && url.pathname === '/data-api/v1/cryptocurrency/map') {
-      assert.deepEqual(Object.fromEntries(url.searchParams), {
-        symbol: 'BTC', listing_status: 'active', _: String(NOW),
-      });
-      body = map;
-    } else if (url.origin === 'https://api.coinmarketcap.com' && url.pathname === '/data-api/v3/cryptocurrency/detail') {
-      assert.deepEqual(Object.fromEntries(url.searchParams), {
-        id: '1', convertId: '2781', languageCode: 'zh', _: String(NOW),
-      });
-      body = { data: cmcDetail() };
-    } else if (url.origin === 'https://dapi.coinmarketcap.com' && url.pathname === '/dex-stats/v3/dexer/crypto-holder/show_holders') {
-      assert.deepEqual(Object.fromEntries(url.searchParams), { cryptoId: '1', _: String(NOW) });
-      body = { data: { showFlag: true, count: 10_000 } };
-    } else {
-      assert.fail(`Unmodeled CMC request: ${url.origin}${url.pathname}`);
-    }
-    return { status: 200, responseText: JSON.stringify(body) };
-  });
-
-  await context.addInitScript(({ origin, keys, auditKey }) => {
-    if (location.origin !== origin) return;
-    const nativeSetItem = Storage.prototype.setItem;
-    if (localStorage.getItem(auditKey) === null) {
-      nativeSetItem.call(localStorage, auditKey, '[]');
-    }
-    window.dataPanelFixture = { resizeEvents: 0, gmCompletions: [], pointerEvents: [] };
-    window.addEventListener('resize', () => { window.dataPanelFixture.resizeEvents += 1; });
-    document.addEventListener('mousemove', event => {
-      window.dataPanelFixture.pointerEvents.push({
-        buttons: event.buttons, x: event.clientX, y: event.clientY, trusted: event.isTrusted,
-      });
-    }, { capture: true });
-
-    // Keep actual browser persistence and retain evidence after real tab teardown.
-    Storage.prototype.setItem = function (key, value) {
-      nativeSetItem.call(this, key, value);
-      if (this !== localStorage || !keys.includes(key)) return;
-      const writes = JSON.parse(localStorage.getItem(auditKey));
-      writes.push({ key, value: JSON.parse(value) });
-      nativeSetItem.call(localStorage, auditKey, JSON.stringify(writes));
-    };
-
-    // The source adapter consumes these callbacks and the status/responseText pair.
-    window.GM_xmlhttpRequest = options => {
-      for (const name of ['onload', 'onerror', 'ontimeout']) {
-        if (typeof options[name] !== 'function') throw new Error(`Missing GM callback: ${name}`);
-      }
-      const request = {
-        method: options.method, url: options.url,
-        timeout: options.timeout, headers: options.headers,
-      };
-      window.__dataPanelFixtureCmcResponse(request).then(response => {
-        window.dataPanelFixture.gmCompletions.push({ url: options.url, response });
-        options.onload(response);
-      });
-    };
-  }, { origin: ORIGIN, keys: PANELS.map(panel => panel.key), auditKey: AUDIT_KEY });
-
-  await context.route('**/*', async route => {
-    const request = route.request();
-    const url = new URL(request.url());
-    assert.equal(request.method(), 'GET');
-    if (url.href === FIXTURE_URL && request.isNavigationRequest()) {
-      await route.fulfill({
-        contentType: 'text/html; charset=utf-8',
-        body: '<!doctype html><html><head><meta charset="utf-8"><title>Data panel position fixture</title>'
-          + '<style>body{margin:0;background:#edf1f5;font:16px system-ui}main{padding:24px;color:#475569}</style>'
-          + '</head><body><main>Offline data panel position fixture</main></body></html>',
-      });
-      return;
-    }
-    assert.equal(url.origin, ORIGIN);
-    requests.push({ method: request.method(), path: url.pathname, params: Object.fromEntries(url.searchParams) });
-    if (url.pathname === '/fapi/v1/time') {
-      assert.deepEqual(Object.fromEntries(url.searchParams), {});
-      await route.fulfill({ json: { serverTime: NOW } });
-      return;
-    }
-    const endpoint = url.pathname.split('/').at(-1);
-    assert.equal(Object.hasOwn(dataset, endpoint), true, `Unmodeled fetch: ${url.pathname}`);
-    if (endpoint === 'fundingRate') {
-      assert.equal(url.pathname, '/fapi/v1/fundingRate');
-      assert.deepEqual(Object.fromEntries(url.searchParams), { symbol: 'BTCUSDT', limit: '1' });
-    } else if (endpoint === 'basis') {
-      assert.equal(url.pathname, '/futures/data/basis');
-      assert.deepEqual(Object.fromEntries(url.searchParams), {
-        pair: 'BTCUSDT', period: '5m', limit: '30', contractType: 'PERPETUAL',
-      });
-    } else {
-      assert.equal(url.pathname, `/futures/data/${endpoint}`);
-      assert.deepEqual(Object.fromEntries(url.searchParams), { symbol: 'BTCUSDT', period: '5m', limit: '30' });
-    }
-    await route.fulfill({ json: dataset[endpoint] });
-  });
-
-  async function open(page, { viewport = LARGE, positions, install = true } = {}) {
-    page.on('pageerror', error => errors.push(error.message));
-    await page.setViewportSize(viewport);
-    await page.clock.setFixedTime(NOW);
-    await page.goto(FIXTURE_URL);
-    if (positions) {
-      await page.evaluate(({ panels, positions, auditKey }) => {
-        for (const panel of panels) localStorage.setItem(panel.key, JSON.stringify(positions[panel.name]));
-        localStorage.setItem(auditKey, '[]');
-      }, { panels: PANELS, positions, auditKey: AUDIT_KEY });
-    }
-    if (install) await installPanels(page);
-  }
-
-  return { open, requests, gmRequests, errors, map };
-}
-
-async function installPanels(page) {
-  for (const panel of PANELS) {
-    const path = fileURLToPath(new URL(`../../../scripts/${panel.artifact}.user.js`, import.meta.url));
-    await page.addScriptTag({ path });
-  }
-  await expect(page.locator('#jh-binance-trading-data-panel [data-role="updated-at"]')).toContainText('更新于');
-  await expect(page.locator('#jh-binance-trading-data-panel-symbol')).toHaveText('BTCUSDT');
-  await expect(page.locator('#jh-binance-cmc-data-panel-footer a')).toHaveText('CMC data-api');
-  await expect(page.locator('#jh-binance-cmc-data-panel-symbol')).toHaveText('BTC #1');
-  await expect(page.locator('#jh-binance-cmc-data-panel-rows')).toContainText('$6万');
-}
 
 async function readPositions(page) {
   return page.evaluate(panels => Object.fromEntries(panels.map(panel => [
@@ -182,7 +24,7 @@ async function readWrites(page) {
 async function assertPositions(page, positions) {
   for (const panel of PANELS) {
     expect(await page.locator(`#${panel.id}`).boundingBox()).toMatchObject({
-      x: positions[panel.name].left, y: positions[panel.name].top, width: 242,
+      x: positions[panel.name].left, y: positions[panel.name].top, width: panel.width,
     });
   }
 }
@@ -277,7 +119,7 @@ test('user restores both separate panel preferences after a smaller viewport', a
   await resize(page, SMALL);
 
   // Then only the displayed positions clamp, leaving each original preference unchanged.
-  await assertPositions(page, { trading: { left: 398, top: 372 }, cmc: { left: 398, top: 372 } });
+  await assertPositions(page, { trading: { left: 160, top: 372 }, cmc: { left: 140, top: 372 } });
   expect(await readPositions(page)).toEqual(INITIAL);
   expect(await readWrites(page)).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath('small-clamped.png') });
@@ -303,7 +145,7 @@ test('user keeps large-screen preferences when a small tab opens reloads and clo
   await fixture.open(small, { viewport: SMALL });
 
   // Then the small tab displays reachable headers while both tabs retain the original preferences.
-  await assertPositions(small, { trading: { left: 398, top: 372 }, cmc: { left: 398, top: 372 } });
+  await assertPositions(small, { trading: { left: 160, top: 372 }, cmc: { left: 140, top: 372 } });
   expect(await readPositions(page)).toEqual(INITIAL);
   expect(await readWrites(page)).toEqual([]);
 
@@ -312,7 +154,7 @@ test('user keeps large-screen preferences when a small tab opens reloads and clo
   await installPanels(small);
 
   // Then reload and initialization leave the shared preferences untouched.
-  await assertPositions(small, { trading: { left: 398, top: 372 }, cmc: { left: 398, top: 372 } });
+  await assertPositions(small, { trading: { left: 160, top: 372 }, cmc: { left: 140, top: 372 } });
   expect(await readPositions(page)).toEqual(INITIAL);
   expect(await readWrites(page)).toEqual([]);
 
@@ -361,10 +203,10 @@ test('user keeps a newer drag preference after an older tab closes', async ({ pa
 test('user clicks titles and collapse controls on a small screen without replacing preferred positions', async ({ page, context }) => {
   // Given both preferred positions clamp vertically but their headers remain separately clickable.
   const fixture = await createFixture(context);
-  const preferred = { trading: { left: 80, top: 720 }, cmc: { left: 390, top: 660 } };
+  const preferred = { trading: { left: 80, top: 720 }, cmc: { left: 690, top: 660 } };
   await fixture.open(page, { positions: preferred });
-  await resize(page, { width: 800, height: 460 });
-  await assertPositions(page, { trading: { left: 80, top: 412 }, cmc: { left: 390, top: 412 } });
+  await resize(page, { width: 1200, height: 460 });
+  await assertPositions(page, { trading: { left: 80, top: 412 }, cmc: { left: 690, top: 412 } });
 
   // When the user clicks each title without pointer movement and toggles each collapse control.
   for (const panel of PANELS) {
@@ -378,7 +220,7 @@ test('user clicks titles and collapse controls on a small screen without replaci
   // Then title clicks and collapse changes do not save any clamped display coordinate.
   expect(await readPositions(page)).toEqual(preferred);
   expect(await readWrites(page)).toEqual([]);
-  await assertPositions(page, { trading: { left: 80, top: 412 }, cmc: { left: 390, top: 412 } });
+  await assertPositions(page, { trading: { left: 80, top: 412 }, cmc: { left: 690, top: 412 } });
   expect(fixture.errors).toEqual([]);
 });
 
@@ -386,7 +228,7 @@ for (const panel of PANELS) {
   test(`user saves the ${panel.name} panel only once after a drag ends at a changed position`, async ({ page, context }) => {
     // Given both panels have saved positions and the selected header can move freely.
     const fixture = await createFixture(context);
-    const initial = { trading: { left: 80, top: 80 }, cmc: { left: 420, top: 100 } };
+    const initial = { trading: { left: 80, top: 80 }, cmc: { left: 660, top: 100 } };
     const target = panel.name === 'trading' ? { left: 220, top: 220 } : { left: 640, top: 280 };
     await fixture.open(page, { positions: initial });
 
@@ -433,7 +275,7 @@ for (const panel of PANELS) {
   test(`user ignores right-button movement over the ${panel.name} header`, async ({ page, context }) => {
     // Given both generated panels have separate saved positions and a real mouse.
     const fixture = await createFixture(context);
-    const initial = { trading: { left: 80, top: 80 }, cmc: { left: 420, top: 100 } };
+    const initial = { trading: { left: 80, top: 80 }, cmc: { left: 660, top: 100 } };
     await fixture.open(page, { positions: initial });
 
     // When the user presses the right button and moves across the selected header.
@@ -462,7 +304,7 @@ for (const panel of PANELS) {
     await nextFrames(page);
 
     // Then the viewport adjustment is temporary and cannot become a completed drag preference.
-    await assertPositions(page, { trading: { left: 398, top: 372 }, cmc: { left: 398, top: 372 } });
+    await assertPositions(page, { trading: { left: 160, top: 372 }, cmc: { left: 140, top: 372 } });
     expect(await readPositions(page)).toEqual(INITIAL);
     expect(await readWrites(page)).toEqual([]);
 
@@ -481,7 +323,7 @@ for (const panel of PANELS) {
     test(`user abandons the ${panel.name} drag after ${cancellation}`, async ({ page, context }) => {
       // Given both panels have saved preferences and the selected panel is mid-drag.
       const fixture = await createFixture(context);
-      const initial = { trading: { left: 80, top: 80 }, cmc: { left: 420, top: 100 } };
+      const initial = { trading: { left: 80, top: 80 }, cmc: { left: 660, top: 100 } };
       const target = { left: initial[panel.name].left + 80, top: 220 };
       await fixture.open(page, { positions: initial });
       await startDrag(page, panel, target);
@@ -515,11 +357,16 @@ test('user keeps responsive default panel positions without creating a saved pre
 
   // When the viewport changes to a smaller screen and back through real resize events.
   await resize(page, SMALL);
-  await assertPositions(page, { trading: { left: 382, top: 60 }, cmc: { left: 382, top: 360 } });
+  const trading = await page.locator(`#${PANELS[0].id}`).boundingBox();
+  const cmc = await page.locator(`#${PANELS[1].id}`).boundingBox();
+  expect(trading).toMatchObject({ x: 144, y: 8, width: 480 });
+  expect(cmc).toMatchObject({ x: 124, width: 500 });
+  expect(cmc.y - trading.y - trading.height).toBeCloseTo(8, 1);
+  expect(cmc.y + cmc.height).toBeLessThanOrEqual(SMALL.height);
   await resize(page, LARGE);
 
-  // Then the original right inset and distinct default heights return without new position keys.
-  await assertPositions(page, { trading: { left: 1342, top: 60 }, cmc: { left: 1342, top: 360 } });
+  // Then the original right inset and separate desktop columns return without new position keys.
+  await assertPositions(page, { trading: { left: 1104, top: 60 }, cmc: { left: 588, top: 60 } });
   expect(await readPositions(page)).toEqual({ trading: null, cmc: null });
   expect(await readWrites(page)).toEqual([]);
 
