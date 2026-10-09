@@ -3,6 +3,7 @@ import { cmcDetail, tradingDataset } from '../../../test/helpers/data-media-migr
 import {
   createDataPanelsFixture, installDataPanels, DATA_PANEL_NOW, DATA_PANELS, POSITION_AUDIT_KEY,
 } from '../helpers/data-panels-host.js';
+import { installSimulatedVisibility, setSimulatedVisibility } from '../helpers/simulated-visibility.js';
 
 const SIDE_BY_SIDE = { trading: { left: 1040, top: 60 }, cmc: { left: 520, top: 60 } };
 
@@ -26,6 +27,68 @@ function presentationDataset() {
   ];
   return dataset;
 }
+
+test('user retains both data panels and expanded details through ten simulated background returns', async ({ page, context }, testInfo) => {
+  // Given both generated panels are loaded with expanded details under a controlled browser clock
+  const fixture = await createDataPanelsFixture(context, { dataset: presentationDataset() });
+  await fixture.open(page, { locale: 'en', controlledClock: true, viewport: { width: 1366, height: 768 } });
+  await installSimulatedVisibility(page);
+  const trading = page.locator('#jh-binance-trading-data-panel');
+  const cmc = page.locator('#jh-binance-cmc-data-panel');
+  await trading.locator('[data-metric="funding"] .td-spark-button').click();
+  await cmc.locator('[data-expand-metric="fdv"]').click();
+  const updated = await trading.locator('[data-role="updated-at"]').textContent();
+  await page.evaluate(() => {
+    window.retainedDataPanelRows = [...document.querySelectorAll('#jh-binance-trading-data-panel-rows > tr, #jh-binance-cmc-data-panel-rows > tr')];
+  });
+
+  // When visibility and suspended animation frames simulate ten one-second tab absences
+  for (let index = 0; index < 10; index++) {
+    await setSimulatedVisibility(page, true);
+    await page.clock.runFor(1_000);
+    await setSimulatedVisibility(page, false);
+  }
+
+  // Then existing rows, details and funding stay readable without a duplicate HTTP request or fresh history timestamp
+  expect(await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#jh-binance-trading-data-panel-rows > tr, #jh-binance-cmc-data-panel-rows > tr')];
+    return rows.length === window.retainedDataPanelRows.length && rows.every((row, index) => row === window.retainedDataPanelRows[index]);
+  })).toBe(true);
+  await expect(trading.locator('[data-role="current-funding"]')).toHaveText('0.00378%');
+  await expect(trading.locator('[data-role="funding-countdown"]')).toHaveText('Countdown 03:59:50');
+  await expect(trading.locator('[data-role="updated-at"]')).toHaveText(updated);
+  await expect(trading.locator('[data-metric="funding"] .td-spark-button')).toHaveAttribute('aria-expanded', 'true');
+  await expect(cmc.locator('[data-expand-metric="fdv"]')).toHaveAttribute('aria-expanded', 'true');
+  await expect(cmc.locator('#jh-binance-cmc-data-panel-explanation-fdv')).toBeVisible();
+  expect(fixture.requests).toHaveLength(10);
+  expect(fixture.gmRequests).toHaveLength(3);
+  expect(fixture.errors).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath('background-panels-en.png'), fullPage: true });
+});
+
+test('user sees an expired funding quote withdrawn immediately after a simulated background settlement', async ({ page, context }) => {
+  // Given a generated trading panel has a current quote whose settlement is two seconds away
+  const dataset = presentationDataset();
+  dataset.premiumIndex.nextFundingTime = DATA_PANEL_NOW + 2_000;
+  const fixture = await createDataPanelsFixture(context, { dataset });
+  await fixture.open(page, { controlledClock: true, panels: ['trading'] });
+  await installSimulatedVisibility(page);
+  const trading = page.locator('#jh-binance-trading-data-panel');
+  const updated = await trading.locator('[data-role="updated-at"]').textContent();
+
+  // When the tab returns after settlement with no newer funding response available
+  await setSimulatedVisibility(page, true);
+  await page.clock.runFor(3_000);
+  await setSimulatedVisibility(page, false);
+
+  // Then the expired quote is unavailable while settled history and its receipt time remain intact
+  await expect(trading.locator('[data-role="current-funding"]')).toHaveText('--');
+  await expect(trading.locator('[data-role="funding-countdown"]')).toHaveText('倒计时 等待更新');
+  await expect(trading.locator('[data-metric="funding"] .td-last-value')).toHaveText('0.000029%');
+  await expect(trading.locator('[data-role="updated-at"]')).toHaveText(updated);
+  expect(fixture.requests).toHaveLength(10);
+  expect(fixture.errors).toEqual([]);
+});
 
 test('user switches both real panels between Chinese and English while retaining precise rates', async ({ page, context }) => {
   // Given the generated panels receive a tiny settled rate and a distinct current rate

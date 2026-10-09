@@ -60,12 +60,11 @@ test('user sees cached rows without their directional votes after a failed refre
   const host = createDataPanelHost(t, 'trading');
   await host.start();
   await activateTrading(host);
-  host.setHidden(true);
 
-  // When returning to the page encounters failures for every endpoint
-  host.setHidden(false);
+  // When the next historical refresh encounters failures for every endpoint
+  host.clock.tick(305_000);
   const dataset = tradingDataset(Date.now());
-  await activateTrading(host, dataset, { status: Object.fromEntries(Object.keys(dataset).map(key => [key, 400])) });
+  await completeTradingBatch(host, dataset, { status: Object.fromEntries(Object.keys(dataset).map(key => [key, 400])) });
   await host.rendered(() => host.element('composite').textContent.includes('中性 0:0'));
 
   // Then cached values are retained with hollow markers and no fresh votes

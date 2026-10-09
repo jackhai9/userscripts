@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.1
+// @version      1.2.2
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -53,6 +53,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   const DATA_LIMIT = 30;
   const FUNDING_HISTORY_LIMIT = 40;
   const CURRENT_FUNDING_REFRESH_MS = 15_000;
+  const BACKGROUND_FUNDING_REFRESH_MS = 60_000;
   const FUNDING_REQUEST_TIMEOUT_MS = 10_000;
   const CLOCK_REQUEST_TIMEOUT_MS = 5_000;
   const CLOCK_MAX_ROUND_TRIP_MS = 2_000;
@@ -87,13 +88,14 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   /* ========== Symbol 检测 ========== */
 
   let lastSymbol = null;
+  let activePath = null;
 
   function getCurrentSymbol() {
     return parseFuturesTradingSymbolFromPathname(location.pathname);
   }
 
   function isActiveTradingPage() {
-    return !panelClosed && !document.hidden && isFuturesTradingPage();
+    return !panelClosed && isFuturesTradingPage();
   }
 
   /* ========== API 层 ========== */
@@ -165,6 +167,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   function sessionIsCurrent(session) {
     return session.generation === sessionGeneration
       && session.path === location.pathname
+      && session.path === activePath
       && session.symbol === getCurrentSymbol()
       && isActiveTradingPage();
   }
@@ -350,14 +353,22 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   }
 
   /** Funding updates and clock ticks must not refresh the historical data timestamp. */
+  function updateDisplayClock() {
+    if (document.hidden || !isActiveTradingPage() || !panelView) return;
+    const footer = document.getElementById(PANEL_ID + '-footer');
+    if (footer) updateFooter(footer);
+    panelView.updateClock(fundingClock());
+  }
+
   function startDisplayClock() {
-    if (agoTimer) return;
-    agoTimer = setInterval(function () {
-      if (!isActiveTradingPage() || !panelView) return;
-      const footer = document.getElementById(PANEL_ID + '-footer');
-      if (footer) updateFooter(footer);
-      panelView.updateClock(fundingClock());
-    }, 1000);
+    if (document.hidden || agoTimer) return;
+    updateDisplayClock();
+    agoTimer = setInterval(updateDisplayClock, 1000);
+  }
+
+  function stopDisplayClock() {
+    clearInterval(agoTimer);
+    agoTimer = null;
   }
 
   function updateFooter(el) {
@@ -380,6 +391,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
 
   let currentFundingTimer = null;
   let currentFundingRequest = null;
+  let currentFundingCompletedAt = null;
   let fundingIntervalRequest = null;
   let currentFundingState = emptyCurrentFundingState(null);
 
@@ -392,8 +404,23 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
     };
   }
 
+  /** Visibility changes the cadence, never the request's completion-time anchor. */
+  function scheduleCurrentFunding(session) {
+    clearTimeout(currentFundingTimer);
+    currentFundingTimer = null;
+    if (!sessionIsCurrent(session) || currentFundingRequest || currentFundingCompletedAt === null) return;
+    const interval = document.hidden ? BACKGROUND_FUNDING_REFRESH_MS : CURRENT_FUNDING_REFRESH_MS;
+    const delay = Math.max(0, currentFundingCompletedAt + interval - Date.now());
+    currentFundingTimer = setTimeout(function () {
+      currentFundingTimer = null;
+      refreshCurrentFunding(session);
+    }, delay);
+  }
+
   async function refreshCurrentFunding(session) {
     if (!sessionIsCurrent(session) || currentFundingRequest) return;
+    clearTimeout(currentFundingTimer);
+    currentFundingTimer = null;
     const request = { controller: new AbortController(), timeout: null };
     currentFundingRequest = request;
     request.timeout = setTimeout(function () {
@@ -412,10 +439,9 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
       clearTimeout(request.timeout);
       if (sessionIsCurrent(session) && currentFundingRequest === request) {
         currentFundingRequest = null;
+        currentFundingCompletedAt = Date.now();
         panelView.setFunding(currentFundingState, fundingClock());
-        currentFundingTimer = setTimeout(function () {
-          refreshCurrentFunding(session);
-        }, CURRENT_FUNDING_REFRESH_MS);
+        scheduleCurrentFunding(session);
       }
     }
   }
@@ -601,11 +627,14 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
     renderPanel(result, symbol);
   }
 
-  // 首次全量拉取（启动 / 切交易对 / tab 恢复）
+  /** Initialize history only for a new route session, including its first visible activation. */
   async function initialFetch(symbol) {
+    const session = currentSession();
+    if (!sessionIsCurrent(session)) return;
     // 作废所有正在进行的异步操作
     epoch++;
     var myEpoch = epoch;
+    const boundary = Math.floor(serverNow() / PERIOD_MS) * PERIOD_MS;
     clearTimeout(cycleTimer);
     clearTimeout(retryTimer);
 
@@ -619,9 +648,10 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
         fetchPeriodData(symbol, PERIOD_KEYS),
         fetchFundingRateData(symbol),
       ]);
-      refreshFundingInterval(currentSession());
+      refreshFundingInterval(session);
       var [periodEntries, fundingEntry] = await history;
-      if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return; // 已被更新的调用取代
+      if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
+      if (serverNow() >= boundary + PERIOD_MS) return;
       applyResults(symbol, periodEntries, fundingEntry);
       renderAll(symbol);
     } catch (e) { err('拉取失败:', e); }
@@ -638,7 +668,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
     cycleTimer = null;
     retryTimer = null;
 
-    if (panelClosed || document.hidden) return;
+    if (panelClosed) return;
     if (!isFuturesTradingPage()) {
       pauseForNonTradingPage();
       return;
@@ -673,13 +703,24 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   }
 
   async function runCycleAttempt(boundary, attempt) {
-    if (document.hidden || panelClosed) return;
+    if (panelClosed) return;
     if (!isFuturesTradingPage()) {
       pauseForNonTradingPage();
       return;
     }
+    // A host can replace history methods before the route watchdog repairs its notifications.
+    if (activePath !== location.pathname) {
+      handlePathChange();
+      return;
+    }
+    // A delayed browser callback must observe the current publication window, not replay missed ones.
+    if (serverNow() >= boundary + PERIOD_MS) {
+      scheduleCycle();
+      return;
+    }
     if (fetching) return;
 
+    const session = currentSession();
     var symbol = getCurrentSymbol();
     if (!symbol) { scheduleCycle(true); return; }
 
@@ -700,7 +741,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
           fetchPeriodData(symbol, PERIOD_KEYS),
           fetchFundingRateData(symbol),
         ]);
-        refreshFundingInterval(currentSession());
+        refreshFundingInterval(session);
         [periodEntries, fundingEntry] = await history;
       } else {
         var pending = getPendingKeys(symbol, targetTs);
@@ -714,7 +755,11 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
       }
 
       // await 返回后检查：是否已被 initialFetch 取代
-      if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
+      if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
+      if (serverNow() >= boundary + PERIOD_MS) {
+        scheduleCycle();
+        return;
+      }
 
       applyResults(symbol, periodEntries, fundingEntry || null);
       renderAll(symbol);
@@ -743,6 +788,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
         runCycleAttempt(boundary, attempt + 1);
       }, retryDelay);
     } catch (e) {
+      if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
       err('数据拉取失败:', e);
       scheduleCycle();
     } finally {
@@ -751,9 +797,10 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   }
 
   function stopBusinessLoop() {
+    activePath = null;
     clearTimeout(cycleTimer);  cycleTimer = null;
     clearTimeout(retryTimer);  retryTimer = null;
-    if (agoTimer)  { clearInterval(agoTimer);  agoTimer = null; }
+    stopDisplayClock();
     if (serverTimeTimer) { clearInterval(serverTimeTimer); serverTimeTimer = null; }
     if (serverTimeRequest) {
       clearTimeout(serverTimeRequest.timeout);
@@ -761,6 +808,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
       serverTimeRequest = null;
     }
     clearTimeout(currentFundingTimer); currentFundingTimer = null;
+    currentFundingCompletedAt = null;
     if (currentFundingRequest) {
       clearTimeout(currentFundingRequest.timeout);
       currentFundingRequest.controller.abort();
@@ -830,6 +878,9 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
     const session = currentSession();
     const symbol = session.symbol;
     if (!symbol) return;
+    // Pending calibration and initial requests already belong to an active session.
+    activePath = session.path;
+    lastPath = session.path;
     failedKeys = new Set([...PERIOD_KEYS, 'fundingRate']);
     endpointErrors = {};
     currentFundingState = emptyCurrentFundingState(symbol);
@@ -847,7 +898,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   }
 
   function handlePathChange() {
-    if (document.hidden || panelClosed) return;
+    if (panelClosed) return;
     if (location.pathname === lastPath) return;
     lastPath = location.pathname;
     if (!isFuturesTradingPage()) {
@@ -858,8 +909,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   }
 
   function startRouteWatcher() {
-    if (document.hidden || panelClosed) return;
-    lastPath = location.pathname;
+    if (panelClosed) return;
     if (!removeSpaRouteChangeListener) {
       removeSpaRouteChangeListener = installSpaRouteChangeListener(window, handlePathChange);
     }
@@ -874,20 +924,29 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   function start() {
     log('脚本启动');
 
-    // tab 恢复时：重同步服务器时间 + 立即拉取 + 补抓当前周期 + 恢复定时器
-    // tab 隐藏时：暂停业务 timer 和 route watcher，减少后台开销
+    // Keep the route session alive while hidden; only the display clock and quote cadence change.
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) {
-        if (panelClosed) return; // 面板已被用户关闭，不恢复
-        startRouteWatcher();
-        if (!isFuturesTradingPage()) {
-          pauseForNonTradingPage();
-          return;
-        }
-        activateTradingPage();
-      } else {
-        stopLoop();
+      if (panelClosed) return;
+      if (document.hidden) {
+        stopDisplayClock();
+        scheduleCurrentFunding(currentSession());
+        return;
       }
+      startRouteWatcher();
+      if (location.pathname !== lastPath) {
+        handlePathChange();
+        return;
+      }
+      if (!isFuturesTradingPage()) {
+        pauseForNonTradingPage();
+        return;
+      }
+      if (activePath !== location.pathname) {
+        activateTradingPage();
+        return;
+      }
+      startDisplayClock();
+      scheduleCurrentFunding(currentSession());
     });
 
     // SPA 切换交易对检测（初始就在后台时延迟到前台再启动）

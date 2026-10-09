@@ -140,7 +140,10 @@ export function createDataPanelHost(t, kind, {
     hidden = value;
     window.document.dispatchEvent(new window.Event('visibilitychange'));
   }
-  t.after(() => { setHidden(true); window.close(); });
+  t.after(() => {
+    window.document.getElementById(`${panelId}-close`)?.click();
+    window.close();
+  });
   return {
     window, document: window.document, clock, network, errors, panelId,
     panel: () => window.document.getElementById(panelId),

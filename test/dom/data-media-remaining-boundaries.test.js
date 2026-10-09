@@ -46,9 +46,7 @@ for (const kind of ['trading', 'cmc']) {
 
     // When an ordinary refresh completes while those output elements are absent
     if (kind === 'trading') {
-      host.setHidden(false);
-      const time = await host.network.waitForRequest(request => !request.settled && request.url.pathname.endsWith('/time'));
-      time.respond({ serverTime: Date.now() });
+      host.clock.tick(305_000);
       await completeTradingBatch(host, tradingDataset(Date.now(), { oi: 3_000_000 }));
     } else {
       host.element('refresh').click();
@@ -68,8 +66,8 @@ for (const kind of ['trading', 'cmc']) {
     for (const { element, parent } of detached) parent.append(element);
     host.element('collapse').click();
     if (kind === 'trading') {
-      host.setHidden(false);
-      await activateTradingData(host, tradingDataset(Date.now(), { oi: 4_000_000 }));
+      host.clock.tick(299_000);
+      await completeTradingBatch(host, tradingDataset(Date.now(), { oi: 4_000_000 }));
     } else {
       host.element('refresh').click();
       await completeCmcData(host, cmcDetail({ statistics: { ...cmcDetail().statistics, price: 80_000 } }), { map: false });
@@ -122,10 +120,8 @@ for (const kind of ['trading', 'cmc']) {
     await host.start();
     await completeInitialPanel(host, kind);
 
-    // When a repeated browser visibility event refreshes the still-active panel
+    // When a repeated browser visibility event leaves the active schedule intact
     host.setHidden(false);
-    if (kind === 'trading') await activateTradingData(host);
-    else await completeCmcData(host, cmcDetail(), { map: false });
     await afterDataMediaResponseTurn();
     const countRequests = () => kind === 'trading'
       ? host.network.requests.filter(isTradingHistoryRequest).length : host.network.requests.length;

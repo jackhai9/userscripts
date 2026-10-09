@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.1
+// @version      0.2.2
 // @author       jackhai9
 // @description  Show localized CoinMarketCap valuation, supply, and metric interpretations on Binance futures pages
 // @match        https://www.binance.com/*/futures/*
@@ -277,7 +277,7 @@
     fetched: localizedText("拉取", "Fetched"),
     dataTime: localizedText("CMC 数据时间", "CMC data time"),
     fetchedTime: localizedText("本次拉取时间", "Fetch time"),
-    refreshPeriod: localizedText("每 30 秒刷新", "Refreshes every 30s"),
+    refreshPeriod: localizedText("前台 30 秒 / 后台 5 分钟刷新", "Refresh: 30s active / 5m in background"),
     changePeriod: localizedText("24小时", "24h"),
     unavailable: localizedText("暂无数据", "Data unavailable"),
     comparisonUnavailable: localizedText("暂无可比数据", "Comparison unavailable"),
@@ -684,6 +684,7 @@
     const STORAGE_POS_KEY = "jh_binance_cmc_data_pos";
     const STORAGE_COLLAPSED_KEY = "jh_binance_cmc_data_collapsed";
     const REFRESH_MS = 30 * 1e3;
+    const BACKGROUND_REFRESH_MS = 5 * 60 * 1e3;
     const ROUTE_WATCHDOG_MS = 5e3;
     const CMC_MAP_API = "https://api.coinmarketcap.com/data-api/v1/cryptocurrency/map";
     const CMC_DETAIL_API = "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail";
@@ -692,8 +693,9 @@
       RAVE: { id: 38967, symbol: "RAVE", slug: "ravedao" }
     };
     let panelClosed = false;
-    let lastSymbol = null;
+    let activePath = null;
     let lastUpdateTs = 0;
+    let lastRefreshCompletedAt = null;
     let refreshTimer = null;
     let routeTimer = null;
     let removeSpaRouteChangeListener = null;
@@ -711,7 +713,7 @@
       return parseFuturesTradingSymbolFromPathname(location.pathname);
     }
     function isActiveTradingPage() {
-      return !panelClosed && !document.hidden && isFuturesTradingPage();
+      return !panelClosed && isFuturesTradingPage();
     }
     function baseAssetFromSymbol(symbol) {
       if (!symbol) return null;
@@ -1132,43 +1134,68 @@
       }
     }
     async function refreshForCurrentSymbol(force, silent) {
-      if (panelClosed || document.hidden) return;
+      if (panelClosed) return;
       if (!isFuturesTradingPage()) {
         pauseForNonTradingPage();
         return;
       }
+      const path = location.pathname;
+      if (activePath !== path) return;
       const symbol = getCurrentSymbol();
       if (!symbol) return;
       if (!force && symbol === inFlightSymbol) return;
       const myEpoch = ++refreshEpoch;
+      const refreshIsCurrent = function() {
+        return myEpoch === refreshEpoch && activePath === path && location.pathname === path && isActiveTradingPage() && getCurrentSymbol() === symbol;
+      };
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
       inFlightSymbol = symbol;
       if (!silent || !lastRowsHtml) renderLoading(symbol);
       try {
         const data = await fetchCmcData(symbol);
-        if (myEpoch !== refreshEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
+        if (!refreshIsCurrent()) return;
         renderData(symbol, data);
-        lastSymbol = symbol;
       } catch (error) {
-        if (myEpoch !== refreshEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
+        if (!refreshIsCurrent()) return;
         renderError(symbol, error && error.message ? error.message : String(error));
       } finally {
-        if (myEpoch === refreshEpoch) inFlightSymbol = null;
+        if (refreshIsCurrent()) {
+          inFlightSymbol = null;
+          lastRefreshCompletedAt = Date.now();
+          scheduleDataRefresh();
+        }
       }
     }
+    function scheduleDataRefresh() {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+      if (!isActiveTradingPage() || activePath !== location.pathname || inFlightSymbol || lastRefreshCompletedAt === null) return;
+      const interval = document.hidden ? BACKGROUND_REFRESH_MS : REFRESH_MS;
+      const delay = Math.max(0, lastRefreshCompletedAt + interval - Date.now());
+      refreshTimer = setTimeout(function() {
+        refreshTimer = null;
+        refreshForCurrentSymbol(false, true);
+      }, delay);
+    }
     function startDataLoop() {
-      if (panelClosed || document.hidden || !isFuturesTradingPage()) return;
+      if (!isActiveTradingPage()) return;
+      if (activePath === location.pathname) {
+        scheduleDataRefresh();
+        return;
+      }
+      stopDataLoop();
+      activePath = location.pathname;
+      lastPath = location.pathname;
       ensurePanel();
       refreshForCurrentSymbol(true, false);
-      if (!refreshTimer) {
-        refreshTimer = setInterval(function() {
-          refreshForCurrentSymbol(false, true);
-        }, REFRESH_MS);
-      }
     }
     function stopDataLoop() {
       refreshEpoch++;
+      activePath = null;
       inFlightSymbol = null;
-      if (refreshTimer) clearInterval(refreshTimer);
+      lastRefreshCompletedAt = null;
+      clearTimeout(refreshTimer);
       refreshTimer = null;
     }
     function stopRouteWatcher() {
@@ -1201,10 +1228,9 @@
     function pauseForNonTradingPage() {
       stopDataLoop();
       removePanel();
-      lastSymbol = null;
     }
     function handleRouteChange() {
-      if (document.hidden || panelClosed) return;
+      if (panelClosed) return;
       if (location.pathname === lastPath) return;
       lastPath = location.pathname;
       if (!isFuturesTradingPage()) {
@@ -1214,8 +1240,7 @@
       startDataLoop();
     }
     function startRouteWatcher() {
-      if (document.hidden || panelClosed) return;
-      lastPath = location.pathname;
+      if (panelClosed) return;
       if (!removeSpaRouteChangeListener) {
         removeSpaRouteChangeListener = installSpaRouteChangeListener(window, handleRouteChange);
       }
@@ -1396,16 +1421,22 @@
       return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     }
     document.addEventListener("visibilitychange", function() {
+      if (panelClosed) return;
       if (document.hidden) {
-        stopLoop();
+        scheduleDataRefresh();
         return;
       }
-      if (panelClosed) return;
       startRouteWatcher();
+      if (location.pathname !== lastPath) {
+        handleRouteChange();
+        return;
+      }
       if (isFuturesTradingPage()) startDataLoop();
       else pauseForNonTradingPage();
     });
-    startRouteWatcher();
-    startDataLoop();
+    if (!document.hidden) {
+      startRouteWatcher();
+      startDataLoop();
+    }
   })();
 })();
