@@ -119,7 +119,7 @@ test('user restores both separate panel preferences after a smaller viewport', a
   await resize(page, SMALL);
 
   // Then only the displayed positions clamp, leaving each original preference unchanged.
-  await assertPositions(page, { trading: { left: 256, top: 372 }, cmc: { left: 256, top: 372 } });
+  await assertPositions(page, { trading: { left: 320, top: 372 }, cmc: { left: 304, top: 372 } });
   expect(await readPositions(page)).toEqual(INITIAL);
   expect(await readWrites(page)).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath('small-clamped.png') });
@@ -145,7 +145,7 @@ test('user keeps large-screen preferences when a small tab opens reloads and clo
   await fixture.open(small, { viewport: SMALL });
 
   // Then the small tab displays reachable headers while both tabs retain the original preferences.
-  await assertPositions(small, { trading: { left: 256, top: 372 }, cmc: { left: 256, top: 372 } });
+  await assertPositions(small, { trading: { left: 320, top: 372 }, cmc: { left: 304, top: 372 } });
   expect(await readPositions(page)).toEqual(INITIAL);
   expect(await readWrites(page)).toEqual([]);
 
@@ -154,7 +154,7 @@ test('user keeps large-screen preferences when a small tab opens reloads and clo
   await installPanels(small);
 
   // Then reload and initialization leave the shared preferences untouched.
-  await assertPositions(small, { trading: { left: 256, top: 372 }, cmc: { left: 256, top: 372 } });
+  await assertPositions(small, { trading: { left: 320, top: 372 }, cmc: { left: 304, top: 372 } });
   expect(await readPositions(page)).toEqual(INITIAL);
   expect(await readWrites(page)).toEqual([]);
 
@@ -304,7 +304,7 @@ for (const panel of PANELS) {
     await nextFrames(page);
 
     // Then the viewport adjustment is temporary and cannot become a completed drag preference.
-    await assertPositions(page, { trading: { left: 256, top: 372 }, cmc: { left: 256, top: 372 } });
+    await assertPositions(page, { trading: { left: 320, top: 372 }, cmc: { left: 304, top: 372 } });
     expect(await readPositions(page)).toEqual(INITIAL);
     expect(await readWrites(page)).toEqual([]);
 
@@ -359,14 +359,14 @@ test('user keeps responsive default panel positions without creating a saved pre
   await resize(page, SMALL);
   const trading = await page.locator(`#${PANELS[0].id}`).boundingBox();
   const cmc = await page.locator(`#${PANELS[1].id}`).boundingBox();
-  expect(trading).toMatchObject({ x: 240, y: 8, width: 384 });
-  expect(cmc).toMatchObject({ x: 240, width: 384 });
+  expect(trading).toMatchObject({ x: 304, y: 8, width: 320 });
+  expect(cmc).toMatchObject({ x: 288, width: 336 });
   expect(cmc.y - trading.y - trading.height).toBeCloseTo(8, 1);
   expect(cmc.y + cmc.height).toBeLessThanOrEqual(SMALL.height);
   await resize(page, LARGE);
 
   // Then the original right inset and separate desktop columns return without new position keys.
-  await assertPositions(page, { trading: { left: 1200, top: 60 }, cmc: { left: 800, top: 60 } });
+  await assertPositions(page, { trading: { left: 1264, top: 60 }, cmc: { left: 912, top: 60 } });
   expect(await readPositions(page)).toEqual({ trading: null, cmc: null });
   expect(await readWrites(page)).toEqual([]);
 

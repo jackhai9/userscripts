@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.2
+// @version      0.2.3
 // @author       jackhai9
 // @description  Show localized CoinMarketCap valuation, supply, and metric interpretations on Binance futures pages
 // @match        https://www.binance.com/*/futures/*
@@ -277,7 +277,6 @@
     fetched: localizedText("拉取", "Fetched"),
     dataTime: localizedText("CMC 数据时间", "CMC data time"),
     fetchedTime: localizedText("本次拉取时间", "Fetch time"),
-    refreshPeriod: localizedText("前台 30 秒 / 后台 5 分钟刷新", "Refresh: 30s active / 5m in background"),
     changePeriod: localizedText("24小时", "24h"),
     unavailable: localizedText("暂无数据", "Data unavailable"),
     comparisonUnavailable: localizedText("暂无可比数据", "Comparison unavailable"),
@@ -607,12 +606,13 @@
     /* Reserve space for complete prices and changes before wrapping the surrounding prose. */
     ${scope} table { width: 100%; table-layout: auto; border-collapse: collapse; }
     ${scope} .cmc-name-col { width: 33%; }
-    ${scope} .cmc-value-col { width: 26%; }
-    ${scope} .cmc-reading-col { width: 41%; }
+    ${scope} .cmc-value-col { width: 28%; }
+    ${scope} .cmc-reading-col { width: 39%; }
     ${scope} thead { position: sticky; top: 0; z-index: 1; background: var(--cmc-head); }
-    ${scope} thead th { color: var(--cmc-muted); font-size: 11px; font-weight: 500; padding: 4px 6px; text-align: left; }
+    ${scope} thead th { color: var(--cmc-muted); font-size: 11px; font-weight: 500; padding: 4px 3px; text-align: left; }
     ${scope} thead th:nth-child(2) { text-align: right; }
-    ${scope} tbody th, ${scope} tbody td { padding: 4px 6px; border-top: 1px solid var(--cmc-border); vertical-align: middle; overflow-wrap: anywhere; }
+    ${scope} thead th:last-child { text-align: right; }
+    ${scope} tbody th, ${scope} tbody td { padding: 4px 3px; border-top: 1px solid var(--cmc-border); vertical-align: middle; overflow-wrap: anywhere; }
     ${scope} .cmc-name { text-align: left; font-weight: 500; }
     ${scope} small { display: block; margin-top: 1px; font-size: 11px; line-height: 1.35; color: var(--cmc-muted); }
     ${scope} .cmc-value { text-align: right; font-variant-numeric: tabular-nums; }
@@ -624,7 +624,7 @@
     ${scope} .cmc-change[data-tone="neutral"] { color: var(--cmc-muted); }
     ${scope} .cmc-key { background: color-mix(in srgb, var(--color-PrimaryYellow, #f0b90b) 7%, var(--cmc-bg)); }
     ${scope} .cmc-group th, ${scope} .cmc-group td { border-top-width: 2px; }
-    ${scope} .cmc-reading-button { display: flex; align-items: center; justify-content: space-between; gap: 3px; width: 100%; min-height: 24px; padding: 0; line-height: inherit; text-align: left; }
+    ${scope} .cmc-reading-button { display: flex; align-items: center; justify-content: flex-end; gap: 3px; width: 100%; min-height: 24px; padding: 0; line-height: inherit; text-align: right; }
     ${scope} .cmc-reading-text { font-weight: 500; }
     ${scope} [data-tone="missing"] .cmc-reading-text { color: var(--cmc-muted); }
     ${scope} [data-tone="active"] .cmc-reading-text { color: var(--cmc-accent); }
@@ -639,8 +639,6 @@
     ${scope} .cmc-times { font-variant-numeric: tabular-nums; }
     @media (max-width: 540px) {
       ${scope} { font-size: 11px; }
-      ${scope} tbody th, ${scope} tbody td { padding: 4px; }
-      ${scope} thead th { padding: 4px; }
       ${scope} .cmc-info { display: none; }
     }
   `;
@@ -648,12 +646,12 @@
 
   // src/shared/data-panel-layout.js
   var DATA_PANEL_LAYOUT_EVENT = "jh-data-panels-layout-change";
-  var DATA_PANEL_WIDTH = 384;
+  var DATA_PANEL_WIDTHS = Object.freeze({ trading: 320, cmc: 336 });
   var PANEL_IDS = Object.freeze({
     trading: "jh-binance-trading-data-panel",
     cmc: "jh-binance-cmc-data-panel"
   });
-  var TWO_COLUMN_WIDTH = DATA_PANEL_WIDTH * 2 + 48;
+  var TWO_COLUMN_WIDTH = DATA_PANEL_WIDTHS.trading + DATA_PANEL_WIDTHS.cmc + 48;
   function hasVisibleDataPanelPeer(document2, kind) {
     const peer = document2.getElementById(PANEL_IDS[kind === "trading" ? "cmc" : "trading"]);
     return peer !== null && peer.style.display !== "none";
@@ -667,7 +665,7 @@
     const sectionHeight = Math.max(48, Math.floor((viewportHeight - 24) / 2));
     const targetTop = stacked ? kind === "trading" ? 8 : 16 + sectionHeight : 60;
     const top = Math.max(0, Math.min(targetTop, viewportHeight - 48));
-    const peerWidth = hasPeer && !stacked && kind === "cmc" ? DATA_PANEL_WIDTH + 16 : 0;
+    const peerWidth = hasPeer && !stacked && kind === "cmc" ? DATA_PANEL_WIDTHS.trading + 16 : 0;
     const targetLeft = viewportWidth - panelWidth - 16 - peerWidth;
     const left = Math.max(0, Math.min(Math.max(stacked ? 8 : 16, targetLeft), viewportWidth - panelWidth));
     const availableHeight = Math.max(48, viewportHeight - top - 8);
@@ -681,6 +679,7 @@
       return isFuturesTradingPathname(location.pathname);
     }
     const PANEL_ID = "jh-binance-cmc-data-panel";
+    const PANEL_WIDTH = DATA_PANEL_WIDTHS.cmc;
     const STORAGE_POS_KEY = "jh_binance_cmc_data_pos";
     const STORAGE_COLLAPSED_KEY = "jh_binance_cmc_data_collapsed";
     const REFRESH_MS = 30 * 1e3;
@@ -932,7 +931,7 @@
       }
       panel = document.createElement("div");
       panel.id = PANEL_ID;
-      panel.style.width = DATA_PANEL_WIDTH + "px";
+      panel.style.width = PANEL_WIDTH + "px";
       const collapsed = loadCollapsed();
       panel.innerHTML = [
         "<style>",
@@ -1126,10 +1125,7 @@
           " ",
           formatClock(lastUpdateTs),
           "</span></span>",
-          "</div>",
-          "<small>",
-          escapeHtml(uiText(CMC_COPY.refreshPeriod)),
-          "</small>"
+          "</div>"
         ].join("");
       }
     }
@@ -1366,7 +1362,7 @@
       };
     }
     function keepPanelInViewport(panel) {
-      const width = panel.offsetWidth || DATA_PANEL_WIDTH;
+      const width = panel.offsetWidth || PANEL_WIDTH;
       const normalized = calculateDataPanelLayout({
         kind: "cmc",
         panelWidth: width,
@@ -1384,7 +1380,7 @@
     function savePanelPosition(panel) {
       if (!panel) return;
       const rect = panel.getBoundingClientRect();
-      const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || DATA_PANEL_WIDTH);
+      const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
       if (!normalized) return;
       savePosition(normalized.left, normalized.top);
       keepPanelInViewport(panel);

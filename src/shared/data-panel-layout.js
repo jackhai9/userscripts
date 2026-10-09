@@ -1,11 +1,11 @@
 export const DATA_PANEL_LAYOUT_EVENT = 'jh-data-panels-layout-change';
-export const DATA_PANEL_WIDTH = 384;
+export const DATA_PANEL_WIDTHS = Object.freeze({ trading: 320, cmc: 336 });
 
 const PANEL_IDS = Object.freeze({
   trading: 'jh-binance-trading-data-panel',
   cmc: 'jh-binance-cmc-data-panel',
 });
-const TWO_COLUMN_WIDTH = DATA_PANEL_WIDTH * 2 + 48;
+const TWO_COLUMN_WIDTH = DATA_PANEL_WIDTHS.trading + DATA_PANEL_WIDTHS.cmc + 48;
 
 export function hasVisibleDataPanelPeer(document, kind) {
   const peer = document.getElementById(PANEL_IDS[kind === 'trading' ? 'cmc' : 'trading']);
@@ -22,7 +22,7 @@ export function calculateDataPanelLayout({ kind, panelWidth, viewportWidth, view
   const sectionHeight = Math.max(48, Math.floor((viewportHeight - 24) / 2));
   const targetTop = stacked ? kind === 'trading' ? 8 : 16 + sectionHeight : 60;
   const top = Math.max(0, Math.min(targetTop, viewportHeight - 48));
-  const peerWidth = hasPeer && !stacked && kind === 'cmc' ? DATA_PANEL_WIDTH + 16 : 0;
+  const peerWidth = hasPeer && !stacked && kind === 'cmc' ? DATA_PANEL_WIDTHS.trading + 16 : 0;
   const targetLeft = viewportWidth - panelWidth - 16 - peerWidth;
   const left = Math.max(0, Math.min(Math.max(stacked ? 8 : 16, targetLeft), viewportWidth - panelWidth));
   const availableHeight = Math.max(48, viewportHeight - top - 8);

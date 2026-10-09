@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.2
+// @version      0.2.3
 // @author       jackhai9
 // @description  Show localized CoinMarketCap valuation, supply, and metric interpretations on Binance futures pages
 // @match        https://www.binance.com/*/futures/*
@@ -30,7 +30,7 @@ import {
 import { buildCmcMetricRows, numberOrNull } from './metrics.js';
 import { CMC_COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 import { cmcPanelStyles } from './panel-styles.js';
-import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as PANEL_WIDTH, hasVisibleDataPanelPeer } from '../shared/data-panel-layout.js';
+import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, hasVisibleDataPanelPeer } from '../shared/data-panel-layout.js';
 
 (function () {
   'use strict';
@@ -40,6 +40,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
   }
 
   const PANEL_ID = 'jh-binance-cmc-data-panel';
+  const PANEL_WIDTH = DATA_PANEL_WIDTHS.cmc;
   const STORAGE_POS_KEY = 'jh_binance_cmc_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_cmc_data_collapsed';
   const REFRESH_MS = 30 * 1000;
@@ -456,7 +457,6 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as 
           '<a href="', escapeHtml(data.url), '" target="_blank" rel="noopener noreferrer">', escapeHtml(sourceLabel), '</a>',
           '<span class="cmc-times"><span title="', escapeHtml(uiText(CMC_COPY.dataTime)), '">CMC ', cmcClock, '</span> / <span title="', escapeHtml(uiText(CMC_COPY.fetchedTime)), '">', escapeHtml(uiText(CMC_COPY.fetched)), ' ', formatClock(lastUpdateTs), '</span></span>',
         '</div>',
-        '<small>', escapeHtml(uiText(CMC_COPY.refreshPeriod)), '</small>',
       ].join('');
     }
   }

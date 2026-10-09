@@ -23,7 +23,6 @@ export const CMC_COPY = Object.freeze({
   fetched: localizedText('拉取', 'Fetched'),
   dataTime: localizedText('CMC 数据时间', 'CMC data time'),
   fetchedTime: localizedText('本次拉取时间', 'Fetch time'),
-  refreshPeriod: localizedText('前台 30 秒 / 后台 5 分钟刷新', 'Refresh: 30s active / 5m in background'),
   changePeriod: localizedText('24小时', '24h'),
   unavailable: localizedText('暂无数据', 'Data unavailable'),
   comparisonUnavailable: localizedText('暂无可比数据', 'Comparison unavailable'),

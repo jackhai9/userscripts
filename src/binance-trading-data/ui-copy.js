@@ -6,7 +6,6 @@ const COPY = Object.freeze({
   title: localizedText('交易数据', 'Trading data'),
   metric: localizedText('指标', 'Metric'),
   history: localizedText('历史趋势', 'History'),
-  historyNote: localizedText('趋势按5分钟采样；费率曲线为历史结算。', 'History: 5m samples; funding shows settlements.'),
   value: localizedText('数值', 'Value'),
   collapse: localizedText('收起面板', 'Collapse panel'),
   expand: localizedText('展开面板', 'Expand panel'),
