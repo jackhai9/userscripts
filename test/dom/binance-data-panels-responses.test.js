@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   activateTradingData, afterDataMediaResponseTurn, completeCmcData, completeTradingBatch,
-  createDataPanelHost, cmcDetail, tradingDataset,
+  createDataPanelHost, cmcDetail, tradingDataset, isTradingHistoryRequest,
 } from '../helpers/data-media-migration-host.js';
 
 for (const scenario of [
@@ -62,7 +62,7 @@ test('user keeps valid CMC valuation data when its detail cannot identify a hold
 
   // Then the existing count and valuation rows remain usable without an invalid-ID request
   assert.match(host.element('rows').textContent, /价格\$6万/);
-  assert.match(host.element('rows').textContent, /持有者17/);
+  assert.equal(host.element('rows').querySelector('[data-metric="holders"] [data-role="metric-value"]').textContent, '17');
   assert.equal(host.network.requests.length, 2);
   assert.equal(host.network.requests.some(request => request.url.pathname.endsWith('/show_holders')), false);
 });
@@ -108,9 +108,9 @@ for (const scenario of [
     await host.rendered(() => host.element('rows').textContent.includes(scenario.error));
 
     // Then the original page failure reason remains visible to the user
-    assert.equal(host.element('rows').textContent, `读取失败${scenario.error}`);
+    assert.equal(host.element('rows').textContent, `Unable to load data${scenario.error}`);
     assert.equal(host.network.requests.length, 2);
-    assert.equal(host.element('footer').textContent, '来源：CoinMarketCap 中文页');
+    assert.equal(host.element('footer').textContent, 'Source: CoinMarketCap');
   });
 }
 
@@ -126,12 +126,13 @@ for (const holderKey of ['total', 'count']) {
     await completeCmcData(host, detail, { holder: { showFlag: false } });
 
     // Then unit formatting, negative signs, unavailable fields, and fallback holder identity are preserved
-    const text = host.element('rows').textContent;
-    assert.match(text, /总供应量1\.2万亿 BTC/);
-    assert.match(text, /最大供应量3亿 BTC/);
-    assert.match(text, /流通供应量-2万 BTC/);
-    assert.match(text, /持有者42/);
-    assert.match(text, /Profile score--/);
+    const rows = host.element('rows');
+    for (const [id, expected] of [['total-supply', '1.2万亿'], ['max-supply', '3亿'], ['circulating-supply', '-2万']]) {
+      assert.equal(rows.querySelector(`[data-metric="${id}"] [data-role="metric-value"]`).textContent, expected);
+      assert.equal(rows.querySelector(`[data-metric="${id}"] .cmc-unit`).textContent, 'BTC');
+    }
+    assert.equal(rows.querySelector('[data-metric="holders"] [data-role="metric-value"]').textContent, '42');
+    assert.equal(rows.querySelector('[data-metric="profile"] [data-role="metric-value"]').textContent, '--');
     assert.match(host.element('footer').textContent, /CMC -- \/ 拉取/);
   });
 }
@@ -147,7 +148,7 @@ test('user sees explicit unavailable metrics when an otherwise valid CMC respons
 
   // Then unavailable values stay visible instead of becoming directional changes or guessed quantities
   assert.equal(host.element('symbol').textContent, 'BTC');
-  assert.equal([...host.element('rows').children].every(row => row.children[1].textContent === '--'), true);
+  assert.deepEqual([...host.element('rows').querySelectorAll('[data-role="metric-value"]')].map(value => value.textContent), Array(12).fill('--'));
   assert.match(host.element('footer').textContent, /CMC -- \/ 拉取/);
 });
 
@@ -163,8 +164,8 @@ test('user retains CMC detail rows when the optional holder endpoint times out',
   await host.rendered(() => host.element('footer').textContent.includes('CMC data-api'));
 
   // Then the successful valuation details remain visible with an unavailable holder metric
-  assert.match(host.element('rows').textContent, /流通市值\$1\.2万亿/);
-  assert.match(host.element('rows').textContent, /持有者--/);
+  assert.equal(host.element('rows').querySelector('[data-metric="market-cap"] [data-role="metric-value"]').textContent, '$1.2T');
+  assert.equal(host.element('rows').querySelector('[data-metric="holders"] [data-role="metric-value"]').textContent, '--');
   assert.equal(host.element('symbol').textContent, 'RAVE #1');
 });
 
@@ -210,7 +211,7 @@ for (const outcome of ['http', 'network']) {
     await host.rendered(panel => panel?.querySelector('[data-role="updated-at"]')?.textContent.startsWith('更新于'));
 
     // Then that row stays unavailable while unrelated successful endpoints retain their votes
-    assert.equal(host.element('rows').firstElementChild.children[1].textContent, '--');
+    assert.equal(host.element('rows').querySelector('[data-metric="oi"] .td-number').textContent, '--');
     assert.match(host.element('composite').textContent, /偏多 6:0/);
     assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/openInterestHist')).length, 2);
   });
@@ -242,7 +243,7 @@ test('user sees no fabricated open-interest trend before enough history is avail
   await activateTradingData(host, dataset);
 
   // Then the quantity has no directional arrow and only the other six indicators vote
-  assert.equal(host.element('rows').firstElementChild.children[1].textContent, '1.00M');
+  assert.equal(host.element('rows').querySelector('[data-metric="oi"] .td-number').textContent, '100万');
   assert.match(host.element('composite').textContent, /偏多 6:0/);
 });
 
@@ -258,13 +259,13 @@ test('user retries only delayed period endpoints after the publication grace int
   mixed.takerlongshortRatio = old.takerlongshortRatio;
   await completeTradingBatch(host, mixed);
   await afterDataMediaResponseTurn();
-  const count = host.network.requests.length;
+  const count = host.network.requests.filter(isTradingHistoryRequest).length;
 
   // When the first retry deadline arrives and the two delayed endpoints catch up
   host.clock.tick(9_999);
-  assert.equal(host.network.requests.length, count);
+  assert.equal(host.network.requests.filter(isTradingHistoryRequest).length, count);
   host.clock.tick(1);
-  const pending = host.network.requests.filter(request => !request.settled);
+  const pending = host.network.requests.filter(request => !request.settled && isTradingHistoryRequest(request));
   const current = tradingDataset(Date.now());
   pending.forEach(request => request.respond(current[request.url.pathname.split('/').at(-1)]));
   await afterDataMediaResponseTurn();
@@ -275,8 +276,8 @@ test('user retries only delayed period endpoints after the publication grace int
   assert.match(host.element('composite').textContent, /偏多 7:0/);
 });
 
-test('user keeps valid trading metrics visible while retrying their missing publication timestamp', { timeout: 5_000 }, async t => {
-  // Given the basis endpoint supplies a valid metric without the current period timestamp
+test('user excludes an untimestamped trading metric until its dated publication arrives', { timeout: 5_000 }, async t => {
+  // Given the basis endpoint omits the timestamp needed for a historical observation
   const host = createDataPanelHost(t, 'trading');
   const dataset = tradingDataset(Date.now());
   delete dataset.basis[0].timestamp;
@@ -285,21 +286,22 @@ test('user keeps valid trading metrics visible while retrying their missing publ
   host.clock.tick(5_000);
   await completeTradingBatch(host, dataset);
   await afterDataMediaResponseTurn();
-  const count = host.network.requests.length;
-  assert.match(host.element('composite').textContent, /偏多 7:0/);
+  const count = host.network.requests.filter(isTradingHistoryRequest).length;
+  assert.match(host.element('composite').textContent, /偏多 6:0/);
+  assert.equal(host.element('rows').querySelector('[data-metric="basis"] .td-number').textContent, '--');
 
   // When only the timestamp-less endpoint reaches its retry deadline and publishes a fresh value
   host.clock.tick(9_999);
-  assert.equal(host.network.requests.length, count);
+  assert.equal(host.network.requests.filter(isTradingHistoryRequest).length, count);
   host.clock.tick(1);
-  const pending = host.network.requests.filter(request => !request.settled);
+  const pending = host.network.requests.filter(request => !request.settled && isTradingHistoryRequest(request));
   assert.deepEqual(pending.map(request => request.url.pathname.split('/').at(-1)), ['basis']);
   pending[0].respond([{ timestamp: Date.now(), basisRate: '-0.02' }]);
   await afterDataMediaResponseTurn();
 
   // Then the fresh basis value changes its vote without retrying already current endpoints
   assert.match(host.element('composite').textContent, /偏多 6:1/);
-  assert.equal(host.network.requests.length, count + 1);
+  assert.equal(host.network.requests.filter(isTradingHistoryRequest).length, count + 1);
   assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/fundingRate')).length, 2);
 });
 
@@ -316,11 +318,11 @@ test('user receives the documented bounded retry schedule while period data rema
 
   // When each explicit retry deadline is reached without advancing endpoint timestamps
   for (const delay of [10_000, 15_000, 20_000, 30_000]) {
-    const before = host.network.requests.length;
+    const before = host.network.requests.filter(isTradingHistoryRequest).length;
     host.clock.tick(delay - 1);
-    assert.equal(host.network.requests.length, before);
+    assert.equal(host.network.requests.filter(isTradingHistoryRequest).length, before);
     host.clock.tick(1);
-    const requests = host.network.requests.filter(request => !request.settled);
+    const requests = host.network.requests.filter(request => !request.settled && isTradingHistoryRequest(request));
     observed.push({ delay, count: requests.length });
     requests.forEach(request => request.respond(stale[request.url.pathname.split('/').at(-1)]));
     await afterDataMediaResponseTurn();
@@ -342,19 +344,19 @@ test('user stops retrying an expired period and resumes at the next publication 
   await completeTradingBatch(host, stale);
   await afterDataMediaResponseTurn();
   host.clock.tick(10_000);
-  host.network.requests.filter(request => !request.settled).forEach(request => request.respond(stale[request.url.pathname.split('/').at(-1)]));
+  host.network.requests.filter(request => !request.settled && isTradingHistoryRequest(request)).forEach(request => request.respond(stale[request.url.pathname.split('/').at(-1)]));
   await afterDataMediaResponseTurn();
-  const count = host.network.requests.length;
+  const count = host.network.requests.filter(isTradingHistoryRequest).length;
 
   // When the old window closes and the next boundary's five-second grace elapses
   host.clock.tick(14_999);
-  assert.equal(host.network.requests.length, count);
+  assert.equal(host.network.requests.filter(isTradingHistoryRequest).length, count);
   host.clock.tick(1);
   await completeTradingBatch(host, tradingDataset(Date.now()));
   await afterDataMediaResponseTurn();
 
   // Then one complete new-period batch replaces further retries of the expired window
-  assert.equal(host.network.requests.length, count + 7);
+  assert.equal(host.network.requests.filter(isTradingHistoryRequest).length, count + 7);
   assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/fundingRate')).length, 3);
   assert.match(host.element('composite').textContent, /偏多 7:0/);
 });

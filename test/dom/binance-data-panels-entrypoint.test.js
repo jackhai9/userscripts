@@ -1,21 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  createDataPanelHost, tradingDataset, completeTradingBatch, cmcDetail, completeCmcData,
+  createDataPanelHost, tradingDataset, completeTradingBatch, cmcDetail, completeCmcData, afterDataMediaResponseTurn,
 } from '../helpers/data-media-migration-host.js';
 
 async function activateTrading(host, dataset = tradingDataset(Date.now()), options) {
   const time = await host.network.waitForRequest(request => !request.settled && request.url.pathname.endsWith('/time'));
   time.respond({ serverTime: Date.now() });
   await completeTradingBatch(host, dataset, options);
-  await host.rendered(panel => panel?.querySelector('[data-role="updated-at"]')?.textContent.startsWith('更新于'));
+  await afterDataMediaResponseTurn();
 }
 
 for (const scenario of [
-  { name: 'long', values: {}, oi: '2.00M ▲', composite: '偏多 7:0' },
-  { name: 'short', values: { oi: 2_000, previousOi: 4_000, ratio: 0.5, basis: -0.01, funding: 0.0002 }, oi: '2K ▼', composite: '偏空 0:7' },
-  { name: 'neutral', values: { oi: 50, previousOi: 50, ratio: 1, basis: 0, funding: 0, supply: 0 }, oi: '50.00', composite: '中性 0:0' },
-  { name: 'billion', values: { oi: 2_000_000_000 }, oi: '2.00B ▲', composite: '偏多 7:0' },
+  { name: 'long', values: {}, oi: '200万 ▲', composite: '偏多 7:0' },
+  { name: 'short', values: { oi: 2_000, previousOi: 4_000, ratio: 0.5, basis: -0.01, funding: 0.0002 }, oi: '2000 ▼', composite: '偏空 0:7' },
+  { name: 'neutral', values: { oi: 50, previousOi: 50, ratio: 1, basis: 0, funding: 0, supply: 0 }, oi: '50', composite: '中性 0:0' },
+  { name: 'billion', values: { oi: 2_000_000_000 }, oi: '20亿 ▲', composite: '偏多 7:0' },
 ]) {
   test(`user sees ${scenario.name} indicators and the corresponding fresh directional votes`, { timeout: 5_000 }, async t => {
     // Given a futures page with complete data for one directional scenario
@@ -49,10 +49,10 @@ test('user sees missing endpoint data explicitly and receives no retry for clien
   await activateTrading(host, dataset, { status: statuses });
 
   // Then missing rows remain visible and cannot contribute directional votes
-  assert.equal([...host.element('rows').children].every(row => row.children[1].textContent === '--'), true);
+  assert.deepEqual([...host.element('rows').querySelectorAll('.td-number')].map(value => value.textContent), Array(8).fill('--'));
   assert.match(host.element('composite').textContent, /中性 0:0/);
-  assert.equal(host.network.requests.length, 8);
-  assert.equal(host.errors.length, 7);
+  assert.equal(host.network.requests.length, 10);
+  assert.equal(host.errors.length, 9);
 });
 
 test('user sees cached rows without their directional votes after a failed refresh', { timeout: 5_000 }, async t => {
@@ -69,8 +69,8 @@ test('user sees cached rows without their directional votes after a failed refre
   await host.rendered(() => host.element('composite').textContent.includes('中性 0:0'));
 
   // Then cached values are retained with hollow markers and no fresh votes
-  assert.match(host.element('rows').textContent, /2\.00M ▲/);
-  assert.equal([...host.element('rows').children].every(row => row.lastElementChild.style.background === 'transparent'), true);
+  assert.match(host.element('rows').textContent, /200万 ▲/);
+  assert.equal([...host.element('rows').children].every(row => row.classList.contains('td-cached')), true);
   assert.match(host.element('composite').textContent, /中性 0:0/);
 });
 
@@ -89,7 +89,7 @@ test('user receives one retry for transient endpoint errors and then sees fresh 
   await host.rendered(panel => panel?.querySelector('[data-role="updated-at"]')?.textContent.startsWith('更新于'));
 
   // Then the rendered value is fresh and exactly two calls targeted that endpoint
-  assert.match(host.element('rows').textContent, /2\.00M ▲/);
+  assert.match(host.element('rows').textContent, /200万 ▲/);
   assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/openInterestHist')).length, 2);
   assert.match(host.element('composite').textContent, /偏多 7:0/);
 });
@@ -109,7 +109,7 @@ test('user sees the current period fetched only after the server boundary delay'
   await host.rendered(() => host.element('composite').textContent.includes('偏空 3:4'));
 
   // Then one new batch updates the votes and highlights the changed ratios
-  assert.equal(host.network.requests.length, previousCount + 7);
+  assert.equal(host.network.requests.length, previousCount + 8);
   assert.match(host.element('composite').textContent, /偏空 3:4/);
   assert.equal(host.element('rows').querySelectorAll('.jh-td-flash').length, 4);
 });
@@ -206,10 +206,11 @@ test('user sees CMC API provenance and all valuation rows after a deterministic 
 
   // Then values, ranking, holder count, and source appear in the real panel DOM
   assert.equal(host.element('symbol').textContent, 'BTC #1');
-  assert.equal(host.element('rows').children.length, 12);
-  assert.match(host.element('rows').textContent, /流通市值\$1\.2万亿-1\.00%/);
-  assert.match(host.element('rows').textContent, /持有者1万/);
-  assert.match(host.element('rows').textContent, /Profile score85%/);
+  assert.equal(host.element('rows').querySelectorAll('tr[data-metric]').length, 12);
+  assert.equal(host.element('rows').querySelector('[data-metric="market-cap"] [data-role="metric-value"]').textContent, '$1.2万亿');
+  assert.equal(host.element('rows').querySelector('[data-metric="market-cap"] .cmc-change').textContent, '-1.00% · 24小时');
+  assert.equal(host.element('rows').querySelector('[data-metric="holders"] [data-role="metric-value"]').textContent, '1万');
+  assert.equal(host.element('rows').querySelector('[data-metric="profile"] [data-role="metric-value"]').textContent, '85%');
   assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/zh/currencies/bitcoin/');
   assert.match(host.element('footer').textContent, /CMC data-api/);
 });
@@ -251,11 +252,12 @@ for (const outcome of ['http', 'network', 'timeout', 'json', 'statistics']) {
     else api.respond({ data: {} });
     const page = await host.network.waitForRequest(request => request.url.hostname === 'coinmarketcap.com');
     page.respond(`<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { detailRes: { detail } } } })}</script>`);
-    await host.rendered(() => host.element('footer').textContent.includes('CMC 页面快照'));
+    await host.rendered(() => host.element('footer').textContent.includes('CMC page snapshot'));
 
     // Then the source remains visibly a page snapshot and the override bypasses mapping
-    assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/zh/currencies/ravedao/');
-    assert.match(host.element('rows').textContent, /金库资产1200 RAVE/);
+    assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/currencies/ravedao/');
+    assert.equal(host.element('rows').querySelector('[data-metric="treasury"] [data-role="metric-value"]').textContent, '1.2K');
+    assert.equal(host.element('rows').querySelector('[data-metric="treasury"] .cmc-unit').textContent, 'RAVE');
     assert.equal(host.network.requests.length, 2);
   });
 }
@@ -279,6 +281,6 @@ test('user can refresh CMC data from the cached asset mapping without losing the
   // Then the new value appears and no second map request was made
   assert.match(host.element('rows').textContent, /价格-\$123/);
   assert.equal(host.element('symbol').textContent, 'BTC');
-  assert.match(host.element('rows').textContent, /Profile score95%/);
+  assert.equal(host.element('rows').querySelector('[data-metric="profile"] [data-role="metric-value"]').textContent, '95%');
   assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/map')).length, 1);
 });

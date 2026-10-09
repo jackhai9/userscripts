@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   activateTradingData, afterDataMediaResponseTurn, cmcDetail, completeCmcData,
-  completeTradingBatch, createDataPanelHost, tradingDataset,
+  completeTradingBatch, createDataPanelHost, tradingDataset, isTradingHistoryRequest,
 } from '../helpers/data-media-migration-host.js';
 import { createMediaHost } from '../helpers/data-media-migration-media-host.js';
 
@@ -79,7 +79,7 @@ for (const kind of ['trading', 'cmc']) {
     // Then the restored panel renders the newest response with one mounted panel and no stale mutation
     assert.equal(host.element('body').style.display, 'block');
     assert.equal(host.document.querySelectorAll(`#${host.panelId}`).length, 1);
-    assert.match(host.element('rows').textContent, kind === 'trading' ? /4\.00M ▲/ : /价格\$8万/);
+    assert.match(host.element('rows').textContent, kind === 'trading' ? /400万 ▲/ : /价格\$8万/);
     assert.match(host.element('footer').textContent, kind === 'trading' ? /更新于/ : /CMC data-api/);
     assert.deepEqual(host.errors, []);
   });
@@ -109,7 +109,8 @@ for (const kind of ['trading', 'cmc']) {
 
       // Then the viewport affects displayed styles without saving them and removal creates no replacement
       assert.deepEqual(position, { left: 900, top: 900 });
-      assert.deepEqual(panelPosition, viewport.displayed);
+      const expectedLeft = viewport.clientWidth ? String(viewport.clientWidth - (kind === 'trading' ? 480 : 500)) + 'px' : '0px';
+      assert.deepEqual(panelPosition, { ...viewport.displayed, left: expectedLeft });
       assert.equal(host.panel(), null);
       assert.equal(host.window.localStorage.getItem(`${prefix}_pos`), '{"left":900,"top":900}');
       assert.deepEqual(host.errors, []);
@@ -127,17 +128,19 @@ for (const kind of ['trading', 'cmc']) {
     if (kind === 'trading') await activateTradingData(host);
     else await completeCmcData(host, cmcDetail(), { map: false });
     await afterDataMediaResponseTurn();
-    const count = host.network.requests.length;
+    const countRequests = () => kind === 'trading'
+      ? host.network.requests.filter(isTradingHistoryRequest).length : host.network.requests.length;
+    const count = countRequests();
     const deadline = kind === 'trading' ? 305_000 : 30_000;
     host.clock.tick(deadline - 1);
-    assert.equal(host.network.requests.length, count);
+    assert.equal(countRequests(), count);
     host.clock.tick(1);
     if (kind === 'trading') await completeTradingBatch(host, tradingDataset(Date.now()));
     else await respondCmcDetail(host, cmcDetail());
     await afterDataMediaResponseTurn();
 
     // Then the next deadline issues one batch and retains exactly one current panel
-    assert.equal(host.network.requests.length, count + (kind === 'trading' ? 7 : 2));
+    assert.equal(countRequests(), count + (kind === 'trading' ? 7 : 2));
     assert.equal(host.document.querySelectorAll(`#${host.panelId}`).length, 1);
     assert.equal(host.element('symbol').textContent, kind === 'trading' ? 'BTCUSDT' : 'BTC #1');
     assert.deepEqual(host.errors, []);
@@ -184,10 +187,10 @@ test('user receives an asset identification error when CMC supplies a numeric sy
 
   // When the upstream row has a numeric symbol even though its ID and slug are present
   request.respond({ data: [{ id: 4, symbol: 4, slug: 'four', is_active: 1 }] });
-  await host.rendered(() => host.element('rows').textContent.includes('无法识别当前合约'));
+  await host.rendered(() => host.element('rows').textContent.includes('Unable to identify the current contract'));
 
   // Then invalid mapping data remains a visible failure and never triggers a guessed detail request
-  assert.equal(host.element('rows').textContent, '读取失败无法识别当前合约');
+  assert.equal(host.element('rows').textContent, 'Unable to load dataUnable to identify the current contract');
   assert.equal(host.element('symbol').textContent, '4USDT');
   assert.equal(host.network.requests.length, 1);
 });
@@ -201,8 +204,8 @@ test('user keeps trading data operational when the page temporarily has no head 
   await host.start();
   await activateTradingData(host);
 
-  // Then style installation uses the remaining document root and complete indicators remain usable
-  assert.equal(host.document.getElementById('jh-trading-data-flash-style').parentNode, host.document.documentElement);
+  // Then the panel owns its stylesheet and complete indicators remain usable without a head
+  assert.equal(host.panel().querySelector('style').parentNode, host.panel());
   assert.equal(host.element('rows').children.length, 8);
   assert.match(host.element('composite').textContent, /偏多 7:0/);
   assert.deepEqual(host.errors, []);
@@ -228,7 +231,7 @@ test('user sees unavailable trading data after the bounded retry also fails with
   await host.rendered(panel => panel?.querySelector('[data-role="updated-at"]')?.textContent.startsWith('更新于'));
 
   // Then the missing row cannot vote and the complete error object remains available for diagnosis
-  assert.equal(host.element('rows').firstElementChild.children[1].textContent, '--');
+  assert.equal(host.element('rows').querySelector('[data-metric="oi"] .td-number').textContent, '--');
   assert.match(host.element('composite').textContent, /偏多 6:0/);
   assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/openInterestHist')).length, 2);
   assert.equal(host.errors.at(-1).at(-1), failure);

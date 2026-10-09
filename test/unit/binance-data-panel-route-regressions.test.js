@@ -26,7 +26,7 @@ for (const kind of ['cmc', 'trading']) {
     assert.equal(host.network.requests.length, 0);
     // When SPA navigation enters a supported contract and its first refresh completes
     host.navigate('/zh-CN/futures/USUSDT');
-    if (kind === 'trading') await activateTradingData(host, tradingDataset(Date.now()), { symbol: 'USUSDT' });
+    if (kind === 'trading') await activateTradingData(host, tradingDataset(Date.now(), { symbol: 'USUSDT' }), { symbol: 'USUSDT' });
     else await completeCmcData(host, cmcDetail({ id: 42, symbol: 'US' }), { symbol: 'US', slug: 'us' });
     // Then exactly one panel owns the current contract
     assert.equal(host.document.querySelectorAll(`#${host.panelId}`).length, 1);
@@ -61,7 +61,7 @@ for (const kind of ['cmc', 'trading']) {
 
     // When SPA navigation enters a Unicode futures trading route
     host.navigate('/zh-CN/futures/龙虾USDT');
-    if (kind === 'trading') await activateTradingData(host, tradingDataset(Date.now()), { symbol: '龙虾USDT' });
+    if (kind === 'trading') await activateTradingData(host, tradingDataset(Date.now(), { symbol: '龙虾USDT' }), { symbol: '龙虾USDT' });
     else await completeCmcData(host, cmcDetail({ id: 42, symbol: '龙虾' }), { symbol: '龙虾', slug: 'lobster' });
 
     // Then the route controls the visible identity and the outbound symbol parameters
