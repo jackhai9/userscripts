@@ -189,30 +189,29 @@ for (const kind of ['trading', 'cmc']) {
   });
 }
 
-for (const state of ['hidden', 'off-route']) {
+for (const state of ['closed', 'off-route']) {
   test(`user starts no trading data batch when server synchronization finishes after becoming ${state}`, { timeout: 5_000 }, async t => {
     // Given initial server time is pending while the panel shows its loading state
     const host = createDataPanelHost(t, 'trading');
     await host.start();
     const timeRequest = host.network.requests[0];
     const panel = host.panel();
-    const initialRows = host.element('rows').innerHTML;
 
-    // When the route or document becomes inactive before synchronization completes
-    if (state === 'hidden') host.setHidden(true);
+    // When the panel is closed or its route becomes inactive before synchronization completes
+    if (state === 'closed') host.element('close').click();
     else host.navigate('/zh-CN/futures');
     await afterDataMediaResponseTurn();
     host.clock.tick(60_000);
 
     // Then cancellation prevents data requests and leaves no late render
     assert.equal(timeRequest.aborted, true);
-    assert.equal(host.panel(), state === 'hidden' ? panel : null);
-    if (state === 'hidden') assert.equal(host.element('rows').innerHTML, initialRows);
+    assert.equal(host.panel(), state === 'closed' ? panel : null);
+    if (state === 'closed') assert.equal(panel.style.display, 'none');
     assert.deepEqual(host.network.requests.map(request => request.url.pathname), ['/fapi/v1/time']);
   });
 }
 
-for (const state of ['closed', 'hidden', 'off-route']) {
+for (const state of ['closed', 'off-route']) {
   test(`user receives no late CMC error after the loading panel becomes ${state}`, { timeout: 5_000 }, async t => {
     // Given the CMC panel is waiting for its initial asset mapping
     const host = createDataPanelHost(t, 'cmc');
@@ -224,7 +223,6 @@ for (const state of ['closed', 'hidden', 'off-route']) {
 
     // When the panel becomes inactive before the mapping reports failure
     if (state === 'closed') host.element('close').click();
-    else if (state === 'hidden') host.setHidden(true);
     else host.navigate('/zh-CN/futures');
     mapping.fail('error');
     await afterDataMediaResponseTurn();
@@ -237,7 +235,7 @@ for (const state of ['closed', 'hidden', 'off-route']) {
   });
 }
 
-for (const state of ['closed', 'hidden', 'off-route', 'new symbol']) {
+for (const state of ['closed', 'off-route', 'new symbol']) {
   test(`user ignores an old trading cycle response after entering ${state}`, { timeout: 5_000 }, async t => {
     // Given an already-rendered panel has started the next scheduled five-minute refresh
     const host = createDataPanelHost(t, 'trading');
@@ -252,7 +250,6 @@ for (const state of ['closed', 'hidden', 'off-route', 'new symbol']) {
 
     // When lifecycle invalidation or a symbol change precedes the old cycle completion
     if (state === 'closed') host.element('close').click();
-    else if (state === 'hidden') host.setHidden(true);
     else if (state === 'off-route') host.navigate('/zh-CN/futures');
     else {
       host.navigate('/zh-CN/futures/ETHUSDT');
@@ -275,7 +272,7 @@ for (const state of ['closed', 'hidden', 'off-route', 'new symbol']) {
   });
 }
 
-for (const state of ['closed', 'hidden', 'off-route']) {
+for (const state of ['closed', 'off-route']) {
   test(`user receives no stale trading render after the panel becomes ${state}`, { timeout: 5_000 }, async t => {
     // Given the panel exists but its initial data responses remain pending
     const host = createDataPanelHost(t, 'trading');
@@ -288,7 +285,6 @@ for (const state of ['closed', 'hidden', 'off-route']) {
 
     // When the lifecycle is invalidated before the pending responses finish
     if (state === 'closed') host.element('close').click();
-    else if (state === 'hidden') host.setHidden(true);
     else host.navigate('/zh-CN/futures');
     await completeTradingBatch(host, tradingDataset(Date.now()), { includeInterval: false });
     await afterDataMediaResponseTurn();
@@ -300,21 +296,24 @@ for (const state of ['closed', 'hidden', 'off-route']) {
   });
 }
 
-test('user stops the trading server clock sync while the document is hidden', { timeout: 5_000 }, async t => {
+test('user retains hourly trading server synchronization while the document is hidden', { timeout: 5_000 }, async t => {
   // Given one initial server-time synchronization has completed
   const host = createDataPanelHost(t, 'trading');
   await host.start();
   await activateTradingData(host);
   const timeCount = () => host.network.requests.filter(request => request.url.pathname.endsWith('/time')).length;
 
-  // When an hourly deadline occurs and the following hour is spent hidden
-  host.clock.tick(3_600_000);
-  assert.equal(timeCount(), 2);
+  // When successive hourly deadlines occur while the initialized tab remains hidden
   host.setHidden(true);
   host.clock.tick(3_600_000);
-
-  // Then the hidden panel cannot perform another server synchronization
   assert.equal(timeCount(), 2);
+  const request = host.network.requests.find(request => !request.settled && request.url.pathname.endsWith('/time'));
+  request.respond({ serverTime: Date.now() });
+  await afterDataMediaResponseTurn();
+  host.clock.tick(3_600_000);
+
+  // Then the same session maintains its hourly calibration without tab reactivation
+  assert.equal(timeCount(), 3);
 });
 
 test('user opens a correctly escaped CMC link when its asset slug contains quotes', { timeout: 5_000 }, async t => {

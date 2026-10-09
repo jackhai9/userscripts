@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.1
+// @version      1.2.2
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -1203,6 +1203,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
     const DATA_LIMIT = 30;
     const FUNDING_HISTORY_LIMIT = 40;
     const CURRENT_FUNDING_REFRESH_MS = 15e3;
+    const BACKGROUND_FUNDING_REFRESH_MS = 6e4;
     const FUNDING_REQUEST_TIMEOUT_MS = 1e4;
     const CLOCK_REQUEST_TIMEOUT_MS = 5e3;
     const CLOCK_MAX_ROUND_TRIP_MS = 2e3;
@@ -1231,11 +1232,12 @@ ${formatHistoryTime(state.current.time, locale)}`;
       emit("ERR", ...args);
     }
     let lastSymbol = null;
+    let activePath = null;
     function getCurrentSymbol() {
       return parseFuturesTradingSymbolFromPathname(location.pathname);
     }
     function isActiveTradingPage() {
-      return !panelClosed && !document.hidden && isFuturesTradingPage();
+      return !panelClosed && isFuturesTradingPage();
     }
     async function fetchJson(path, params, signal) {
       const url = new URL(path, API_BASE);
@@ -1292,7 +1294,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       return { generation: sessionGeneration, path: location.pathname, symbol: getCurrentSymbol() };
     }
     function sessionIsCurrent(session) {
-      return session.generation === sessionGeneration && session.path === location.pathname && session.symbol === getCurrentSymbol() && isActiveTradingPage();
+      return session.generation === sessionGeneration && session.path === location.pathname && session.path === activePath && session.symbol === getCurrentSymbol() && isActiveTradingPage();
     }
     async function syncServerTime(session) {
       const requestId = ++clockRequestId;
@@ -1452,14 +1454,20 @@ ${formatHistoryTime(state.current.time, locale)}`;
       const footer = panel.querySelector("#" + PANEL_ID2 + "-footer");
       if (footer) updateFooter(footer);
     }
+    function updateDisplayClock() {
+      if (document.hidden || !isActiveTradingPage() || !panelView) return;
+      const footer = document.getElementById(PANEL_ID2 + "-footer");
+      if (footer) updateFooter(footer);
+      panelView.updateClock(fundingClock());
+    }
     function startDisplayClock() {
-      if (agoTimer) return;
-      agoTimer = setInterval(function() {
-        if (!isActiveTradingPage() || !panelView) return;
-        const footer = document.getElementById(PANEL_ID2 + "-footer");
-        if (footer) updateFooter(footer);
-        panelView.updateClock(fundingClock());
-      }, 1e3);
+      if (document.hidden || agoTimer) return;
+      updateDisplayClock();
+      agoTimer = setInterval(updateDisplayClock, 1e3);
+    }
+    function stopDisplayClock() {
+      clearInterval(agoTimer);
+      agoTimer = null;
     }
     function updateFooter(el) {
       const locale = uiLocale();
@@ -1478,6 +1486,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
     }
     let currentFundingTimer = null;
     let currentFundingRequest = null;
+    let currentFundingCompletedAt = null;
     let fundingIntervalRequest = null;
     let currentFundingState = emptyCurrentFundingState(null);
     function emptyCurrentFundingState(symbol) {
@@ -1492,8 +1501,21 @@ ${formatHistoryTime(state.current.time, locale)}`;
         intervalError: null
       };
     }
+    function scheduleCurrentFunding(session) {
+      clearTimeout(currentFundingTimer);
+      currentFundingTimer = null;
+      if (!sessionIsCurrent(session) || currentFundingRequest || currentFundingCompletedAt === null) return;
+      const interval = document.hidden ? BACKGROUND_FUNDING_REFRESH_MS : CURRENT_FUNDING_REFRESH_MS;
+      const delay = Math.max(0, currentFundingCompletedAt + interval - Date.now());
+      currentFundingTimer = setTimeout(function() {
+        currentFundingTimer = null;
+        refreshCurrentFunding(session);
+      }, delay);
+    }
     async function refreshCurrentFunding(session) {
       if (!sessionIsCurrent(session) || currentFundingRequest) return;
+      clearTimeout(currentFundingTimer);
+      currentFundingTimer = null;
       const request = { controller: new AbortController(), timeout: null };
       currentFundingRequest = request;
       request.timeout = setTimeout(function() {
@@ -1512,10 +1534,9 @@ ${formatHistoryTime(state.current.time, locale)}`;
         clearTimeout(request.timeout);
         if (sessionIsCurrent(session) && currentFundingRequest === request) {
           currentFundingRequest = null;
+          currentFundingCompletedAt = Date.now();
           panelView.setFunding(currentFundingState, fundingClock());
-          currentFundingTimer = setTimeout(function() {
-            refreshCurrentFunding(session);
-          }, CURRENT_FUNDING_REFRESH_MS);
+          scheduleCurrentFunding(session);
         }
       }
     }
@@ -1677,8 +1698,11 @@ ${formatHistoryTime(state.current.time, locale)}`;
       renderPanel(result, symbol);
     }
     async function initialFetch(symbol) {
+      const session = currentSession();
+      if (!sessionIsCurrent(session)) return;
       epoch++;
       var myEpoch = epoch;
+      const boundary = Math.floor(serverNow() / PERIOD_MS) * PERIOD_MS;
       clearTimeout(cycleTimer);
       clearTimeout(retryTimer);
       if (symbol !== lastSymbol) {
@@ -1691,9 +1715,10 @@ ${formatHistoryTime(state.current.time, locale)}`;
           fetchPeriodData(symbol, PERIOD_KEYS),
           fetchFundingRateData(symbol)
         ]);
-        refreshFundingInterval(currentSession());
+        refreshFundingInterval(session);
         var [periodEntries, fundingEntry] = await history;
-        if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
+        if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
+        if (serverNow() >= boundary + PERIOD_MS) return;
         applyResults(symbol, periodEntries, fundingEntry);
         renderAll(symbol);
       } catch (e) {
@@ -1707,7 +1732,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       clearTimeout(retryTimer);
       cycleTimer = null;
       retryTimer = null;
-      if (panelClosed || document.hidden) return;
+      if (panelClosed) return;
       if (!isFuturesTradingPage()) {
         pauseForNonTradingPage();
         return;
@@ -1734,12 +1759,21 @@ ${formatHistoryTime(state.current.time, locale)}`;
       }, delay);
     }
     async function runCycleAttempt(boundary, attempt) {
-      if (document.hidden || panelClosed) return;
+      if (panelClosed) return;
       if (!isFuturesTradingPage()) {
         pauseForNonTradingPage();
         return;
       }
+      if (activePath !== location.pathname) {
+        handlePathChange();
+        return;
+      }
+      if (serverNow() >= boundary + PERIOD_MS) {
+        scheduleCycle();
+        return;
+      }
       if (fetching) return;
+      const session = currentSession();
       var symbol = getCurrentSymbol();
       if (!symbol) {
         scheduleCycle(true);
@@ -1760,7 +1794,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
             fetchPeriodData(symbol, PERIOD_KEYS),
             fetchFundingRateData(symbol)
           ]);
-          refreshFundingInterval(currentSession());
+          refreshFundingInterval(session);
           [periodEntries, fundingEntry] = await history;
         } else {
           var pending = getPendingKeys(symbol, targetTs);
@@ -1772,7 +1806,11 @@ ${formatHistoryTime(state.current.time, locale)}`;
           }
           periodEntries = await fetchPeriodData(symbol, pending);
         }
-        if (epoch !== myEpoch || !isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
+        if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
+        if (serverNow() >= boundary + PERIOD_MS) {
+          scheduleCycle();
+          return;
+        }
         applyResults(symbol, periodEntries, fundingEntry || null);
         renderAll(symbol);
         var stillPending = getPendingKeys(symbol, targetTs);
@@ -1794,6 +1832,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
           runCycleAttempt(boundary, attempt + 1);
         }, retryDelay);
       } catch (e) {
+        if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
         err("数据拉取失败:", e);
         scheduleCycle();
       } finally {
@@ -1801,14 +1840,12 @@ ${formatHistoryTime(state.current.time, locale)}`;
       }
     }
     function stopBusinessLoop() {
+      activePath = null;
       clearTimeout(cycleTimer);
       cycleTimer = null;
       clearTimeout(retryTimer);
       retryTimer = null;
-      if (agoTimer) {
-        clearInterval(agoTimer);
-        agoTimer = null;
-      }
+      stopDisplayClock();
       if (serverTimeTimer) {
         clearInterval(serverTimeTimer);
         serverTimeTimer = null;
@@ -1820,6 +1857,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       }
       clearTimeout(currentFundingTimer);
       currentFundingTimer = null;
+      currentFundingCompletedAt = null;
       if (currentFundingRequest) {
         clearTimeout(currentFundingRequest.timeout);
         currentFundingRequest.controller.abort();
@@ -1885,6 +1923,8 @@ ${formatHistoryTime(state.current.time, locale)}`;
       const session = currentSession();
       const symbol = session.symbol;
       if (!symbol) return;
+      activePath = session.path;
+      lastPath = session.path;
       failedKeys = /* @__PURE__ */ new Set([...PERIOD_KEYS, "fundingRate"]);
       endpointErrors = {};
       currentFundingState = emptyCurrentFundingState(symbol);
@@ -1901,7 +1941,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       scheduleCycle();
     }
     function handlePathChange() {
-      if (document.hidden || panelClosed) return;
+      if (panelClosed) return;
       if (location.pathname === lastPath) return;
       lastPath = location.pathname;
       if (!isFuturesTradingPage()) {
@@ -1911,8 +1951,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       activateTradingPage();
     }
     function startRouteWatcher() {
-      if (document.hidden || panelClosed) return;
-      lastPath = location.pathname;
+      if (panelClosed) return;
       if (!removeSpaRouteChangeListener) {
         removeSpaRouteChangeListener = installSpaRouteChangeListener(window, handlePathChange);
       }
@@ -1926,17 +1965,27 @@ ${formatHistoryTime(state.current.time, locale)}`;
     function start() {
       log("脚本启动");
       document.addEventListener("visibilitychange", function() {
-        if (!document.hidden) {
-          if (panelClosed) return;
-          startRouteWatcher();
-          if (!isFuturesTradingPage()) {
-            pauseForNonTradingPage();
-            return;
-          }
-          activateTradingPage();
-        } else {
-          stopLoop();
+        if (panelClosed) return;
+        if (document.hidden) {
+          stopDisplayClock();
+          scheduleCurrentFunding(currentSession());
+          return;
         }
+        startRouteWatcher();
+        if (location.pathname !== lastPath) {
+          handlePathChange();
+          return;
+        }
+        if (!isFuturesTradingPage()) {
+          pauseForNonTradingPage();
+          return;
+        }
+        if (activePath !== location.pathname) {
+          activateTradingPage();
+          return;
+        }
+        startDisplayClock();
+        scheduleCurrentFunding(currentSession());
       });
       if (!document.hidden) {
         startRouteWatcher();

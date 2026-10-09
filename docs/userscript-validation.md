@@ -70,8 +70,10 @@ read the Node version from `.nvmrc`.
   scope, and available-balance parsing. Canonical gateway symbols retain the
   separate exact server contract in `src/shared/canonical-symbol.js`.
 - Async work must carry the symbol, route, and lifecycle identity that started
-  it. A route change, symbol change, hidden/closed panel, or page teardown
-  invalidates work before its result can render or update shared state.
+  it. A route change, symbol change, panel close, or page teardown invalidates
+  work before its result can render or update shared state. Follow each script's
+  visibility contract: the two data panels below retain an activated session
+  while hidden; visibility alone does not invalidate its requests.
 - Timer, observer, drag, and unload listeners are part of the lifecycle. Stop
   business work when its route or panel is inactive, remove listeners when the
   panel is removed, and keep only the route watcher needed to discover a future
@@ -124,14 +126,35 @@ prices retain enough significant digits to distinguish nonzero values from zero.
 ## Binance Trading Data Panel
 
 The panel runs only on an actual Binance futures trading route. It derives the
-symbol from the shared route parser, aligns five-minute data to Binance server
-time, and keeps the business loop stopped while the document is hidden, the
-panel is closed, or the route is not a trading page. A route watcher may remain
-alive while the panel is paused so a later SPA transition can restart the
-business loop.
+symbol from the shared route parser and aligns five-minute data to Binance server
+time. An initially hidden document waits for its first visible activation. Once
+activated, hiding the tab retains the same route session, in-flight requests,
+data, and historical schedule. Closing the panel or leaving a trading route stops
+the business loop. The route watcher remains active off-route and while hidden
+so a later SPA transition can start a new session; old-symbol and old-path
+responses cannot publish into that session.
+
+Current funding refreshes 15 seconds after request completion in the foreground
+and 60 seconds after completion in the background. Successful and failed requests
+both establish this deadline; the displayed receipt timestamp changes only on
+success. Visibility changes recalculate the deadline from that same completion
+time, never restart initialization or overlap an existing request. Returning to
+an overdue quote schedules one refresh while retaining its existing value and
+provenance. An active session includes calibration and initial requests that are
+still pending.
+
+Historical data retains its five-minute boundaries, five-second first delay,
+10/15/20/30-second retry schedule, and hourly server calibration while hidden.
+A delayed timer starts only the latest publication window. Initial and periodic
+responses that arrive after their own five-minute window expires are discarded
+before updating values, votes, or the receipt timestamp; the current window is
+then scheduled once. Browser timer throttling can delay these requests, and a
+frozen or discarded page cannot execute JavaScript until resumed or reloaded.
 
 The one-second age display retains its footer elements and updates only changed
-text. It does not recreate the timestamp row or alter the data-fetch schedule.
+text. It pauses while hidden and updates immediately on return, including removal
+of a current funding quote whose settlement has expired. It does not recreate
+the timestamp row or alter the historical data-fetch schedule.
 
 Each period fetch records which endpoint produced fresh data and which endpoint
 used a cached value or has no value. Fresh and cached indicators remain distinct
@@ -181,14 +204,14 @@ not apply another multiplier to 1000-token contracts.
 
 The single funding row combines the last settled rate and its historical chart
 with the separate current rate, interval, and countdown. Only the settled value
-participates in the existing simplified funding vote. Current funding refreshes
-15 seconds after each request completes, with a 10-second request deadline.
+participates in the existing simplified funding vote. Current funding follows
+the visibility cadence above, with a 10-second request deadline.
 Interval metadata refreshes independently at activation and each full historical
 cycle, also with a 10-second deadline. It must never block a historical refresh.
 An absent metadata row means an unknown interval, not an assumed eight hours.
 
 Requests and responses retain session, path, and symbol ownership. Changing
-routes, hiding, or closing aborts the current-rate, interval, and clock requests;
+routes or closing aborts the current-rate, interval, and clock requests;
 superseded responses cannot publish. A failed current refresh can retain an actual
 previous quote with a visible cache/error label. A first failure without data is
 labelled unavailable rather than cached. Metadata cache status is independent.
@@ -230,10 +253,22 @@ and timestamp, and a failed refresh must not overwrite a newer symbol's panel.
 The existing `1000` and `1000000` multiplier mapping recognizes Unicode letters
 as the start of an asset name; numeric-only names such as `4` retain their digits.
 
-Route changes, hidden documents, panel close, and panel removal invalidate the
-refresh epoch and clean up timers and DOM listeners. A route watcher may remain
-to detect a later matching page, but it must not continue the business refresh
-loop while paused.
+Route changes, panel close, and panel removal invalidate the refresh epoch and
+clean up business timers. Responses belong to the complete pathname as well as
+the symbol, so even a same-symbol language change starts a new session. A route
+watcher remains to detect later matching pages, including transitions while
+hidden; it does not run business requests off-route or after close.
+
+An initially hidden document waits until first visited. An activated panel keeps
+its data, expanded interpretation, pending requests, and session when hidden.
+Automatic refresh uses one timeout: 30 seconds after the last completed attempt
+in the foreground and five minutes in the background. Failed attempts also set
+the deadline without claiming a successful fetch. Returning
+before that deadline makes no request; returning after the foreground deadline
+silently refreshes once without replacing the table with Loading. Visibility
+cannot duplicate an in-flight refresh or reset its timing anchor. A manual
+Refresh keeps its explicit superseding-request behavior. Browser throttling or
+freezing can delay the schedule; missed intervals are not replayed.
 
 The CMC table has metric, value, and interpretation columns, with expandable
 definitions. A short name and separate qualifier identify each ratio's numerator,
@@ -260,8 +295,8 @@ Interpretations describe what the value supports. The volume ratio's 50% thresho
 is explicitly a descriptive convention, not a statistical anomaly or trading
 signal. Valuation comparisons need peers, volume changes need history, DEX
 liquidity is not Binance order-book depth, and profile disclosure scores do not
-establish project safety. The existing 30-second refresh, mapping rules, source
-timestamps, and API/page-snapshot provenance remain separate from presentation.
+establish project safety. The refresh schedule, mapping rules, source timestamps,
+and API/page-snapshot provenance remain separate from presentation.
 
 For a browser-openable offline implementation preview, run
 `node e2e/binance-orderbook/helpers/data-panels-preview.mjs` after the two builds
@@ -269,6 +304,24 @@ and open `output/data-panels-preview/index.html` with a `file://` URL. The gener
 embeds unchanged generated artifacts and labelled example data. It supports both
 languages, light/dark themes, and each panel separately, without external network
 requests. It is not live Binance or Tampermonkey evidence.
+
+### Background lifecycle validation (2026-10-09)
+
+Trading-data `1.2.2` and CMC-data `0.2.2` passed the full 2548-test Node suite,
+including 23 focused background-lifecycle scenarios, and all 41 generated-panel
+browser scenarios. Both builds, generated syntax and release metadata checks,
+test lint, and `git diff --check` passed. The browser checks cover simulated
+visibility and suspended animation frames; the rendered English panels were
+inspected with both historical and CMC interpretation details kept open.
+
+The controlled host verifies that ten quick returns preserve the same rows and
+initial request batch, without postponing the original foreground deadline.
+Other checks cover background cadence, request completion while hidden, failure
+cooldowns, late initial/cycle responses, full-path ownership when the host
+replaces its history methods, clock continuity,
+and settlement expiry on return. These are deterministic request and UI checks,
+not CPU or memory measurements. Current Chrome timer throttling, freezing or
+discarding, Tampermonkey installation, and live Binance responses remain untested.
 
 ### Compact layout validation (2026-10-09)
 
@@ -348,8 +401,16 @@ claim live behavior from source inspection alone.
   new symbol.
 - Open near a five-minute boundary and verify the current period is fetched
   after the server-time boundary rather than skipped.
-- Hide the tab and return; the business timer stops while hidden and resumes with
-  a fresh, current-symbol fetch.
+- Switch tabs repeatedly within 15 seconds; retain the same rows, current quote,
+  and history timestamp without new calibration or history requests. Once current
+  funding is overdue, returning requests it once without clearing the old value.
+- Keep the initialized tab hidden: funding refreshes at 60-second completion
+  intervals, history retains its five-minute schedule, and hourly calibration
+  continues. The second-by-second display stops and catches up immediately on
+  return, including a settlement boundary crossed while hidden.
+- Delay browser callbacks or pending history across several publication windows;
+  process only the latest window after its five-second delay. A late initial or
+  cycle response cannot appear as freshly received current-period data.
 - Close the panel and verify background polling does not restart it.
 - Simulate a partial endpoint failure; cached rows are marked as cached and are
   excluded from directional vote totals while missing rows remain explicit.
@@ -373,8 +434,13 @@ claim live behavior from source inspection alone.
   the known mapping renders data.
 - Verify the displayed source and update time distinguish a page snapshot from a
   data API response.
-- Hide or close the panel while a refresh is pending; no stale render or timer
-  survives removal.
+- Hide the tab while a refresh is pending; its current-symbol response still
+  renders and a quick return causes no duplicate request or Loading state.
+- Keep the tab hidden through a five-minute refresh, then return; only an overdue
+  foreground snapshot triggers one silent refresh. Repeated returns after errors
+  must respect the completion-based cooldown.
+- Close or leave the route while a refresh is pending; no stale render or timer
+  survives removal, and visibility events cannot reopen a closed panel.
 - Navigate between matching and non-matching Binance routes and verify the
   route watcher does not leave a business loop running off-route.
 - Expand interpretations for FDV, volume/cap, liquidity/cap, supply, holders, and

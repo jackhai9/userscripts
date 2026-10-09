@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { activateTradingData, createDataPanelHost } from '../helpers/data-media-migration-host.js';
+import { activateTradingData, afterDataMediaResponseTurn, completeTradingBatch, createDataPanelHost, tradingDataset } from '../helpers/data-media-migration-host.js';
 
 async function harness(t) {
   const updatedAt = new Date(2026, 8, 12, 12, 34, 56).getTime();
@@ -27,7 +27,7 @@ test('user keeps the footer elements while sixty clock updates advance displayed
   assert.equal(labels[1].textContent, '60秒前');
 });
 
-test('user receives a same-second refresh without any footer DOM mutation', { timeout: 5_000 }, async t => {
+test('user returns to the tab within the same second without any footer DOM mutation', { timeout: 5_000 }, async t => {
   // Given an observed footer has just rendered its initial data timestamp
   const h = await harness(t);
   const records = [];
@@ -35,12 +35,12 @@ test('user receives a same-second refresh without any footer DOM mutation', { ti
   observer.observe(h.footer, { childList: true, subtree: true, characterData: true });
   t.after(() => observer.disconnect());
 
-  // When returning to the tab fetches and renders new data within the same second
+  // When the user switches away and returns within the same second
   h.setHidden(true);
   h.setHidden(false);
-  await activateTradingData(h);
+  await afterDataMediaResponseTurn();
 
-  // Then the repeated render leaves the unchanged timestamp and age nodes untouched
+  // Then the return leaves unchanged timestamp and age nodes untouched
   assert.equal(records.length, 0);
   assert.equal(observer.takeRecords().length, 0);
   assert.equal(h.footer.firstElementChild.children[1].textContent, '0秒前');
@@ -55,7 +55,9 @@ test('user sees the retained timestamp label advance and elapsed seconds reset w
   // When the user returns five minutes later and the next complete response renders
   h.clock.setTime(h.updatedAt + 300_000);
   h.setHidden(false);
-  await activateTradingData(h);
+  h.clock.tick(0);
+  await completeTradingBatch(h, tradingDataset(Date.now()));
+  await afterDataMediaResponseTurn();
 
   // Then the same label displays the new timestamp and a zero-second age
   assert.equal(h.footer.firstElementChild.children[0], label);

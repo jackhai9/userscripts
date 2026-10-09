@@ -35,25 +35,25 @@ test('user sees English trading labels on an English futures page', { timeout: 5
   assert.equal(host.element('close').getAttribute('aria-label'), 'Close');
 });
 
-test('user keeps the resumed data session when an earlier time request completes late', { timeout: 5_000 }, async t => {
+test('user keeps one pending calibration through repeated tab visibility changes', { timeout: 5_000 }, async t => {
   // Given the original activation has an outstanding server-time request
   const host = createDataPanelHost(t, 'trading');
   await host.start();
   const oldTime = await host.network.waitForRequest(request => request.url.pathname.endsWith('/time'));
 
-  // When a resumed activation completes before the old calibration
-  host.setHidden(true);
-  host.setHidden(false);
-  const newTime = await host.network.waitForRequest(request => request !== oldTime && request.url.pathname.endsWith('/time'));
-  newTime.respond({ serverTime: Date.now() });
+  // When repeated returns occur before the original calibration finishes
+  for (let index = 0; index < 10; index++) {
+    host.setHidden(true);
+    host.setHidden(false);
+  }
+  assert.equal(host.network.requests.length, 1);
+  assert.equal(oldTime.aborted, false);
+  oldTime.respond({ serverTime: Date.now() });
   await completeTradingBatch(host, tradingDataset(Date.now()));
   await afterDataMediaResponseTurn();
-  const requestCount = host.network.requests.length;
-  const rendered = host.element('rows').textContent;
-  assert.equal(oldTime.aborted, true);
-  await afterDataMediaResponseTurn();
 
-  // Then late calibration cannot change the data or start another request batch
-  assert.equal(host.network.requests.length, requestCount);
-  assert.equal(host.element('rows').textContent, rendered);
+  // Then the original session starts one complete batch and renders current data
+  assert.equal(host.network.requests.length, 10);
+  assert.match(host.element('rows').textContent, /200万 ▲/);
+  assert.equal(host.panel().querySelector('[data-role="funding-countdown"]').textContent, '倒计时 04:00:00');
 });
