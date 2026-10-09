@@ -5,15 +5,15 @@ import { installStrategy31 } from '../../src/binance-strategy31-volume-reversal/
 import { SIGNAL_GATEWAY_BRIDGE } from '../../src/shared/signal-gateway-bridge.js';
 
 function fixture(locale) {
-  const host = createStrategy29ChartHost({ resolution: '5', bars: [
-    { time: 300, open: 10, high: 13, low: 9, close: 12 },
+  const host = createStrategy29ChartHost({ resolution: '15', bars: [
+    { time: 900, open: 10, high: 13, low: 9, close: 12 },
   ] });
   host.dom.reconfigure({ url: `https://www.binance.com/${locale}/futures/BTRUSDT` });
   const symbol = 'BTR/USDT:USDT';
   const payload = { schema_version: 1, strategy_id: '31', spec_version: '31_2_spec_v1', symbol,
-    timeframe: '5m', observed_at_ms: 600000, events: [
-      { id: `31_2_spec_v1:${symbol}:5m:300000`, symbol, timeframe: '5m', bar_open_ms: 300000,
-        bar_close_ms: 600000, open: 10, high: 13, low: 9, close: 12, volume: 101, previous_volume: 100 },
+    timeframe: '15m', observed_at_ms: 1800000, events: [
+      { id: `31_2_spec_v1:${symbol}:15m:900000`, symbol, timeframe: '15m', bar_open_ms: 900000,
+        bar_close_ms: 1800000, open: 10, high: 13, low: 9, close: 12, volume: 101, previous_volume: 100 },
     ] };
   const requests = [];
   let capabilities = ['strategy31'];
@@ -44,7 +44,7 @@ function fixture(locale) {
 }
 
 const states = [
-  { name: 'confirmed chart signals', zh: '策略31：1 个图表信号 · 5m', en: 'Strategy31: 1 chart signals · 5m',
+  { name: 'confirmed chart signals', zh: '策略31：1 个图表信号 · 15m', en: 'Strategy31: 1 chart signals · 15m',
     prepare: f => { f.payload.events[0].volume = 102; }, requests: 1, markers: 1 },
   { name: 'unsupported market', zh: '策略31：不支持的交易市场', en: 'Strategy31: unsupported market',
     prepare: f => { f.view.history.replaceState({}, '', f.view.location.pathname.replace('BTRUSDT', 'BTRUSDC')); }, requests: 0, markers: 0 },
@@ -94,13 +94,13 @@ test('user switches retained Strategy31 status between Chinese and English while
   f.hold(response.promise);
   const sample = f.runtime.sample();
   f.setHidden(true);
-  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, '策略31：1 个图表信号 · 5m');
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, '策略31：1 个图表信号 · 15m');
 
   // When the pending hidden page switches to English through native SPA history.
   f.view.history.pushState({}, '', '/en/futures/BTRUSDT');
 
   // Then the retained status translates immediately without requests or marker replacement.
-  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 5m');
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 15m');
   assert.equal(f.requests.length, 2);
   assert.equal(f.requests[1].signal.aborted, false);
   assert.equal(f.overlay.markers()[0], marker);
@@ -109,7 +109,7 @@ test('user switches retained Strategy31 status between Chinese and English while
   f.view.history.pushState({}, '', '/zh-CN/futures/BTRUSDT');
 
   // Then Chinese returns immediately while the interval session and marker layer keep their subscriptions.
-  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, '策略31：1 个图表信号 · 5m');
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, '策略31：1 个图表信号 · 15m');
   assert.equal(f.requests.length, 2);
   assert.equal(f.overlay.markers()[0], marker);
   assert.equal(f.intervalChanged.size, 2);
@@ -121,7 +121,7 @@ test('user switches retained Strategy31 status between Chinese and English while
   await sample;
 
   // Then the completed sample retains Chinese and never adds a third request or native drawing.
-  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, '策略31：1 个图表信号 · 5m');
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, '策略31：1 个图表信号 · 15m');
   assert.equal(f.requests.length, 2);
   assert.equal(f.overlay.markers().length, 1);
   assert.equal(f.created.length, 0);

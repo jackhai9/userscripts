@@ -5,16 +5,19 @@ import { installStrategy31 } from '../../src/binance-strategy31-volume-reversal/
 import { SIGNAL_GATEWAY_BRIDGE } from '../../src/shared/signal-gateway-bridge.js';
 import { registerChartMutationOwner } from '../../src/shared/chart-mutation-owners.js';
 
-function fixture({ pathname = '/en/futures/BTRUSDT', hiddenDuringInstall = true, preferences = new Map() } = {}) {
-  const host = createStrategy29ChartHost({ resolution: '5', bars: [
-    { time: 300, open: 10, high: 13, low: 9, close: 12 },
+function fixture({ pathname = '/en/futures/BTRUSDT', hiddenDuringInstall = true, preferences = new Map(),
+  period = { resolution: '15', timeframe: '15m', seconds: 900 } } = {}) {
+  const { resolution, timeframe, seconds } = period;
+  const host = createStrategy29ChartHost({ resolution, bars: [
+    { time: seconds, open: 10, high: 13, low: 9, close: 12 },
   ] });
   host.dom.reconfigure({ url: `https://www.binance.com${pathname}` });
   const symbol = 'BTR/USDT:USDT';
-  const event = { id: `31_2_spec_v1:${symbol}:5m:300000`, symbol, timeframe: '5m', bar_open_ms: 300000,
-    bar_close_ms: 600000, open: 10, high: 13, low: 9, close: 12, volume: 101, previous_volume: 100 };
+  const event = { id: `31_2_spec_v1:${symbol}:${timeframe}:${seconds * 1000}`, symbol, timeframe,
+    bar_open_ms: seconds * 1000, bar_close_ms: seconds * 2000,
+    open: 10, high: 13, low: 9, close: 12, volume: 101, previous_volume: 100 };
   const payload = { schema_version: 1, strategy_id: '31', spec_version: '31_2_spec_v1', symbol,
-    timeframe: '5m', observed_at_ms: 600000, events: [event] };
+    timeframe, observed_at_ms: seconds * 2000, events: [event] };
   let nextResponse = null, revision = 0;
   const requests = [];
   const preferenceReads = [];
@@ -159,7 +162,7 @@ test('user leaves a Strategy31 drag without storing it or reviving the removed s
   const status = f.document.getElementById('jh-strategy31-status');
   assert.equal(status.style.left, '240px');
   assert.equal(status.style.top, '180px');
-  assert.equal(status.textContent, '策略31：1 个图表信号 · 5m');
+  assert.equal(status.textContent, '策略31：1 个图表信号 · 15m');
   assert.deepEqual(f.preferenceReads, [{ key: 'strategy31StatusPosition', initial: null }]);
   assert.deepEqual(f.preferenceWrites, []);
 });
@@ -287,7 +290,7 @@ test('user clears Strategy31 from the futures landing page and resumes on a trad
   t.after(() => { f.runtime.dispose(); f.close(); });
   await f.runtime.sample();
   assert.equal(f.overlay.markers().length, 1);
-  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 5m');
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 15m');
   // When navigation leaves the trading route while its native chart remains mounted
   f.dom.reconfigure({ url: 'https://www.binance.com/en/futures/' });
   await f.runtime.sample();
@@ -303,7 +306,7 @@ test('user clears Strategy31 from the futures landing page and resumes on a trad
   // Then the observer acquires fresh signals and restores its overlay arrow
   assert.equal(f.requests.length, 2);
   assert.equal(f.overlay.markers().length, 1);
-  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 5m');
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 15m');
 });
 
 test('user aborts pending signals on leaving a trading page without late UI resurrection', async (t) => {
@@ -339,7 +342,7 @@ test('user aborts pending signals on leaving a trading page without late UI resu
   assert.equal(f.requests.length, 3);
   assert.equal(f.requests[2].signal.aborted, false);
   assert.equal(f.overlay.markers().length, 1);
-  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 5m');
+  assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 15m');
 });
 
 test('user clears the landing-page overlay immediately while a chart owner is busy', async (t) => {
@@ -385,12 +388,12 @@ test('user resumes signals after returning from an unsupported monthly interval'
   // Given a supported chart and its installed observer
   const f = fixture();
   t.after(() => { f.runtime.dispose(); f.close(); });
-  // When the chart visits a monthly interval and returns to five minutes
+  // When the chart visits a monthly interval and returns to fifteen minutes
   f.changeInterval('1M');
   f.finishData();
   await f.runtime.sample();
   assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: unsupported interval');
-  f.changeInterval('5');
+  f.changeInterval('15');
   f.finishData();
   await f.runtime.sample();
   // Then the observer resumes one correctly anchored arrow
@@ -408,8 +411,8 @@ test('user waits for native data completion even when old chart data remains rea
   const response = Promise.withResolvers();
   f.hold(response.promise);
   // When interval invalidation precedes the native data-completed event
+  f.changeInterval('30');
   f.changeInterval('15');
-  f.changeInterval('5');
   f.setDataReady(true);
   const sample = f.runtime.sample();
   response.resolve({ kind: 'response', status: 200, responseText: JSON.stringify(f.payload) });
@@ -428,14 +431,14 @@ test('user sees retained signals only after their exact chart candles load', asy
   // Given a retained server signal older than the currently loaded chart
   const f = fixture();
   t.after(() => { f.runtime.dispose(); f.close(); });
-  f.setBars([{ time: 900, open: 10, high: 13, low: 9, close: 12 }]);
+  f.setBars([{ time: 1800, open: 10, high: 13, low: 9, close: 12 }]);
   // When the observer receives history outside the loaded candle times
   await f.runtime.sample();
   // Then no native drawing is created at an unavailable coordinate
   assert.equal(f.created.length, 0);
   assert.equal(f.overlay.markers().length, 0);
   // When loading earlier chart history exposes the exact green candle
-  f.setBars([{ time: 300, open: 10, high: 13, low: 9, close: 12 }]);
+  f.setBars([{ time: 900, open: 10, high: 13, low: 9, close: 12 }]);
   f.finishData();
   await f.runtime.sample();
   // Then the same retained signal is displayed without restarting
@@ -469,7 +472,7 @@ test('user keeps arrows through one transient native candle update', async (t) =
   const f = fixture();
   t.after(() => { f.runtime.dispose(); f.close(); });
   await f.runtime.sample();
-  const bar = { time: 300, open: 10, high: 13, low: 9, close: 12 };
+  const bar = { time: 900, open: 10, high: 13, low: 9, close: 12 };
   f.exportNext(exportStrategyBars([bar, bar]));
   // When one sample races the native feed update
   await f.runtime.sample();
@@ -488,7 +491,7 @@ test('user never receives a late arrow from the previous chart interval', async 
   f.hold(response.promise);
   // When the interval changes before the request completes
   const sample = f.runtime.sample();
-  f.changeInterval('15');
+  f.changeInterval('30');
   response.resolve({ kind: 'response', status: 200, responseText: JSON.stringify(f.payload) });
   await sample;
   // Then the stale event does not create any native drawing
@@ -506,7 +509,7 @@ test('user never sees an old arrow finish after gateway settings change', async 
   await gate.entered;
   // When gateway settings change before the native operation completes
   f.changeSettings();
-  gate.resolve(exportStrategyBars([{ time: 300, open: 10, high: 13, low: 9, close: 12 }]));
+  gate.resolve(exportStrategyBars([{ time: 900, open: 10, high: 13, low: 9, close: 12 }]));
   await sample;
   // Then no old-settings arrow remains visible
   assert.equal(f.overlay.markers().length, 0);
@@ -539,7 +542,7 @@ test('user sees no resurrected status after stopping during native candle export
   await gate.entered;
   // When the observer stops before export completes
   f.runtime.dispose();
-  gate.resolve(exportStrategyBars([{ time: 300, open: 10, high: 13, low: 9, close: 12 }]));
+  gate.resolve(exportStrategyBars([{ time: 900, open: 10, high: 13, low: 9, close: 12 }]));
   await sample;
   await f.runtime.sample();
   // Then neither a drawing nor a success message reappears
@@ -547,3 +550,96 @@ test('user sees no resurrected status after stopping during native candle export
   assert.equal(f.document.getElementById('jh-strategy31-status'), null);
   f.close();
 });
+
+for (const period of [
+  { resolution: '1', timeframe: '1m', seconds: 60 },
+  { resolution: '3', timeframe: '3m', seconds: 180 },
+  { resolution: '5', timeframe: '5m', seconds: 300 },
+]) {
+  test(`user sees no Strategy31 request or arrow when starting on ${period.timeframe}`, async (t) => {
+    // Given a short-period chart with an otherwise valid server signal available
+    const f = fixture({ period });
+    t.after(() => { f.runtime.dispose(); f.close(); });
+
+    // When the observer samples the unsupported chart repeatedly
+    await f.runtime.sample();
+    await f.runtime.sample();
+
+    // Then unsupported status appears without requesting signals or chart candles
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.exports.length, 0);
+    assert.equal(f.overlay.markers().length, 0);
+    assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: unsupported interval');
+  });
+
+  test(`user hides Strategy31 arrows immediately on ${period.timeframe} and rejects a late fifteen-minute response`, async (t) => {
+    // Given a visible fifteen-minute arrow and a second response held at the gateway boundary
+    const f = fixture();
+    t.after(() => { f.runtime.dispose(); f.close(); });
+    await f.runtime.sample();
+    assert.equal(f.overlay.markers().length, 1);
+    const overlay = f.overlay.pane.querySelector('[data-strategy-marker-overlay]');
+    assert.equal(overlay.style.visibility, 'visible');
+    const response = Promise.withResolvers();
+    f.hold(response.promise);
+    const pending = f.runtime.sample();
+    assert.equal(f.requests.length, 2);
+
+    // When native interval invalidation moves to the unsupported chart before sampling or response completion
+    f.changeInterval(period.resolution);
+
+    // Then the previous arrow is hidden synchronously without waiting for the gateway
+    assert.equal(overlay.style.visibility, 'hidden');
+    assert.equal(f.requests.length, 2);
+
+    // When the old response arrives and the new native interval finishes loading
+    response.resolve({ kind: 'response', status: 200, responseText: JSON.stringify(f.payload) });
+    await pending;
+    assert.equal(overlay.style.visibility, 'hidden');
+    f.finishData();
+    await f.runtime.sample();
+
+    // Then the late response cannot restore the arrow or start a short-period request
+    assert.equal(f.requests.length, 2);
+    assert.equal(f.overlay.markers().length, 0);
+    assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: unsupported interval');
+
+    // When the chart returns to fifteen minutes with its own data-completion event
+    f.hold(null);
+    f.changeInterval('15');
+    f.finishData();
+    await f.runtime.sample();
+
+    // Then one fresh supported request restores the server-owned arrow
+    assert.equal(f.requests.length, 3);
+    assert.equal(f.requests[2].path, '/v1/strategy31/events?symbol=BTR%2FUSDT%3AUSDT&timeframe=15m&limit=200');
+    assert.equal(f.overlay.markers().length, 1);
+    assert.equal(f.overlay.markers()[0].dataset.markerId, f.payload.events[0].id);
+    assert.equal(f.document.getElementById('jh-strategy31-status').textContent, 'Strategy31: 1 chart signals · 15m');
+  });
+}
+
+for (const period of [
+  { resolution: '15', timeframe: '15m', seconds: 900 },
+  { resolution: '30', timeframe: '30m', seconds: 1800 },
+  { resolution: '60', timeframe: '1h', seconds: 3600 },
+  { resolution: '240', timeframe: '4h', seconds: 14400 },
+]) {
+  test(`user receives a Strategy31 arrow on the supported ${period.timeframe} chart`, async (t) => {
+    // Given a native chart and closed server event on a supported monitor period
+    const f = fixture({ period });
+    t.after(() => { f.runtime.dispose(); f.close(); });
+
+    // When the real observer requests and renders the matching projection
+    await f.runtime.sample();
+
+    // Then the bounded gateway request and exact native candle produce one green arrow
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.requests[0].path, `/v1/strategy31/events?symbol=BTR%2FUSDT%3AUSDT&timeframe=${period.timeframe}&limit=200`);
+    assert.equal(f.overlay.markers().length, 1);
+    assert.equal(f.overlay.markers()[0].dataset.markerId, f.payload.events[0].id);
+    assert.equal(f.overlay.markers()[0].getAttribute('transform'), 'translate(0 491)');
+    assert.equal(f.document.getElementById('jh-strategy31-status').textContent, `Strategy31: 1 chart signals · ${period.timeframe}`);
+    assert.equal(f.created.length, 0);
+  });
+}

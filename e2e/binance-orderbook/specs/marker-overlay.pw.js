@@ -128,7 +128,7 @@ test('user sees independent Strategy27 arrows and labels beside Strategy29 and S
       createShape() { window.nativeCalls.create += 1; throw new Error('Native creation is forbidden'); },
       removeEntity() { window.nativeCalls.remove += 1; throw new Error('Native removal is forbidden'); } };
     const api = { activeChart: () => chart, saveChart() { window.nativeCalls.save += 1; throw new Error('Native save is forbidden'); } };
-    const rows = Array.from({ length: 8 }, (_, index) => [120 + index * 60, 100, 110, index === 7 ? 95 : 90, 105]);
+    const rows = Array.from({ length: 8 }, (_, index) => [index === 7 ? 900 : 120 + index * 60, 100, 110, index === 7 ? 95 : 90, 105]);
     const host = window.installMarkerOverlayHost({ document, chart, rows });
     host.setSpacing(100, 60);
     const target = { chart, chartRoot: document.body, tradingViewApi: api, resolution: '1S', routeSymbol: 'OPNUSDT' };
@@ -138,9 +138,9 @@ test('user sees independent Strategy27 arrows and labels beside Strategy29 and S
     const strategy31 = window.markerApi.createBollingerMarkerLayer(target);
     // This tests renderer ownership; production Strategy31's interval activation is tested separately.
     const strategy31Signals = window.observerApi.parseStrategy31Events({ schema_version: 1, strategy_id: '31',
-      spec_version: '31_2_spec_v1', symbol: 'OPN/USDT:USDT', timeframe: '1m', observed_at_ms: 660000,
-      events: [{ id: '31_2_spec_v1:OPN/USDT:USDT:1m:540000', symbol: 'OPN/USDT:USDT', timeframe: '1m',
-        bar_open_ms: 540000, bar_close_ms: 600000, open: 100, high: 110, low: 95, close: 105, volume: 2, previous_volume: 1 }] }, 'OPN/USDT:USDT', '1m');
+      spec_version: '31_2_spec_v1', symbol: 'OPN/USDT:USDT', timeframe: '15m', observed_at_ms: 1800000,
+      events: [{ id: '31_2_spec_v1:OPN/USDT:USDT:15m:900000', symbol: 'OPN/USDT:USDT', timeframe: '15m',
+        bar_open_ms: 900000, bar_close_ms: 1800000, open: 100, high: 110, low: 95, close: 105, volume: 2, previous_volume: 1 }] }, 'OPN/USDT:USDT', '15m');
     window.scene = { chart, host, ordinary, compound, strategy29, strategy31, strategy31Signals };
   });
 
@@ -169,7 +169,7 @@ test('user sees independent Strategy27 arrows and labels beside Strategy29 and S
     ['candidate:high:icon', 'translate(260 154)'], ['candidate:high:label', 'translate(260 114)'],
     ['candidate:high-second:icon', 'translate(260 90)'], ['candidate:high-second:label', 'translate(260 50)'],
     ['candidate:low:icon', 'translate(360 246)'], ['candidate:low:label', 'translate(360 264)'],
-    ['strategy29-warning', 'translate(460 190)'], ['31_2_spec_v1:OPN/USDT:USDT:1m:540000', 'translate(760 210)'],
+    ['strategy29-warning', 'translate(460 190)'], ['31_2_spec_v1:OPN/USDT:USDT:15m:900000', 'translate(760 210)'],
   ]) await expect(page.locator(`[data-marker-id="${id}"]`)).toHaveAttribute('transform', transform);
   await expect(page.locator('[data-marker-id="candidate:high:icon"]')).toHaveAttribute('d', 'M 0 18 L -12 2 L -4 2 L -4 -18 L 4 -18 L 4 2 L 12 2 Z');
   await expect(page.locator('[data-marker-id="candidate:high:icon"]')).toHaveAttribute('fill', '#B71C3B');
@@ -191,7 +191,7 @@ test('user sees independent Strategy27 arrows and labels beside Strategy29 and S
   // Then clearing one layer preserves the other three and every native drawing/save counter remains zero
   await expect(page.locator('[data-strategy-marker-overlay]')).toHaveCount(3);
   await expect(page.locator('[data-marker-id]')).toHaveCount(6);
-  await expect(page.locator('[data-marker-id="31_2_spec_v1:OPN/USDT:USDT:1m:540000"]')).toHaveAttribute('transform', 'translate(780 210)');
+  await expect(page.locator('[data-marker-id="31_2_spec_v1:OPN/USDT:USDT:15m:900000"]')).toHaveAttribute('transform', 'translate(780 210)');
   expect(await page.evaluate(() => ({ calls: window.nativeCalls, drawings: window.scene.chart.getAllShapes() }))).toEqual({ calls: { create: 0, remove: 0, save: 0 }, drawings: [{ id: 'user-line', price: 123 }] });
   await page.evaluate(() => { window.scene.ordinary.clear(); window.scene.strategy29.clear(); window.scene.strategy31.clear(); });
   await expect(page.locator('[data-strategy-marker-overlay]')).toHaveCount(0);

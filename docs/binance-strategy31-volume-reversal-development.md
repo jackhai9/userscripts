@@ -1,8 +1,8 @@
 # Strategy31 volume reversal signals
 
 Source: `src/binance-strategy31-volume-reversal/`. Installer:
-`scripts/binance-strategy31-volume-reversal.user.js` (0.1.7).
-Install alongside CorsairQuant signal client 0.6.13, which owns private gateway
+`scripts/binance-strategy31-volume-reversal.user.js` (0.1.8).
+Install alongside CorsairQuant signal client 0.6.14, which owns private gateway
 authentication. The shared bridge explicitly advertises the `strategy31` capability.
 
 CorsairQuant confirms consecutive closed red/green candles when green base volume
@@ -11,8 +11,10 @@ has percentage growth strictly above the configured server-side
 red volume. Exactly 20% does not qualify at that threshold. The monitor publishes
 the startup policy in SQLite; the gateway uses that policy for retained events.
 Configuration changes require monitor restart and do not backfill previously
-discarded candles. Telegram period exclusions are separate: qualified 5m arrows
-remain available while 5m notifications are muted. This client reads native chart candle times
+discarded candles. Signal periods start at 15m; the shipped monitor observes
+15m, 30m, 1h and 4h. Telegram period exclusions are separate and only mute delivery
+for otherwise supported signals. The shipped exclusion list is empty.
+This client reads native chart candle times
 only to limit rendering to loaded history; it does not detect signals locally.
 It requests a bounded snapshot of up to 200 retained
 qualifying events for the current canonical symbol and native timeframe every five seconds.
@@ -20,6 +22,11 @@ Hidden documents suspend requests; navigation and settings revisions invalidate
 late responses. Repeated snapshots reconcile one arrow per stable event ID.
 Interval changes preserve the native data-completion subscription. Unsupported
 periods and non-USDT markets pause observation until a supported chart is selected.
+On 1m, 3m and 5m charts it shows the existing unsupported-period status and makes
+no Strategy31 request or arrow. Switching from a supported period hides previous
+arrows immediately; a late response cannot restore them. Returning to a supported
+period resumes only after the native data-completion event. Other strategies keep
+their own period contracts, including Strategy27's one-second chart.
 Non-trading routes remove the status and retire pending requests and chart
 ownership. Route observation remains available after a terminal failure to
 remove presentation on departure and redraw retained status when the language
@@ -60,9 +67,11 @@ projection and lifecycle contract.
 The projection is recent retained history, not all visible chart history.
 
 The shared capability permits only `/v1/strategy31/events` with exactly `symbol`,
-`timeframe` and `limit=200`. It does not expose credentials or an arbitrary URL
+`timeframe` and `limit=200`. Allowed periods are 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h,
+1d, 3d and 1w; shorter periods are rejected before transport or event parsing.
+It does not expose credentials or an arbitrary URL
 proxy. Server contract uses schema 1 and `31_2_spec_v1` as stable wire identity;
-runtime signal policy uses v9. The server filters before selecting the latest 200
+runtime signal policy uses v18. The server filters before selecting the latest 200
 matches and returns them chronologically. If the 10,000-candidate scan budget is
 exceeded before filling the snapshot, the route returns 503 rather than silently
 returning incomplete history. Invalid event identity,
@@ -73,3 +82,8 @@ Build with `npm run build:binance-strategy31-volume-reversal`; validate with
 repository's browser suite. DOM integration tests use the shared chart-coordinate host
 fixture, exercising actual marker rendering and stale-response rejection.
 Fixture results do not establish current Binance rendering or installed code.
+The period-admission regressions cover unsupported startup, immediate hiding
+during a pending request, late-response rejection and supported-period recovery.
+Live validation must separately exercise 1m/3m/5m rejection, a pending 15m-to-5m
+switch, supported 15m and longer charts, and unchanged Strategy27 one-second
+activation using the installed source.

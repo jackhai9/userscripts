@@ -19,7 +19,7 @@ export function validateSignalGatewayPath(path) {
   if (url.pathname === '/v1/strategy31/events') {
     if (keys.length !== 3 || !keys.every(key => ['symbol', 'timeframe', 'limit'].includes(key))
       || !isCanonicalUsdtSymbol(query.get('symbol')) || query.get('limit') !== '200'
-      || !['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w'].includes(query.get('timeframe'))) {
+      || !['15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w'].includes(query.get('timeframe'))) {
       throw new TypeError('Signal gateway Strategy31 query is invalid');
     }
     return path;
