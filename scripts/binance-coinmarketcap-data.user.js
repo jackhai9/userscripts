@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.1.18
+// @version      0.1.19
 // @author       jackhai9
 // @description  在 Binance 合约页面显示当前币种的 CoinMarketCap 中文页关键估值与供应量数据
 // @match        https://www.binance.com/*/futures/*
@@ -125,7 +125,6 @@
     let routeTimer = null;
     let removeSpaRouteChangeListener = null;
     let dragCleanup = null;
-    let unloadCleanup = null;
     let inFlightSymbol = null;
     let refreshEpoch = 0;
     let lastRowsHtml = "";
@@ -490,13 +489,12 @@
       if (panel) return panel;
       panel = document.createElement("div");
       panel.id = PANEL_ID;
-      const savedPos = normalizeSavedPosition(loadPosition(), PANEL_WIDTH);
       const collapsed = loadCollapsed();
       Object.assign(panel.style, {
         position: "fixed",
-        top: savedPos ? savedPos.top + "px" : "360px",
-        left: savedPos ? savedPos.left + "px" : "auto",
-        right: savedPos ? "auto" : "16px",
+        top: "360px",
+        left: "auto",
+        right: "16px",
         width: PANEL_WIDTH + "px",
         zIndex: "999997",
         background: C.bg,
@@ -572,18 +570,9 @@
       ].join("");
       document.body.appendChild(panel);
       keepPanelInViewport(panel);
-      savePanelPosition(panel);
       cleanupPanelDrag();
       dragCleanup = setupDrag(panel);
       setupControls(panel);
-      cleanupPanelUnload();
-      const onBeforeUnload = function() {
-        savePanelPosition(panel);
-      };
-      window.addEventListener("beforeunload", onBeforeUnload);
-      unloadCleanup = function cleanupUnload() {
-        window.removeEventListener("beforeunload", onBeforeUnload);
-      };
       return panel;
     }
     function renderLoading(symbol) {
@@ -726,14 +715,8 @@
       dragCleanup();
       dragCleanup = null;
     }
-    function cleanupPanelUnload() {
-      if (!unloadCleanup) return;
-      unloadCleanup();
-      unloadCleanup = null;
-    }
     function removePanel() {
       cleanupPanelDrag();
-      cleanupPanelUnload();
       const panel = document.getElementById(PANEL_ID);
       if (panel) panel.remove();
       lastRowsHtml = "";
@@ -774,18 +757,17 @@
       let startY;
       let startLeft;
       let startTop;
-      let saveQueued = false;
-      const queuePositionSave = function() {
-        if (saveQueued) return;
-        saveQueued = true;
-        window.requestAnimationFrame(function() {
-          saveQueued = false;
-          savePanelPosition(panel);
-        });
+      const cancelDrag = function() {
+        if (!dragging) return;
+        dragging = false;
+        keepPanelInViewport(panel);
+      };
+      const onResize = function() {
+        dragging = false;
+        keepPanelInViewport(panel);
       };
       const onMouseDown = function(event) {
-        const target = event.target;
-        if (target && target.closest && target.closest("button,a")) return;
+        if (event.button !== 0 || event.target.closest("button,a")) return;
         dragging = true;
         const rect = panel.getBoundingClientRect();
         startX = event.clientX;
@@ -796,26 +778,34 @@
       };
       const onMouseMove = function(event) {
         if (!dragging) return;
+        if ((event.buttons & 1) === 0) {
+          cancelDrag();
+          return;
+        }
         const newLeft = Math.max(0, Math.min(startLeft + event.clientX - startX, window.innerWidth - panel.offsetWidth));
         const newTop = Math.max(0, Math.min(startTop + event.clientY - startY, window.innerHeight - panel.offsetHeight));
         panel.style.left = newLeft + "px";
         panel.style.top = newTop + "px";
         panel.style.right = "auto";
-        queuePositionSave();
       };
-      const onMouseUp = function() {
-        if (!dragging) return;
+      const onMouseUp = function(event) {
+        if (!dragging || event.button !== 0) return;
         dragging = false;
-        savePanelPosition(panel);
+        const rect = panel.getBoundingClientRect();
+        if (rect.left !== startLeft || rect.top !== startTop) savePanelPosition(panel);
       };
       header.addEventListener("mousedown", onMouseDown);
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
+      window.addEventListener("blur", cancelDrag);
+      window.addEventListener("resize", onResize);
       return function cleanupDrag() {
         dragging = false;
         header.removeEventListener("mousedown", onMouseDown);
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
+        window.removeEventListener("blur", cancelDrag);
+        window.removeEventListener("resize", onResize);
       };
     }
     function setupControls(panel) {
@@ -857,13 +847,11 @@
       };
     }
     function keepPanelInViewport(panel) {
-      const rect = panel.getBoundingClientRect();
-      const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
-      if (!normalized) return;
+      const width = panel.offsetWidth || PANEL_WIDTH;
+      const normalized = normalizeSavedPosition(loadPosition(), width) || normalizeSavedPosition({ left: window.innerWidth - width - 16, top: 360 }, width);
       panel.style.left = normalized.left + "px";
       panel.style.top = normalized.top + "px";
       panel.style.right = "auto";
-      savePosition(normalized.left, normalized.top);
     }
     function savePanelPosition(panel) {
       if (!panel) return;
@@ -912,10 +900,6 @@
       startRouteWatcher();
       if (isFuturesTradingPage()) startDataLoop();
       else pauseForNonTradingPage();
-    });
-    window.addEventListener("resize", function() {
-      const panel = document.getElementById(PANEL_ID);
-      if (panel) keepPanelInViewport(panel);
     });
     startRouteWatcher();
     startDataLoop();

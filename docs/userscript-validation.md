@@ -82,6 +82,28 @@ read the Node version from `.nvmrc`.
 - Errors keep the observed HTTP, parse, mapping, or contract reason. Do not
   turn an unknown or ambiguous upstream result into a guessed default.
 
+### Data panel positions
+
+The trading-data and CoinMarketCap panels store independent `{left, top}`
+preferences. Only a completed primary-button drag that changes the displayed
+position writes that panel's preference. Creating, resizing, reloading, or
+closing a page must not save its temporary viewport adjustment or overwrite a
+position saved by another tab. Header clicks and collapse controls do not save
+coordinates. A drag interrupted by resize, window blur, or a move with the
+primary button already released is canceled without saving.
+
+For every resize, project the saved preference into the current viewport while
+keeping the header reachable. Enlarging the viewport restores the saved
+coordinates. Without a saved preference, use the current viewport's right edge
+with a 16 px margin and the separate default top offsets (trading data: 60 px;
+CoinMarketCap: 360 px); do not persist those defaults. Existing stored coordinates
+remain the user's preference; an already overwritten earlier position cannot be
+reconstructed.
+
+`e2e/binance-orderbook/specs/data-panel-position.pw.js` covers this contract with
+the generated scripts, real browser geometry, native storage, and isolated data
+providers. JSDOM lifecycle tests do not establish viewport geometry.
+
 ## Binance Trading Data Panel
 
 The panel runs only on an actual Binance futures trading route. It derives the
@@ -131,6 +153,19 @@ loop while paused.
 
 Run the smallest affected set and record each path as tested or untested. Do not
 claim live behavior from source inspection alone.
+
+### Data panel positions
+
+- Place the two panels separately, shrink the window, and enlarge it again;
+  both return to their saved positions without rewriting the position keys.
+- Open or reload a small second window and close it; the original saved
+  positions remain available in a larger window.
+- Drag a panel in one tab, then close an older tab; reopening uses the newer
+  position.
+- Click the header or collapse control without dragging; only the collapse
+  preference may change. Complete a drag; only that panel's position is saved.
+- Interrupt a drag by resizing, switching window focus, or releasing the mouse
+  outside the document; later movement cannot continue or save the old drag.
 
 ### Binance trading data
 

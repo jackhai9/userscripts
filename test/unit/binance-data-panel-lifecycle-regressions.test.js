@@ -61,22 +61,33 @@ for (const kind of ['trading', 'cmc']) {
     await host.start();
     await finishInitial(host, kind);
     const panel = host.panel();
-    host.element('header').dispatchEvent(new host.window.MouseEvent('mousedown', { bubbles: true, clientX: 10, clientY: 10 }));
+    host.element('header').dispatchEvent(new host.window.MouseEvent('mousedown', {
+      bubbles: true, clientX: 10, clientY: 10, button: 0, buttons: 1,
+    }));
 
     // When leaving the route removes the panel before the next pointer movement
     host.navigate('/zh-CN/futures');
     const position = panel.style.cssText;
-    host.document.dispatchEvent(new host.window.MouseEvent('mousemove', { clientX: 400, clientY: 400 }));
+    host.document.dispatchEvent(new host.window.MouseEvent('mousemove', { clientX: 400, clientY: 400, buttons: 1 }));
     host.document.dispatchEvent(new host.window.MouseEvent('mouseup'));
     host.clock.tick(16);
 
     // Then detached drag handlers cannot alter the removed panel
     assert.equal(host.panel(), null);
     assert.equal(panel.style.cssText, position);
+
+    // When another tab's saved preference changes before the window resizes
+    const positionKey = kind === 'trading' ? 'jh_binance_trading_data_pos' : 'jh_binance_cmc_data_pos';
+    host.window.localStorage.setItem(positionKey, '{"left":700,"top":300}');
+    host.window.dispatchEvent(new host.window.Event('resize'));
+
+    // Then removed resize handlers cannot move the detached panel or change the newer preference
+    assert.equal(panel.style.cssText, position);
+    assert.equal(host.window.localStorage.getItem(positionKey), '{"left":700,"top":300}');
   });
 
-  test(`user keeps later saved positions after the ${kind} panel removes its unload listener`, { timeout: 5_000 }, async t => {
-    // Given a rendered panel with its normal unload persistence listener
+  test(`user keeps later saved positions after the ${kind} panel is removed and the page unloads`, { timeout: 5_000 }, async t => {
+    // Given a rendered panel on the active trading route
     const host = createDataPanelHost(t, kind);
     await host.start();
     await finishInitial(host, kind);
