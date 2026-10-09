@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.2
+// @version      1.2.3
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -406,7 +406,6 @@
     title: localizedText("交易数据", "Trading data"),
     metric: localizedText("指标", "Metric"),
     history: localizedText("历史趋势", "History"),
-    historyNote: localizedText("趋势按5分钟采样；费率曲线为历史结算。", "History: 5m samples; funding shows settlements."),
     value: localizedText("数值", "Value"),
     collapse: localizedText("收起面板", "Collapse panel"),
     expand: localizedText("展开面板", "Expand panel"),
@@ -725,12 +724,12 @@ ${item.value}`;
 
   // src/shared/data-panel-layout.js
   var DATA_PANEL_LAYOUT_EVENT = "jh-data-panels-layout-change";
-  var DATA_PANEL_WIDTH = 384;
+  var DATA_PANEL_WIDTHS = Object.freeze({ trading: 320, cmc: 336 });
   var PANEL_IDS = Object.freeze({
     trading: "jh-binance-trading-data-panel",
     cmc: "jh-binance-cmc-data-panel"
   });
-  var TWO_COLUMN_WIDTH = DATA_PANEL_WIDTH * 2 + 48;
+  var TWO_COLUMN_WIDTH = DATA_PANEL_WIDTHS.trading + DATA_PANEL_WIDTHS.cmc + 48;
   function hasVisibleDataPanelPeer(document2, kind) {
     const peer = document2.getElementById(PANEL_IDS[kind === "trading" ? "cmc" : "trading"]);
     return peer !== null && peer.style.display !== "none";
@@ -744,7 +743,7 @@ ${item.value}`;
     const sectionHeight = Math.max(48, Math.floor((viewportHeight - 24) / 2));
     const targetTop = stacked ? kind === "trading" ? 8 : 16 + sectionHeight : 60;
     const top = Math.max(0, Math.min(targetTop, viewportHeight - 48));
-    const peerWidth = hasPeer && !stacked && kind === "cmc" ? DATA_PANEL_WIDTH + 16 : 0;
+    const peerWidth = hasPeer && !stacked && kind === "cmc" ? DATA_PANEL_WIDTHS.trading + 16 : 0;
     const targetLeft = viewportWidth - panelWidth - 16 - peerWidth;
     const left = Math.max(0, Math.min(Math.max(stacked ? 8 : 16, targetLeft), viewportWidth - panelWidth));
     const availableHeight = Math.max(48, viewportHeight - top - 8);
@@ -811,14 +810,14 @@ ${item.value}`;
     ${scope} button:focus-visible { outline: 2px solid var(--td-focus); outline-offset: 2px; }
     ${scope} #${PANEL_ID}-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
     ${scope} table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-    ${scope} .td-name-col { width: 42%; }
-    ${scope} .td-trend-col { width: 28%; }
+    ${scope} .td-name-col { width: 40%; }
+    ${scope} .td-trend-col { width: 30%; }
     ${scope} .td-value-col { width: 30%; }
     ${scope} thead { position: sticky; top: 0; z-index: 1; background: var(--td-head); }
-    ${scope} thead th { color: var(--td-muted); font-size: 11px; font-weight: 500; padding: 4px 6px; text-align: left; }
+    ${scope} thead th { color: var(--td-muted); font-size: 11px; font-weight: 500; padding: 4px; text-align: left; }
     ${scope} thead th:nth-child(2) { text-align: center; }
     ${scope} thead th:last-child { text-align: right; }
-    ${scope} tbody th, ${scope} tbody td { padding: 4px 6px; vertical-align: middle; border-top: 1px solid var(--td-border); }
+    ${scope} tbody th, ${scope} tbody td { padding: 4px; vertical-align: middle; border-top: 1px solid var(--td-border); }
     ${scope} .td-name { color: var(--td-muted); text-align: left; font-weight: 400; overflow-wrap: anywhere; }
     ${scope} .td-trend { padding: 4px 2px; text-align: center; }
     ${scope} .td-value { text-align: right; font-variant-numeric: tabular-nums; }
@@ -875,8 +874,6 @@ ${item.value}`;
     ${scope} .td-footer-line { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px 8px; }
     @media (max-width: 540px) {
       ${scope} { font-size: 12px; }
-      ${scope} thead th, ${scope} tbody th, ${scope} tbody td { padding: 4px; }
-      ${scope} .td-trend { padding: 4px 2px; }
       ${scope} .td-funding-row .td-number { font-size: 13px; }
     }
   `;
@@ -886,7 +883,7 @@ ${item.value}`;
     style.textContent = styles();
     panel.append(style);
     Object.assign(panel.style, {
-      width: `${DATA_PANEL_WIDTH}px`,
+      width: `${DATA_PANEL_WIDTHS.trading}px`,
       maxWidth: "calc(100vw - 16px)",
       maxHeight: "calc(100vh - 24px)",
       display: "flex",
@@ -941,8 +938,7 @@ ${item.value}`;
     const footer = identify(node("footer"), "footer");
     const footerLine = node("div", "td-footer-line");
     footerLine.append(role(node("span"), "updated-at"), role(node("span"), "elapsed"));
-    const historyNote = node("small", "td-history-note");
-    footer.append(footerLine, historyNote);
+    footer.append(footerLine);
     body.append(table, composite, footer);
     panel.append(header, body);
     let currentModel = null;
@@ -964,7 +960,6 @@ ${item.value}`;
       panel.setAttribute("aria-label", panelTitle);
       table.setAttribute("aria-label", panelTitle);
       setText(title, panelTitle);
-      setText(historyNote, tradingText("historyNote", locale));
       for (const heading of headings) setText(heading, tradingText(heading.dataset.copy, locale));
       const collapseTitle = tradingText(collapsed ? "expand" : "collapse", locale);
       collapseButton.title = collapseTitle;
@@ -1191,6 +1186,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
     }
     const PREFIX = "[交易数据]";
     const PANEL_ID2 = "jh-binance-trading-data-panel";
+    const PANEL_WIDTH = DATA_PANEL_WIDTHS.trading;
     const STORAGE_POS_KEY = "jh_binance_trading_data_pos";
     const STORAGE_COLLAPSED_KEY = "jh_binance_trading_data_collapsed";
     const DEBUG = false;
@@ -1637,7 +1633,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       };
     }
     function keepPanelInViewport(panel) {
-      const width = panel.offsetWidth || DATA_PANEL_WIDTH;
+      const width = panel.offsetWidth || PANEL_WIDTH;
       const normalized = calculateDataPanelLayout({
         kind: "trading",
         panelWidth: width,
@@ -1654,7 +1650,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
     function savePanelPosition(panel) {
       if (!panel) return;
       const rect = panel.getBoundingClientRect();
-      const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || DATA_PANEL_WIDTH);
+      const normalized = normalizeSavedPosition({ left: rect.left, top: rect.top }, panel.offsetWidth || PANEL_WIDTH);
       if (!normalized) return;
       savePosition(normalized.left, normalized.top);
       keepPanelInViewport(panel);

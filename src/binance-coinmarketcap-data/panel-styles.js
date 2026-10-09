@@ -55,12 +55,13 @@ export function cmcPanelStyles(panelId) {
     /* Reserve space for complete prices and changes before wrapping the surrounding prose. */
     ${scope} table { width: 100%; table-layout: auto; border-collapse: collapse; }
     ${scope} .cmc-name-col { width: 33%; }
-    ${scope} .cmc-value-col { width: 26%; }
-    ${scope} .cmc-reading-col { width: 41%; }
+    ${scope} .cmc-value-col { width: 28%; }
+    ${scope} .cmc-reading-col { width: 39%; }
     ${scope} thead { position: sticky; top: 0; z-index: 1; background: var(--cmc-head); }
-    ${scope} thead th { color: var(--cmc-muted); font-size: 11px; font-weight: 500; padding: 4px 6px; text-align: left; }
+    ${scope} thead th { color: var(--cmc-muted); font-size: 11px; font-weight: 500; padding: 4px 3px; text-align: left; }
     ${scope} thead th:nth-child(2) { text-align: right; }
-    ${scope} tbody th, ${scope} tbody td { padding: 4px 6px; border-top: 1px solid var(--cmc-border); vertical-align: middle; overflow-wrap: anywhere; }
+    ${scope} thead th:last-child { text-align: right; }
+    ${scope} tbody th, ${scope} tbody td { padding: 4px 3px; border-top: 1px solid var(--cmc-border); vertical-align: middle; overflow-wrap: anywhere; }
     ${scope} .cmc-name { text-align: left; font-weight: 500; }
     ${scope} small { display: block; margin-top: 1px; font-size: 11px; line-height: 1.35; color: var(--cmc-muted); }
     ${scope} .cmc-value { text-align: right; font-variant-numeric: tabular-nums; }
@@ -72,7 +73,7 @@ export function cmcPanelStyles(panelId) {
     ${scope} .cmc-change[data-tone="neutral"] { color: var(--cmc-muted); }
     ${scope} .cmc-key { background: color-mix(in srgb, var(--color-PrimaryYellow, #f0b90b) 7%, var(--cmc-bg)); }
     ${scope} .cmc-group th, ${scope} .cmc-group td { border-top-width: 2px; }
-    ${scope} .cmc-reading-button { display: flex; align-items: center; justify-content: space-between; gap: 3px; width: 100%; min-height: 24px; padding: 0; line-height: inherit; text-align: left; }
+    ${scope} .cmc-reading-button { display: flex; align-items: center; justify-content: flex-end; gap: 3px; width: 100%; min-height: 24px; padding: 0; line-height: inherit; text-align: right; }
     ${scope} .cmc-reading-text { font-weight: 500; }
     ${scope} [data-tone="missing"] .cmc-reading-text { color: var(--cmc-muted); }
     ${scope} [data-tone="active"] .cmc-reading-text { color: var(--cmc-accent); }
@@ -87,8 +88,6 @@ export function cmcPanelStyles(panelId) {
     ${scope} .cmc-times { font-variant-numeric: tabular-nums; }
     @media (max-width: 540px) {
       ${scope} { font-size: 11px; }
-      ${scope} tbody th, ${scope} tbody td { padding: 4px; }
-      ${scope} thead th { padding: 4px; }
       ${scope} .cmc-info { display: none; }
     }
   `;

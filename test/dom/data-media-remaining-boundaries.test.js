@@ -83,7 +83,7 @@ for (const kind of ['trading', 'cmc']) {
   });
 
   for (const viewport of [
-    { name: 'document client dimensions', clientWidth: 640, clientHeight: 360, displayed: { left: '256px', top: '312px' } },
+    { name: 'document client dimensions', clientWidth: 640, clientHeight: 360, displayed: { left: kind === 'trading' ? '320px' : '304px', top: '312px' } },
     { name: 'an unavailable viewport', clientWidth: 0, clientHeight: 0, displayed: { left: '0px', top: '32px' } },
   ]) {
     test(`user keeps the saved ${kind} preference while ${viewport.name} constrain its display`, { timeout: 5_000 }, async t => {

@@ -146,7 +146,8 @@ test('user switches the complete CMC panel language and number units while retai
   assert.match(host.element('rows').querySelector('button').getAttribute('aria-label'), /View interpretation basis/);
   assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/currencies/bitcoin/');
   assert.equal(host.element('footer').querySelector('.cmc-times > span').textContent, dataTime);
-  assert.match(host.element('footer').textContent, /Fetched .*Refresh: 30s active \/ 5m in background/);
+  assert.match(host.element('footer').textContent, /Fetched \d{2}:\d{2}:\d{2}$/);
+  assert.equal(host.element('footer').children.length, 1);
   assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/map')).length, 1);
   assert.equal(host.window.localStorage.getItem('jh_binance_cmc_data_pos'), storage.jh_binance_cmc_data_pos);
   assert.equal(host.window.localStorage.getItem('jh_binance_cmc_data_collapsed'), '0');

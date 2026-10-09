@@ -1,6 +1,6 @@
 import { formatFundingPercent } from './market-data.js';
 import { createHistoryChart } from './sparkline.js';
-import { DATA_PANEL_WIDTH } from '../shared/data-panel-layout.js';
+import { DATA_PANEL_WIDTHS } from '../shared/data-panel-layout.js';
 import {
   formatFundingPeriod, formatHistoryCount, formatHistoryTime, formatVotes,
   tradingMetricText, tradingText,
@@ -61,14 +61,14 @@ function styles() {
     ${scope} button:focus-visible { outline: 2px solid var(--td-focus); outline-offset: 2px; }
     ${scope} #${PANEL_ID}-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
     ${scope} table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-    ${scope} .td-name-col { width: 42%; }
-    ${scope} .td-trend-col { width: 28%; }
+    ${scope} .td-name-col { width: 40%; }
+    ${scope} .td-trend-col { width: 30%; }
     ${scope} .td-value-col { width: 30%; }
     ${scope} thead { position: sticky; top: 0; z-index: 1; background: var(--td-head); }
-    ${scope} thead th { color: var(--td-muted); font-size: 11px; font-weight: 500; padding: 4px 6px; text-align: left; }
+    ${scope} thead th { color: var(--td-muted); font-size: 11px; font-weight: 500; padding: 4px; text-align: left; }
     ${scope} thead th:nth-child(2) { text-align: center; }
     ${scope} thead th:last-child { text-align: right; }
-    ${scope} tbody th, ${scope} tbody td { padding: 4px 6px; vertical-align: middle; border-top: 1px solid var(--td-border); }
+    ${scope} tbody th, ${scope} tbody td { padding: 4px; vertical-align: middle; border-top: 1px solid var(--td-border); }
     ${scope} .td-name { color: var(--td-muted); text-align: left; font-weight: 400; overflow-wrap: anywhere; }
     ${scope} .td-trend { padding: 4px 2px; text-align: center; }
     ${scope} .td-value { text-align: right; font-variant-numeric: tabular-nums; }
@@ -125,8 +125,6 @@ function styles() {
     ${scope} .td-footer-line { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px 8px; }
     @media (max-width: 540px) {
       ${scope} { font-size: 12px; }
-      ${scope} thead th, ${scope} tbody th, ${scope} tbody td { padding: 4px; }
-      ${scope} .td-trend { padding: 4px 2px; }
       ${scope} .td-funding-row .td-number { font-size: 13px; }
     }
   `;
@@ -138,7 +136,7 @@ export function createTradingDataView({ document, panel, locale, collapsed, onCo
   style.textContent = styles();
   panel.append(style);
   Object.assign(panel.style, {
-    width: `${DATA_PANEL_WIDTH}px`, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100vh - 24px)',
+    width: `${DATA_PANEL_WIDTHS.trading}px`, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100vh - 24px)',
     display: 'flex', flexDirection: 'column',
   });
   const node = (tag, className = '', text = '') => {
@@ -191,8 +189,7 @@ export function createTradingDataView({ document, panel, locale, collapsed, onCo
   const footer = identify(node('footer'), 'footer');
   const footerLine = node('div', 'td-footer-line');
   footerLine.append(role(node('span'), 'updated-at'), role(node('span'), 'elapsed'));
-  const historyNote = node('small', 'td-history-note');
-  footer.append(footerLine, historyNote);
+  footer.append(footerLine);
   body.append(table, composite, footer);
   panel.append(header, body);
 
@@ -217,7 +214,6 @@ export function createTradingDataView({ document, panel, locale, collapsed, onCo
     panel.setAttribute('aria-label', panelTitle);
     table.setAttribute('aria-label', panelTitle);
     setText(title, panelTitle);
-    setText(historyNote, tradingText('historyNote', locale));
     for (const heading of headings) setText(heading, tradingText(heading.dataset.copy, locale));
     const collapseTitle = tradingText(collapsed ? 'expand' : 'collapse', locale);
     collapseButton.title = collapseTitle;
