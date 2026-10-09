@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.0
+// @version      1.2.1
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -27,7 +27,7 @@ import {
 import { resolveUiLocaleFromPathname } from '../binance-orderbook-trade/contracts/panel-copy.js';
 import { computeTradingSignals, parseCurrentFunding, parseFundingInterval, parseHistory } from './market-data.js';
 import { createTradingDataView } from './panel-view.js';
-import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, hasVisibleDataPanelPeer } from '../shared/data-panel-layout.js';
+import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTH as PANEL_WIDTH, hasVisibleDataPanelPeer } from '../shared/data-panel-layout.js';
 
 (function () {
   'use strict';
@@ -42,7 +42,6 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, hasVisibleDataPanelP
   const PANEL_ID = 'jh-binance-trading-data-panel';
   const STORAGE_POS_KEY = 'jh_binance_trading_data_pos';
   const STORAGE_COLLAPSED_KEY = 'jh_binance_trading_data_collapsed';
-  const PANEL_WIDTH = 480;
   const DEBUG = false;
 
   const PERIOD_MS = 5 * 60 * 1000;  // 数据周期 5 分钟

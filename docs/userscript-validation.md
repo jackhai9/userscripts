@@ -94,10 +94,10 @@ primary button already released is canceled without saving.
 
 For every resize, project the saved preference into the current viewport while
 keeping the header reachable. Enlarging the viewport restores the saved
-coordinates. The trading panel is 480 px wide and the CMC panel is 500 px wide,
-each limited by the viewport. Without a saved preference, one panel uses the
+coordinates. Both panels are 384 px wide, limited by the viewport. Without a
+saved preference, one panel uses the
 right edge with a 16 px margin and a 60 px top offset. When both are present,
-viewports at least 1028 px wide place them side by side, with CMC to the left of
+viewports at least 816 px wide place them side by side, with CMC to the left of
 trading and a 16 px gap. Smaller viewports split the available height into two
 scrollable panels with 8 px outer margins and an 8 px vertical gap. These defaults
 are never persisted. Saved positions remain authoritative, even when a user's
@@ -149,6 +149,14 @@ break the line. One observation is a point, and an empty series stays unavailabl
 Taker activity uses separate buy and sell volume bars; its numeric field is clearly
 labelled as the buy/sell ratio. Click or focus a chart to inspect its values and
 dated observations; arrow keys select points and Escape closes the detail.
+
+Compact rows use 4 px vertical padding and 26 px charts. The footer states the
+shared five-minute sampling period and distinguishes settled funding history;
+individual observation counts appear in the opened history detail. The funding
+row also retains its settled-history caption, last settled value, current rate,
+confirmed interval, and countdown. The composite heading opens the voting rules
+with native `details`/`summary`; its current open state survives display refreshes.
+Body text remains 13 px on desktop and annotations remain at least 11 px.
 
 All Binance requests use the existing `https://www.binance.com` origin:
 
@@ -237,6 +245,17 @@ denominators do not produce a ratio. Null, empty, or invalid provider numbers st
 unavailable, while genuine zero stays zero. Treasury holdings retain their token
 unit and cannot become a holder-address count.
 
+Compact rows keep their brief interpretation visible. Secondary notes are in the
+interpretation button's tooltip and expanded explanation, and token units share
+the value line when space allows. Automatic table layout reserves the complete
+width of a small token price or 24-hour change before wrapping prose; browser
+checks compare text ranges against their own cells as well as overall overflow.
+Body text remains 12 px on desktop and
+annotations remain at least 11 px. The generated-panel browser scenarios require
+both default panels, all metric rows, and both footers to fit a 1366-by-768 desktop
+without scrolling in Chinese and English. Narrow screens retain separate scroll
+areas and no horizontal overflow.
+
 Interpretations describe what the value supports. The volume ratio's 50% threshold
 is explicitly a descriptive convention, not a statistical anomaly or trading
 signal. Valuation comparisons need peers, volume changes need history, DEX
@@ -250,6 +269,23 @@ and open `output/data-panels-preview/index.html` with a `file://` URL. The gener
 embeds unchanged generated artifacts and labelled example data. It supports both
 languages, light/dark themes, and each panel separately, without external network
 requests. It is not live Binance or Tampermonkey evidence.
+
+### Compact layout validation (2026-10-09)
+
+Trading-data `1.2.1` and CMC-data `0.2.1` passed the full 2528-test Node suite,
+all 39 panel browser scenarios, both builds, generated syntax checks, test lint,
+metadata/install URL checks, and independent source review. Six new browser
+scenarios verify complete default panels on a 1366-by-768 screen and precise
+small prices staying inside their value cells at 1366/320 px in both languages.
+Resize scenarios wait for browser rendering frames before reading geometry.
+
+At the same 1600-by-1056 preview viewport, the Chinese trading panel decreased
+from approximately 897 to 500 px high and CMC from 779 to 567 px. English heights
+decreased from 913 to 534 px and 826 to 618 px. Both widths are now 384 px, with
+unchanged 13/12 px desktop body text and a minimum 11 px annotation size. The
+four preview combinations again have no panel overlap, horizontal overflow,
+page errors, or external HTTP requests. These are offline rendering results;
+the installed Tampermonkey scripts and live Binance pages were not operated.
 
 ### Data-panel implementation validation (2026-10-09)
 

@@ -119,7 +119,7 @@ for (const kind of ['trading', 'cmc']) {
     else await completeCmcData(host, cmcDetail(), { map: false });
 
     // Then a new current-symbol refresh renders after route reactivation
-    assert.equal(host.panel().style.width, kind === 'trading' ? '480px' : '500px');
+    assert.equal(host.panel().style.width, '384px');
     assert.match(host.element('symbol').textContent, /^BTC/);
     assert.ok(host.network.requests.length > beforePause);
   });
@@ -152,7 +152,7 @@ for (const kind of ['trading', 'cmc']) {
     const firstRow = host.element('rows').firstElementChild;
 
     // Then the table keeps three semantic columns and aligned tabular numeric values
-    assert.equal(host.panel().style.width, kind === 'trading' ? '480px' : '500px');
+    assert.equal(host.panel().style.width, '384px');
     assert.equal(host.element('rows').tagName, 'TBODY');
     assert.equal(firstRow.children.length, 3);
     assert.equal(firstRow.firstElementChild.getAttribute('scope'), 'row');
