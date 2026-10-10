@@ -144,6 +144,26 @@ test("user builds a symmetric vertical price range with cumulative depth", () =>
   assert.equal(profile.maxCumulative, 20);
 });
 
+test('user retains independent depth snapshots after later quantities change', () => {
+  // Given a subscriber retains the first completed depth profile
+  const book = createDepthProfileBook('BTCUSDT');
+  pushDepthProfileUpdate(book, update());
+  applyDepthProfileSnapshot(book, snapshot());
+  const first = buildDepthProfile(book);
+  const original = structuredClone(first);
+
+  // When another absolute quantity update produces the next display profile
+  pushDepthProfileUpdate(book, update({ U: 103, u: 103, pu: 102,
+    b: [['100', '8']], a: [['101', '10']] }));
+  const second = buildDepthProfile(book);
+
+  // Then current cumulative quantities change without mutating the earlier snapshot
+  assert.deepEqual(first, original);
+  assert.deepEqual(second.bids.map(level => level.cumulative), [8, 11]);
+  assert.deepEqual(second.asks.map(level => level.cumulative), [10, 15]);
+  assert.equal(book.bids.get('100'), '8');
+});
+
 test("user preserves every active price level accumulated from the native depth stream", () => {
   // Given the symbol book and native depth messages are available
   const book = createDepthProfileBook('BTCUSDT');

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   activateTradingData, afterDataMediaResponseTurn, completeCmcData,
-  completeTradingBatch, createDataPanelHost, cmcDetail, tradingDataset, isTradingHistoryRequest,
+  createDataPanelHost, cmcDetail, tradingDataset, isTradingHistoryRequest,
 } from '../helpers/data-media-migration-host.js';
 
 async function finishInitial(host, kind) {
@@ -162,7 +162,7 @@ for (const kind of ['trading', 'cmc']) {
     assert.equal(styles.textAlign, 'right');
   });
 
-  test(`user keeps the new symbol when a superseded ${kind} response arrives late`, { timeout: 5_000 }, async t => {
+  test(`user keeps the new symbol after superseded ${kind} requests are cancelled`, { timeout: 5_000 }, async t => {
     // Given the original Bitcoin request remains pending while the user changes symbol
     const host = createDataPanelHost(t, kind);
     await host.start();
@@ -170,19 +170,19 @@ for (const kind of ['trading', 'cmc']) {
       host.network.requests[0].respond({ serverTime: Date.now() });
       await host.network.waitForRequest(request => request.url.pathname.endsWith('/fundingRate'));
     }
+    const oldRequests = host.network.requests.filter(request => !request.settled);
 
-    // When Ethereum renders before the old Bitcoin request is allowed to finish
+    // When Ethereum replaces the session that owns the unfinished Bitcoin requests
     host.navigate('/zh-CN/futures/ETHUSDT');
     if (kind === 'trading') {
       await activateTradingData(host, tradingDataset(Date.now(), { symbol: 'ETHUSDT', oi: 3000 }), { symbol: 'ETHUSDT' });
-      await completeTradingBatch(host, tradingDataset(Date.now()), { symbol: 'BTCUSDT', includeInterval: false });
     } else {
       await completeCmcData(host, cmcDetail({ id: 2, symbol: 'ETH' }), { symbol: 'ETH', slug: 'ethereum' });
-      await completeCmcData(host);
     }
     await afterDataMediaResponseTurn();
 
-    // Then the late response cannot replace the displayed Ethereum identity or data
+    // Then cancelled work cannot replace the displayed Ethereum identity or data
+    assert.equal(oldRequests.every(request => request.aborted), true);
     assert.match(host.element('symbol').textContent, /^ETH/);
     if (kind === 'trading') assert.match(host.element('rows').textContent, /3000 ▼/);
     else assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/zh/currencies/ethereum/');
@@ -221,10 +221,10 @@ for (const state of ['closed', 'off-route']) {
     const before = rows.innerHTML;
     const panel = host.panel();
 
-    // When the panel becomes inactive before the mapping reports failure
+    // When a mapping failure is queued immediately before its panel becomes inactive
+    mapping.fail('error');
     if (state === 'closed') host.element('close').click();
     else host.navigate('/zh-CN/futures');
-    mapping.fail('error');
     await afterDataMediaResponseTurn();
 
     // Then the abandoned loading state is not rewritten as a current request failure
@@ -236,7 +236,7 @@ for (const state of ['closed', 'off-route']) {
 }
 
 for (const state of ['closed', 'off-route', 'new symbol']) {
-  test(`user ignores an old trading cycle response after entering ${state}`, { timeout: 5_000 }, async t => {
+  test(`user cancels the old trading cycle after entering ${state}`, { timeout: 5_000 }, async t => {
     // Given an already-rendered panel has started the next scheduled five-minute refresh
     const host = createDataPanelHost(t, 'trading');
     await host.start();
@@ -257,11 +257,10 @@ for (const state of ['closed', 'off-route', 'new symbol']) {
     }
     const rows = state === 'new symbol' ? host.element('rows') : oldRows;
     const before = rows.innerHTML;
-    const stale = tradingDataset(Date.now(), { oi: 9_000_000, ratio: 0.5, basis: -0.02, funding: 0.001 });
-    oldRequests.forEach(request => request.respond(stale[request.url.pathname.split('/').at(-1)]));
     await afterDataMediaResponseTurn();
 
-    // Then the superseded scheduled batch cannot alter inactive or current-symbol rows
+    // Then cancellation prevents the scheduled batch from altering inactive or current-symbol rows
+    assert.equal(oldRequests.every(request => request.aborted), true);
     assert.equal(rows.innerHTML, before);
     assert.equal(oldPanel.isConnected, state !== 'off-route');
     if (state === 'new symbol') {
@@ -282,15 +281,17 @@ for (const state of ['closed', 'off-route']) {
     const panel = host.panel();
     const rows = host.element('rows');
     const initialRows = rows.innerHTML;
+    const pending = host.network.requests.filter(request => !request.settled && isTradingHistoryRequest(request));
 
     // When the lifecycle is invalidated before the pending responses finish
     if (state === 'closed') host.element('close').click();
     else host.navigate('/zh-CN/futures');
-    await completeTradingBatch(host, tradingDataset(Date.now()), { includeInterval: false });
     await afterDataMediaResponseTurn();
 
     // Then the pending request cannot write its rows into the inactive panel
     assert.equal(rows.innerHTML, initialRows);
+    assert.equal(pending.length, 7);
+    assert.equal(pending.every(request => request.aborted), true);
     assert.equal(panel.isConnected, state !== 'off-route');
     if (state === 'closed') assert.equal(panel.style.display, 'none');
   });

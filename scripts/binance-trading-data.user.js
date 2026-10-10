@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.3
+// @version      1.2.4
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -1233,9 +1233,10 @@ ${formatHistoryTime(state.current.time, locale)}`;
       return parseFuturesTradingSymbolFromPathname(location.pathname);
     }
     function isActiveTradingPage() {
-      return !panelClosed && isFuturesTradingPage();
+      return !panelClosed && !pageSuspended && isFuturesTradingPage();
     }
     async function fetchJson(path, params, signal) {
+      signal.throwIfAborted();
       const url = new URL(path, API_BASE);
       for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
       const href = url.toString();
@@ -1244,7 +1245,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
         if (!resp.ok) throw Object.assign(new Error(`HTTP ${resp.status}`), { status: resp.status });
         return await resp.json();
       } catch (e1) {
-        if (signal?.aborted) throw e1;
+        if (signal.aborted || e1.name === "AbortError") throw e1;
         if (e1.status && e1.status >= 400 && e1.status < 500) throw e1;
         log("重试:", path);
         const resp = await fetch(href, { signal });
@@ -1252,26 +1253,26 @@ ${formatHistoryTime(state.current.time, locale)}`;
         return await resp.json();
       }
     }
-    function fetchOpenInterest(symbol) {
-      return fetchJson(API_PATHS.openInterest, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+    function fetchOpenInterest(symbol, signal) {
+      return fetchJson(API_PATHS.openInterest, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
     }
-    function fetchTopAccountRatio(symbol) {
-      return fetchJson(API_PATHS.topAccountRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+    function fetchTopAccountRatio(symbol, signal) {
+      return fetchJson(API_PATHS.topAccountRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
     }
-    function fetchTopPositionRatio(symbol) {
-      return fetchJson(API_PATHS.topPositionRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+    function fetchTopPositionRatio(symbol, signal) {
+      return fetchJson(API_PATHS.topPositionRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
     }
-    function fetchGlobalAccountRatio(symbol) {
-      return fetchJson(API_PATHS.globalAccountRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+    function fetchGlobalAccountRatio(symbol, signal) {
+      return fetchJson(API_PATHS.globalAccountRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
     }
-    function fetchTakerRatio(symbol) {
-      return fetchJson(API_PATHS.takerRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+    function fetchTakerRatio(symbol, signal) {
+      return fetchJson(API_PATHS.takerRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
     }
-    function fetchBasis(symbol) {
-      return fetchJson(API_PATHS.basis, { pair: symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT, contractType: "PERPETUAL" });
+    function fetchBasis(symbol, signal) {
+      return fetchJson(API_PATHS.basis, { pair: symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT, contractType: "PERPETUAL" }, signal);
     }
-    function fetchFundingRate(symbol) {
-      return fetchJson(API_PATHS.fundingRate, { symbol, limit: FUNDING_HISTORY_LIMIT });
+    function fetchFundingRate(symbol, signal) {
+      return fetchJson(API_PATHS.fundingRate, { symbol, limit: FUNDING_HISTORY_LIMIT }, signal);
     }
     const FETCHER_MAP = {
       openInterest: fetchOpenInterest,
@@ -1286,8 +1287,9 @@ ${formatHistoryTime(state.current.time, locale)}`;
     let sessionGeneration = 0;
     let clockRequestId = 0;
     let serverTimeRequest = null;
+    let historyController = null;
     function currentSession() {
-      return { generation: sessionGeneration, path: location.pathname, symbol: getCurrentSymbol() };
+      return { generation: sessionGeneration, path: location.pathname, symbol: getCurrentSymbol(), historyController };
     }
     function sessionIsCurrent(session) {
       return session.generation === sessionGeneration && session.path === location.pathname && session.path === activePath && session.symbol === getCurrentSymbol() && isActiveTradingPage();
@@ -1334,12 +1336,16 @@ ${formatHistoryTime(state.current.time, locale)}`;
       if (!Array.isArray(data) || data.length === 0) return 0;
       return Number(data[data.length - 1].timestamp) || 0;
     }
-    async function fetchPeriodData(symbol, keys) {
+    async function fetchPeriodData(symbol, keys, signal) {
+      signal.throwIfAborted();
       if (!keys || keys.length === 0) return {};
       var fetchers = keys.map(async function(k) {
-        return parseHistory(k, await FETCHER_MAP[k](symbol), symbol);
+        return parseHistory(k, await FETCHER_MAP[k](symbol, signal), symbol);
       });
       var results = await Promise.allSettled(fetchers);
+      signal.throwIfAborted();
+      const aborted = results.find((result) => result.status === "rejected" && result.reason.name === "AbortError");
+      if (aborted) throw aborted.reason;
       var backup = dataCache[symbol] || {};
       var entries = {};
       keys.forEach(function(key, i) {
@@ -1357,12 +1363,15 @@ ${formatHistoryTime(state.current.time, locale)}`;
       });
       return entries;
     }
-    async function fetchFundingRateData(symbol) {
+    async function fetchFundingRateData(symbol, signal) {
       var backup = dataCache[symbol] || {};
       try {
-        var data = parseHistory("fundingRate", await fetchFundingRate(symbol), symbol);
+        var data = parseHistory("fundingRate", await fetchFundingRate(symbol, signal), symbol);
+        signal.throwIfAborted();
         return { data, cached: false, error: null };
       } catch (e) {
+        signal.throwIfAborted();
+        if (e.name === "AbortError") throw e;
         err("fundingRate 请求失败:", e);
         return { data: backup.fundingRate || null, cached: true, error: String(e.message || e) };
       }
@@ -1683,6 +1692,8 @@ ${formatHistoryTime(state.current.time, locale)}`;
     let serverTimeTimer = null;
     let dragCleanup = null;
     let panelClosed = false;
+    let pageSuspended = false;
+    let resumeAfterPageShow = false;
     let lastUpdateTs = 0;
     let fetching = 0;
     let epoch = 0;
@@ -1696,6 +1707,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
     async function initialFetch(symbol) {
       const session = currentSession();
       if (!sessionIsCurrent(session)) return;
+      const signal = session.historyController.signal;
       epoch++;
       var myEpoch = epoch;
       const boundary = Math.floor(serverNow() / PERIOD_MS) * PERIOD_MS;
@@ -1708,8 +1720,8 @@ ${formatHistoryTime(state.current.time, locale)}`;
       fetching = myEpoch;
       try {
         var history = Promise.all([
-          fetchPeriodData(symbol, PERIOD_KEYS),
-          fetchFundingRateData(symbol)
+          fetchPeriodData(symbol, PERIOD_KEYS, signal),
+          fetchFundingRateData(symbol, signal)
         ]);
         refreshFundingInterval(session);
         var [periodEntries, fundingEntry] = await history;
@@ -1718,6 +1730,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
         applyResults(symbol, periodEntries, fundingEntry);
         renderAll(symbol);
       } catch (e) {
+        if (!sessionIsCurrent(session) || signal.aborted || e.name === "AbortError") return;
         err("拉取失败:", e);
       } finally {
         if (fetching === myEpoch) fetching = 0;
@@ -1728,7 +1741,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       clearTimeout(retryTimer);
       cycleTimer = null;
       retryTimer = null;
-      if (panelClosed) return;
+      if (panelClosed || pageSuspended) return;
       if (!isFuturesTradingPage()) {
         pauseForNonTradingPage();
         return;
@@ -1755,7 +1768,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       }, delay);
     }
     async function runCycleAttempt(boundary, attempt) {
-      if (panelClosed) return;
+      if (panelClosed || pageSuspended) return;
       if (!isFuturesTradingPage()) {
         pauseForNonTradingPage();
         return;
@@ -1770,6 +1783,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       }
       if (fetching) return;
       const session = currentSession();
+      const signal = session.historyController.signal;
       var symbol = getCurrentSymbol();
       if (!symbol) {
         scheduleCycle(true);
@@ -1787,8 +1801,8 @@ ${formatHistoryTime(state.current.time, locale)}`;
         var periodEntries, fundingEntry;
         if (attempt === 0) {
           var history = Promise.all([
-            fetchPeriodData(symbol, PERIOD_KEYS),
-            fetchFundingRateData(symbol)
+            fetchPeriodData(symbol, PERIOD_KEYS, signal),
+            fetchFundingRateData(symbol, signal)
           ]);
           refreshFundingInterval(session);
           [periodEntries, fundingEntry] = await history;
@@ -1800,7 +1814,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
             scheduleCycle();
             return;
           }
-          periodEntries = await fetchPeriodData(symbol, pending);
+          periodEntries = await fetchPeriodData(symbol, pending, signal);
         }
         if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
         if (serverNow() >= boundary + PERIOD_MS) {
@@ -1828,7 +1842,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
           runCycleAttempt(boundary, attempt + 1);
         }, retryDelay);
       } catch (e) {
-        if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
+        if (epoch !== myEpoch || !sessionIsCurrent(session) || signal.aborted || e.name === "AbortError") return;
         err("数据拉取失败:", e);
         scheduleCycle();
       } finally {
@@ -1837,6 +1851,10 @@ ${formatHistoryTime(state.current.time, locale)}`;
     }
     function stopBusinessLoop() {
       activePath = null;
+      if (historyController) {
+        historyController.abort();
+        historyController = null;
+      }
       clearTimeout(cycleTimer);
       cycleTimer = null;
       clearTimeout(retryTimer);
@@ -1916,6 +1934,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       epoch++;
       stopBusinessLoop();
       fetching = 0;
+      historyController = new AbortController();
       const session = currentSession();
       const symbol = session.symbol;
       if (!symbol) return;
@@ -1937,7 +1956,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       scheduleCycle();
     }
     function handlePathChange() {
-      if (panelClosed) return;
+      if (panelClosed || pageSuspended) return;
       if (location.pathname === lastPath) return;
       lastPath = location.pathname;
       if (!isFuturesTradingPage()) {
@@ -1947,7 +1966,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       activateTradingPage();
     }
     function startRouteWatcher() {
-      if (panelClosed) return;
+      if (panelClosed || pageSuspended) return;
       if (!removeSpaRouteChangeListener) {
         removeSpaRouteChangeListener = installSpaRouteChangeListener(window, handlePathChange);
       }
@@ -1958,30 +1977,46 @@ ${formatHistoryTime(state.current.time, locale)}`;
         }, ROUTE_WATCHDOG_MS);
       }
     }
+    function resumeTradingPage() {
+      if (panelClosed || pageSuspended) return;
+      startRouteWatcher();
+      if (location.pathname !== lastPath) {
+        handlePathChange();
+        return;
+      }
+      if (!isFuturesTradingPage()) {
+        pauseForNonTradingPage();
+        return;
+      }
+      if (activePath !== location.pathname) {
+        activateTradingPage();
+        return;
+      }
+      startDisplayClock();
+      scheduleCurrentFunding(currentSession());
+    }
     function start() {
       log("脚本启动");
       document.addEventListener("visibilitychange", function() {
-        if (panelClosed) return;
+        if (panelClosed || pageSuspended) return;
         if (document.hidden) {
           stopDisplayClock();
           scheduleCurrentFunding(currentSession());
           return;
         }
-        startRouteWatcher();
-        if (location.pathname !== lastPath) {
-          handlePathChange();
-          return;
-        }
-        if (!isFuturesTradingPage()) {
-          pauseForNonTradingPage();
-          return;
-        }
-        if (activePath !== location.pathname) {
-          activateTradingPage();
-          return;
-        }
-        startDisplayClock();
-        scheduleCurrentFunding(currentSession());
+        resumeTradingPage();
+      });
+      window.addEventListener("pagehide", function() {
+        if (pageSuspended) return;
+        resumeAfterPageShow = pathTimer !== null;
+        pageSuspended = true;
+        stopLoop();
+      });
+      window.addEventListener("pageshow", function() {
+        if (!pageSuspended) return;
+        pageSuspended = false;
+        if (resumeAfterPageShow || !document.hidden) resumeTradingPage();
+        resumeAfterPageShow = false;
       });
       if (!document.hidden) {
         startRouteWatcher();

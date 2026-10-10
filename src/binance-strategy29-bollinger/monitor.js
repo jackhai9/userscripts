@@ -119,6 +119,7 @@ export function createBollingerMonitor({
         lastProcessedClosedBarsWindowKey: null,
         lastProcessedClosedBarsContentSnapshot: null,
         lastProcessedSignals: null,
+        layerMatchesCachedSignals: false,
       };
       bearishBollingerAlertContext = nextContext;
     }
@@ -148,11 +149,18 @@ export function createBollingerMonitor({
           stage = 'reconcile';
           return signals;
         },
-        renderSignals: async (signals) => {
+        renderSignals: async (signals, { contentUnchanged }) => {
           stage = 'render';
-          const rendered = await context.layer.render(signals, {
+          const options = {
             isCurrent: () => isBearishBollingerAlertContextCurrent(context),
-          });
+          };
+          const canReconcile = contentUnchanged && context.layerMatchesCachedSignals;
+          // Rendering and cache publication straddle awaits; interrupted work
+          // must not be reused as the last committed candle snapshot.
+          context.layerMatchesCachedSignals = false;
+          const rendered = await (canReconcile
+            ? context.layer.reconcile(options)
+            : context.layer.render(signals, options));
           stage = 'reconcile';
           return rendered;
         },
@@ -161,6 +169,7 @@ export function createBollingerMonitor({
         context.lastProcessedClosedBarsWindowKey = result.closedBarsWindowKey;
         context.lastProcessedClosedBarsContentSnapshot = result.closedBarsContentSnapshot;
         context.lastProcessedSignals = result.signals;
+        context.layerMatchesCachedSignals = true;
       }
     })();
     bearishBollingerAlertTask = task;

@@ -71,6 +71,12 @@ function observePositionRequests(page) {
   return () => requests;
 }
 
+/** Keep the response gated while the native drawing discovery window completes. */
+async function pauseAtPendingResponse(page) {
+  await pauseScenarioClock(page);
+  await page.clock.runFor(250);
+}
+
 /** The last order of each round and the next round's first order are network gates. */
 async function openPendingFirstRound(page) {
   await installScenarioClock(page);
@@ -92,8 +98,8 @@ async function openPendingFirstRound(page) {
   await panel.locator('[data-ladder-group="levels"][data-ladder-value="3"]').click();
   await observeContinuousStatus(page);
   await panel.getByRole('button', { name: '阶梯平空', exact: true }).click({ modifiers: ['Alt'] });
-  await expect.poll(host.pendingSubmitSequences).toEqual([3]);
-  await pauseScenarioClock(page);
+  await expect.poll(host.pendingSubmitSequences, { intervals: [100] }).toEqual([3]);
+  await pauseAtPendingResponse(page);
   return {
     ...host,
     panel,
@@ -157,7 +163,7 @@ test('user completes two close-short rounds with a full cooldown and exact cumul
   await expect.poll(host.pendingSubmitSequences).toEqual([4]);
   await host.releaseSubmitResponse(4);
   await expect.poll(host.pendingSubmitSequences).toEqual([6]);
-  await pauseScenarioClock(page);
+  await pauseAtPendingResponse(page);
   await host.releaseSubmitResponse(6);
 
   // Then both rounds preserve their initial direction and only six confirmed orders are counted.
@@ -224,7 +230,7 @@ test('user waits for a disabled close button and then receives a complete cooldo
   expect(await readSubmissions(page)).toHaveLength(3);
   await page.clock.resume();
   await expect.poll(host.pendingSubmitSequences).toEqual([4]);
-  await pauseScenarioClock(page);
+  await pauseAtPendingResponse(page);
   await stopContinuousRound(page, host);
   await host.releaseSubmitResponse(4);
   await expect.poll(async () => (await readFixtureState(page)).events
@@ -278,7 +284,7 @@ test('user restarts the full cooldown when the close button becomes busy before 
   expect(await readSubmissions(page)).toHaveLength(3);
   await page.clock.resume();
   await expect.poll(host.pendingSubmitSequences).toEqual([4]);
-  await pauseScenarioClock(page);
+  await pauseAtPendingResponse(page);
   await stopContinuousRound(page, host);
   await host.releaseSubmitResponse(4);
   await expect.poll(async () => (await readFixtureState(page)).events
@@ -610,7 +616,7 @@ test('user restores a new precision promptly and uses its profile after a comple
   // When the full cooldown expires and the next round reaches its first pending request.
   await page.clock.resume();
   await expect.poll(host.pendingSubmitSequences).toEqual([4]);
-  await pauseScenarioClock(page);
+  await pauseAtPendingResponse(page);
 
   // Then the new precision uses its default five-order profile instead of the prior three-order allocation.
   await expect(host.status).toContainText('本轮 0/5 笔');
@@ -647,7 +653,7 @@ test('user advances an unconfirmed continuous order to a new round without count
   // When the recovery deadline passes and the old response arrives while the next round is pending.
   await page.clock.resume();
   await expect.poll(host.pendingSubmitSequences).toEqual([3, 4]);
-  await pauseScenarioClock(page);
+  await pauseAtPendingResponse(page);
   await host.releaseSubmitResponse(3);
   await expect.poll(async () => (await readFixtureState(page)).events
     .filter(({ type }) => type === 'order-submit-api-success').length).toBe(3);

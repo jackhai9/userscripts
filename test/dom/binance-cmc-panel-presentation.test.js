@@ -233,23 +233,20 @@ test('user retains an expanded CMC explanation across the thirty-second refresh 
   assert.equal(host.network.requests.length, 5);
 });
 
-test('user keeps new-language CMC rows after the superseded symbol mapping fails', { timeout: 5_000 }, async t => {
+test('user keeps new-language CMC rows after a queued old symbol mapping failure', { timeout: 5_000 }, async t => {
   // Given a Chinese Bitcoin lookup is pending when the user opens English Ethereum
   const host = createCmcHost(t);
   await host.start();
   const oldMapping = host.network.requests[0];
+
+  // When the old transport fails just before navigation invalidates its queued rejection
+  oldMapping.fail('error');
   host.navigate('/en/futures/ETHUSDT');
   await completeCmcData(host, cmcDetail({ id: 2, symbol: 'ETH' }), { symbol: 'ETH', slug: 'ethereum' });
-  const rows = host.element('rows').innerHTML;
-  const footer = host.element('footer').innerHTML;
-
-  // When the original Bitcoin lookup reports a late error
-  oldMapping.fail('error');
   await afterDataMediaResponseTurn();
 
   // Then the old epoch cannot replace the English asset, interpretations, or source
-  assert.equal(host.element('rows').innerHTML, rows);
-  assert.equal(host.element('footer').innerHTML, footer);
+  assert.equal(host.element('rows').querySelector('[data-metric="price"] .cmc-number').textContent, '$60K');
   assert.equal(host.element('symbol').textContent, 'ETH #1');
   assert.equal(host.panel().lang, 'en');
   assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/currencies/ethereum/');

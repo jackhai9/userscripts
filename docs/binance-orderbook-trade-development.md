@@ -196,6 +196,22 @@ The userscript installs `core/binance-native-depth-source.js` at `document-start
 
 The session must stop and invalidate old work on symbol change, non-trading routes, hidden documents, and `pagehide`. The overlay canvas uses `pointer-events: none`; only its compact collapse control may receive pointer input. Do not connect this visualization book to ladder pricing or any trading decision.
 
+The native source still validates and applies every depth increment while no
+display is subscribed. It releases its sorted profile when the last subscriber
+leaves and materializes the latest book once when a subscriber returns. Duplicate
+update IDs pass the same payload validation but do not rebuild or repaint an
+already-ready profile. A valid repeat still restores readiness after a transport
+interruption. Failed or resynchronizing books cannot become ready merely because a
+new display subscribes. Each materialization owns one fresh level array per side,
+so later updates never mutate an earlier delivered profile. The UI may retain its
+last delivered snapshot while hidden; the source does not build additional
+display copies until a consumer subscribes again.
+
+The existing `nativeDepthState` diagnostic separates `bookBidCount` and
+`bookAskCount` from the materialized profile's `bidCount` and `askCount`.
+`profileBuildCount`, `profileUpdateId`, and `subscriberCount` expose fixed-size
+work counters without triggering a sort, a fetch, or retaining update history.
+
 Compact depth labels are painted inside the existing 132px canvas. Each pixel row
 keeps its largest cumulative quantity for the bar and separately sums all real
 level quantities for its label, retaining the full minimum-to-maximum price band.

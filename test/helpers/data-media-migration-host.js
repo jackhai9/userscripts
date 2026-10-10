@@ -96,9 +96,10 @@ export function createDataMediaNetwork() {
       publish(request);
     });
   }
+  /** Model the abort handle and onabort terminal event in Tampermonkey's GM_xmlhttpRequest contract. */
   function gmRequest(options) {
     const request = {
-      url: new URL(options.url), kind: 'gm', options, settled: false,
+      url: new URL(options.url), kind: 'gm', options, settled: false, aborted: false, abortCalls: 0,
       respond(body, status = 200) {
         assert.equal(request.settled, false, 'each GM request has one terminal outcome');
         request.settled = true;
@@ -106,13 +107,22 @@ export function createDataMediaNetwork() {
       },
       fail(kind = 'error') {
         assert.equal(request.settled, false);
+        assert.ok(['error', 'timeout', 'abort'].includes(kind));
         request.settled = true;
-        assert.ok(['error', 'timeout'].includes(kind));
+        request.aborted = kind === 'abort';
         options[`on${kind}`]();
       },
     };
     publish(request);
-    return { abort() { request.settled = true; } };
+    return {
+      abort() {
+        request.abortCalls++;
+        if (request.settled) return;
+        request.settled = true;
+        request.aborted = true;
+        options.onabort?.({});
+      },
+    };
   }
   return { requests, fetch, gmRequest, waitForRequest };
 }

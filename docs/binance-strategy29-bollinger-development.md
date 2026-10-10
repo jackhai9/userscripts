@@ -13,8 +13,8 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.12 directly and reload the page. The current orderbook
-script is optional; install CorsairQuant signal client 0.6.14 for the remote
+Install Strategy29 0.5.13 directly and reload the page. The current orderbook
+script is optional; install CorsairQuant signal client 0.6.15 for the remote
 summary. This personal-use project targets the current scripts, without
 old-version runtime branches or preference migration.
 
@@ -248,6 +248,19 @@ Each interval session uses a private subscription owner token. The observed Bina
 The exposed chart API can exist before its internal model during initial loading. Target discovery and current-target validation use the observed Trading Platform 30 `hasModel()` contract before reading `resolution()`. A missing model is an expected not-ready state, not a fatal error; the existing poll resumes when the model exists. Model readiness does not replace the interval/data session guard.
 
 Indicator calculation traverses each fixed window directly without allocating sliced/mapped close arrays for every bar. Summation order and detector thresholds remain unchanged.
+
+When the full export comparison finds unchanged signals, the monitor reconciles
+the retained overlay instead of normalizing and projecting the same markers
+again. This reuse also requires the overlay to match the committed detector
+cache: an interrupted render must be republished before it can be reused.
+Reconciliation still validates the current chart/session, all projection
+object identities, mutation permission, and pane dimensions. Native data, viewport
+and resize events mark projection dirty and schedule a frame independently.
+Visibility and busy-state recovery still redraw; a new signal snapshot always
+passes through full validation. An actual projection reads the series' first
+value at most once for the frame. The one-second export and complete historical
+OHLC comparison remain in place, including revisions to older candles and
+clock-only bar closure.
 
 Markers use a script-owned SVG inside the main-series pane's canvas container. The overlay is clipped to that pane and has `pointer-events: none`; it does not cover the price/time axes or intercept drawing interactions. Each direction allows 1,000 signals, for 2,000 total. Validation rejects an over-limit or malformed snapshot before publishing it. Offscreen signals remain in the bounded signal set but create no SVG nodes. Keyed nodes are reused, and unchanged attributes are not rewritten.
 

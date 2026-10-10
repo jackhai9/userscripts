@@ -707,7 +707,10 @@ for (const stage of ['export', 'render']) {
     assert.equal(harness.monitor.diagnostics.cachedSignalCount, 6);
     assert.equal(harness.monitor.diagnostics.layerSize, 6);
     if (stage === 'export') fixture.chart.exportData = async () => { throw new Error('synthetic export failure'); };
-    else fixture.overlay.setProjection({ price: () => { throw new Error('synthetic projection failure'); } });
+    else {
+      fixture.overlay.setProjection({ price: () => { throw new Error('synthetic projection failure'); } });
+      fixture.overlay.events.priceRangeChanged.emit();
+    }
     const message = stage === 'export' ? 'synthetic export failure' : 'synthetic projection failure';
     await assert.rejects(harness.tick(), { message });
     await harness.tick();

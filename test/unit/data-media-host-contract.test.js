@@ -48,7 +48,7 @@ test('user receives exactly the response supplied for each pending data request'
   assert.throws(() => network.requests[1].respond({ duplicate: true }), /one terminal outcome/);
 });
 
-test('user receives distinct GM response, network failure, and timeout callbacks', async () => {
+test('user receives distinct GM response, network failure, timeout, and abort callbacks', async () => {
   // Given a GM boundary whose callbacks record their terminal outcomes
   const network = createDataMediaNetwork();
   const outcomes = [];
@@ -57,6 +57,7 @@ test('user receives distinct GM response, network failure, and timeout callbacks
     onload: response => outcomes.push(response),
     onerror: () => outcomes.push('network'),
     ontimeout: () => outcomes.push('timeout'),
+    onabort: () => outcomes.push('abort'),
   };
   const requested = network.waitForRequest(request => request.url.pathname === '/cmc');
 
@@ -67,10 +68,13 @@ test('user receives distinct GM response, network failure, and timeout callbacks
   network.requests[1].fail('error');
   network.gmRequest(options);
   network.requests[2].fail('timeout');
+  network.gmRequest(options);
+  network.requests[3].fail('abort');
 
   // Then each callback is delivered once with the supplied status and body
-  assert.deepEqual(outcomes, [{ status: 503, responseText: '{"data":[1]}' }, 'network', 'timeout']);
+  assert.deepEqual(outcomes, [{ status: 503, responseText: '{"data":[1]}' }, 'network', 'timeout', 'abort']);
   assert.equal(network.requests.every(request => request.settled), true);
+  assert.equal(network.requests[3].aborted, true);
 });
 
 test('user aborts a pending fetch once without delivering a later response', async () => {
@@ -88,6 +92,65 @@ test('user aborts a pending fetch once without delivering a later response', asy
   assert.equal(network.requests[0].settled, true);
   assert.equal(network.requests[0].aborted, true);
   assert.throws(() => network.requests[0].respond({ late: true }), /one terminal outcome/);
+});
+
+test('user receives one terminal GM abort callback from a cancelled request handle', () => {
+  // Given the GM boundary exposes the documented abort handle and callback
+  const network = createDataMediaNetwork();
+  const outcomes = [];
+  const handle = network.gmRequest({
+    url: 'https://example.test/cmc',
+    onload: () => outcomes.push('response'),
+    onerror: () => outcomes.push('error'),
+    ontimeout: () => outcomes.push('timeout'),
+    onabort: () => outcomes.push('abort'),
+  });
+
+  // When the owner cancels the handle twice before any response arrives
+  handle.abort();
+  handle.abort();
+
+  // Then only the abort terminal event is delivered and a later response is rejected
+  assert.deepEqual(outcomes, ['abort']);
+  assert.equal(network.requests[0].settled, true);
+  assert.equal(network.requests[0].aborted, true);
+  assert.throws(() => network.requests[0].respond({ late: true }), /one terminal outcome/);
+});
+
+test('user retains a completed GM response when its handle is aborted later', () => {
+  // Given a completed GM request has already delivered its response
+  const network = createDataMediaNetwork();
+  const outcomes = [];
+  const handle = network.gmRequest({
+    url: 'https://example.test/cmc',
+    onload: response => outcomes.push(response.responseText),
+    onabort: () => outcomes.push('abort'),
+  });
+  network.requests[0].respond('complete');
+
+  // When a late owner cancellation reaches the completed handle
+  handle.abort();
+
+  // Then no second terminal callback replaces or follows the successful response
+  assert.deepEqual(outcomes, ['complete']);
+  assert.equal(network.requests[0].aborted, false);
+});
+
+test('user receives the original reason when a pending fetch reaches its abort deadline', async () => {
+  // Given the active fetch belongs to a controller with a specific deadline reason
+  const network = createDataMediaNetwork();
+  const controller = new AbortController();
+  const pending = network.fetch('https://example.test/funding', { signal: controller.signal });
+  const reason = new DOMException('Funding request timed out', 'TimeoutError');
+  const rejected = assert.rejects(pending, error => error === reason);
+
+  // When the owner cancels with that deadline rather than the default abort reason
+  controller.abort(reason);
+  await rejected;
+
+  // Then the transport is terminal and preserves the distinction between timeout and cancellation
+  assert.equal(network.requests[0].settled, true);
+  assert.equal(network.requests[0].aborted, true);
 });
 
 test('user does not start a fetch with an already cancelled signal', async () => {

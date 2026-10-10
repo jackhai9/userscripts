@@ -295,7 +295,7 @@ export async function reconcileBearishBollingerAlertWindow({
   if (!Array.isArray(signals)) {
     throw new Error('Bollinger signal cache is invalid');
   }
-  const rendered = await renderSignals(signals);
+  const rendered = await renderSignals(signals, { contentUnchanged });
   if (typeof rendered !== 'boolean') {
     throw new Error('TradingView Bollinger alert render result is invalid');
   }
@@ -380,6 +380,7 @@ function createMarkerLayer(target, defaultDirection, options) {
         return overlay.render(markers, { isCurrent });
       } catch (error) { overlay.clear(); throw error; }
     },
+    reconcile: overlay.reconcile,
     clear: overlay.clear,
     get size() { return overlay.size; },
     get overlayStats() { return overlay.overlayStats; },

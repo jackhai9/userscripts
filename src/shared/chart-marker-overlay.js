@@ -20,6 +20,7 @@ export function createChartMarkerOverlay(target, {
   const nodes = new Map();
   let svg = null, host = null, frame = null, observer = null, projection = null;
   let signals = [], validateCurrent = null, invalidated = false;
+  let projectionDirty = true, renderedWidth = null, renderedHeight = null;
   let renderedFrames = 0, visibleMarkers = 0, generation = 0;
 
   function hide() {
@@ -49,6 +50,9 @@ export function createChartMarkerOverlay(target, {
     nodes.clear();
     validateCurrent = null;
     invalidated = false;
+    projectionDirty = true;
+    renderedWidth = null;
+    renderedHeight = null;
     return true;
   }
 
@@ -87,10 +91,16 @@ export function createChartMarkerOverlay(target, {
     if (!Number.isFinite(width) || !Number.isFinite(height)) {
       throw new Error('TradingView marker pane dimensions are invalid');
     }
+    if (!projectionDirty && svg.style.visibility === 'visible'
+      && width === renderedWidth && height === renderedHeight) return true;
+    // Consume this redraw before host reads so a delegate fired during projection
+    // still marks the next frame dirty.
+    projectionDirty = false;
     const projected = [];
     const visibleIds = new Set();
     const { series, time, price } = projection;
     const data = chart.getSeries().data();
+    let firstValue, firstValueRead = false;
     for (const signal of signals) {
       const index = time.timePointToIndex(signal.time, 0);
       if (index === null) continue;
@@ -101,7 +111,11 @@ export function createChartMarkerOverlay(target, {
       const x = time.indexToCoordinate(index);
       if (!Number.isFinite(x)) throw new Error('TradingView marker coordinates are invalid');
       if (width <= 0 || height <= 0 || x < 0 || x > width) continue;
-      const y = price.priceToCoordinate(signal.price, series.firstValue());
+      if (!firstValueRead) {
+        firstValue = series.firstValue();
+        firstValueRead = true;
+      }
+      const y = price.priceToCoordinate(signal.price, firstValue);
       if (!Number.isFinite(y)) {
         throw new Error('TradingView marker coordinates are invalid');
       }
@@ -148,11 +162,14 @@ export function createChartMarkerOverlay(target, {
     }
     if (svg.style.visibility !== 'visible') svg.style.visibility = 'visible';
     visibleMarkers = projected.length;
+    renderedWidth = width;
+    renderedHeight = height;
     renderedFrames += 1;
     return true;
   }
 
   function schedule() {
+    projectionDirty = true;
     if (!svg || frame !== null || invalidated || document.hidden) return;
     const scheduledGeneration = generation;
     frame = host.ownerDocument.defaultView.requestAnimationFrame(() => {
@@ -235,7 +252,16 @@ export function createChartMarkerOverlay(target, {
           const path = points.map(([x, y], index) => `${index === 0 ? 'M' : 'L'} ${x * scale} ${sign * y * scale + centerShift}`).join(' ');
           return { ...marker, pathData: `${path} Z` };
         });
+        projectionDirty = true;
         return draw();
+      } catch (error) { clear(); throw error; }
+    },
+    /** Rechecks the retained snapshot; changed caller inputs must go through render. */
+    reconcile({ isCurrent }) {
+      try {
+        if (typeof isCurrent !== 'function') throw new Error('TradingView overlay current-target validator is unavailable');
+        validateCurrent = isCurrent;
+        return svg ? draw() : false;
       } catch (error) { clear(); throw error; }
     },
     clear,
