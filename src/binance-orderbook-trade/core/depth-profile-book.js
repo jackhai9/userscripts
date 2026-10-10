@@ -180,21 +180,26 @@ export function applyDepthProfileSnapshot(book, payload) {
 }
 
 function toSortedLevels(levels, direction) {
-  return [...levels.entries()]
-    .map(([price, quantity]) => ({
-      price: Number(price),
-      quantity: Number(quantity),
-    }))
-    .filter((level) => Number.isFinite(level.price) && Number.isFinite(level.quantity))
-    .sort((left, right) => direction * (left.price - right.price));
+  const sorted = [];
+  for (const [price, quantity] of levels) {
+    const numericPrice = Number(price);
+    const numericQuantity = Number(quantity);
+    if (Number.isFinite(numericPrice) && Number.isFinite(numericQuantity)) {
+      sorted.push({ price: numericPrice, quantity: numericQuantity });
+    }
+  }
+  return sorted.sort((left, right) => direction * (left.price - right.price));
 }
 
 function addCumulativeQuantity(levels) {
   let cumulative = 0;
-  return levels.map((level) => {
+  // These levels are freshly owned by this profile; a second object copy per
+  // price would only increase allocations on every native depth update.
+  for (const level of levels) {
     cumulative += level.quantity;
-    return { ...level, cumulative };
-  });
+    level.cumulative = cumulative;
+  }
+  return levels;
 }
 
 export function buildDepthProfile(book) {

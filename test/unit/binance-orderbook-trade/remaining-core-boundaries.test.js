@@ -306,7 +306,11 @@ test('user receives a connecting depth state only after a valid symbol subscript
   const status = { symbol: 'BTCUSDT', status: 'connecting', detail: '' };
   assert.deepEqual(statuses, [status]);
   assert.deepEqual(profiles, []);
-  assert.deepEqual(source.getState('BTCUSDT'), { status, bidCount: 0, askCount: 0, minPrice: null, maxPrice: null });
+  assert.deepEqual(source.getState('BTCUSDT'), {
+    status, bidCount: 0, askCount: 0, minPrice: null, maxPrice: null,
+    bookBidCount: 0, bookAskCount: 0, subscriberCount: 1,
+    profileUpdateId: null, profileBuildCount: 0,
+  });
   unsubscribe();
 });
 

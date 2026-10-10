@@ -3,7 +3,7 @@
 // @namespace    binance.strategy27.events
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.6.14
+// @version      0.6.15
 // @author       jackhai9
 // @description  Display Strategy 27 events and provide the shared private CorsairQuant gateway connection
 // @match        https://www.binance.com/*/futures/*
@@ -1191,6 +1191,7 @@
     const nodes = /* @__PURE__ */ new Map();
     let svg = null, host = null, frame = null, observer = null, projection = null;
     let signals = [], validateCurrent = null, invalidated = false;
+    let projectionDirty = true, renderedWidth = null, renderedHeight = null;
     let renderedFrames = 0, visibleMarkers = 0, generation = 0;
     function hide() {
       if (svg && svg.style.visibility !== "hidden") svg.style.visibility = "hidden";
@@ -1217,6 +1218,9 @@
       nodes.clear();
       validateCurrent = null;
       invalidated = false;
+      projectionDirty = true;
+      renderedWidth = null;
+      renderedHeight = null;
       return true;
     }
     function readProjection() {
@@ -1251,10 +1255,13 @@
       if (!Number.isFinite(width) || !Number.isFinite(height)) {
         throw new Error("TradingView marker pane dimensions are invalid");
       }
+      if (!projectionDirty && svg.style.visibility === "visible" && width === renderedWidth && height === renderedHeight) return true;
+      projectionDirty = false;
       const projected = [];
       const visibleIds = /* @__PURE__ */ new Set();
       const { series, time, price } = projection;
       const data = chart.getSeries().data();
+      let firstValue, firstValueRead = false;
       for (const signal of signals) {
         const index = time.timePointToIndex(signal.time, 0);
         if (index === null) continue;
@@ -1264,7 +1271,11 @@
         const x = time.indexToCoordinate(index);
         if (!Number.isFinite(x)) throw new Error("TradingView marker coordinates are invalid");
         if (width <= 0 || height <= 0 || x < 0 || x > width) continue;
-        const y = price.priceToCoordinate(signal.price, series.firstValue());
+        if (!firstValueRead) {
+          firstValue = series.firstValue();
+          firstValueRead = true;
+        }
+        const y = price.priceToCoordinate(signal.price, firstValue);
         if (!Number.isFinite(y)) {
           throw new Error("TradingView marker coordinates are invalid");
         }
@@ -1316,10 +1327,13 @@
       }
       if (svg.style.visibility !== "visible") svg.style.visibility = "visible";
       visibleMarkers = projected.length;
+      renderedWidth = width;
+      renderedHeight = height;
       renderedFrames += 1;
       return true;
     }
     function schedule() {
+      projectionDirty = true;
       if (!svg || frame !== null || invalidated || document.hidden) return;
       const scheduledGeneration = generation;
       frame = host.ownerDocument.defaultView.requestAnimationFrame(() => {
@@ -1411,7 +1425,19 @@
             const path = points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x * scale} ${sign * y * scale + centerShift}`).join(" ");
             return { ...marker, pathData: `${path} Z` };
           });
+          projectionDirty = true;
           return draw();
+        } catch (error) {
+          clear();
+          throw error;
+        }
+      },
+      /** Rechecks the retained snapshot; changed caller inputs must go through render. */
+      reconcile({ isCurrent }) {
+        try {
+          if (typeof isCurrent !== "function") throw new Error("TradingView overlay current-target validator is unavailable");
+          validateCurrent = isCurrent;
+          return svg ? draw() : false;
         } catch (error) {
           clear();
           throw error;

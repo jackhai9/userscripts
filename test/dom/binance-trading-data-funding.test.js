@@ -233,17 +233,19 @@ test('user cancels old current funding when switching symbols and keeps the new 
   await host.network.waitForRequest(request => endpoint(request) === 'fundingRate');
   const current = host.network.requests.find(request => endpoint(request) === 'premiumIndex');
   const interval = host.network.requests.find(request => endpoint(request) === 'fundingInfo');
+  const history = historyRequests(host);
 
   // When the user navigates to STRK before Bitcoin completes
   host.navigate('/en/futures/STRKUSDT');
   const data = tradingDataset(Date.now(), { symbol: 'STRKUSDT', currentFunding: 0.00005, funding: 0.00000029 });
   await activateTradingData(host, data, { symbol: 'STRKUSDT' });
-  await completeTradingBatch(host, tradingDataset(Date.now()), { includeInterval: false });
   await afterDataMediaResponseTurn();
 
-  // Then cancelled old requests and late history cannot change the new identity or rate
+  // Then cancelled current and historical requests cannot change the new identity or rate
   assert.equal(current.aborted, true);
   assert.equal(interval.aborted, true);
+  assert.equal(history.length, 7);
+  assert.equal(history.every(request => request.aborted), true);
   assert.equal(host.element('symbol').textContent, 'STRKUSDT');
   assert.equal(read(host, 'current-funding').textContent, '0.005%');
   assert.equal(read(host, 'funding-period').textContent, 'Current · 4h');

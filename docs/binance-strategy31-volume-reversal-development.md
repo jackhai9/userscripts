@@ -1,8 +1,8 @@
 # Strategy31 volume reversal signals
 
 Source: `src/binance-strategy31-volume-reversal/`. Installer:
-`scripts/binance-strategy31-volume-reversal.user.js` (0.1.8).
-Install alongside CorsairQuant signal client 0.6.14, which owns private gateway
+`scripts/binance-strategy31-volume-reversal.user.js` (0.1.9).
+Install alongside CorsairQuant signal client 0.6.15, which owns private gateway
 authentication. The shared bridge explicitly advertises the `strategy31` capability.
 
 CorsairQuant confirms consecutive closed red/green candles when green base volume

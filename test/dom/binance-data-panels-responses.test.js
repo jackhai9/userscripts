@@ -67,23 +67,21 @@ test('user keeps valid CMC valuation data when its detail cannot identify a hold
   assert.equal(host.network.requests.some(request => request.url.pathname.endsWith('/show_holders')), false);
 });
 
-test('user keeps the new CMC symbol when the superseded mapping fails late', { timeout: 5_000 }, async t => {
+test('user keeps the new CMC symbol after cancelling the superseded mapping', { timeout: 5_000 }, async t => {
   // Given Bitcoin mapping is pending while the user switches to Ethereum
   const host = createDataPanelHost(t, 'cmc');
   await host.start();
   const oldMapping = host.network.requests[0];
+
+  // When Ethereum replaces the session owning the unfinished Bitcoin mapping
   host.navigate('/zh-CN/futures/ETHUSDT');
   await completeCmcData(host, cmcDetail({ id: 2, symbol: 'ETH' }), { symbol: 'ETH', slug: 'ethereum' });
-  const rows = host.element('rows').innerHTML;
-  const footer = host.element('footer').innerHTML;
-
-  // When the old Bitcoin request reports a transport failure after Ethereum has rendered
-  oldMapping.fail('error');
   await afterDataMediaResponseTurn();
 
-  // Then the stale rejection cannot replace current rows, identity, or provenance
-  assert.equal(host.element('rows').innerHTML, rows);
-  assert.equal(host.element('footer').innerHTML, footer);
+  // Then the cancelled mapping cannot replace current rows, identity, or provenance
+  assert.equal(oldMapping.aborted, true);
+  assert.match(host.element('rows').textContent, /价格\$6万/);
+  assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/zh/currencies/ethereum/');
   assert.equal(host.element('symbol').textContent, 'ETH #1');
   assert.equal(host.network.requests.length, 4);
 });
@@ -186,10 +184,10 @@ test('user can force a new CMC refresh while scheduled refreshes avoid duplicati
   const current = await host.network.waitForRequest(request => request !== old && !request.settled && request.url.pathname.endsWith('/detail'));
   current.respond({ data: { ...detail, statistics: { ...detail.statistics, price: 100 } } });
   await host.rendered(() => host.element('rows').textContent.includes('价格$100'));
-  old.respond({ data: { ...detail, statistics: { ...detail.statistics, price: 50 } } });
   await afterDataMediaResponseTurn();
 
-  // Then only the latest forced request controls the panel's visible price
+  // Then cancellation leaves only the latest forced request controlling the visible price
+  assert.equal(old.aborted, true);
   assert.match(host.element('rows').textContent, /价格\$100/);
   assert.doesNotMatch(host.element('rows').textContent, /价格\$50/);
   assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/map')).length, 1);

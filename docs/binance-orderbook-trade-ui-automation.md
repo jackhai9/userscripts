@@ -50,6 +50,22 @@ not a latency or throughput measurement. The ordinary single-round unknown
 submission scenario must not be generalized to continuous mode, whose existing
 `submit_unconfirmed` policy deliberately permits a later recovery round.
 
+Playwright's public Clock API has no atomic pause-now operation. The helper fixes
+`Date` at the sampled wall time before pausing, then restores elapsed time using
+the monotonic clock. During that handshake, `Date` can briefly move backward and
+remain fixed while timers and `performance.now()` still advance. Compensation
+preserves the final wall/monotonic relationship and pending timer deadlines; it
+does not guarantee monotonic wall time during the handshake. Pause only at
+controlled lifecycle gates, and use the dedicated scenario-clock regression to
+verify delayed transport and repeated pause/resume behavior.
+
+A held native response does not mean its chart-save capture has completed.
+Continuous-readiness scenarios without native drawing events explicitly advance
+the existing 250ms drawing-discovery window while holding that response. This
+keeps response release and Stop checks independent of when host-side polling
+first observes the request. Drawing-lifecycle scenarios control that window
+separately so they can still assert its before/after boundaries.
+
 Background-tab L2 scenarios override `document.hidden`, dispatch
 `visibilitychange`, and pause paint-frame callbacks after the real generated
 userscript is loaded. They verify that already clicked open/close ladders,

@@ -120,7 +120,7 @@ for (const kind of ['trading', 'cmc']) {
     assert.equal(host.network.requests.length, count);
   });
 
-  test(`user keeps a new background ${kind} symbol when the old symbol response arrives late`, { timeout: 5_000 }, async t => {
+  test(`user keeps a new background ${kind} symbol after cancelling old requests`, { timeout: 5_000 }, async t => {
     // Given the original Bitcoin request is pending when its tab becomes hidden
     const host = createDataPanelHost(t, kind);
     await host.start();
@@ -128,18 +128,17 @@ for (const kind of ['trading', 'cmc']) {
       host.network.requests[0].respond({ serverTime: Date.now() });
       await host.network.waitForRequest(request => request.url.pathname.endsWith('/fundingRate'));
     }
+    const oldRequests = host.network.requests.filter(request => !request.settled);
     host.setHidden(true);
 
-    // When background navigation completes Ethereum before the old Bitcoin response
+    // When background navigation replaces Bitcoin and completes the Ethereum responses
     host.navigate('/zh-CN/futures/ETHUSDT');
     assert.equal(host.network.requests.filter(request => !request.settled
       && (request.url.pathname.endsWith('/time') || request.url.searchParams.get('symbol') === 'ETH')).length, 1);
     if (kind === 'trading') {
       await activateTradingData(host, tradingDataset(Date.now(), { symbol: 'ETHUSDT', oi: 3000 }), { symbol: 'ETHUSDT' });
-      await completeTradingBatch(host, tradingDataset(Date.now()), { includeInterval: false });
     } else {
       await completeCmcData(host, cmcDetail({ id: 2, symbol: 'ETH' }), { symbol: 'ETH', slug: 'ethereum' });
-      await completeCmcData(host);
     }
     await afterDataMediaResponseTurn();
     const count = host.network.requests.length;
@@ -147,6 +146,7 @@ for (const kind of ['trading', 'cmc']) {
     host.clock.tick(0);
 
     // Then returning retains the already loaded Ethereum data without restarting either symbol
+    assert.equal(oldRequests.every(request => request.aborted), true);
     assert.match(host.element('symbol').textContent, /^ETH/);
     assert.equal(host.network.requests.length, count);
     if (kind === 'trading') assert.match(host.element('rows').textContent, /3000 ▼/);

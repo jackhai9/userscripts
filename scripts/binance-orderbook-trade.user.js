@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.227
+// @version      2.7.228
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -4812,17 +4812,23 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     return applyBufferedUpdates(book);
   }
   function toSortedLevels(levels, direction) {
-    return [...levels.entries()].map(([price, quantity]) => ({
-      price: Number(price),
-      quantity: Number(quantity)
-    })).filter((level) => Number.isFinite(level.price) && Number.isFinite(level.quantity)).sort((left, right) => direction * (left.price - right.price));
+    const sorted = [];
+    for (const [price, quantity] of levels) {
+      const numericPrice = Number(price);
+      const numericQuantity = Number(quantity);
+      if (Number.isFinite(numericPrice) && Number.isFinite(numericQuantity)) {
+        sorted.push({ price: numericPrice, quantity: numericQuantity });
+      }
+    }
+    return sorted.sort((left, right) => direction * (left.price - right.price));
   }
   function addCumulativeQuantity(levels) {
     let cumulative = 0;
-    return levels.map((level) => {
+    for (const level of levels) {
       cumulative += level.quantity;
-      return { ...level, cumulative };
-    });
+      level.cumulative = cumulative;
+    }
+    return levels;
   }
   function buildDepthProfile(book) {
     if (!book.ready) throw new Error("Depth profile book is not ready");
@@ -4889,6 +4895,8 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       symbol,
       book: createDepthProfileBook(symbol),
       profile: null,
+      profileUpdateId: null,
+      profileBuildCount: 0,
       status: { symbol, status: "connecting", detail: "" },
       subscribers: /* @__PURE__ */ new Set()
     };
@@ -4926,14 +4934,32 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       for (const subscriber of record.subscribers) subscriber.onProfile(profile);
       notifyStatus(record, "ready");
     }
-    function failRecord(record, error) {
+    function clearProfile(record) {
       record.profile = null;
+      record.profileUpdateId = null;
+    }
+    function materializeProfile(record) {
+      record.profileBuildCount += 1;
+      record.profile = buildDepthProfile(record.book);
+      record.profileUpdateId = record.book.previousFinalUpdateId;
+      return record.profile;
+    }
+    function publishCurrentBook(record) {
+      clearProfile(record);
+      if (record.subscribers.size === 0) {
+        notifyStatus(record, "ready");
+        return;
+      }
+      notifyProfile(record, materializeProfile(record));
+    }
+    function failRecord(record, error) {
+      clearProfile(record);
       notifyStatus(record, "failed", error?.message || String(error));
     }
     function beginSnapshot(symbol) {
       const record = ensureRecord(symbol);
       record.book = createDepthProfileBook(symbol);
-      record.profile = null;
+      clearProfile(record);
       notifyStatus(record, "synchronizing");
       for (const [otherSymbol, otherRecord] of records) {
         if (otherSymbol !== symbol && otherRecord.subscribers.size === 0) records.delete(otherSymbol);
@@ -4945,7 +4971,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       const record = ensureRecord(symbol);
       try {
         const ready = applyDepthProfileSnapshot(record.book, payload);
-        if (ready) notifyProfile(record, buildDepthProfile(record.book));
+        if (ready) publishCurrentBook(record);
         else notifyStatus(record, "synchronizing");
       } catch (error) {
         failRecord(record, error);
@@ -4955,11 +4981,13 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       if (restored) return;
       const record = ensureRecord(symbol);
       try {
+        const previousUpdateId = record.book.previousFinalUpdateId;
         const ready = pushDepthProfileUpdate(record.book, payload);
-        if (ready) notifyProfile(record, buildDepthProfile(record.book));
+        if (ready && record.status.status === "ready" && record.book.previousFinalUpdateId === previousUpdateId) return;
+        if (ready) publishCurrentBook(record);
         else notifyStatus(record, "synchronizing");
       } catch (error) {
-        record.profile = null;
+        clearProfile(record);
         if (error instanceof DepthProfileSequenceError) {
           record.book = createDepthProfileBook(symbol);
           notifyStatus(record, "resyncing", error.message);
@@ -5057,10 +5085,21 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           onProfile: assertFunction(onProfile, "profile listener"),
           onStatus: assertFunction(onStatus, "status listener")
         };
+        if (record.status.status === "ready" && record.profile === null) {
+          try {
+            materializeProfile(record);
+          } catch (error) {
+            failRecord(record, error);
+          }
+        }
         record.subscribers.add(subscriber);
         subscriber.onStatus(record.status);
         if (record.profile) subscriber.onProfile(record.profile);
-        return () => record.subscribers.delete(subscriber);
+        return () => {
+          const removed = record.subscribers.delete(subscriber);
+          if (record.subscribers.size === 0) clearProfile(record);
+          return removed;
+        };
       },
       getState(symbol) {
         const record = records.get(assertSymbol2(symbol));
@@ -5070,7 +5109,12 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
           bidCount: record.profile?.bids.length || 0,
           askCount: record.profile?.asks.length || 0,
           minPrice: record.profile?.minPrice ?? null,
-          maxPrice: record.profile?.maxPrice ?? null
+          maxPrice: record.profile?.maxPrice ?? null,
+          bookBidCount: record.book.bids.size,
+          bookAskCount: record.book.asks.size,
+          subscriberCount: record.subscribers.size,
+          profileUpdateId: record.profileUpdateId,
+          profileBuildCount: record.profileBuildCount
         };
       },
       restore() {

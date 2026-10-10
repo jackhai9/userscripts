@@ -10,6 +10,8 @@ are owned by `skills/userscript-release/SKILL.md`.
 
 The eight-script performance audit, operation-count baselines, and reproduction
 commands are recorded in `docs/userscript-performance-review.md`.
+The later Binance multi-tab investigation, live observations and request/marker/
+depth changes are recorded in [Binance Multi-tab Performance Review](binance-multitab-performance-review.md).
 
 The behavioral test rules, reviewed fake contracts, virtual-time boundaries,
 and explicit migration inventory are owned by [Behavioral Test Policy](test-policy.md).
@@ -74,6 +76,12 @@ read the Node version from `.nvmrc`.
   work before its result can render or update shared state. Follow each script's
   visibility contract: the two data panels below retain an activated session
   while hidden; visibility alone does not invalidate its requests.
+- Both data panels cancel business requests and timers on `pagehide`. A BFCache
+  `pageshow` restores a previously activated route watcher and starts one new
+  current-route session, including when that activated page remains hidden.
+  Visibility events during suspension and repeated `pageshow` events cannot
+  duplicate initialization. A never-visited hidden page still waits for its first
+  visible activation, and a closed panel stays closed after restoration.
 - Timer, observer, drag, and unload listeners are part of the lifecycle. Stop
   business work when its route or panel is inactive, remove listeners when the
   panel is removed, and keep only the route watcher needed to discover a future
@@ -212,8 +220,12 @@ cycle, also with a 10-second deadline. It must never block a historical refresh.
 An absent metadata row means an unknown interval, not an assumed eight hours.
 
 Requests and responses retain session, path, and symbol ownership. Changing
-routes or closing aborts the current-rate, interval, and clock requests;
-superseded responses cannot publish. A failed current refresh can retain an actual
+routes, closing, or `pagehide` aborts the seven historical requests as well as the
+current-rate, interval, and clock requests. One route-session controller owns
+history; the other three request types retain their independent controllers and
+deadlines. Lifecycle cancellation starts no network retry and is not recorded as
+an endpoint failure or cached result. Superseded responses cannot publish.
+A failed current refresh can retain an actual
 previous quote with a visible cache/error label. A first failure without data is
 labelled unavailable rather than cached. Metadata cache status is independent.
 
@@ -259,6 +271,14 @@ clean up business timers. Responses belong to the complete pathname as well as
 the symbol, so even a same-symbol language change starts a new session. A route
 watcher remains to detect later matching pages, including transitions while
 hidden; it does not run business requests off-route or after close.
+
+Each refresh owns one cancellation signal across the map, detail, page-snapshot,
+and holder requests. Route changes, close, `pagehide`, and a superseding manual
+Refresh abort the current GM request. Every terminal transport callback removes
+its abort listener. Cancellation ends the chain without a page fallback or holder
+lookup; stage boundaries also reject an already-changed pathname before the route
+watchdog runs. Existing provider failures retain their documented fallback and
+20-second transport timeout.
 
 An initially hidden document waits until first visited. An activated panel keeps
 its data, expanded interpretation, pending requests, and session when hidden.
@@ -308,6 +328,25 @@ and open `output/data-panels-preview/index.html` with a `file://` URL. The gener
 embeds unchanged generated artifacts and labelled example data. It supports both
 languages, light/dark themes, and each panel separately, without external network
 requests. It is not live Binance or Tampermonkey evidence.
+
+### Request cancellation validation (2026-10-10)
+
+Trading-data `1.2.4` and CMC-data `0.2.4` passed 40 focused cancellation scenarios
+and 14 host-boundary tests on Node `24.16.0`, alongside the existing response,
+background, lifecycle, and funding checks. The controlled history request count
+remains `7 -> 7 -> 7` through BTC/ETH/SOL navigation and reaches zero after leaving
+futures. Queued failures cannot start off-route retries. CMC checks cover all four
+pipeline stages, every GM terminal callback's listener cleanup, manual
+supersession, and pathname changes that precede the route watchdog.
+
+Simulated BFCache checks verify one restored session and its normal subsequent
+refresh, preserved hidden-page activation rules, and a closed panel that stays
+closed. Both builds, generated syntax and metadata checks, changed-test lint, and
+`git diff --check` passed. These are deterministic request and DOM checks, not CPU
+or memory measurements. They do not establish real Chrome BFCache, installed
+Tampermonkey behavior, or live Binance/CMC responses. Rendered fixture checks and
+aggregate results are recorded in the
+[multi-tab performance review](binance-multitab-performance-review.md).
 
 ### Narrow column layout validation (2026-10-09)
 
@@ -418,7 +457,9 @@ claim live behavior from source inspection alone.
 ### Binance trading data
 
 - Switch symbols while a fetch is pending; old results must not appear under the
-  new symbol.
+  new symbol. Each superseded historical batch must be cancelled, leaving only
+  the current seven requests pending; leaving futures must leave none and must
+  not start an immediate retry from an already-queued failure.
 - Open near a five-minute boundary and verify the current period is fetched
   after the server-time boundary rather than skipped.
 - Switch tabs repeatedly within 15 seconds; retain the same rows, current quote,
@@ -449,7 +490,8 @@ claim live behavior from source inspection alone.
 
 ### Binance CoinMarketCap data
 
-- Switch symbols during an API/page fetch; the superseded result must be ignored.
+- Switch symbols during a map, detail, page, or holder fetch; the superseded
+  request must be cancelled and must not initiate the next stage.
 - Exercise a known mapping, a missing mapping, and an ambiguous mapping; only
   the known mapping renders data.
 - Verify the displayed source and update time distinguish a page snapshot from a
@@ -461,6 +503,11 @@ claim live behavior from source inspection alone.
   must respect the completion-based cooldown.
 - Close or leave the route while a refresh is pending; no stale render or timer
   survives removal, and visibility events cannot reopen a closed panel.
+- For either panel, leave a page with pending requests and restore it through
+  browser back/forward navigation. Verify `pagehide` cancels the transports and
+  BFCache `pageshow` starts one current session, followed by the normal refresh
+  schedule. Repeated visibility/restore events and restoration of a closed panel
+  must not start extra work.
 - Navigate between matching and non-matching Binance routes and verify the
   route watcher does not leave a business loop running off-route.
 - Expand interpretations for FDV, volume/cap, liquidity/cap, supply, holders, and

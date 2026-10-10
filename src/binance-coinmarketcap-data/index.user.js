@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.3
+// @version      0.2.4
 // @author       jackhai9
 // @description  Show localized CoinMarketCap valuation, supply, and metric interpretations on Binance futures pages
 // @match        https://www.binance.com/*/futures/*
@@ -55,6 +55,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   };
 
   let panelClosed = false;
+  let pageSuspended = false;
+  let resumeAfterPageShow = false;
   let activePath = null;
   let lastUpdateTs = 0;
   let lastRefreshCompletedAt = null;
@@ -64,6 +66,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   let dragCleanup = null;
   let inFlightSymbol = null;
   let refreshEpoch = 0;
+  let refreshController = null;
   let lastRowsHtml = '';
   let lastPath = location.pathname;
   let expandedMetricId = null;
@@ -78,7 +81,15 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   function isActiveTradingPage() {
-    return !panelClosed && isFuturesTradingPage();
+    return !panelClosed && !pageSuspended && isFuturesTradingPage();
+  }
+
+  /** A native history call can change the pathname before the route watchdog aborts its signal. */
+  function assertRefreshActive(signal) {
+    signal.throwIfAborted();
+    if (!isActiveTradingPage() || activePath !== location.pathname) {
+      throw new DOMException('CMC refresh is no longer active', 'AbortError');
+    }
   }
 
   function baseAssetFromSymbol(symbol) {
@@ -121,7 +132,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     return CMC_MAP_API + '?' + params.toString();
   }
 
-  async function resolveCmcAsset(symbol) {
+  async function resolveCmcAsset(symbol, signal) {
+    assertRefreshActive(signal);
     const base = baseAssetFromSymbol(symbol);
     if (!base) return null;
     if (assetCache[base]) return assetCache[base];
@@ -133,7 +145,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
 
     const url = mapApiUrlForBaseAsset(base);
     if (!url) return null;
-    const payload = await requestJson(url);
+    const payload = await requestJson(url, signal);
+    assertRefreshActive(signal);
     const cmcSymbol = cmcSymbolFromBaseAsset(base);
     const matches = Array.isArray(payload && payload.data)
       ? payload.data.filter(function (row) {
@@ -158,9 +171,12 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     return asset && asset.slug ? 'https://coinmarketcap.com/' + localePrefix + 'currencies/' + asset.slug + '/' : null;
   }
 
-  function requestText(url) {
+  function requestText(url, signal) {
+    assertRefreshActive(signal);
     return new Promise(function (resolve, reject) {
-      GM_xmlhttpRequest({
+      const abort = function () { request.abort(); };
+      const cleanup = function () { signal.removeEventListener('abort', abort); };
+      const request = GM_xmlhttpRequest({
         method: 'GET',
         url,
         timeout: 20_000,
@@ -170,6 +186,11 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
           Pragma: 'no-cache',
         },
         onload(response) {
+          cleanup();
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
           if (response.status < 200 || response.status >= 300) {
             reject(new Error('CMC HTTP ' + response.status));
             return;
@@ -177,18 +198,28 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
           resolve(response.responseText || '');
         },
         onerror() {
+          cleanup();
           reject(new Error('CMC request failed'));
         },
         ontimeout() {
+          cleanup();
           reject(new Error('CMC request timeout'));
         },
+        onabort() {
+          cleanup();
+          reject(new DOMException('CMC request aborted', 'AbortError'));
+        },
       });
+      signal.addEventListener('abort', abort, { once: true });
     });
   }
 
-  function requestJson(url) {
+  function requestJson(url, signal) {
+    assertRefreshActive(signal);
     return new Promise(function (resolve, reject) {
-      GM_xmlhttpRequest({
+      const abort = function () { request.abort(); };
+      const cleanup = function () { signal.removeEventListener('abort', abort); };
+      const request = GM_xmlhttpRequest({
         method: 'GET',
         url,
         timeout: 20_000,
@@ -198,6 +229,11 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
           Pragma: 'no-cache',
         },
         onload(response) {
+          cleanup();
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
           if (response.status < 200 || response.status >= 300) {
             reject(new Error('CMC API HTTP ' + response.status));
             return;
@@ -209,12 +245,19 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
           }
         },
         onerror() {
+          cleanup();
           reject(new Error('CMC API request failed'));
         },
         ontimeout() {
+          cleanup();
           reject(new Error('CMC API request timeout'));
         },
+        onabort() {
+          cleanup();
+          reject(new DOMException('CMC request aborted', 'AbortError'));
+        },
       });
+      signal.addEventListener('abort', abort, { once: true });
     });
   }
 
@@ -268,49 +311,59 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     return detail;
   }
 
-  async function fetchCmcApiData(asset) {
+  async function fetchCmcApiData(asset, signal) {
     const url = detailApiUrlForAsset(asset);
     if (!url) throw new Error(uiText(CMC_COPY.unidentifiedContract));
-    const payload = await requestJson(url);
+    const payload = await requestJson(url, signal);
+    assertRefreshActive(signal);
     return collectApiDetail(payload);
   }
 
-  async function fetchCmcHolderData(cryptoId) {
+  async function fetchCmcHolderData(cryptoId, signal) {
     const url = holderApiUrlForCryptoId(cryptoId);
     if (!url) return null;
-    const payload = await requestJson(url);
+    const payload = await requestJson(url, signal);
+    assertRefreshActive(signal);
     const data = payload && payload.data;
     if (!data || !data.showFlag) return null;
     return numberOrNull(data.count);
   }
 
-  async function fetchCmcPageData(asset) {
+  async function fetchCmcPageData(asset, signal) {
     const url = cmcUrlForAsset(asset);
     if (!url) throw new Error(uiText(CMC_COPY.unidentifiedContract));
-    const html = await requestText(url);
+    const html = await requestText(url, signal);
+    assertRefreshActive(signal);
     const nextData = extractNextData(html);
     return collectDetail(nextData);
   }
 
-  async function fetchCmcData(symbol) {
-    const asset = await resolveCmcAsset(symbol);
+  async function fetchCmcData(symbol, signal) {
+    const asset = await resolveCmcAsset(symbol, signal);
+    assertRefreshActive(signal);
     const url = cmcUrlForAsset(asset);
     let detail;
     let source = 'data-api';
     try {
-      detail = await fetchCmcApiData(asset);
+      detail = await fetchCmcApiData(asset, signal);
     } catch (apiError) {
-      detail = await fetchCmcPageData(asset);
+      assertRefreshActive(signal);
+      if (apiError.name === 'AbortError') throw apiError;
+      detail = await fetchCmcPageData(asset, signal);
       source = 'page-snapshot';
     }
+    assertRefreshActive(signal);
     let holderCount = null;
     if (!detail.showTreasuriesFlag) {
       try {
-        holderCount = await fetchCmcHolderData(detail.id);
+        holderCount = await fetchCmcHolderData(detail.id, signal);
       } catch (holderError) {
+        assertRefreshActive(signal);
+        if (holderError.name === 'AbortError') throw holderError;
         holderCount = null;
       }
     }
+    assertRefreshActive(signal);
     if (holderCount !== null) detail = { ...detail, cmcHolderCount: holderCount };
     return {
       url,
@@ -462,7 +515,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   async function refreshForCurrentSymbol(force, silent) {
-    if (panelClosed) return;
+    if (panelClosed || pageSuspended) return;
     if (!isFuturesTradingPage()) {
       pauseForNonTradingPage();
       return;
@@ -474,6 +527,9 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     if (!force && symbol === inFlightSymbol) return;
 
     const myEpoch = ++refreshEpoch;
+    if (refreshController) refreshController.abort();
+    const controller = new AbortController();
+    refreshController = controller;
     const refreshIsCurrent = function () {
       return myEpoch === refreshEpoch && activePath === path && location.pathname === path
         && isActiveTradingPage() && getCurrentSymbol() === symbol;
@@ -483,13 +539,14 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     inFlightSymbol = symbol;
     if (!silent || !lastRowsHtml) renderLoading(symbol);
     try {
-      const data = await fetchCmcData(symbol);
+      const data = await fetchCmcData(symbol, controller.signal);
       if (!refreshIsCurrent()) return;
       renderData(symbol, data);
     } catch (error) {
-      if (!refreshIsCurrent()) return;
+      if (!refreshIsCurrent() || error.name === 'AbortError') return;
       renderError(symbol, error && error.message ? error.message : String(error));
     } finally {
+      if (refreshController === controller) refreshController = null;
       if (refreshIsCurrent()) {
         inFlightSymbol = null;
         lastRefreshCompletedAt = Date.now();
@@ -527,6 +584,10 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   function stopDataLoop() {
     refreshEpoch++;
     activePath = null;
+    if (refreshController) {
+      refreshController.abort();
+      refreshController = null;
+    }
     inFlightSymbol = null;
     lastRefreshCompletedAt = null;
     clearTimeout(refreshTimer);
@@ -570,7 +631,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   function handleRouteChange() {
-    if (panelClosed) return;
+    if (panelClosed || pageSuspended) return;
     if (location.pathname === lastPath) return;
     lastPath = location.pathname;
     if (!isFuturesTradingPage()) {
@@ -581,7 +642,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   function startRouteWatcher() {
-    if (panelClosed) return;
+    if (panelClosed || pageSuspended) return;
     if (!removeSpaRouteChangeListener) {
       removeSpaRouteChangeListener = installSpaRouteChangeListener(window, handleRouteChange);
     }
@@ -787,12 +848,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
       .replace(/'/g, '&#39;');
   }
 
-  document.addEventListener('visibilitychange', function () {
-    if (panelClosed) return;
-    if (document.hidden) {
-      scheduleDataRefresh();
-      return;
-    }
+  function resumeDataPage() {
+    if (panelClosed || pageSuspended) return;
     startRouteWatcher();
     if (location.pathname !== lastPath) {
       handleRouteChange();
@@ -800,6 +857,29 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     }
     if (isFuturesTradingPage()) startDataLoop();
     else pauseForNonTradingPage();
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (panelClosed || pageSuspended) return;
+    if (document.hidden) {
+      scheduleDataRefresh();
+      return;
+    }
+    resumeDataPage();
+  });
+
+  /** A BFCache document survives teardown, so restoration must replace its cancelled session once. */
+  window.addEventListener('pagehide', function () {
+    if (pageSuspended) return;
+    resumeAfterPageShow = routeTimer !== null;
+    pageSuspended = true;
+    stopLoop();
+  });
+  window.addEventListener('pageshow', function () {
+    if (!pageSuspended) return;
+    pageSuspended = false;
+    if (resumeAfterPageShow || !document.hidden) resumeDataPage();
+    resumeAfterPageShow = false;
   });
 
   // A newly opened background tab starts only when first visited.

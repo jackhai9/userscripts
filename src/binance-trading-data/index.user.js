@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.3
+// @version      1.2.4
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -96,12 +96,13 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   function isActiveTradingPage() {
-    return !panelClosed && isFuturesTradingPage();
+    return !panelClosed && !pageSuspended && isFuturesTradingPage();
   }
 
   /* ========== API 层 ========== */
 
   async function fetchJson(path, params, signal) {
+    signal.throwIfAborted();
     const url = new URL(path, API_BASE);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     const href = url.toString();
@@ -110,7 +111,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
       if (!resp.ok) throw Object.assign(new Error(`HTTP ${resp.status}`), { status: resp.status });
       return await resp.json();
     } catch (e1) {
-      if (signal?.aborted) throw e1;
+      if (signal.aborted || e1.name === 'AbortError') throw e1;
       // 4xx 是确定性失败（参数错误、限流），不重试
       if (e1.status && e1.status >= 400 && e1.status < 500) throw e1;
       // 网络错误或 5xx，重试一次
@@ -121,26 +122,26 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     }
   }
 
-  function fetchOpenInterest(symbol) {
-    return fetchJson(API_PATHS.openInterest, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+  function fetchOpenInterest(symbol, signal) {
+    return fetchJson(API_PATHS.openInterest, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
   }
-  function fetchTopAccountRatio(symbol) {
-    return fetchJson(API_PATHS.topAccountRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+  function fetchTopAccountRatio(symbol, signal) {
+    return fetchJson(API_PATHS.topAccountRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
   }
-  function fetchTopPositionRatio(symbol) {
-    return fetchJson(API_PATHS.topPositionRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+  function fetchTopPositionRatio(symbol, signal) {
+    return fetchJson(API_PATHS.topPositionRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
   }
-  function fetchGlobalAccountRatio(symbol) {
-    return fetchJson(API_PATHS.globalAccountRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+  function fetchGlobalAccountRatio(symbol, signal) {
+    return fetchJson(API_PATHS.globalAccountRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
   }
-  function fetchTakerRatio(symbol) {
-    return fetchJson(API_PATHS.takerRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT });
+  function fetchTakerRatio(symbol, signal) {
+    return fetchJson(API_PATHS.takerRatio, { symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT }, signal);
   }
-  function fetchBasis(symbol) {
-    return fetchJson(API_PATHS.basis, { pair: symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT, contractType: 'PERPETUAL' });
+  function fetchBasis(symbol, signal) {
+    return fetchJson(API_PATHS.basis, { pair: symbol, period: DEFAULT_PERIOD, limit: DATA_LIMIT, contractType: 'PERPETUAL' }, signal);
   }
-  function fetchFundingRate(symbol) {
-    return fetchJson(API_PATHS.fundingRate, { symbol, limit: FUNDING_HISTORY_LIMIT });
+  function fetchFundingRate(symbol, signal) {
+    return fetchJson(API_PATHS.fundingRate, { symbol, limit: FUNDING_HISTORY_LIMIT }, signal);
   }
 
   // key -> fetcher 映射
@@ -160,9 +161,10 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   let sessionGeneration = 0;
   let clockRequestId = 0;
   let serverTimeRequest = null;
+  let historyController = null;
 
   function currentSession() {
-    return { generation: sessionGeneration, path: location.pathname, symbol: getCurrentSymbol() };
+    return { generation: sessionGeneration, path: location.pathname, symbol: getCurrentSymbol(), historyController };
   }
 
   function sessionIsCurrent(session) {
@@ -224,10 +226,14 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   // 纯函数：拉取指定 5m 接口，返回结果但不写全局状态
-  async function fetchPeriodData(symbol, keys) {
+  async function fetchPeriodData(symbol, keys, signal) {
+    signal.throwIfAborted();
     if (!keys || keys.length === 0) return {};
-    var fetchers = keys.map(async function (k) { return parseHistory(k, await FETCHER_MAP[k](symbol), symbol); });
+    var fetchers = keys.map(async function (k) { return parseHistory(k, await FETCHER_MAP[k](symbol, signal), symbol); });
     var results = await Promise.allSettled(fetchers);
+    signal.throwIfAborted();
+    const aborted = results.find(result => result.status === 'rejected' && result.reason.name === 'AbortError');
+    if (aborted) throw aborted.reason;
     var backup = dataCache[symbol] || {};
     var entries = {};
 
@@ -248,12 +254,15 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   // 纯函数：拉取 fundingRate
-  async function fetchFundingRateData(symbol) {
+  async function fetchFundingRateData(symbol, signal) {
     var backup = dataCache[symbol] || {};
     try {
-      var data = parseHistory('fundingRate', await fetchFundingRate(symbol), symbol);
+      var data = parseHistory('fundingRate', await fetchFundingRate(symbol, signal), symbol);
+      signal.throwIfAborted();
       return { data: data, cached: false, error: null };
     } catch (e) {
+      signal.throwIfAborted();
+      if (e.name === 'AbortError') throw e;
       err('fundingRate 请求失败:', e);
       return { data: backup.fundingRate || null, cached: true, error: String(e.message || e) };
     }
@@ -616,6 +625,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   let serverTimeTimer = null;
   let dragCleanup = null;
   let panelClosed = false;
+  let pageSuspended = false;
+  let resumeAfterPageShow = false;
   let lastUpdateTs = 0;
   let fetching = 0; // 0=空闲, 非零=正在拉取的 epoch
   let epoch = 0; // 递增计数器，用于作废过期的异步回调
@@ -632,6 +643,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   async function initialFetch(symbol) {
     const session = currentSession();
     if (!sessionIsCurrent(session)) return;
+    const signal = session.historyController.signal;
     // 作废所有正在进行的异步操作
     epoch++;
     var myEpoch = epoch;
@@ -646,8 +658,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     fetching = myEpoch;
     try {
       var history = Promise.all([
-        fetchPeriodData(symbol, PERIOD_KEYS),
-        fetchFundingRateData(symbol),
+        fetchPeriodData(symbol, PERIOD_KEYS, signal),
+        fetchFundingRateData(symbol, signal),
       ]);
       refreshFundingInterval(session);
       var [periodEntries, fundingEntry] = await history;
@@ -655,7 +667,10 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
       if (serverNow() >= boundary + PERIOD_MS) return;
       applyResults(symbol, periodEntries, fundingEntry);
       renderAll(symbol);
-    } catch (e) { err('拉取失败:', e); }
+    } catch (e) {
+      if (!sessionIsCurrent(session) || signal.aborted || e.name === 'AbortError') return;
+      err('拉取失败:', e);
+    }
     finally { if (fetching === myEpoch) fetching = 0; }
   }
 
@@ -669,7 +684,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     cycleTimer = null;
     retryTimer = null;
 
-    if (panelClosed) return;
+    if (panelClosed || pageSuspended) return;
     if (!isFuturesTradingPage()) {
       pauseForNonTradingPage();
       return;
@@ -704,7 +719,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   async function runCycleAttempt(boundary, attempt) {
-    if (panelClosed) return;
+    if (panelClosed || pageSuspended) return;
     if (!isFuturesTradingPage()) {
       pauseForNonTradingPage();
       return;
@@ -722,6 +737,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     if (fetching) return;
 
     const session = currentSession();
+    const signal = session.historyController.signal;
     var symbol = getCurrentSymbol();
     if (!symbol) { scheduleCycle(true); return; }
 
@@ -739,8 +755,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
       var periodEntries, fundingEntry;
       if (attempt === 0) {
         var history = Promise.all([
-          fetchPeriodData(symbol, PERIOD_KEYS),
-          fetchFundingRateData(symbol),
+          fetchPeriodData(symbol, PERIOD_KEYS, signal),
+          fetchFundingRateData(symbol, signal),
         ]);
         refreshFundingInterval(session);
         [periodEntries, fundingEntry] = await history;
@@ -752,7 +768,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
           scheduleCycle();
           return;
         }
-        periodEntries = await fetchPeriodData(symbol, pending);
+        periodEntries = await fetchPeriodData(symbol, pending, signal);
       }
 
       // await 返回后检查：是否已被 initialFetch 取代
@@ -789,7 +805,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
         runCycleAttempt(boundary, attempt + 1);
       }, retryDelay);
     } catch (e) {
-      if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
+      if (epoch !== myEpoch || !sessionIsCurrent(session) || signal.aborted || e.name === 'AbortError') return;
       err('数据拉取失败:', e);
       scheduleCycle();
     } finally {
@@ -799,6 +815,10 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
 
   function stopBusinessLoop() {
     activePath = null;
+    if (historyController) {
+      historyController.abort();
+      historyController = null;
+    }
     clearTimeout(cycleTimer);  cycleTimer = null;
     clearTimeout(retryTimer);  retryTimer = null;
     stopDisplayClock();
@@ -876,6 +896,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     epoch++;
     stopBusinessLoop();
     fetching = 0;
+    historyController = new AbortController();
     const session = currentSession();
     const symbol = session.symbol;
     if (!symbol) return;
@@ -899,7 +920,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   function handlePathChange() {
-    if (panelClosed) return;
+    if (panelClosed || pageSuspended) return;
     if (location.pathname === lastPath) return;
     lastPath = location.pathname;
     if (!isFuturesTradingPage()) {
@@ -910,7 +931,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   function startRouteWatcher() {
-    if (panelClosed) return;
+    if (panelClosed || pageSuspended) return;
     if (!removeSpaRouteChangeListener) {
       removeSpaRouteChangeListener = installSpaRouteChangeListener(window, handlePathChange);
     }
@@ -922,32 +943,51 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     }
   }
 
+  function resumeTradingPage() {
+    if (panelClosed || pageSuspended) return;
+    startRouteWatcher();
+    if (location.pathname !== lastPath) {
+      handlePathChange();
+      return;
+    }
+    if (!isFuturesTradingPage()) {
+      pauseForNonTradingPage();
+      return;
+    }
+    if (activePath !== location.pathname) {
+      activateTradingPage();
+      return;
+    }
+    startDisplayClock();
+    scheduleCurrentFunding(currentSession());
+  }
+
   function start() {
     log('脚本启动');
 
     // Keep the route session alive while hidden; only the display clock and quote cadence change.
     document.addEventListener('visibilitychange', function () {
-      if (panelClosed) return;
+      if (panelClosed || pageSuspended) return;
       if (document.hidden) {
         stopDisplayClock();
         scheduleCurrentFunding(currentSession());
         return;
       }
-      startRouteWatcher();
-      if (location.pathname !== lastPath) {
-        handlePathChange();
-        return;
-      }
-      if (!isFuturesTradingPage()) {
-        pauseForNonTradingPage();
-        return;
-      }
-      if (activePath !== location.pathname) {
-        activateTradingPage();
-        return;
-      }
-      startDisplayClock();
-      scheduleCurrentFunding(currentSession());
+      resumeTradingPage();
+    });
+
+    /** A BFCache document survives teardown, so restoration must replace its cancelled session once. */
+    window.addEventListener('pagehide', function () {
+      if (pageSuspended) return;
+      resumeAfterPageShow = pathTimer !== null;
+      pageSuspended = true;
+      stopLoop();
+    });
+    window.addEventListener('pageshow', function () {
+      if (!pageSuspended) return;
+      pageSuspended = false;
+      if (resumeAfterPageShow || !document.hidden) resumeTradingPage();
+      resumeAfterPageShow = false;
     });
 
     // SPA 切换交易对检测（初始就在后台时延迟到前台再启动）
