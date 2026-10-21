@@ -84,7 +84,7 @@ test('user cannot cancel orders on another symbol through the current-symbol act
   expect(errors).toEqual([]);
 });
 
-test('user dismisses native cancellation and keeps every order and original UI setting', async ({ page }) => {
+test('user dismisses cancellation from Binance native button and keeps every order and original UI setting', async ({ page }) => {
   // Given both symbols have orders and the initial view uses the conditional sub-tab.
   const scenario = createCancelScenario({
     positions: POSITION_SETS.both,
@@ -101,6 +101,10 @@ test('user dismisses native cancellation and keeps every order and original UI s
 
   // When the user opens the native confirmation and chooses Cancel.
   await page.getByRole('button', { name: '撤单' }).click();
+  const nativeCancelAll = page.locator('#OPEN_ORDERS [data-cancel-all]');
+  await expect(nativeCancelAll).toHaveJSProperty('tagName', 'BUTTON');
+  await expect(nativeCancelAll).toHaveClass(/bn-button/);
+  await expect(nativeCancelAll).not.toHaveClass(/cursor-pointer/);
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(async () => (await readFixtureState(page)).showOrders).toBe(true);
   await page.getByRole('button', { name: '取消' }).click();

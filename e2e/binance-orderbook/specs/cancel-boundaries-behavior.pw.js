@@ -331,7 +331,7 @@ test('user cannot cancel when a checked symbol filter still exposes another symb
   expect(errors).toEqual([]);
 });
 
-for (const controlState of ['missing', 'duplicated', 'disabled']) {
+for (const controlState of ['missing', 'duplicated', 'aria-disabled', 'disabled']) {
   test(`user receives a safe refusal when the native cancel control is ${controlState}`, async ({ page }) => {
     // Given confirmed current-symbol Basic rows remain but their cancel control is not uniquely usable.
     const scenario = createCancelScenario({
@@ -345,6 +345,7 @@ for (const controlState of ['missing', 'duplicated', 'disabled']) {
     await page.locator('[data-cancel-all]').evaluate((control, controlState) => {
       if (controlState === 'missing') control.remove();
       else if (controlState === 'duplicated') control.after(control.cloneNode(true));
+      else if (controlState === 'disabled') control.disabled = true;
       else control.setAttribute('aria-disabled', 'true');
     }, controlState);
 

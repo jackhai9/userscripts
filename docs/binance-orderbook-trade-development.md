@@ -469,6 +469,8 @@ When selecting account-order tabs, scope to the bottom account-orders tab group.
 
 When a pane is found through `aria-controls`, confirm it contains current-orders controls such as `隐藏其他合约` or `全撤`. Binance may reuse pane ids in unrelated tab systems.
 
+Find `全撤` / `Cancel All` only as a visible, enabled native button inside the verified current-orders scope. Do not depend on Binance utility classes such as `cursor-pointer`; the page's native button classes can change independently of its label and role.
+
 SVG action controls need separate treatment from normal buttons. A visible Binance SVG can have `getClientRects()` dimensions without `offsetWidth` / `offsetHeight`, and the SVG itself may not expose a native `.click()` method. If no clickable ancestor exists, dispatch a bubbling `MouseEvent("click")` and verify the live page state changes.
 
 When orderbook depth is missing, infer missing maker prices from the current displayed orderbook step, not from exchange `tickSize`.
