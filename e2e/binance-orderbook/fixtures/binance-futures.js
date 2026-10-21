@@ -381,7 +381,7 @@ export function renderBinanceFuturesFixture(scenario) {
             '<div role="checkbox" name="hideOtherSymbol" aria-checked="' + state.hideOtherSymbols + '">隐藏其他合约</div>' +
             '<div class="orders-content"' + (scenario.host.orderRowsPageSize === null ? '' : ' style="height:96px;overflow-y:auto"') + '>' +
               (scenario.host.orderRowsMountDelayMs === 0 ? renderOrdersRows() : '<div data-orders-loading>Loading orders</div>') + '</div>' +
-            (visibleOrders().length ? '<div class="cursor-pointer" data-cancel-all>全撤</div>' : '') +
+            (visibleOrders().length ? '<button class="bn-button bn-button__text bn-button__text__yellow data-size-tiny" data-cancel-all>全撤</button>' : '') +
           '</div>';
 
         accountWidget.querySelectorAll('[data-account-tab]').forEach((tab) => {
@@ -715,8 +715,9 @@ export function renderBinanceFuturesFixture(scenario) {
           const cancelAll = accountWidget.querySelector('[data-cancel-all]');
           if (!visibleOrders().length && cancelAll) cancelAll.remove();
           if (visibleOrders().length && !cancelAll) {
-            const button = document.createElement('div');
-            button.className = 'cursor-pointer';
+            const button = document.createElement('button');
+            button.className = 'bn-button bn-button__text bn-button__text__yellow data-size-tiny';
+            button.type = 'button';
             button.setAttribute('data-cancel-all', '');
             button.textContent = '全撤';
             button.addEventListener('click', openCancelDialog);
