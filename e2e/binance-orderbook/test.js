@@ -1,8 +1,7 @@
 import { test as base, expect } from '@playwright/test';
 import {
-  startBrowserCoverage,
   checkpointBrowserCoverage,
-  finishBrowserCoverage,
+  coverContextPages,
 } from '../../scripts/test-coverage/collect-browser.mjs';
 
 import {
@@ -18,15 +17,15 @@ function jsonAttachment(value) {
 }
 
 export const test = base.extend({
-  sourceCoverage: [async ({ page }, use, testInfo) => {
+  sourceCoverage: [async ({ page, context }, use, testInfo) => {
     const directory = process.env.USERSCRIPTS_BROWSER_COVERAGE_DIRECTORY;
     if (!directory) {
       await use();
       return;
     }
-    await startBrowserCoverage(page);
+    const finishContextPages = await coverContextPages(context, page, directory, testInfo);
     await use();
-    await finishBrowserCoverage(page, directory, testInfo);
+    await finishContextPages();
   }, { auto: true }],
   // Failure evidence belongs to the test runner boundary so every future scenario
   // receives the same diagnostics without duplicating cleanup code in each spec.

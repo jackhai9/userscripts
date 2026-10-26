@@ -485,3 +485,76 @@ test('user preserves settled round callbacks when a foreign owner replaces the r
   assert.equal(h.calls.length, 1);
   assert.equal(h.api.saveChart, foreign);
 });
+
+test('user cannot begin an order-line capture after continuous saving stops mid-round', () => {
+  // Given a continuous round whose controller stops before the next order is submitted.
+  const h = createTradingViewApi(), timers = createManualTimers();
+  const original = h.api.saveChart;
+  const controller = createTradingViewContinuousSaveController(h.api, timers);
+  const round = controller.beginRound();
+  controller.stop();
+
+  // When a late placement tries to capture its order-line save in that round.
+  const lateCapture = () => controller.beginSubmitCapture(round);
+
+  // Then the stopped controller rejects it without new timers, listeners, or save ownership.
+  assert.throws(lateCapture, /连续图表保存控制器已停止/);
+  assert.equal(timers.timers.size, 0);
+  assert.equal(h.listeners.get('drawing_event').size, 0);
+  assert.equal(h.api.saveChart, original);
+});
+
+test('user cannot begin an order-line capture with a continuous round that already ended', () => {
+  // Given a continuous round that ended before a late placement reused it.
+  const h = createTradingViewApi(), timers = createManualTimers();
+  const controller = createTradingViewContinuousSaveController(h.api, timers);
+  const round = controller.beginRound();
+  controller.endRound(round);
+
+  // When that placement tries to capture its order-line save with the ended round.
+  const staleCapture = () => controller.beginSubmitCapture(round);
+
+  // Then the stale round is rejected before any capture timer starts.
+  assert.throws(staleCapture, /图表保存轮次不匹配/);
+  assert.equal(timers.timers.size, 0);
+  controller.stop();
+  assert.equal(h.listeners.get('drawing_event').size, 0);
+});
+
+test('user ignores non-removal drawing events while monitoring a removal save', async () => {
+  // Given removal monitoring that finishes without waiting for event discovery.
+  const h = createTradingViewApi(), timers = createManualTimers();
+  const original = h.api.saveChart;
+  const controller = createTradingViewRemovalSaveController(h.api, { settleQuietMs: 10, eventDiscoveryMs: 0, ...timers });
+
+  // When only a property change arrives before the session finishes.
+  h.event('properties_changed');
+  const stats = await controller.finish();
+
+  // Then no removal burst or native save happens and save ownership is restored.
+  assert.deepEqual(stats, { fullSaveCount: 0, removeEventCount: 0, saveRequestCount: 0, synchronousSaveCount: 0 });
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.api.saveChart, original);
+  assert.equal(timers.timers.size, 0);
+  assert.equal(h.listeners.get('drawing_event').size, 0);
+});
+
+test('user gets an ownership error instead of a removal burst when another owner holds the save method', async () => {
+  // Given removal monitoring whose save method another owner replaces before a native removal.
+  const h = createTradingViewApi(), timers = createManualTimers();
+  const controller = createTradingViewRemovalSaveController(h.api, { settleQuietMs: 10, eventDiscoveryMs: 0, ...timers });
+  const foreign = function foreignSaveChart() {};
+  h.api.saveChart = foreign;
+
+  // When the native removal event arrives and the monitoring session finishes.
+  h.event();
+  const completion = controller.finish();
+
+  // Then the foreign method is never wrapped and finishing reports the ownership conflict.
+  await assert.rejects(completion, /图表保存接口正被其他操作占用/);
+  assert.equal(h.api.saveChart, foreign);
+  assert.equal(controller.getStats().removeEventCount, 1);
+  assert.deepEqual(h.calls, []);
+  assert.equal(timers.timers.size, 0);
+  assert.equal(h.listeners.get('drawing_event').size, 0);
+});
