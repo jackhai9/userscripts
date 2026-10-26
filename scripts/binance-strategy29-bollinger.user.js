@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.14
+// @version      0.5.15
 // @author       jackhai9
 // @description  Bollinger/SMA60 overlay markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -330,7 +330,7 @@
     const owner = {};
     const subscriptions = [];
     const nodes = /* @__PURE__ */ new Map();
-    let svg = null, host = null, frame = null, observer = null, projection = null;
+    let svg = null, host = null, frame = null, frameView = null, observer = null, projection = null;
     let signals = [], validateCurrent = null, invalidated = false;
     let projectionDirty = true, renderedWidth = null, renderedHeight = null;
     let renderedFrames = 0, visibleMarkers = 0, generation = 0;
@@ -339,8 +339,9 @@
       visibleMarkers = 0;
     }
     function cancelFrame() {
-      if (frame !== null) host.ownerDocument.defaultView.cancelAnimationFrame(frame);
+      if (frame !== null) frameView.cancelAnimationFrame(frame);
       frame = null;
+      frameView = null;
     }
     function clear() {
       generation += 1;
@@ -477,9 +478,11 @@
       projectionDirty = true;
       if (!svg || frame !== null || invalidated || document.hidden) return;
       const scheduledGeneration = generation;
-      frame = host.ownerDocument.defaultView.requestAnimationFrame(() => {
+      frameView = host.ownerDocument.defaultView;
+      frame = frameView.requestAnimationFrame(() => {
         if (!svg || scheduledGeneration !== generation) return;
         frame = null;
+        frameView = null;
         try {
           draw();
         } catch (error) {

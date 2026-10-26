@@ -69,5 +69,16 @@ export function attachChartMarkerOverlayHost({ chart, document, bars = null }) {
     setProjection({ time, price }) { if (time) projectTime = time; if (price) projectPrice = price; },
     setTimeLookup({ index, time }) { if (index) resolveIndex = index; if (time) readTime = time; },
     setHidden(hidden) { Object.defineProperty(document, 'hidden', { configurable: true, value: hidden }); document.dispatchEvent(new document.defaultView.Event('visibilitychange')); },
+    /**
+     * Binance can remove the chart iframe. Chromium then reports a null defaultView for
+     * its document while the old window object still accepts cancelAnimationFrame calls
+     * (verified against Chromium 1234 with Playwright 1.62.1); jsdom keeps the view.
+     */
+    detachChartFrame() {
+      const frame = document.querySelector('iframe');
+      assert.equal(frame?.contentDocument, paneDocument, 'Only a pane inside the chart iframe can be detached');
+      frame.remove();
+      Object.defineProperty(paneDocument, 'defaultView', { configurable: true, get: () => null });
+    },
   };
 }
