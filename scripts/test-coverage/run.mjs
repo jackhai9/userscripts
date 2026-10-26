@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { ROOT, COVERAGE_DIRECTORY, assertProjectNodeVersion } from './config.mjs';
+import { ROOT, COVERAGE_DIRECTORY } from './config.mjs';
 import { buildCoverageReport } from './report.mjs';
 import { assessBranchCoverage } from './gates.mjs';
+import { assertProjectNodeVersion } from '../node-runtime.mjs';
 import { exactNodeArgs } from '../test-selection/node-runner.mjs';
+
+await assertProjectNodeVersion();
 
 export async function nodeTestFiles() {
   async function walk(directory) {
@@ -39,7 +42,6 @@ export async function runCoverage(mode, { reportOnly = false, requireTarget = fa
   if (requireTarget && (reportOnly || mode === 'node')) {
     throw new Error('The final coverage target requires a complete gated run');
   }
-  await assertProjectNodeVersion();
   const policy = mode === 'all' && !reportOnly
     ? JSON.parse(await readFile(new URL('./branch-policy.json', import.meta.url), 'utf8'))
     : null;

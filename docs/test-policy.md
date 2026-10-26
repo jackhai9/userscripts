@@ -12,7 +12,12 @@ validation are repository contracts. Other repositories define equivalent checks
 for their own entrypoints and infrastructure. Shared agent guidance alone does
 not establish that another repository's existing tests or CI already comply.
 
-Use the Node version pinned by `.nvmrc`. The relevant commands are:
+Use the Node version pinned by `.nvmrc`. `package.json` `devEngines` makes npm
+refuse any other runtime (`EBADDEVENGINES`), and repository CLIs assert the same
+version before doing any work. Shells that do not load nvm, including
+non-interactive agent shells, select it per command, for example
+`source "$NVM_DIR/nvm.sh" && nvm use >/dev/null && npm test`. The relevant
+commands are:
 
 | Command | Evidence |
 | --- | --- |

@@ -5,6 +5,9 @@ import { pipeline } from 'node:stream/promises';
 import { run } from 'node:test';
 import { spec } from 'node:test/reporters';
 import { fileURLToPath } from 'node:url';
+import { assertProjectNodeVersion } from '../node-runtime.mjs';
+
+await assertProjectNodeVersion();
 
 /** Node's CLI expands filenames as globs; the programmatic files option is literal. */
 export function exactNodeArgs(files, options = {}) {

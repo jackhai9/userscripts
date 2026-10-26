@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,9 +36,3 @@ export async function productionSourceFiles() {
     .filter(isProductionSource).sort();
 }
 
-export async function assertProjectNodeVersion() {
-  const expected = (await readFile(resolve(ROOT, '.nvmrc'), 'utf8')).trim();
-  if (process.versions.node !== expected) {
-    throw new Error('Use the project Node version ' + expected + '; received ' + process.versions.node);
-  }
-}
