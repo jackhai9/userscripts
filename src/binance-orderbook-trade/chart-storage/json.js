@@ -1,8 +1,17 @@
 const encoder = new TextEncoder();
 const nativeObjectSource = Function.prototype.toString.call(Object);
+// Function source text is immutable, so each realm's Object constructor needs one check.
+const nativeObjectConstructors = new WeakSet();
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function isNativeObjectConstructor(candidate) {
+  if (nativeObjectConstructors.has(candidate)) return true;
+  if (Function.prototype.toString.call(candidate) !== nativeObjectSource) return false;
+  nativeObjectConstructors.add(candidate);
+  return true;
 }
 
 /** TradingView snapshots may originate in an iframe with a different Object prototype. */
@@ -11,7 +20,7 @@ function isPlainJsonObject(value) {
   if (prototype === null || Object.getPrototypeOf(prototype) !== null) return false;
   const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor');
   if (!constructor || !Object.hasOwn(constructor, 'value') || typeof constructor.value !== 'function') return false;
-  if (Function.prototype.toString.call(constructor.value) !== nativeObjectSource) return false;
+  if (!isNativeObjectConstructor(constructor.value)) return false;
   const descriptor = Object.getOwnPropertyDescriptor(constructor.value, 'prototype');
   return !!descriptor && Object.hasOwn(descriptor, 'value') && descriptor.value === prototype;
 }
@@ -21,9 +30,51 @@ export function byteLength(value) {
 }
 
 /**
+ * Exact UTF-8 size of `JSON.stringify(text)` without building the escaped text.
+ * Well-formed stringify uses two-byte escapes for quote, backslash and \b\t\n\f\r,
+ * six-byte \u escapes for other controls and lone surrogates, and raw UTF-8 otherwise.
+ */
+function jsonStringByteLength(text) {
+  let bytes = 2;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) {
+      if (code === 0x22 || code === 0x5c) bytes += 2;
+      else if (code >= 0x20) bytes += 1;
+      else bytes += code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d ? 2 : 6;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 6;
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      bytes += 6;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+/** Finite numbers stringify exactly as `String(number)`, which is ASCII. */
+function primitiveJsonByteLength(value) {
+  if (value === null) return 4;
+  if (typeof value === 'boolean') return value ? 4 : 5;
+  if (typeof value === 'number') return String(value).length;
+  return jsonStringByteLength(value);
+}
+
+/**
  * Snapshot only JSON trees without invoking getters or changing structured-clone
  * identity. A global seen set rejects aliases as well as cycles. The shared byte
- * budget bounds traversal before cloning the rest of an oversized snapshot.
+ * budget bounds traversal before cloning the rest of an oversized snapshot and
+ * consumes the exact UTF-8 JSON size. Copies use data-property creation, so a
+ * `__proto__` key stays an own value and inherited setters never run.
  */
 export function snapshotJson(value, budget = { remaining: Infinity }, seen = new Set()) {
   function consume(bytes) {
@@ -32,7 +83,7 @@ export function snapshotJson(value, budget = { remaining: Infinity }, seen = new
   }
   if (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') {
     assert(typeof value !== 'number' || Number.isFinite(value), 'Chart JSON numbers must be finite');
-    consume(byteLength(value));
+    consume(primitiveJsonByteLength(value));
     return value;
   }
   assert(typeof value === 'object', 'Chart values must be JSON');
@@ -45,16 +96,13 @@ export function snapshotJson(value, budget = { remaining: Infinity }, seen = new
   if (array) assert(keys.length === value.length && keys.every((key, index) => key === String(index)), 'Chart JSON arrays must be dense');
   seen.add(value);
   consume(2 + Math.max(0, keys.length - 1));
-  const result = array ? [] : {};
-  for (const key of keys) {
+  const copies = keys.map(key => {
     const descriptor = descriptors[key];
     assert(descriptor.enumerable && Object.hasOwn(descriptor, 'value'), 'Chart JSON requires enumerable data properties');
-    if (!array) consume(byteLength(key) + 1);
-    Object.defineProperty(result, key, {
-      value: snapshotJson(descriptor.value, budget, seen), enumerable: true, writable: true, configurable: true,
-    });
-  }
-  return result;
+    if (!array) consume(jsonStringByteLength(key) + 1);
+    return snapshotJson(descriptor.value, budget, seen);
+  });
+  return array ? copies : Object.fromEntries(keys.map((key, index) => [key, copies[index]]));
 }
 
 /** Signed zero and property insertion order remain observable through native reads. */

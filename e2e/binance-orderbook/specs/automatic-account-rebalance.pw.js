@@ -654,6 +654,24 @@ test('user qualifies again only after independently verified new account activit
   expect(api.snapshot().balances).toEqual(TARGET);
 });
 
+test('user trades without private identity requests while no completed episode awaits activity', async ({ page }) => {
+  // Given an account with open orders and no stored completed automatic episode.
+  const api = createAccountRebalanceApi(EXCESS);
+  const loaded = await openAutomatic(page, api);
+  await page.clock.runFor(32);
+
+  // When the open-order counters change repeatedly during trading.
+  await page.evaluate(orders => window.__BINANCE_FIXTURE__.setOrders(orders), ORDER_SETS.both);
+  await page.clock.runFor(32);
+  await page.evaluate(orders => window.__BINANCE_FIXTURE__.setOrders(orders), ORDER_SETS.other);
+  await page.clock.runFor(32);
+
+  // Then no account identity is requested and no episode record is created.
+  expect(api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.identity)).toEqual([]);
+  expect(await episodeRecords(page)).toEqual([]);
+  expect(loaded.errors).toEqual([]);
+});
+
 test('user never repeats a transfer with an unknown response after reloading', async ({ page }) => {
   // Given the server commits a transfer but its response is lost.
   const api = createAccountRebalanceApi(EXCESS);

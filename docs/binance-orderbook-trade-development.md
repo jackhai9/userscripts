@@ -407,7 +407,11 @@ with SHA-256 and stores only a versioned episode status under
 `userscripts:automatic-usdt-rebalance:v1:<digest>`. Missing state initially
 qualifies; `consumed` becomes `active` only after a new authoritative nonflat
 snapshot. That activity observation uses the same lock in shared mode so it can
-observe an ongoing script trade while remaining excluded by transfers. The
+observe an ongoing script trade while remaining excluded by transfers. It starts
+only while a stored record could change: a `consumed` or completed record, or any
+unrecognized value, which keeps the validating path that reports it. Stored
+`active`, `in_flight` and `blocked` records alone never request account identity
+on account-counter changes during trading. The
 `in_flight` marker is persisted before each transfer POST. It and `blocked` remain
 terminal across reloads and later activity; neither a timer nor another tab
 clears an uncertain outcome. There is no automatic retry or rollback. Missing
