@@ -58,6 +58,11 @@ jobs:
     runs-on: ubuntu-latest
     # Include setup and report upload around the complete browser suite.
     timeout-minutes: 15
+    # The image bakes in Chromium and its system packages, so browser runs never
+    # download from Ubuntu mirrors; its tag must equal the locked @playwright/test.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --user 1001 --ipc=host
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -65,7 +70,6 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
       - run: npm run test:binance-orderbook-ui-toolchain
       - run: npm run build:binance-orderbook-trade
       - run: npm run build:binance-strategy29-bollinger
