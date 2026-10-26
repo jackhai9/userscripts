@@ -76,3 +76,34 @@ export async function finishBrowserCoverage(page, outputDirectory, testInfo) {
     snapshots,
   }));
 }
+
+/**
+ * Scenarios may open, reload, and close several pages in their own context. Each
+ * page keeps a separate CDP session because script IDs are unique only within one
+ * session, and a page's capture is written before it closes because Chromium
+ * discards its counters with the page, so unload handlers stay outside coverage.
+ */
+export async function coverContextPages(context, page, outputDirectory, testInfo) {
+  const open = new Set();
+  const newPage = context.newPage;
+  async function cover(target) {
+    await startBrowserCoverage(target);
+    open.add(target);
+    const close = target.close;
+    target.close = async (options) => {
+      if (open.delete(target)) await finishBrowserCoverage(target, outputDirectory, testInfo);
+      return close.call(target, options);
+    };
+  }
+  // A page must be covered before the scenario can navigate it.
+  context.newPage = async (...args) => {
+    const created = await newPage.apply(context, args);
+    await cover(created);
+    return created;
+  };
+  await cover(page);
+  return async () => {
+    for (const target of open) await finishBrowserCoverage(target, outputDirectory, testInfo);
+    open.clear();
+  };
+}

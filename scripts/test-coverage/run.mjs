@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { ROOT, COVERAGE_DIRECTORY, assertProjectNodeVersion } from './config.mjs';
+import { ROOT, COVERAGE_DIRECTORY } from './config.mjs';
 import { buildCoverageReport } from './report.mjs';
 import { assessBranchCoverage } from './gates.mjs';
+import { assertProjectNodeVersion } from '../node-runtime.mjs';
 import { exactNodeArgs } from '../test-selection/node-runner.mjs';
+
+await assertProjectNodeVersion();
 
 export async function nodeTestFiles() {
   async function walk(directory) {
@@ -39,7 +42,6 @@ export async function runCoverage(mode, { reportOnly = false, requireTarget = fa
   if (requireTarget && (reportOnly || mode === 'node')) {
     throw new Error('The final coverage target requires a complete gated run');
   }
-  await assertProjectNodeVersion();
   const policy = mode === 'all' && !reportOnly
     ? JSON.parse(await readFile(new URL('./branch-policy.json', import.meta.url), 'utf8'))
     : null;
@@ -56,7 +58,9 @@ export async function runCoverage(mode, { reportOnly = false, requireTarget = fa
     reportFile: resolve(runDirectory, 'node-results.txt'),
   }), { USERSCRIPTS_NODE_COVERAGE_DIRECTORY: nodeDirectory });
   if (browserDirectory !== null) {
-    await runNode(['./node_modules/@playwright/test/cli.js', 'test',
+    // Precise block coverage slows every page; parallel workers would push timing-sensitive
+    // expectations past their limits, so the instrumented browser layer stays serial.
+    await runNode(['./node_modules/@playwright/test/cli.js', 'test', '--workers=1',
       '--reporter=dot,html,./scripts/test-coverage/browser-reporter.mjs'], {
       USERSCRIPTS_BROWSER_COVERAGE_DIRECTORY: browserDirectory,
       PLAYWRIGHT_HTML_OPEN: 'never',

@@ -9,9 +9,12 @@ import { parse } from 'acorn';
 import * as esbuild from 'esbuild';
 import { CoverageReport } from 'monocart-coverage-reports';
 
-import { ROOT, assertProjectNodeVersion, relativeSourcePath } from './config.mjs';
+import { ROOT, relativeSourcePath } from './config.mjs';
 import { composeSourceMap, mapCoverageEntry } from './source-maps.mjs';
 import { findArtifactSegments, splitCoverageEntry } from './split-entries.mjs';
+import { assertProjectNodeVersion } from '../node-runtime.mjs';
+
+await assertProjectNodeVersion();
 
 const runFile = promisify(execFile);
 
@@ -26,7 +29,6 @@ export const PROOF_SOURCE = `export function chooseBranch(nodeBranch) {
 
 /** All synthetic source, raw captures, and reports stay in this test's output. */
 export async function createMergeProof(outputDirectory) {
-  await assertProjectNodeVersion();
   await mkdir(outputDirectory, { recursive: true });
   const sourceFile = resolve(outputDirectory, 'branch-source.mjs');
   const sourcePath = relativeSourcePath(sourceFile);

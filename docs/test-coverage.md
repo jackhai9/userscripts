@@ -4,6 +4,10 @@ Coverage measures all JavaScript under `src/` and the two hand-maintained instal
 scripts, `scripts/auto_refresh.user.js` and
 `scripts/coinmarketcap-valuation-helper.user.js`. Generated install artifacts are
 mapped back to their original sources, so they do not create another denominator.
+The byte-pinned copies of Binance's native webpack factories under
+`src/binance-orderbook-trade/chart-storage/` are host code that controlled
+fixtures cannot execute; they are mapped like bundled dependencies and receive no
+credit, while the hand-written chart-storage modules stay in scope.
 Unexecuted source files remain in the report with zero execution credit. Test
 files, fixtures, build tooling, and historical installer snapshots are not
 production source. The executable scope lives in
@@ -43,7 +47,12 @@ text receive no credit for executing that source file. Browser collection also
 recognizes complete original modules loaded through Blob URLs.
 
 Browser coverage uses one public CDP session per page and caches script bytes when
-Chromium parses them. A real reload must go through `reloadPageWithCoverage` in
+Chromium parses them. The fixture covers the scenario's first page and every page
+it opens with `context.newPage()` before that page can navigate; each page writes
+its own capture, and a page closed during the scenario writes it before closing
+because Chromium discards the counters with the page. Unload-time handlers and
+pages in additional browser contexts therefore stay outside browser coverage.
+A real reload must go through `reloadPageWithCoverage` in
 `e2e/binance-orderbook/test.js`: it takes a precise checkpoint before discarding
 the outgoing document. Raw checkpoints remain in the capture. Only snapshots
 with the same session, script ID, URL, and exact source bytes are merged; a new
@@ -72,11 +81,12 @@ once in the final report. An isolated Node-and-Chromium proof checks known branc
 counts so repeated bundled copies cannot hide a branch executed by another copy.
 
 Every selected Node test process must finish its capture. Every production
-browser scenario must pass and finish its capture, with IDs matched against the
-current Playwright run. Missing, stale, skipped, or retried browser evidence
-invalidates completeness. The one explicit collector self-test file uses virtual
-code; it must pass but does not contribute production coverage. Source-map and
-capture tests validate these boundaries independently.
+browser scenario must pass and finish at least one capture, with IDs matched
+against the current Playwright run; each CDP session is captured exactly once.
+Missing, stale, skipped, or retried browser evidence invalidates completeness.
+The explicit collector self-test files use virtual code; they must pass but do
+not contribute production coverage. Source-map and capture tests validate these
+boundaries independently.
 
 ## Repository Gate
 

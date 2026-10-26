@@ -86,6 +86,9 @@
 
 ## Validation
 
+- Run every Node, npm, and npx command on the `.nvmrc` runtime. npm refuses any
+  other version (`EBADDEVENGINES`); agent shells may not load nvm, so select it
+  per command as shown in `docs/test-policy.md`.
 - Changed tests must pass `npm run lint:tests`. The behavioral test policy and
   explicit migration inventory are owned by `docs/test-policy.md`; affected
   selection and coverage commands do not replace required builds or live checks.

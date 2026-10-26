@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from 'acorn';
 import { decode, encode } from '@jridgewell/sourcemap-codec';
-import { ROOT, productionSourceFiles } from '../../scripts/test-coverage/config.mjs';
+import { ROOT, isProductionSource, productionSourceFiles } from '../../scripts/test-coverage/config.mjs';
 import {
   createSourceRegistry,
   mapCoverageEntry,
@@ -37,6 +37,24 @@ test('user rejects a coverage source outside the project and bundled dependencie
 
   // Then the unexpected source is exposed instead of silently reducing the denominator
   assert.throws(classify, /Unexpected non-project coverage source: outside\/unknown.js/);
+});
+
+test('user maps byte-pinned native factory copies like bundled dependencies without crediting them', () => {
+  // Given a hand-written chart-storage module bundled beside a generated native factory copy
+  const sources = [
+    'src/binance-orderbook-trade/chart-storage/runtime.js',
+    'src/binance-orderbook-trade/chart-storage/mirror-module.js',
+  ];
+  const map = { version: 3, sources, sourcesContent: ['runtime', 'factory'], names: [],
+    mappings: encode([[[0, 0, 0, 0], [9, 1, 0, 0]]]) };
+
+  // When the mapper retains the production source set
+  const result = retainProjectSourceMappings(map, new Set(sources.filter(path => isProductionSource(path))));
+
+  // Then factory columns clear attribution while the hand-written module stays in scope
+  assert.deepEqual(result.sources, ['src/binance-orderbook-trade/chart-storage/runtime.js']);
+  assert.deepEqual(decode(result.mappings), [[[0, 0, 0, 0], [9]]]);
+  assert.equal(isProductionSource('src/binance-orderbook-trade/chart-storage/drawing-save-module.js'), false);
 });
 
 test('user gets coverage maps for the exact install artifacts and complete original sources', async () => {

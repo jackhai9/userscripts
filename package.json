@@ -1,6 +1,13 @@
 {
   "private": true,
   "type": "module",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.16.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
     "build:userscripts": "node scripts/build-userscript.mjs",
     "build:binance-userscripts": "node scripts/build-userscript.mjs binance-orderbook-trade binance-trading-data binance-coinmarketcap-data binance-strategy27-events binance-strategy29-bollinger binance-strategy31-volume-reversal",

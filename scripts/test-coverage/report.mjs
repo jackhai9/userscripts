@@ -22,6 +22,7 @@ export async function buildCoverageReport({ nodeDirectory, browserDirectory, out
   });
   const capturedTests = new Set();
   const capturedBrowserTests = new Set();
+  const capturedBrowserSessions = new Set();
   const browserManifest = browserDirectory === null ? null
     : JSON.parse(await readFile(resolve(browserDirectory, 'manifest.json'), 'utf8'));
   const unmapped = [];
@@ -36,7 +37,9 @@ export async function buildCoverageReport({ nodeDirectory, browserDirectory, out
       let entries;
       if (layer === 'node') capturedTests.add(capture.testFile);
       else {
-        assert.equal(capturedBrowserTests.has(capture.testId), false, 'Duplicate browser capture');
+        // One scenario may cover several pages; each CDP session is captured once.
+        assert.equal(capturedBrowserSessions.has(capture.sessionId), false, 'Duplicate browser capture session');
+        capturedBrowserSessions.add(capture.sessionId);
         capturedBrowserTests.add(capture.testId);
       }
       if (layer === 'browser') {

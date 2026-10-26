@@ -7,7 +7,7 @@ import { parse } from 'acorn';
 import { decode, encode } from '@jridgewell/sourcemap-codec';
 import * as esbuild from 'esbuild';
 import { TARGETS, createUserscriptBanner } from '../build-userscript.mjs';
-import { ROOT, productionSourceFiles, relativeSourcePath } from './config.mjs';
+import { ROOT, isVendoredSource, productionSourceFiles, relativeSourcePath } from './config.mjs';
 import { findArtifactSegments } from './split-entries.mjs';
 
 const parserOptions = { ecmaVersion: 'latest', sourceType: 'module' };
@@ -23,7 +23,7 @@ export function retainProjectSourceMappings(map, projectSources) {
       sources.push(path);
       sourcesContent.push(map.sourcesContent[index]);
     } else {
-      assert.ok(path.startsWith('node_modules/'), 'Unexpected non-project coverage source: ' + path);
+      assert.ok(isVendoredSource(path), 'Unexpected non-project coverage source: ' + path);
     }
   });
   const mappings = decode(map.mappings).map(line => line.map(segment => {
@@ -68,7 +68,7 @@ export async function createSourceRegistry() {
       'Coverage build differs from the public artifact; rebuild ' + name);
     map.sources = await Promise.all(map.sources.map(async (path, index) => {
       const normalized = relativeSourcePath(resolve(dirname(outfile), path));
-      assert.ok(sources.has(normalized) || normalized.startsWith('node_modules/'),
+      assert.ok(sources.has(normalized) || isVendoredSource(normalized),
         'Unexpected coverage source: ' + normalized);
       const expected = sources.has(normalized)
         ? sources.get(normalized)
