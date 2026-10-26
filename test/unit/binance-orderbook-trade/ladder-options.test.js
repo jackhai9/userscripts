@@ -2,7 +2,8 @@ import { captureThrownError } from '../../helpers/orderbook-migration-errors.js'
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLadderOptionHarness } from '../../helpers/orderbook-migration-ladder-options.js';
-import { PANEL_COPY, formatLocalizedText, localizedText } from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
+import { PANEL_COPY } from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
+import { formatLocalizedText, localizedText } from '../../../src/shared/ui-locale.js';
 
 import {
   isModeSymbolOptionStorageKey,

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.229
+// @version      2.7.230
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -998,7 +998,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     return matchesBinancePageText(value, BINANCE_PAGE_TEXT.accountOrders.cancelAll);
   }
 
-  // src/binance-orderbook-trade/contracts/panel-copy.js
+  // src/shared/ui-locale.js
   var UI_LOCALE_ZH_CN = "zh-CN";
   var UI_LOCALE_EN = "en";
   var SUPPORTED_UI_LOCALES = Object.freeze([
@@ -1036,6 +1036,8 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     const firstSegment = String(pathname || "").split(/[?#]/, 1)[0].split("/").filter(Boolean)[0];
     return firstSegment?.toLowerCase() === "zh-cn" ? UI_LOCALE_ZH_CN : UI_LOCALE_EN;
   }
+
+  // src/binance-orderbook-trade/contracts/panel-copy.js
   var freezeCopy = (copy) => Object.freeze(copy);
   var PANEL_COPY = Object.freeze({
     section: freezeCopy({
@@ -1101,10 +1103,6 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       incrementMultiplier: localizedText("增加倍数", "Increase multiplier")
     }),
     rebalanceDialog: freezeCopy({
-      targetSummary: localizedText(
-        "目标分配：资金 50% / 现货 40% / U本位 10%",
-        "Target allocation: Funding 50% / Spot 40% / USDⓈ-M Futures 10%"
-      ),
       accountHeading: localizedText("账户", "Account"),
       currentHeading: localizedText("当前 (USDT)", "Current (USDT)"),
       targetHeading: localizedText("目标 (USDT)", "Target (USDT)"),
@@ -1166,13 +1164,24 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       continuousClose: localizedText(
         "Option/Alt + 单击：连续交易",
         "Option/Alt + click: continuous trading"
-      ),
-      accountRebalance: localizedText(
-        "将资金、现货和 U 本位账户的 USDT 按 5:4:1 分配",
-        "Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a 5:4:1 ratio"
       )
     })
   });
+  function formatUsdtRebalanceTooltip(ratio) {
+    return localizedText(
+      `将资金、现货和 U 本位账户的 USDT 按 ${ratio} 分配`,
+      `Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a ${ratio} ratio`
+    );
+  }
+  function formatUsdtRebalanceTargetSummary(percents) {
+    return localizedText(
+      `目标分配：资金 ${percents.FUNDING}% / 现货 ${percents.MAIN}% / U本位 ${percents.UMFUTURE}%`,
+      `Target allocation: Funding ${percents.FUNDING}% / Spot ${percents.MAIN}% / USDⓈ-M Futures ${percents.UMFUTURE}%`
+    );
+  }
+  function formatUsdtRebalanceAllocatedStatus(ratio) {
+    return localizedText(`USDT 已按 ${ratio} 分配`, `USDT is already allocated at ${ratio}`);
+  }
   function formatPrecisionRefreshTooltip(tradeCount) {
     const count = Number(tradeCount);
     if (!Number.isInteger(count) || count <= 1) {
@@ -1612,22 +1621,37 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     FUNDING: Object.freeze({
       accountType: "CARD",
       bapiCode: "CARD",
-      label: "资金",
-      ratio: 50
+      label: "资金"
     }),
     MAIN: Object.freeze({
       accountType: "MAIN",
       bapiCode: "MAIN",
-      label: "现货",
-      ratio: 40
+      label: "现货"
     }),
     UMFUTURE: Object.freeze({
       accountType: "FUTURE",
       bapiCode: "FUTURE",
-      label: "U本位合约",
-      ratio: 10
+      label: "U本位合约"
     })
   });
+  function assertUsdtRebalanceAllocation(percents) {
+    const accounts = Object.keys(percents ?? {});
+    if (accounts.length !== ACCOUNT_ORDER.length || !ACCOUNT_ORDER.every((code) => accounts.includes(code))) {
+      throw new Error("USDT 再平衡比例必须且只能包含资金、现货和 U本位合约");
+    }
+    if (!ACCOUNT_ORDER.every((code) => Number.isSafeInteger(percents[code]) && percents[code] >= 1)) {
+      throw new Error("USDT 再平衡比例必须是不小于 1 的整数百分比");
+    }
+    if (ACCOUNT_ORDER.reduce((sum, code) => sum + percents[code], 0) !== 100) {
+      throw new Error("USDT 再平衡比例合计必须为 100");
+    }
+  }
+  function formatUsdtRebalanceRatio(percents) {
+    assertUsdtRebalanceAllocation(percents);
+    const gcd = (left, right) => right === 0 ? left : gcd(right, left % right);
+    const divisor = ACCOUNT_ORDER.reduce((value, code) => gcd(value, percents[code]), 0);
+    return ACCOUNT_ORDER.map((code) => percents[code] / divisor).join(":");
+  }
   function parsePositionAmount2(value) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string" && /^-?(?:\d+\.?\d*|\.\d+)$/.test(value.trim())) {
@@ -1713,14 +1737,15 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       UMFUTURE: transferable
     };
   }
-  function buildUsdtRebalancePlan(rawBalances) {
+  function buildUsdtRebalancePlan(rawBalances, percents) {
+    assertUsdtRebalanceAllocation(percents);
     const beforeUnits = Object.fromEntries(
       ACCOUNT_ORDER.map((accountCode) => [accountCode, decimalToUnits(rawBalances[accountCode])])
     );
     const totalUnits = ACCOUNT_ORDER.reduce((sum, accountCode) => sum + beforeUnits[accountCode], 0n);
     const targetUnits = {
-      FUNDING: totalUnits * 50n / 100n,
-      MAIN: totalUnits * 40n / 100n,
+      FUNDING: totalUnits * BigInt(percents.FUNDING) / 100n,
+      MAIN: totalUnits * BigInt(percents.MAIN) / 100n,
       UMFUTURE: 0n
     };
     targetUnits.UMFUTURE = totalUnits - targetUnits.FUNDING - targetUnits.MAIN;
@@ -1791,6 +1816,13 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       (accountCode) => decimalToUnits(left?.[accountCode]) === decimalToUnits(right?.[accountCode])
     );
   }
+
+  // src/binance-orderbook-trade/config.js
+  var USDT_REBALANCE_TARGET_PERCENTS = Object.freeze({
+    FUNDING: 70,
+    MAIN: 20,
+    UMFUTURE: 10
+  });
 
   // src/binance-orderbook-trade/core/precision.js
   function getOrderbookPrecisionShortcutOptions(options, limit = 4) {
@@ -15549,6 +15581,12 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     const USDT_REBALANCE_FLAT_STABLE_MS = 2e3;
     const USDT_REBALANCE_REQUEST_TIMEOUT_MS = 5e3;
     const USDT_REBALANCE_BALANCE_POLL_MS = 1e3;
+    const USDT_REBALANCE_RATIO = formatUsdtRebalanceRatio(USDT_REBALANCE_TARGET_PERCENTS);
+    const USDT_REBALANCE_COPY = Object.freeze({
+      allocated: formatUsdtRebalanceAllocatedStatus(USDT_REBALANCE_RATIO),
+      targetSummary: formatUsdtRebalanceTargetSummary(USDT_REBALANCE_TARGET_PERCENTS),
+      tooltip: formatUsdtRebalanceTooltip(USDT_REBALANCE_RATIO)
+    });
     const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
     const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
     const SINGLE_ORDER_DRAFT_MAX_AGE_MS = 15e3;
@@ -16030,7 +16068,6 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       ["阶梯任务运行中，请先停止阶梯挂单", "A ladder task is running; stop it first"],
       ["连续交易运行中，请先停止阶梯挂单", "Continuous trading is running; stop it first"],
       ["正在读取账户再平衡计划", "Loading account rebalance plan"],
-      ["USDT 已按 5:4:1 分配", "USDT is already allocated at 5:4:1"],
       ["账户再平衡已取消", "Account rebalance cancelled"],
       ["已全部平仓", "All positions closed"],
       ["空闲", "Idle"],
@@ -21089,7 +21126,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         await assertUsdtRebalanceTradingState(options);
         const balances = await readCurrentUsdtRebalanceBalances();
         assertUsdtRebalanceLocalState(options);
-        const plan = buildUsdtRebalancePlan(balances);
+        const plan = planUsdtRebalance(balances);
         writeUsdtRebalanceEpisode(accountKey, "consumed");
         if (plan.transfers.length === 0) {
           setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.noTransfer);
@@ -21119,6 +21156,9 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       scheduleRenderPanel();
       return task;
     }
+    function planUsdtRebalance(balances) {
+      return buildUsdtRebalancePlan(balances, USDT_REBALANCE_TARGET_PERCENTS);
+    }
     function buildUsdtRebalanceDialogModel(plan) {
       const accountLabels = {
         FUNDING: localizedText("资金", "Funding"),
@@ -21128,7 +21168,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
       const accountCodes = ["FUNDING", "MAIN", "UMFUTURE"];
       return {
         title: ui(PANEL_COPY.action.accountRebalance),
-        targetSummary: ui(PANEL_COPY.rebalanceDialog.targetSummary),
+        targetSummary: ui(USDT_REBALANCE_COPY.targetSummary),
         accountHeading: ui(PANEL_COPY.rebalanceDialog.accountHeading),
         currentHeading: ui(PANEL_COPY.rebalanceDialog.currentHeading),
         targetHeading: ui(PANEL_COPY.rebalanceDialog.targetHeading),
@@ -21179,10 +21219,10 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         const previewAccountKey = await readUsdtRebalanceAccountKey();
         await assertUsdtRebalanceTradingState();
         const initialBalances = await readCurrentUsdtRebalanceBalances();
-        plan = buildUsdtRebalancePlan(initialBalances);
+        plan = planUsdtRebalance(initialBalances);
         if (plan.transfers.length === 0) {
           usdtRebalanceEligible = false;
-          setLadderStatus(localizedText("USDT 已按 5:4:1 分配", "USDT is already allocated at 5:4:1"));
+          setLadderStatus(USDT_REBALANCE_COPY.allocated);
           return { status: "already_balanced", plan };
         }
         if (!await showUsdtRebalanceDialog(document, buildUsdtRebalanceDialogModel(plan))) {
@@ -22197,7 +22237,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         "</div>",
         `<div id="${LADDER_STATUS_ROW_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
         `<span id="${LADDER_STATUS_ID}" title="${initialStatus}" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">${initialStatus}</span>`,
-        `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(PANEL_COPY.tooltip.accountRebalance)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
+        `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(USDT_REBALANCE_COPY.tooltip)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
         "</div>",
         `<div id="${AUTOMATIC_USDT_REBALANCE_STATUS_ID}" hidden style="height:18px;margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`
       ].join("");

@@ -3,12 +3,24 @@ import { ACCOUNT_PATHS, createAccountRebalanceApi } from '../fixtures/account-re
 import { createCancelScenario, CURRENT_SYMBOL, ORDER_SETS } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
+import {
+  REBALANCE_RATIO, REBALANCE_TARGET, REBALANCE_TOTAL, allIn, shiftedFromTarget, transferBody,
+} from '../fixtures/usdt-allocation.js';
 
 const PREFIX = 'userscripts:automatic-usdt-rebalance:v1:';
-const EXCESS = { FUNDING: '0', MAIN: '0', UMFUTURE: '100' };
-const TARGET = { FUNDING: '50', MAIN: '40', UMFUTURE: '10' };
-const REPORTED_BALANCES = { FUNDING: '77.50900867', MAIN: '59.49944996', UMFUTURE: '15.22316207' };
-const REPORTED_TARGET = { FUNDING: '76.11581035', MAIN: '60.89264828', UMFUTURE: '15.22316207' };
+/** All USDT in Futures always plans one Funding and one Spot withdrawal for any valid allocation. */
+const EXCESS = allIn('UMFUTURE');
+const EXCESS_TRANSFERS = [
+  transferBody(REBALANCE_TARGET.FUNDING, 'FUTURE_CARD'),
+  transferBody(REBALANCE_TARGET.MAIN, 'FUTURE_MAIN'),
+];
+const AFTER_FIRST_EXCESS_TRANSFER = {
+  FUNDING: REBALANCE_TARGET.FUNDING, MAIN: '0', UMFUTURE: String(REBALANCE_TOTAL - Number(REBALANCE_TARGET.FUNDING)),
+};
+const TARGET = REBALANCE_TARGET;
+// Funding holds an eight-decimal surplus that Spot lacks while Futures is already on target.
+const REPORTED_BALANCES = shiftedFromTarget({ FUNDING: '1.39319832', MAIN: '-1.39319832' });
+const REPORTED_TARGET = REBALANCE_TARGET;
 const transfers = api => api.snapshot().requests.filter(r => r.pathname === ACCOUNT_PATHS.transfer);
 
 async function episodeRecords(page) {
@@ -217,10 +229,7 @@ test('user automatically withdraws excess once after a stable empty account with
   // Then only Futures withdrawals occur and the episode is durably consumed.
   await expect.poll(() => api.snapshot().balances).toEqual(TARGET);
   await expect.poll(() => episodes(page)).toEqual(['consumed']);
-  expect(transfers(api).map(r => r.body)).toEqual([
-    { asset: 'USDT', amount: '50', kindType: 'FUTURE_CARD' },
-    { asset: 'USDT', amount: '40', kindType: 'FUTURE_MAIN' },
-  ]);
+  expect(transfers(api).map(r => r.body)).toEqual(EXCESS_TRANSFERS);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect((await readFixtureState(page)).events.filter(e => /order-submitted|cancel-requested/.test(e.type))).toEqual([]);
   expect(errors).toEqual([]);
@@ -286,7 +295,7 @@ test('user automatically corrects Funding and Spot allocation when Futures is al
   await page.locator('[data-usdt-rebalance]').click();
 
   // Then the public manual workflow reports an already balanced account without another transfer to confirm.
-  await expect(page.locator('#jh-binance-ladder-status')).toHaveText('USDT 已按 5:4:1 分配');
+  await expect(page.locator('#jh-binance-ladder-status')).toHaveText(`USDT 已按 ${REBALANCE_RATIO} 分配`);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(transfers(api)).toHaveLength(1);
   expect(api.snapshot().balances).toEqual(REPORTED_TARGET);
@@ -296,24 +305,18 @@ test('user automatically corrects Funding and Spot allocation when Futures is al
 for (const allocation of [
   {
     name: 'Spot excess to Funding when Futures is on target',
-    before: { FUNDING: '40', MAIN: '50', UMFUTURE: '10' },
-    expectedTransfers: [{ asset: 'USDT', amount: '10', kindType: 'MAIN_CARD' }],
+    before: shiftedFromTarget({ FUNDING: '-1', MAIN: '1' }),
+    expectedTransfers: [transferBody('1', 'MAIN_CARD')],
   },
   {
     name: 'Funding and Futures excess to Spot',
-    before: { FUNDING: '60', MAIN: '20', UMFUTURE: '20' },
-    expectedTransfers: [
-      { asset: 'USDT', amount: '10', kindType: 'CARD_MAIN' },
-      { asset: 'USDT', amount: '10', kindType: 'FUTURE_MAIN' },
-    ],
+    before: shiftedFromTarget({ FUNDING: '0.5', MAIN: '-2', UMFUTURE: '1.5' }),
+    expectedTransfers: [transferBody('0.5', 'CARD_MAIN'), transferBody('1.5', 'FUTURE_MAIN')],
   },
   {
     name: 'Spot and Futures excess to Funding',
-    before: { FUNDING: '20', MAIN: '60', UMFUTURE: '20' },
-    expectedTransfers: [
-      { asset: 'USDT', amount: '20', kindType: 'MAIN_CARD' },
-      { asset: 'USDT', amount: '10', kindType: 'FUTURE_CARD' },
-    ],
+    before: shiftedFromTarget({ FUNDING: '-2', MAIN: '1.5', UMFUTURE: '0.5' }),
+    expectedTransfers: [transferBody('1.5', 'MAIN_CARD'), transferBody('0.5', 'FUTURE_CARD')],
   },
 ]) {
   test(`user automatically transfers ${allocation.name}`, async ({ page }) => {
@@ -338,8 +341,8 @@ for (const allocation of [
 }
 
 test('user restores the complete allocation after a loss only once per empty episode', async ({ page }) => {
-  // Given Futures is below its allocation while Funding and Spot can restore the full ratio.
-  const below = { FUNDING: '50', MAIN: '40', UMFUTURE: '0' };
+  // Given a Futures loss left it below its allocation while Funding and Spot hold the difference.
+  const below = shiftedFromTarget({ FUNDING: '1.5', MAIN: '0.5', UMFUTURE: '-2' });
   const api = createAccountRebalanceApi(below);
   await openAutomatic(page, api);
 
@@ -347,11 +350,11 @@ test('user restores the complete allocation after a loss only once per empty epi
   await becomeFlat(page);
 
   // Then Funding and Spot replenish Futures exactly once and the complete allocation is confirmed.
-  await expect.poll(() => api.snapshot().balances).toEqual({ FUNDING: '45', MAIN: '36', UMFUTURE: '9' });
+  await expect.poll(() => api.snapshot().balances).toEqual(TARGET);
   await expectAutomaticStatus(page, '已自动进行账户再平衡');
   expect(transfers(api).map(request => request.body)).toEqual([
-    { asset: 'USDT', amount: '5', kindType: 'CARD_FUTURE' },
-    { asset: 'USDT', amount: '4', kindType: 'MAIN_FUTURE' },
+    transferBody('1.5', 'CARD_FUTURE'),
+    transferBody('0.5', 'MAIN_FUTURE'),
   ]);
   expect(await episodeRecords(page)).toEqual([
     { version: 1, status: 'consumed', outcome: 'automatic_completed' },
@@ -474,7 +477,7 @@ test('user sees a localized refusal for an invalid persisted completion outcome'
 
 test('user does not see a manual rebalance reported as an automatic completion after reload', async ({ page }) => {
   // Given the automatic episode is already consumed and the user reviews a manual plan.
-  const api = createAccountRebalanceApi({ FUNDING: '100', MAIN: '0', UMFUTURE: '0' });
+  const api = createAccountRebalanceApi(allIn('FUNDING'));
   await openAutomatic(page, api);
   await seedEpisode(page, { version: 1, status: 'consumed' });
   await becomeFlat(page);
@@ -505,7 +508,7 @@ test('user does not see a manual rebalance reported as an automatic completion a
 
 test('user sees automatic completion only after the final transferred balance is confirmed', async ({ page }) => {
   // Given the only planned transfer will be acknowledged before its balance is published.
-  const before = { FUNDING: '50', MAIN: '30', UMFUTURE: '20' };
+  const before = shiftedFromTarget({ MAIN: '-1', UMFUTURE: '1' });
   const api = createAccountRebalanceApi(before, { commitTransfers: false });
   await openAutomatic(page, api);
 
@@ -547,7 +550,7 @@ test('user does not see partial automatic transfers reported as completed after 
 
   // Then a confirmed partial transfer does not claim the whole plan completed.
   await expectAutomaticStatus(page, '自动再平衡已停止：Binance 登录态已失效', 'Binance 登录态已失效');
-  expect(api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '0', UMFUTURE: '50' });
+  expect(api.snapshot().balances).toEqual(AFTER_FIRST_EXCESS_TRANSFER);
   expect(await episodeRecords(page)).toEqual([{ version: 1, status: 'consumed' }]);
   expect(transfers(api)).toHaveLength(1);
 
@@ -558,7 +561,7 @@ test('user does not see partial automatic transfers reported as completed after 
   // Then the result remains non-successful and the remaining transfer is not retried.
   await expectAutomaticStatus(page, '本轮不再自动执行账户再平衡');
   expect(transfers(api)).toHaveLength(1);
-  expect(api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '0', UMFUTURE: '50' });
+  expect(api.snapshot().balances).toEqual(AFTER_FIRST_EXCESS_TRANSFER);
 });
 
 for (const kind of ['basic', 'conditional']) {
@@ -584,10 +587,7 @@ for (const allocation of [
     name: 'Futures withdrawals',
     before: EXCESS,
     target: TARGET,
-    expectedTransfers: [
-      { asset: 'USDT', amount: '50', kindType: 'FUTURE_CARD' },
-      { asset: 'USDT', amount: '40', kindType: 'FUTURE_MAIN' },
-    ],
+    expectedTransfers: EXCESS_TRANSFERS,
   },
   {
     name: 'Funding-to-Spot correction',
@@ -673,7 +673,7 @@ test('user never repeats a transfer with an unknown response after reloading', a
   await expect.poll(() => episodes(page)).toEqual(['in_flight']);
   await expect(page.locator('[data-usdt-rebalance]')).toBeEnabled();
   expect(transfers(api)).toHaveLength(1);
-  expect(api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '0', UMFUTURE: '50' });
+  expect(api.snapshot().balances).toEqual(AFTER_FIRST_EXCESS_TRANSFER);
 
   // When the user reloads the page with the unresolved operation.
   await reloadPageWithCoverage(page);

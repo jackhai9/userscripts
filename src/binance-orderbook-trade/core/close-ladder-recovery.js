@@ -1,6 +1,6 @@
 import { compareDecimalStrings, normalizeDecimalString } from './decimal.js';
 import { throwIfAborted } from '../../shared/abort.js';
-import { combineLocalizedText, formatLocalizedText, localizedText } from '../contracts/panel-copy.js';
+import { combineLocalizedText, formatLocalizedText, localizedText } from '../../shared/ui-locale.js';
 
 export function capCloseLadderBaseQty(domQty, positionQty) {
   const comparison = compareDecimalStrings(domQty, positionQty);

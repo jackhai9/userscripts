@@ -1,6 +1,8 @@
 import {
-  localizedText, formatLocalizedText, resolveUiLocaleFromPathname,
-} from '../binance-orderbook-trade/contracts/panel-copy.js';
+  localizedText,
+  formatLocalizedText,
+  resolveUiLocaleFromPathname,
+} from '../shared/ui-locale.js';
 
 export { localizedText, formatLocalizedText, resolveUiLocaleFromPathname };
 

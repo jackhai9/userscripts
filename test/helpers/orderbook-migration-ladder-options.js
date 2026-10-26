@@ -14,8 +14,13 @@ import { normalizeDecimalString } from '../../src/binance-orderbook-trade/core/d
 import { parseTradeModeLabel } from '../../src/binance-orderbook-trade/dom/trade-form.js';
 import { parseFuturesTradingSymbolFromPathname } from '../../src/shared/binance-futures-route.js';
 import {
-  PANEL_COPY, combineLocalizedText, formatLocalizedText, localizedText,
+  PANEL_COPY,
 } from '../../src/binance-orderbook-trade/contracts/panel-copy.js';
+import {
+  combineLocalizedText,
+  formatLocalizedText,
+  localizedText,
+} from '../../src/shared/ui-locale.js';
 
 const source = readFileSync(new URL('../../src/binance-orderbook-trade/index.user.js', import.meta.url), 'utf8');
 const program = parse(source, { ecmaVersion: 'latest', sourceType: 'module', range: true });

@@ -13,8 +13,8 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.13 directly and reload the page. The current orderbook
-script is optional; install CorsairQuant signal client 0.6.15 for the remote
+Install Strategy29 0.5.14 directly and reload the page. The current orderbook
+script is optional; install CorsairQuant signal client 0.6.16 for the remote
 summary. This personal-use project targets the current scripts, without
 old-version runtime branches or preference migration.
 
@@ -61,8 +61,8 @@ Strategy27 uses the same SVG renderer with its own event and compound placement 
 ## Panel Language and Position
 
 The summary follows the existing pathname locale contract: `/zh-CN/` uses Chinese,
-while English and other routes use English. Strategy29 imports the existing pure
-orderbook locale helpers without modifying orderbook or shared runtime behavior.
+while English and other routes use English. Strategy29 imports the shared locale
+primitives in `src/shared/ui-locale.js` without modifying orderbook or shared runtime behavior.
 Headers, connection and selection states, signal names, processing labels,
 notification totals and empty states have bilingual copy. Technical
 identifiers and arbitrary server diagnostic details remain verbatim, with localized

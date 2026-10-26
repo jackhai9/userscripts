@@ -253,7 +253,7 @@ The userscript UI supports exactly `zh-CN` and English. Resolve the locale from 
 
 Keep script-owned UI copy in `contracts/panel-copy.js` as paired `localizedText(zhCN, en)` values. Dynamic status formatters must retain both languages until render time so current order, round, and cancellation counters survive a locale switch. Raw technical exceptions, Binance response messages, error codes, and native `TypeError` text stay unchanged so they remain copyable for diagnosis.
 
-Strategy27, Strategy29, and Strategy31 also import this module's locale helpers. Changes to its initialized copy map affect all four generated artifacts; bump their source metadata and rebuild each affected script together.
+The locale primitives (`localizedText`, `formatLocalizedText`, `resolveUiLocaleFromPathname`, and related helpers) live in `src/shared/ui-locale.js`, which all six Binance scripts import. Only the orderbook bundles `contracts/panel-copy.js`, so its copy map can change without touching the other installers. A change to `src/shared/ui-locale.js` affects all six generated artifacts; bump their source metadata and rebuild them together.
 
 Run `npm run lint:ui-copy` for status changes. CI rejects direct unpaired text or
 titles at `setLadderStatus` and `setAutomaticUsdtRebalanceStatus`, including
@@ -364,7 +364,12 @@ USDT account rebalancing has automatic and manually confirmed paths that share t
 
 Automatic rebalancing runs once per verified globally flat episode after the same
 two-second zero-counter window. Both paths allocate total available USDT to
-Funding 50%, Spot 40%, and Futures 10% through `buildUsdtRebalancePlan`.
+the whole-percent targets in `src/binance-orderbook-trade/config.js` through
+`buildUsdtRebalancePlan`. The allocation must name exactly Funding, Spot, and
+Futures with whole percentages of at least 1 that total 100; the script rejects
+any other value when it loads. The action tooltip, confirmation summary, and
+already-balanced status derive the reduced ratio (70/20/10 is shown as 7:2:1)
+from the same configuration, so changing the allocation needs no other edit.
 Funding and Spot targets are floored to eight decimals; Futures receives the
 remainder so the complete balance is conserved. Any of the three accounts may
 donate to an underallocated account, including refilling Futures after a loss
@@ -438,7 +443,7 @@ revalidates its original account identity and exact previewed balances.
 
 The rebalance path is pinned to the current Binance page bundle contract instead of automating the native transfer dialog. It reads Spot and Funding available USDT from `/bapi/asset/v2/private/asset-service/wallet/balance`, reads the U-M Futures transferable amount from `/bapi/futures/v1/private/future/user-data/getMaxWithdrawAmount`, and submits at most two sequential transfers through `/bapi/asset/v1/private/asset-service/wallet/transfer` with `{ asset, amount, kindType }`. Wallet rows are identified by the stable `accountType` values `MAIN`, `CARD`, and `FUTURE`; `walletName` is localized and must not be used as an identifier. The private transfer BAPI uses those same account codes; do not substitute the public SAPI names `FUNDING` or `UMFUTURE`. It does not save an API key and does not fall back to DOM clicking if this private BAPI contract changes.
 
-For manual full rebalancing, the user must approve one native confirmation that shows the current balances, 5:4:1 targets, and exact transfer list. After confirmation, the script rechecks all positions, all open orders, and the exact three-account balance snapshot before every transfer. Each successful response must then be reflected by a fresh balance read before the next transfer starts. An intervening position, order, or balance change stops the task; a partial completion is reported explicitly and is never retried or rolled back automatically.
+For manual full rebalancing, the user must approve one native confirmation that shows the current balances, configured targets, and exact transfer list. After confirmation, the script rechecks all positions, all open orders, and the exact three-account balance snapshot before every transfer. Each successful response must then be reflected by a fresh balance read before the next transfer starts. An intervening position, order, or balance change stops the task; a partial completion is reported explicitly and is never retried or rolled back automatically.
 
 Automatic rebalancing requires visibility again before each transfer. Hiding the tab after the user confirms a manual rebalance does not cancel its remaining transfers. The initial eligibility and preview still require a visible trading page; each confirmed transfer continues to require the same fresh account checks, matching balances, and current trading route while hidden.
 

@@ -3,16 +3,60 @@ import assert from 'node:assert/strict';
 
 import {
   PANEL_COPY,
+  formatPrecisionRefreshTooltip,
+  formatUsdtRebalanceAllocatedStatus,
+  formatUsdtRebalanceTargetSummary,
+  formatUsdtRebalanceTooltip,
+} from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
+import {
   SUPPORTED_UI_LOCALES,
   UI_LOCALE_EN,
   UI_LOCALE_ZH_CN,
   combineLocalizedText,
   formatLocalizedText,
-  formatPrecisionRefreshTooltip,
   isLocalizedText,
   localizedText,
   resolveUiLocaleFromPathname,
-} from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
+} from '../../../src/shared/ui-locale.js';
+
+for (const { percents, ratio, copy } of [
+  {
+    percents: { FUNDING: 50, MAIN: 40, UMFUTURE: 10 },
+    ratio: '5:4:1',
+    copy: {
+      tooltip: ['将资金、现货和 U 本位账户的 USDT 按 5:4:1 分配', 'Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a 5:4:1 ratio'],
+      targetSummary: ['目标分配：资金 50% / 现货 40% / U本位 10%', 'Target allocation: Funding 50% / Spot 40% / USDⓈ-M Futures 10%'],
+      allocated: ['USDT 已按 5:4:1 分配', 'USDT is already allocated at 5:4:1'],
+    },
+  },
+  {
+    percents: { FUNDING: 70, MAIN: 20, UMFUTURE: 10 },
+    ratio: '7:2:1',
+    copy: {
+      tooltip: ['将资金、现货和 U 本位账户的 USDT 按 7:2:1 分配', 'Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a 7:2:1 ratio'],
+      targetSummary: ['目标分配：资金 70% / 现货 20% / U本位 10%', 'Target allocation: Funding 70% / Spot 20% / USDⓈ-M Futures 10%'],
+      allocated: ['USDT 已按 7:2:1 分配', 'USDT is already allocated at 7:2:1'],
+    },
+  },
+]) {
+  test(`user sees account rebalance copy for the ${ratio} allocation in both languages`, () => {
+    // Given a validated allocation and its reduced ratio label
+    const allocation = percents;
+
+    // When the rebalance tooltip, dialog summary, and balanced status are built
+    const built = {
+      tooltip: formatUsdtRebalanceTooltip(ratio),
+      targetSummary: formatUsdtRebalanceTargetSummary(allocation),
+      allocated: formatUsdtRebalanceAllocatedStatus(ratio),
+    };
+
+    // Then each text names the same allocation in Chinese and English
+    for (const [key, [chinese, english]] of Object.entries(copy)) {
+      assert.equal(formatLocalizedText(built[key], UI_LOCALE_ZH_CN), chinese, key);
+      assert.equal(formatLocalizedText(built[key], UI_LOCALE_EN), english, key);
+    }
+  });
+}
 
 function collectLeaves(value) {
   if (isLocalizedText(value)) return [value];

@@ -1,6 +1,7 @@
 import {
-  localizedText, formatLocalizedText,
-} from '../binance-orderbook-trade/contracts/panel-copy.js';
+  localizedText,
+  formatLocalizedText,
+} from '../shared/ui-locale.js';
 
 const COPY = Object.freeze({
   title: localizedText('交易数据', 'Trading data'),

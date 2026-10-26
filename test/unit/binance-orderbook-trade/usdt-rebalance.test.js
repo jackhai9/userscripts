@@ -5,12 +5,125 @@ import assert from 'node:assert/strict';
 import {
   applyUsdtTransferToBalances,
   areUsdtBalancesEqual,
+  assertUsdtRebalanceAllocation,
   buildUsdtRebalancePlan,
+  formatUsdtRebalanceRatio,
   parseUsdtWalletBalances,
   resolveAllFuturesPositionStatus,
   USDT_REBALANCE_ACCOUNTS,
   withFuturesTransferableBalance,
 } from '../../../src/binance-orderbook-trade/core/usdt-rebalance.js';
+import { USDT_REBALANCE_TARGET_PERCENTS } from '../../../src/binance-orderbook-trade/config.js';
+
+const FIVE_FOUR_ONE = Object.freeze({ FUNDING: 50, MAIN: 40, UMFUTURE: 10 });
+
+for (const { label, percents, before, targets, transfers } of [
+  {
+    label: '7:2:1 when all USDT starts in Funding',
+    percents: { FUNDING: 70, MAIN: 20, UMFUTURE: 10 },
+    before: { FUNDING: '200', MAIN: '0', UMFUTURE: '0' },
+    targets: { FUNDING: '140', MAIN: '40', UMFUTURE: '20' },
+    transfers: [
+      { from: 'FUNDING', to: 'MAIN', kindType: 'CARD_MAIN', amount: '40' },
+      { from: 'FUNDING', to: 'UMFUTURE', kindType: 'CARD_FUTURE', amount: '20' },
+    ],
+  },
+  {
+    label: '7:2:1 when Spot holds the former 5:4:1 share',
+    percents: { FUNDING: 70, MAIN: 20, UMFUTURE: 10 },
+    before: { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
+    targets: { FUNDING: '70', MAIN: '20', UMFUTURE: '10' },
+    transfers: [{ from: 'MAIN', to: 'FUNDING', kindType: 'MAIN_CARD', amount: '20' }],
+  },
+  {
+    label: '8:1:1 when all USDT starts in Futures',
+    percents: { FUNDING: 80, MAIN: 10, UMFUTURE: 10 },
+    before: { FUNDING: '0', MAIN: '0', UMFUTURE: '100' },
+    targets: { FUNDING: '80', MAIN: '10', UMFUTURE: '10' },
+    transfers: [
+      { from: 'UMFUTURE', to: 'FUNDING', kindType: 'FUTURE_CARD', amount: '80' },
+      { from: 'UMFUTURE', to: 'MAIN', kindType: 'FUTURE_MAIN', amount: '10' },
+    ],
+  },
+  {
+    label: '7:2:1 minimum units while Futures keeps the rounding remainder',
+    percents: { FUNDING: 70, MAIN: 20, UMFUTURE: 10 },
+    before: { FUNDING: '0', MAIN: '0', UMFUTURE: '0.00000009' },
+    targets: { FUNDING: '0.00000006', MAIN: '0.00000001', UMFUTURE: '0.00000002' },
+    transfers: [
+      { from: 'UMFUTURE', to: 'FUNDING', kindType: 'FUTURE_CARD', amount: '0.00000006' },
+      { from: 'UMFUTURE', to: 'MAIN', kindType: 'FUTURE_MAIN', amount: '0.00000001' },
+    ],
+  },
+]) {
+  test(`user reaches the configured ${label}`, () => {
+    // Given balances and an explicit whole-percent allocation
+    const balances = before;
+
+    // When the shared planner calculates and applies the allocation
+    const plan = buildUsdtRebalancePlan(balances, percents);
+    const finalBalances = plan.transfers.reduce(applyUsdtTransferToBalances, balances);
+
+    // Then the exact targets are reached with the expected transfers and no follow-up work
+    assert.deepEqual(plan.transfers, transfers);
+    assert.deepEqual(plan.targets, targets);
+    assert.deepEqual(finalBalances, targets);
+    assert.deepEqual(buildUsdtRebalancePlan(finalBalances, percents).transfers, []);
+  });
+}
+
+for (const [percents, ratio] of [
+  [{ FUNDING: 50, MAIN: 40, UMFUTURE: 10 }, '5:4:1'],
+  [{ FUNDING: 70, MAIN: 20, UMFUTURE: 10 }, '7:2:1'],
+  [{ FUNDING: 80, MAIN: 10, UMFUTURE: 10 }, '8:1:1'],
+  [{ FUNDING: 60, MAIN: 20, UMFUTURE: 20 }, '3:1:1'],
+  [{ FUNDING: 34, MAIN: 33, UMFUTURE: 33 }, '34:33:33'],
+]) {
+  test(`user sees the whole-percent allocation ${JSON.stringify(percents)} as ${ratio}`, () => {
+    // Given a valid whole-percent allocation
+    const allocation = percents;
+
+    // When the panel ratio label is derived from it
+    const label = formatUsdtRebalanceRatio(allocation);
+
+    // Then the label is the fully reduced Funding:Spot:Futures ratio
+    assert.equal(label, ratio);
+  });
+}
+
+for (const [reason, percents, message] of [
+  ['a missing account', { FUNDING: 70, MAIN: 30 }, /必须且只能包含资金、现货和 U本位合约/],
+  ['an extra account', { FUNDING: 70, MAIN: 20, UMFUTURE: 5, COIN: 5 }, /必须且只能包含资金、现货和 U本位合约/],
+  ['a fractional percent', { FUNDING: 69.5, MAIN: 20.5, UMFUTURE: 10 }, /不小于 1 的整数百分比/],
+  ['an empty Futures share', { FUNDING: 80, MAIN: 20, UMFUTURE: 0 }, /不小于 1 的整数百分比/],
+  ['a text percent', { FUNDING: '70', MAIN: 20, UMFUTURE: 10 }, /不小于 1 的整数百分比/],
+  ['a total below 100', { FUNDING: 70, MAIN: 20, UMFUTURE: 5 }, /合计必须为 100/],
+]) {
+  test(`user cannot plan a rebalance with ${reason}`, () => {
+    // Given an allocation that cannot describe exact account shares
+    const balances = { FUNDING: '100', MAIN: '0', UMFUTURE: '0' };
+
+    // When the allocation is validated directly and through the planner
+    const validate = () => assertUsdtRebalanceAllocation(percents);
+    const plan = () => buildUsdtRebalancePlan(balances, percents);
+
+    // Then both reject it before any transfer can be planned
+    assert.throws(validate, message);
+    assert.throws(plan, message);
+  });
+}
+
+test('user ships a rebalance allocation that the planner accepts', () => {
+  // Given the allocation configured for the orderbook script
+  const allocation = USDT_REBALANCE_TARGET_PERCENTS;
+
+  // When it is validated and reduced for the panel
+  const label = formatUsdtRebalanceRatio(allocation);
+
+  // Then it is frozen and yields a ratio label for every account
+  assert.equal(Object.isFrozen(allocation), true);
+  assert.match(label, /^\d+:\d+:\d+$/);
+});
 
 test('user aligns funding and spot when futures already holds its target allocation', () => {
   // Given futures already holds ten percent while funding exceeds its target
@@ -19,7 +132,7 @@ test('user aligns funding and spot when futures already holds its target allocat
   };
 
   // When the shared planner calculates and applies the remaining allocation
-  const plan = buildUsdtRebalancePlan(balances);
+  const plan = buildUsdtRebalancePlan(balances, FIVE_FOUR_ONE);
   const finalBalances = plan.transfers.reduce(applyUsdtTransferToBalances, balances);
 
   // Then one funding-to-spot transfer completes the exact allocation
@@ -30,7 +143,7 @@ test('user aligns funding and spot when futures already holds its target allocat
     FUNDING: '76.11581035', MAIN: '60.89264828', UMFUTURE: '15.22316207',
   });
   assert.deepEqual(plan.targets, finalBalances);
-  assert.deepEqual(buildUsdtRebalancePlan(finalBalances).transfers, []);
+  assert.deepEqual(buildUsdtRebalancePlan(finalBalances, FIVE_FOUR_ONE).transfers, []);
 });
 
 for (const { label, before, targets, transfers } of [
@@ -133,7 +246,7 @@ for (const { label, before, targets, transfers } of [
     const balances = { ...before };
 
     // When the shared account allocation is planned and applied
-    const plan = buildUsdtRebalancePlan(balances);
+    const plan = buildUsdtRebalancePlan(balances, FIVE_FOUR_ONE);
     const finalBalances = plan.transfers.reduce(applyUsdtTransferToBalances, balances);
 
     // Then all three accounts reach their conserved targets with no remaining transfer
@@ -141,8 +254,8 @@ for (const { label, before, targets, transfers } of [
     assert.deepEqual(plan.targets, targets);
     assert.deepEqual(plan.transfers, transfers);
     assert.deepEqual(finalBalances, targets);
-    assert.deepEqual(buildUsdtRebalancePlan(finalBalances).transfers, []);
-    assert.equal(buildUsdtRebalancePlan(finalBalances).total, plan.total);
+    assert.deepEqual(buildUsdtRebalancePlan(finalBalances, FIVE_FOUR_ONE).transfers, []);
+    assert.equal(buildUsdtRebalancePlan(finalBalances, FIVE_FOUR_ONE).total, plan.total);
     assert.deepEqual(balances, before);
   });
 }
@@ -157,7 +270,7 @@ for (const balances of [
     const before = { ...balances };
 
     // When the shared rebalance planner evaluates the account
-    const plan = buildUsdtRebalancePlan(before);
+    const plan = buildUsdtRebalancePlan(before, FIVE_FOUR_ONE);
 
     // Then the balanced account remains unchanged without a transfer
     assert.deepEqual(plan.transfers, []);
@@ -373,7 +486,7 @@ test("user sees that rebalance plan allocates total USDT to funding, spot, and f
   }];
 
   // When the USDT eligibility or transfer plan is evaluated
-  const observed = buildUsdtRebalancePlan(...scenarioInputs);
+  const observed = buildUsdtRebalancePlan(...scenarioInputs, FIVE_FOUR_ONE);
 
   // Then sees that rebalance plan allocates total USDT to funding, spot, and futures as 5:4:1
   assert.deepEqual(observed, {
@@ -396,7 +509,7 @@ test("user sees that rebalance plan uses at most two transfers and assigns decim
   }];
 
   // When the USDT eligibility or transfer plan is evaluated
-  const plan = buildUsdtRebalancePlan(...scenarioInputs);
+  const plan = buildUsdtRebalancePlan(...scenarioInputs, FIVE_FOUR_ONE);
 
 
   // Then sees that rebalance plan uses at most two transfers and assigns decimal dust to futures
@@ -421,7 +534,7 @@ test("user sees that rebalance plan is empty when balances already match 5:4:1",
   }];
 
   // When the USDT eligibility or transfer plan is evaluated
-  const observed = buildUsdtRebalancePlan(...scenarioInputs).transfers;
+  const observed = buildUsdtRebalancePlan(...scenarioInputs, FIVE_FOUR_ONE).transfers;
 
   // Then sees that rebalance plan is empty when balances already match 5:4:1
   assert.deepEqual(observed, []);
@@ -436,7 +549,7 @@ test("user sees that rebalance plan rejects unsupported USDT precision instead o
     }];
 
   // When the USDT eligibility or transfer plan is evaluated
-  const observedFailure = captureThrownError(() => buildUsdtRebalancePlan(...scenarioInputs));
+  const observedFailure = captureThrownError(() => buildUsdtRebalancePlan(...scenarioInputs, FIVE_FOUR_ONE));
 
   // Then sees that rebalance plan rejects unsupported USDT precision instead of rounding
   assert.match(observedFailure.message, /USDT 余额精度超过 8 位/);
@@ -591,7 +704,7 @@ test('user receives an empty balanced plan when all available wallets are empty'
   const balances = { FUNDING: '0.00000000', MAIN: '0', UMFUTURE: '0' };
 
   // When the 5:4:1 rebalance is planned
-  const plan = buildUsdtRebalancePlan(balances);
+  const plan = buildUsdtRebalancePlan(balances, FIVE_FOUR_ONE);
 
   // Then the plan contains exact zero targets and no transfer requests
   assert.deepEqual(plan, {

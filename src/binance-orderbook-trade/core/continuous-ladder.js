@@ -10,7 +10,7 @@ import {
   localizedText,
   UI_LOCALE_EN,
   UI_LOCALE_ZH_CN,
-} from '../contracts/panel-copy.js';
+} from '../../shared/ui-locale.js';
 
 export const CONTINUOUS_LADDER_COOLDOWN_MS = 1000;
 export const CONTINUOUS_LADDER_READY_CHECK_MS = 50;
