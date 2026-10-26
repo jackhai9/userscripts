@@ -628,11 +628,15 @@ for (const allocation of [
 }
 
 test('user qualifies again only after independently verified new account activity', async ({ page }) => {
-  // Given the first automatic episode has completed.
+  // Given the first automatic episode has completed both transfers.
   const api = createAccountRebalanceApi(EXCESS);
   await openAutomatic(page, api);
   await becomeFlat(page);
-  await expect.poll(() => episodes(page)).toEqual(['consumed']);
+  // A bare consumed status also marks the plan before and between transfers.
+  await expect.poll(() => episodeRecords(page)).toEqual([
+    { version: 1, status: 'consumed', outcome: 'automatic_completed' },
+  ]);
+  expect(transfers(api)).toHaveLength(2);
 
   // When a new server-side order is observed before its later removal.
   api.setOrders({ basic: [{ symbol: 'BTCUSDT' }], conditional: [] });
