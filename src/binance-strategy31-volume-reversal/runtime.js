@@ -9,7 +9,7 @@ import { TradingViewBarSnapshotInconsistentError } from '../binance-strategy29-b
 import { createBollingerIntervalSession, createBollingerMarkerLayer, isBearishBollingerChartTargetCurrent,
   exportClosedTradingViewBars, tradingViewResolutionToSeconds } from '../binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
 import { parseStrategy31Events, STRATEGY31_PERIODS } from './event-contract.js';
-import { localizedText, formatLocalizedText, resolveUiLocaleFromPathname } from '../binance-orderbook-trade/contracts/panel-copy.js';
+import { localizedText, formatLocalizedText, resolveUiLocaleFromPathname } from '../shared/ui-locale.js';
 
 const STATUS_COPY = Object.freeze({
   unsupportedMarket: localizedText('策略31：不支持的交易市场', 'Strategy31: unsupported market'),

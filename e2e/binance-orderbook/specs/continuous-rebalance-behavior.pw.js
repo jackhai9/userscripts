@@ -4,14 +4,16 @@ import { CURRENT_SYMBOL, OTHER_SYMBOL, ORDER_SETS, createCancelScenario } from '
 import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
 import { installSimulatedVisibility, setSimulatedVisibility } from '../helpers/simulated-visibility.js';
+import { REBALANCE_TARGET, allIn, transferBody } from '../fixtures/usdt-allocation.js';
 
 const ACTION = '[data-usdt-rebalance]';
 const STATUS = '#jh-binance-ladder-status';
 const OTHER_POSITION = { symbol: OTHER_SYMBOL, side: 'LONG', quantity: '1' };
 const API_OTHER_POSITION = { symbol: OTHER_SYMBOL, positionSide: 'LONG', positionAmount: '1' };
+const FUNDED = allIn('FUNDING');
 const REBALANCE_TRANSFERS = [
-  { asset: 'USDT', amount: '40', kindType: 'CARD_MAIN' },
-  { asset: 'USDT', amount: '10', kindType: 'CARD_FUTURE' },
+  transferBody(REBALANCE_TARGET.MAIN, 'CARD_MAIN'),
+  transferBody(REBALANCE_TARGET.UMFUTURE, 'CARD_FUTURE'),
 ];
 
 /** Keep the last acknowledgement pending while native account updates settle. */
@@ -33,7 +35,7 @@ async function openPendingClose(page, side) {
   await expect.poll(host.pendingSubmitSequences).toEqual([3]);
   await pauseScenarioClock(page);
 
-  const api = createAccountRebalanceApi({ FUNDING: '100', MAIN: '0', UMFUTURE: '0' });
+  const api = createAccountRebalanceApi(FUNDED);
   await page.route('https://www.binance.com/bapi/**', async route => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -123,7 +125,7 @@ for (const side of ['LONG', 'SHORT']) {
     await expect(page.locator(STATUS)).toHaveText(
       `连续阶梯${host.action} · 已结束 · 当前方向已无持仓 · 1/1 轮 · 累计 3 笔`,
     );
-    expect(host.api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '40', UMFUTURE: '10' });
+    expect(host.api.snapshot().balances).toEqual(REBALANCE_TARGET);
     await expectNoAdditionalTrading(page, host, REBALANCE_TRANSFERS);
   });
 }
@@ -197,6 +199,6 @@ test('user qualifies after returning to a page where continuous closing finished
   await expect(page.locator('#jh-binance-auto-rebalance-status')).toHaveText('已自动进行账户再平衡');
   await page.clock.runFor(32);
   await expect(page.locator(ACTION)).toBeHidden();
-  expect(host.api.snapshot().balances).toEqual({ FUNDING: '50', MAIN: '40', UMFUTURE: '10' });
+  expect(host.api.snapshot().balances).toEqual(REBALANCE_TARGET);
   await expectNoAdditionalTrading(page, host, REBALANCE_TRANSFERS);
 });

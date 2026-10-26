@@ -5,7 +5,7 @@ import {
   localizedText,
   UI_LOCALE_EN,
   UI_LOCALE_ZH_CN,
-} from '../contracts/panel-copy.js';
+} from '../../shared/ui-locale.js';
 
 function assertLadderProgress(progress) {
   if (

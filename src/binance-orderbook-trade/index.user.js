@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.229
+// @version      2.7.230
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -44,13 +44,18 @@ import {
 } from './contracts/binance-page-text.js';
 import {
   PANEL_COPY,
+  formatPrecisionRefreshTooltip,
+  formatUsdtRebalanceAllocatedStatus,
+  formatUsdtRebalanceTargetSummary,
+  formatUsdtRebalanceTooltip,
+} from './contracts/panel-copy.js';
+import {
   combineLocalizedText,
   formatLocalizedText,
-  formatPrecisionRefreshTooltip,
   isLocalizedText,
   localizedText,
   resolveUiLocaleFromPathname,
-} from './contracts/panel-copy.js';
+} from '../shared/ui-locale.js';
 import {
   resolveCloseDisplayQuantities,
   resolveConfirmedCloseDirection,
@@ -66,10 +71,12 @@ import {
   applyUsdtTransferToBalances,
   areUsdtBalancesEqual,
   buildUsdtRebalancePlan,
+  formatUsdtRebalanceRatio,
   parseUsdtWalletBalances,
   resolveAllFuturesPositionStatus,
   withFuturesTransferableBalance,
 } from './core/usdt-rebalance.js';
+import { USDT_REBALANCE_TARGET_PERCENTS } from './config.js';
 import {
   addDecimalStrings,
   ceilQtyByNotional,
@@ -401,6 +408,13 @@ installChartStorageOptimizer();
   const USDT_REBALANCE_FLAT_STABLE_MS = 2000;
   const USDT_REBALANCE_REQUEST_TIMEOUT_MS = 5000;
   const USDT_REBALANCE_BALANCE_POLL_MS = 1000;
+  // An invalid allocation stops the script at load instead of at the first transfer.
+  const USDT_REBALANCE_RATIO = formatUsdtRebalanceRatio(USDT_REBALANCE_TARGET_PERCENTS);
+  const USDT_REBALANCE_COPY = Object.freeze({
+    allocated: formatUsdtRebalanceAllocatedStatus(USDT_REBALANCE_RATIO),
+    targetSummary: formatUsdtRebalanceTargetSummary(USDT_REBALANCE_TARGET_PERCENTS),
+    tooltip: formatUsdtRebalanceTooltip(USDT_REBALANCE_RATIO),
+  });
   const LADDER_OPEN_QTY_READY_TIMEOUT_MS = 1200;
   const TRADE_INPUT_SYNC_TIMEOUT_MS = 350;
   // A clicked limit price has no ladder-style maker-price recheck after a long background stall.
@@ -976,7 +990,6 @@ installChartStorageOptimizer();
     ['阶梯任务运行中，请先停止阶梯挂单', 'A ladder task is running; stop it first'],
     ['连续交易运行中，请先停止阶梯挂单', 'Continuous trading is running; stop it first'],
     ['正在读取账户再平衡计划', 'Loading account rebalance plan'],
-    ['USDT 已按 5:4:1 分配', 'USDT is already allocated at 5:4:1'],
     ['账户再平衡已取消', 'Account rebalance cancelled'],
     ['已全部平仓', 'All positions closed'],
     ['空闲', 'Idle'],
@@ -6934,7 +6947,7 @@ installChartStorageOptimizer();
       await assertUsdtRebalanceTradingState(options);
       const balances = await readCurrentUsdtRebalanceBalances();
       assertUsdtRebalanceLocalState(options);
-      const plan = buildUsdtRebalancePlan(balances);
+      const plan = planUsdtRebalance(balances);
       writeUsdtRebalanceEpisode(accountKey, 'consumed');
       if (plan.transfers.length === 0) {
         setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.noTransfer);
@@ -6967,6 +6980,11 @@ installChartStorageOptimizer();
     return task;
   }
 
+  /** Automatic and manually confirmed rebalancing plan with the same configured allocation. */
+  function planUsdtRebalance(balances) {
+    return buildUsdtRebalancePlan(balances, USDT_REBALANCE_TARGET_PERCENTS);
+  }
+
   function buildUsdtRebalanceDialogModel(plan) {
     const accountLabels = {
       FUNDING: localizedText('资金', 'Funding'),
@@ -6976,7 +6994,7 @@ installChartStorageOptimizer();
     const accountCodes = ['FUNDING', 'MAIN', 'UMFUTURE'];
     return {
       title: ui(PANEL_COPY.action.accountRebalance),
-      targetSummary: ui(PANEL_COPY.rebalanceDialog.targetSummary),
+      targetSummary: ui(USDT_REBALANCE_COPY.targetSummary),
       accountHeading: ui(PANEL_COPY.rebalanceDialog.accountHeading),
       currentHeading: ui(PANEL_COPY.rebalanceDialog.currentHeading),
       targetHeading: ui(PANEL_COPY.rebalanceDialog.targetHeading),
@@ -7030,10 +7048,10 @@ installChartStorageOptimizer();
       const previewAccountKey = await readUsdtRebalanceAccountKey();
       await assertUsdtRebalanceTradingState();
       const initialBalances = await readCurrentUsdtRebalanceBalances();
-      plan = buildUsdtRebalancePlan(initialBalances);
+      plan = planUsdtRebalance(initialBalances);
       if (plan.transfers.length === 0) {
         usdtRebalanceEligible = false;
-        setLadderStatus(localizedText("USDT 已按 5:4:1 分配", "USDT is already allocated at 5:4:1"));
+        setLadderStatus(USDT_REBALANCE_COPY.allocated);
         return { status: 'already_balanced', plan };
       }
       if (!await showUsdtRebalanceDialog(document, buildUsdtRebalanceDialogModel(plan))) {
@@ -8212,7 +8230,7 @@ installChartStorageOptimizer();
       '</div>',
       `<div id="${LADDER_STATUS_ROW_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
       `<span id="${LADDER_STATUS_ID}" title="${initialStatus}" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">${initialStatus}</span>`,
-      `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(PANEL_COPY.tooltip.accountRebalance)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
+      `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(USDT_REBALANCE_COPY.tooltip)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
       '</div>',
       `<div id="${AUTOMATIC_USDT_REBALANCE_STATUS_ID}" hidden style="height:18px;margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
     ].join('');

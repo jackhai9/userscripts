@@ -14,7 +14,7 @@ V10 live projection. The VPS remains the only market-data and event-analysis
 authority. The userscript opens no Binance market-data WebSocket, uses no
 Binance API key, and does not recalculate the four force groups.
 
-Version 0.6.15 retains this installation's private gateway configuration and
+Version 0.6.16 retains this installation's private gateway configuration and
 provides a shared read-only transport. Strategy29 owns its own summary panel,
 lifecycle and panel position. The existing `strategy27GatewayOrigin` and
 `strategy27GatewayAuthSecret` storage keys remain the single credential source;
@@ -198,7 +198,7 @@ ADR 032 in CorsairQuant owns the server-side rule and transport contract. The
 browser does not reconstruct candidates from ordinary events or recalculate
 market evidence. The client, lifecycle, panel, SVG chart layer and optional-job
 controller are wired into the entrypoint and tested together. The source and
-generated install artifact are version 0.6.15 with identical metadata headers.
+generated install artifact are version 0.6.16 with identical metadata headers.
 The generated artifact passes syntax, release-contract and isolated execution
 checks, including candidate delivery, paired SVG markers, clear and context stop.
 Binance operator-page validation remains outstanding. Server/gateway rollout
@@ -353,10 +353,8 @@ so the banner reports the last event evidence, not a current membership guarante
 
 The interface follows the existing Binance userscript locale contract: the
 `/zh-CN/` route selects Simplified Chinese, and other routes select English.
-Strategy 27 reuses the existing orderbook locale helpers without importing its
-runtime or trading actions. The helper module also contains a static copy table;
-its small initialization remains in the bundle until a separate shared-helper
-extraction can migrate consumers together.
+Strategy 27 imports the shared locale primitives from `src/shared/ui-locale.js`
+without importing orderbook runtime, copy, or trading actions.
 
 Panel headings, monitoring/connection/history notices, ordinary and compound
 facts, candidate labels, menus and prompts all use the selected locale. Proper

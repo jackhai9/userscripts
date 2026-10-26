@@ -3,6 +3,7 @@ import { ACCOUNT_PATHS } from '../fixtures/account-rebalance-api.js';
 import { CURRENT_SYMBOL, OTHER_SYMBOL, ORDER_SETS } from '../scenarios/cancel-current-symbol.js';
 import { LEVERAGE_PATH, THIRD_SYMBOL, openAccountLifecycleHost } from '../helpers/account-lifecycle-host.js';
 import { readFixtureState } from '../helpers/userscript-page.js';
+import { scaledTarget, shiftedFromTarget } from '../fixtures/usdt-allocation.js';
 
 const ACTION = '[data-usdt-rebalance]';
 const POSITION_TAB = '[data-account-tab="positions"]';
@@ -368,7 +369,7 @@ test('user previews balances published during qualification instead of an earlie
   await page.clock.runFor(1000);
 
   // When a native wallet update doubles each balance before qualification completes.
-  host.api.setBalances({ FUNDING: '100', MAIN: '80', UMFUTURE: '20' });
+  host.api.setBalances(scaledTarget(2));
   await page.clock.runFor(1000);
   await host.waitForPositionResponses(3);
   await expectEligible(page);
@@ -379,16 +380,18 @@ test('user previews balances published during qualification instead of an earlie
   await host.expectNoTradingActions();
 
   // When the user opens the now-eligible account preview.
-  host.api.setBalances({ FUNDING: '70', MAIN: '30', UMFUTURE: '0' });
+  // Funding gains what Spot and Futures lose, so the preview must plan exactly 1 and 2 USDT.
+  const published = shiftedFromTarget({ FUNDING: '3', MAIN: '-1', UMFUTURE: '-2' });
+  host.api.setBalances(published);
   await page.locator(ACTION).evaluate(button => button.click());
   const dialog = page.getByRole('dialog', { name: '账户再平衡' });
 
   // Then the reviewed plan uses the newly published balances and remains unexecuted.
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('.jh-rebalance-dialog-transfer-amount')).toHaveText(['10 USDT', '10 USDT']);
+  await expect(dialog.locator('.jh-rebalance-dialog-transfer-amount')).toHaveText(['1 USDT', '2 USDT']);
   expect(host.api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.wallets).length)
     .toBe(automaticWalletReads + 1);
-  expect(host.api.snapshot().balances).toEqual({ FUNDING: '70', MAIN: '30', UMFUTURE: '0' });
+  expect(host.api.snapshot().balances).toEqual(published);
   await dialog.getByRole('button', { name: '取消', exact: true }).evaluate(button => button.click());
   await host.expectNoTradingActions();
 });

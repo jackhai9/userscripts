@@ -3,6 +3,7 @@ import { ACCOUNT_PATHS, createAccountRebalanceApi } from '../fixtures/account-re
 import { CURRENT_SYMBOL, OTHER_SYMBOL, ORDER_SETS, createCancelScenario } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario, readFixtureState } from './userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from './scenario-clock.js';
+import { REBALANCE_TARGET } from '../fixtures/usdt-allocation.js';
 
 export const LEVERAGE_PATH = '/bapi/futures/v1/private/future/user-data/adjustLeverage';
 export const THIRD_SYMBOL = 'ETHUSDT';
@@ -69,7 +70,8 @@ export async function openAccountLifecycleHost(page, {
   orders = ORDER_SETS.current,
   apiPositions = [],
   leverage = 2,
-  balances = { FUNDING: '50', MAIN: '40', UMFUTURE: '10' },
+  // Already balanced wallets keep lifecycle scenarios free of transfers for any allocation.
+  balances = REBALANCE_TARGET,
 } = {}) {
   await installScenarioClock(page);
   const loaded = await openUserscriptScenario(page, createCancelScenario({

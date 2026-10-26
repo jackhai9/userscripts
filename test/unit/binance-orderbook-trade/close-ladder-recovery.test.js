@@ -4,7 +4,7 @@ import {
   capCloseLadderBaseQty,
   runCloseLadderWithPositionRecovery,
 } from '../../../src/binance-orderbook-trade/core/close-ladder-recovery.js';
-import { formatLocalizedText } from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
+import { formatLocalizedText } from '../../../src/shared/ui-locale.js';
 
 function rejection() {
   return Object.assign(new Error('Reduce-only rejected (90802022)'), {

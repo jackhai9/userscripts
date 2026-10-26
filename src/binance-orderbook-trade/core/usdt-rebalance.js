@@ -17,21 +17,43 @@ export const USDT_REBALANCE_ACCOUNTS = Object.freeze({
     accountType: 'CARD',
     bapiCode: 'CARD',
     label: '资金',
-    ratio: 50,
   }),
   MAIN: Object.freeze({
     accountType: 'MAIN',
     bapiCode: 'MAIN',
     label: '现货',
-    ratio: 40,
   }),
   UMFUTURE: Object.freeze({
     accountType: 'FUTURE',
     bapiCode: 'FUTURE',
     label: 'U本位合约',
-    ratio: 10,
   }),
 });
+
+/**
+ * Whole-percent targets keep both the reduced ratio and the percentage copy exact.
+ * Every account keeps a share so a configuration cannot drain Futures margin.
+ */
+export function assertUsdtRebalanceAllocation(percents) {
+  const accounts = Object.keys(percents ?? {});
+  if (accounts.length !== ACCOUNT_ORDER.length || !ACCOUNT_ORDER.every((code) => accounts.includes(code))) {
+    throw new Error('USDT 再平衡比例必须且只能包含资金、现货和 U本位合约');
+  }
+  if (!ACCOUNT_ORDER.every((code) => Number.isSafeInteger(percents[code]) && percents[code] >= 1)) {
+    throw new Error('USDT 再平衡比例必须是不小于 1 的整数百分比');
+  }
+  if (ACCOUNT_ORDER.reduce((sum, code) => sum + percents[code], 0) !== 100) {
+    throw new Error('USDT 再平衡比例合计必须为 100');
+  }
+}
+
+/** Reduce whole percentages to the ratio shown in the panel, e.g. 70/20/10 → 7:2:1. */
+export function formatUsdtRebalanceRatio(percents) {
+  assertUsdtRebalanceAllocation(percents);
+  const gcd = (left, right) => (right === 0 ? left : gcd(right, left % right));
+  const divisor = ACCOUNT_ORDER.reduce((value, code) => gcd(value, percents[code]), 0);
+  return ACCOUNT_ORDER.map((code) => percents[code] / divisor).join(':');
+}
 
 function parsePositionAmount(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -131,14 +153,15 @@ export function withFuturesTransferableBalance(balances, payload) {
  * Automatic and manually confirmed transfers share exact eight-decimal targets.
  * Rounding each reserve down leaves the remainder in Futures without losing USDT.
  */
-export function buildUsdtRebalancePlan(rawBalances) {
+export function buildUsdtRebalancePlan(rawBalances, percents) {
+  assertUsdtRebalanceAllocation(percents);
   const beforeUnits = Object.fromEntries(
     ACCOUNT_ORDER.map((accountCode) => [accountCode, decimalToUnits(rawBalances[accountCode])]),
   );
   const totalUnits = ACCOUNT_ORDER.reduce((sum, accountCode) => sum + beforeUnits[accountCode], 0n);
   const targetUnits = {
-    FUNDING: totalUnits * 50n / 100n,
-    MAIN: totalUnits * 40n / 100n,
+    FUNDING: totalUnits * BigInt(percents.FUNDING) / 100n,
+    MAIN: totalUnits * BigInt(percents.MAIN) / 100n,
     UMFUTURE: 0n,
   };
   targetUnits.UMFUTURE = totalUnits - targetUnits.FUNDING - targetUnits.MAIN;

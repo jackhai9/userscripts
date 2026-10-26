@@ -27,7 +27,7 @@ import {
   formatLocalizedText,
   UI_LOCALE_EN,
   UI_LOCALE_ZH_CN,
-} from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
+} from '../../../src/shared/ui-locale.js';
 
 test('user sees cancellation availability and completion in the action button', () => {
   // Given idle, running, completed-empty, and ladder-blocked cancellation states.

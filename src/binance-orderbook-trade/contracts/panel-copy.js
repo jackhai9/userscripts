@@ -1,49 +1,4 @@
-export const UI_LOCALE_ZH_CN = 'zh-CN';
-export const UI_LOCALE_EN = 'en';
-
-export const SUPPORTED_UI_LOCALES = Object.freeze([
-  UI_LOCALE_ZH_CN,
-  UI_LOCALE_EN,
-]);
-
-export function localizedText(zhCN, en) {
-  if (typeof zhCN !== 'string' || zhCN === '' || typeof en !== 'string' || en === '') {
-    throw new Error('Localized UI text requires non-empty Chinese and English values');
-  }
-  return Object.freeze({ zhCN, en });
-}
-
-export function isLocalizedText(value) {
-  return Boolean(
-    value
-    && typeof value === 'object'
-    && typeof value.zhCN === 'string'
-    && typeof value.en === 'string',
-  );
-}
-
-export function formatLocalizedText(value, locale) {
-  if (typeof value === 'string') return value;
-  if (!isLocalizedText(value)) throw new Error('Invalid localized UI text');
-  if (locale === UI_LOCALE_ZH_CN) return value.zhCN;
-  if (locale === UI_LOCALE_EN) return value.en;
-  throw new Error(`Unsupported UI locale: ${locale}`);
-}
-
-export function combineLocalizedText(parts, separator = '') {
-  if (!Array.isArray(parts) || typeof separator !== 'string') {
-    throw new Error('Invalid localized UI text composition');
-  }
-  return localizedText(
-    parts.map((part) => formatLocalizedText(part, UI_LOCALE_ZH_CN)).join(separator),
-    parts.map((part) => formatLocalizedText(part, UI_LOCALE_EN)).join(separator),
-  );
-}
-
-export function resolveUiLocaleFromPathname(pathname) {
-  const firstSegment = String(pathname || '').split(/[?#]/, 1)[0].split('/').filter(Boolean)[0];
-  return firstSegment?.toLowerCase() === 'zh-cn' ? UI_LOCALE_ZH_CN : UI_LOCALE_EN;
-}
+import { localizedText } from '../../shared/ui-locale.js';
 
 const freezeCopy = (copy) => Object.freeze(copy);
 
@@ -111,10 +66,6 @@ export const PANEL_COPY = Object.freeze({
     incrementMultiplier: localizedText('增加倍数', 'Increase multiplier'),
   }),
   rebalanceDialog: freezeCopy({
-    targetSummary: localizedText(
-      '目标分配：资金 50% / 现货 40% / U本位 10%',
-      'Target allocation: Funding 50% / Spot 40% / USDⓈ-M Futures 10%',
-    ),
     accountHeading: localizedText('账户', 'Account'),
     currentHeading: localizedText('当前 (USDT)', 'Current (USDT)'),
     targetHeading: localizedText('目标 (USDT)', 'Target (USDT)'),
@@ -177,12 +128,30 @@ export const PANEL_COPY = Object.freeze({
       'Option/Alt + 单击：连续交易',
       'Option/Alt + click: continuous trading',
     ),
-    accountRebalance: localizedText(
-      '将资金、现货和 U 本位账户的 USDT 按 5:4:1 分配',
-      'Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a 5:4:1 ratio',
-    ),
   }),
 });
+
+/**
+ * Rebalance copy is built from the orderbook's validated allocation instead of this
+ * shared map, so changing the allocation does not alter the other bundled scripts.
+ */
+export function formatUsdtRebalanceTooltip(ratio) {
+  return localizedText(
+    `将资金、现货和 U 本位账户的 USDT 按 ${ratio} 分配`,
+    `Allocate USDT across Funding, Spot, and USDⓈ-M Futures accounts at a ${ratio} ratio`,
+  );
+}
+
+export function formatUsdtRebalanceTargetSummary(percents) {
+  return localizedText(
+    `目标分配：资金 ${percents.FUNDING}% / 现货 ${percents.MAIN}% / U本位 ${percents.UMFUTURE}%`,
+    `Target allocation: Funding ${percents.FUNDING}% / Spot ${percents.MAIN}% / USDⓈ-M Futures ${percents.UMFUTURE}%`,
+  );
+}
+
+export function formatUsdtRebalanceAllocatedStatus(ratio) {
+  return localizedText(`USDT 已按 ${ratio} 分配`, `USDT is already allocated at ${ratio}`);
+}
 
 export function formatPrecisionRefreshTooltip(tradeCount) {
   const count = Number(tradeCount);

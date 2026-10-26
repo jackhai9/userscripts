@@ -5,7 +5,7 @@ import {
   localizedText,
   UI_LOCALE_EN,
   UI_LOCALE_ZH_CN,
-} from '../../../src/binance-orderbook-trade/contracts/panel-copy.js';
+} from '../../../src/shared/ui-locale.js';
 
 import {
   CONTINUOUS_LADDER_COOLDOWN_MS,
