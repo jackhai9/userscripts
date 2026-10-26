@@ -346,6 +346,35 @@ test('user skips only documentation that has no runtime consumer', async () => {
   assert.match(plan.reasons.join('\n'), /documentation/i);
 });
 
+for (const changed of ['.gitignore', 'tools/.gitignore']) {
+  test(`user skips Git ignore rules in ${changed} that have no runtime consumer`, async () => {
+    // Given ignore rules in an otherwise complete dependency graph.
+    const graph = await graphFor(repositoryFiles({ [changed]: 'output/\n' }));
+
+    // When only those ignore rules change.
+    const plan = selectTests(graph, [changed]);
+
+    // Then no runtime test is selected and the plan names the non-runtime change.
+    assert.equal(plan.mode, 'none');
+    assert.deepEqual(plan.nodeTests, []);
+    assert.deepEqual(plan.browserTests, []);
+    assert.deepEqual(plan.reasons, ['Only documentation or Git ignore rules without runtime consumers changed']);
+  });
+}
+
+test('user still runs the tests of a source change committed beside ignore rules', async () => {
+  // Given ignore rules and a consumed source file in one change set.
+  const graph = await graphFor(repositoryFiles({ '.gitignore': 'output/\n' }));
+
+  // When both paths change together.
+  const plan = selectTests(graph, ['.gitignore', 'src/other.js']);
+
+  // Then the source consumers remain selected without escalating the ignore rules to a full run.
+  assert.equal(plan.mode, 'affected');
+  assert.deepEqual(plan.nodeTests, ['test/unit/other.test.js']);
+  assert.deepEqual(plan.browserTests, []);
+});
+
 test('user skips a clean checkout while still allowing an explicit full run', async () => {
   // Given a valid dependency graph without any changed paths.
   const graph = await graphFor(repositoryFiles());

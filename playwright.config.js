@@ -6,7 +6,10 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
-  workers: 1,
+  // Spec files use isolated contexts with routed fixtures, so they can run in parallel while
+  // tests inside one file stay ordered. Half the logical CPUs is two workers on 4-vCPU CI
+  // runners, which keeps headroom for the 3s expectation timeout.
+  workers: '50%',
   timeout: 15_000,
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
   expect: {

@@ -143,8 +143,8 @@ A full run is selected when:
   ESLint configuration, the userscript builder, or `scripts/test-*` infrastructure
   changes.
 - A changed path was deleted, is unavailable, or has no verified consumer and is
-  not an eligible documentation file. Unmapped JSON, HTML, images, snapshots, and
-  source files all remain runtime changes.
+  not an eligible documentation file or Git ignore rule. Unmapped JSON, HTML,
+  images, snapshots, and source files all remain runtime changes.
 - Build mapping, Playwright discovery, or snapshot ownership cannot be verified
   globally, or an uncertain dependency cannot be assigned to a test owner.
 
@@ -156,7 +156,9 @@ a full run.
 `none` is allowed for a valid graph with no changes, or for documentation without
 known or uncertain runtime consumers. Eligible documentation is Markdown under
 `docs/` and the documented root Markdown names such as `README.md` and `AGENTS.md`.
-A Markdown extension alone is not enough to skip a runtime reader.
+A Markdown extension alone is not enough to skip a runtime reader. `.gitignore`
+files are skipped the same way: ignore rules never change tracked inputs, and a
+file they newly expose is classified as its own untracked change.
 
 The selector does not generate userscripts, install them, activate live browser
 sessions, or authorize financial actions. Its browser execution is the project's

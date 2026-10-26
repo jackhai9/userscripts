@@ -58,7 +58,9 @@ export async function runCoverage(mode, { reportOnly = false, requireTarget = fa
     reportFile: resolve(runDirectory, 'node-results.txt'),
   }), { USERSCRIPTS_NODE_COVERAGE_DIRECTORY: nodeDirectory });
   if (browserDirectory !== null) {
-    await runNode(['./node_modules/@playwright/test/cli.js', 'test',
+    // Precise block coverage slows every page; parallel workers would push timing-sensitive
+    // expectations past their limits, so the instrumented browser layer stays serial.
+    await runNode(['./node_modules/@playwright/test/cli.js', 'test', '--workers=1',
       '--reporter=dot,html,./scripts/test-coverage/browser-reporter.mjs'], {
       USERSCRIPTS_BROWSER_COVERAGE_DIRECTORY: browserDirectory,
       PLAYWRIGHT_HTML_OPEN: 'never',

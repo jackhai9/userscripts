@@ -21,6 +21,11 @@ function isDocumentation(path) {
   return /^(?:docs\/.*\.(?:md|mdx)|(?:README(?:\.[^/]*)?|AGENTS|CHANGELOG|CONTRIBUTING|LICENSE)\.md)$/.test(path);
 }
 
+/** Ignore rules never change tracked inputs; a newly unignored file is classified as its own change. */
+function isGitIgnoreRules(path) {
+  return /(?:^|\/)\.gitignore$/.test(path);
+}
+
 function infrastructure(path) {
   return /^(?:package(?:-lock)?\.json|\.nvmrc|playwright\.config\.[^/]+|eslint\.config\.[^/]+)$/.test(path)
     || path.startsWith('.github/workflows/') || path.startsWith('scripts/test-') || path === BUILD_FILE;
@@ -266,11 +271,11 @@ export function selectTests(graph, changedFiles, { full = false } = {}) {
     if (!graph.files.has(path)) { fullReasons.push('Deleted or unavailable changed path: ' + path); continue; }
     const affected = consumers(path);
     for (const test of affected) selected.add(test);
-    if (!affected.size && !isDocumentation(path)) fullReasons.push('Unmapped runtime change: ' + path);
+    if (!affected.size && !isDocumentation(path) && !isGitIgnoreRules(path)) fullReasons.push('Unmapped runtime change: ' + path);
   }
   const mode = fullReasons.length ? 'full' : selected.size ? 'affected' : 'none';
   const reasons = [...fullReasons];
-  if (mode === 'none') reasons.push(changed.length ? 'Only documentation without runtime consumers changed' : 'No changed files');
+  if (mode === 'none') reasons.push(changed.length ? 'Only documentation or Git ignore rules without runtime consumers changed' : 'No changed files');
   if (mode === 'affected') {
     reasons.push('Selected complete test files through dependency edges and all unresolved consumers');
     reasons.push(...graph.uncertainties.map(describe));
