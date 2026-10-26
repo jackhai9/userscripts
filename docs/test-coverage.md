@@ -109,7 +109,11 @@ The policy applies to merged Node and browser results. The complete pipeline run
 weekly and through manual workflow dispatch in `.github/workflows/userscript-tests.yml`.
 PRs and main pushes run test lint, generated-artifact checks, and the
 [affected test selection](test-selection.md). The existing script-specific
-workflows retain their independent checks.
+workflows retain their independent checks. Workflows that run browser tests use
+the `mcr.microsoft.com/playwright` image whose tag equals the locked
+`@playwright/test` version, so CI never downloads browsers or Ubuntu packages;
+`test/unit/ci-playwright-image.test.js` fails when a Playwright upgrade leaves
+the tag behind.
 
 ## Reports and Interpretation
 
