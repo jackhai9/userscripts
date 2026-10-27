@@ -18,7 +18,7 @@ export function createChartMarkerOverlay(target, {
   const owner = {};
   const subscriptions = [];
   const nodes = new Map();
-  let svg = null, host = null, frame = null, observer = null, projection = null;
+  let svg = null, host = null, frame = null, frameView = null, observer = null, projection = null;
   let signals = [], validateCurrent = null, invalidated = false;
   let projectionDirty = true, renderedWidth = null, renderedHeight = null;
   let renderedFrames = 0, visibleMarkers = 0, generation = 0;
@@ -28,9 +28,15 @@ export function createChartMarkerOverlay(target, {
     visibleMarkers = 0;
   }
 
+  /**
+   * Binance can remove the chart iframe while a redraw is pending. Its document then
+   * has no defaultView, so cancel through the window that issued the frame; otherwise
+   * clear() stops before releasing the old chart's subscriptions and listeners.
+   */
   function cancelFrame() {
-    if (frame !== null) host.ownerDocument.defaultView.cancelAnimationFrame(frame);
+    if (frame !== null) frameView.cancelAnimationFrame(frame);
     frame = null;
+    frameView = null;
   }
 
   function clear() {
@@ -172,9 +178,11 @@ export function createChartMarkerOverlay(target, {
     projectionDirty = true;
     if (!svg || frame !== null || invalidated || document.hidden) return;
     const scheduledGeneration = generation;
-    frame = host.ownerDocument.defaultView.requestAnimationFrame(() => {
+    frameView = host.ownerDocument.defaultView;
+    frame = frameView.requestAnimationFrame(() => {
       if (!svg || scheduledGeneration !== generation) return;
       frame = null;
+      frameView = null;
       try { draw(); } catch (error) {
         // This is the asynchronous rendering boundary. Consumers expose terminal
         // failures through their existing monitor diagnostics or status notice.

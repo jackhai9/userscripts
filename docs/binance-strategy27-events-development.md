@@ -168,7 +168,11 @@ It accepts only resolved timestamps, prices and explicit presentation styles;
 it owns no event, retention, placement or slot policy. Each instance owns a
 separate main-pane SVG with `pointer-events: none`. Axis areas are excluded.
 Time/price delegates, data updates and pane resize notifications coalesce into
-one animation frame; hidden pages cancel pending frames. Interval and data
+one animation frame; hidden pages cancel pending frames. A pending frame is
+cancelled through the window that requested it: Binance can remove the chart
+iframe, leaving its document without a `defaultView`, and clearing must still
+release that chart's delegates, resize observer, visibility listener and SVG.
+Interval and data
 invalidation hide stale presentation immediately. The Strategy27 context subscribes
 to interval changes before its first marker. Any interval notification invalidates
 that context, cancels pending candle waits and requests, and causes the next poll
