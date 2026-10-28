@@ -70,6 +70,9 @@ execute the original native expression once, before any optimized transaction
 exists. Native handling may exceed the optimizer's limits; these limits bound
 optimization, not Binance's original work. Shared references, cycles and non-JSON
 input use that native path instead of silently changing their stored meaning.
+The copy charges each value its exact UTF-8 JSON size while it walks the tree,
+without encoding every value separately; the accepted batch is measured once.
+Stored old values are validated inside the transaction with the same copy.
 
 Within a transaction, unsupported old values and exhausted comparison budgets
 cause direct writes. They do not reject otherwise valid replacements. A genuine

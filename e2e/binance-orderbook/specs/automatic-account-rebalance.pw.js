@@ -654,6 +654,56 @@ test('user qualifies again only after independently verified new account activit
   expect(api.snapshot().balances).toEqual(TARGET);
 });
 
+const identityRequests = api => api.snapshot().requests.filter(request => request.pathname === ACCOUNT_PATHS.identity);
+
+async function seedRawEpisode(page, account, value) {
+  await page.evaluate(async ({ prefix, account, value }) => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(account));
+    localStorage.setItem(prefix + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join(''), value);
+  }, { prefix: PREFIX, account, value });
+}
+
+/** An observation holds or awaits the shared account lock until its requests settle. */
+async function settleAccountObservations(page) {
+  await expect.poll(() => page.evaluate(async () => {
+    const { held, pending } = await navigator.locks.query();
+    return [...held, ...pending].filter(lock => lock.name === 'userscripts:usdt-account-operation:v1').length;
+  })).toBe(0);
+}
+
+for (const episode of [
+  { name: 'no stored episode', account: null, value: null, requestsIdentity: false },
+  { name: 'a stored active episode', account: 'fixture-account', value: '{"version":1,"status":"active"}', requestsIdentity: false },
+  { name: 'an unrecognized stored record', account: 'fixture-account', value: '{"version":1,"status":"active","note":true}', requestsIdentity: true },
+  { name: 'a consumed episode of another account', account: 'other-account', value: '{"version":1,"status":"consumed"}', requestsIdentity: true },
+]) {
+  test(`user ${episode.requestsIdentity ? 'still verifies' : 'skips'} account identity on trading activity with ${episode.name}`, async ({ page }) => {
+    // Given an account with open orders and the stored automatic episode state.
+    const api = createAccountRebalanceApi(EXCESS);
+    const loaded = await openAutomatic(page, api);
+    await page.clock.runFor(32);
+    await settleAccountObservations(page);
+    if (episode.value !== null) await seedRawEpisode(page, episode.account, episode.value);
+    const before = identityRequests(api).length;
+    const storedBefore = await page.evaluate(prefix => Object.fromEntries(Object.keys(localStorage)
+      .filter(key => key.startsWith(prefix)).map(key => [key, localStorage.getItem(key)])), PREFIX);
+
+    // When the open-order counters change repeatedly during trading.
+    await page.evaluate(orders => window.__BINANCE_FIXTURE__.setOrders(orders), ORDER_SETS.both);
+    await page.clock.runFor(32);
+    await settleAccountObservations(page);
+    await page.evaluate(orders => window.__BINANCE_FIXTURE__.setOrders(orders), ORDER_SETS.other);
+    await page.clock.runFor(32);
+    await settleAccountObservations(page);
+
+    // Then identity is requested only when a stored record could change, and stored state stays intact.
+    expect(identityRequests(api).length > before).toBe(episode.requestsIdentity);
+    expect(await page.evaluate(prefix => Object.fromEntries(Object.keys(localStorage)
+      .filter(key => key.startsWith(prefix)).map(key => [key, localStorage.getItem(key)])), PREFIX)).toEqual(storedBefore);
+    expect(loaded.errors).toEqual([]);
+  });
+}
+
 test('user never repeats a transfer with an unknown response after reloading', async ({ page }) => {
   // Given the server commits a transfer but its response is lost.
   const api = createAccountRebalanceApi(EXCESS);

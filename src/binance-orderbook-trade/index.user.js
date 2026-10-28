@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.230
+// @version      2.7.231
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -142,7 +142,6 @@ import {
   isOpenLadderOpenOrdersCapacityFeedback,
   isPostOnlyMakerRejectionFeedback,
   isReduceOnlyOpenOrdersConflictFeedback,
-  isPotentialOrderFeedbackText,
   readConfirmedReduceOnlyRejection,
   resolveBinanceRateLimitCooldownMs,
   resolveBinanceSubmitResponseRecovery,
@@ -253,6 +252,7 @@ import {
   getOpenOrderRowCells,
   readOpenOrdersScopeText as readOpenOrdersScopeTextDom,
 } from './dom/open-order-rows.js';
+import { readVisibleOrderFeedbackEntries as readVisibleOrderFeedbackEntriesDom } from './dom/order-feedback-scan.js';
 import {
   assertSameBinanceChartOrdersTarget,
   findActiveBinanceChartOrdersPopover,
@@ -408,6 +408,11 @@ installChartStorageOptimizer();
   const USDT_REBALANCE_FLAT_STABLE_MS = 2000;
   const USDT_REBALANCE_REQUEST_TIMEOUT_MS = 5000;
   const USDT_REBALANCE_BALANCE_POLL_MS = 1000;
+  const AUTOMATIC_USDT_REBALANCE_EPISODE_PREFIX = 'userscripts:automatic-usdt-rebalance:v1:';
+  // Exact records written for episode states that new account activity never changes.
+  const NON_CONSUMED_AUTOMATIC_USDT_REBALANCE_EPISODES = new Set(
+    ['active', 'in_flight', 'blocked'].map((status) => JSON.stringify({ version: 1, status })),
+  );
   // An invalid allocation stops the script at load instead of at the first transfer.
   const USDT_REBALANCE_RATIO = formatUsdtRebalanceRatio(USDT_REBALANCE_TARGET_PERCENTS);
   const USDT_REBALANCE_COPY = Object.freeze({
@@ -3203,26 +3208,7 @@ installChartStorageOptimizer();
   }
 
   function readVisibleOrderFeedbackEntries() {
-    const selectors = [
-      '[role="alert"]',
-      '[aria-live]',
-      '[class*="toast"]',
-      '[class*="Toast"]',
-      '[class*="message"]',
-      '[class*="Message"]',
-      '[class*="notification"]',
-      '[class*="Notification"]',
-    ];
-    const seen = new Set();
-    const entries = [];
-    for (const el of document.querySelectorAll(selectors.join(','))) {
-      if (seen.has(el) || !isVisibleElement(el)) continue;
-      seen.add(el);
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!text || text.length > 300) continue;
-      if (isPotentialOrderFeedbackText(text)) entries.push({ el, text });
-    }
-    return entries;
+    return readVisibleOrderFeedbackEntriesDom(document, { isVisibleElement });
   }
 
   function takeOrderFeedbackSnapshot() {
@@ -6808,7 +6794,7 @@ installChartStorageOptimizer();
       throw new Error('Unsupported or unverified account identity');
     }
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload.data.userId));
-    return 'userscripts:automatic-usdt-rebalance:v1:'
+    return AUTOMATIC_USDT_REBALANCE_EPISODE_PREFIX
       + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
   }
 
@@ -6860,8 +6846,24 @@ installChartStorageOptimizer();
     }, null, false);
   }
 
+  /**
+   * Activity observation only turns a consumed episode active. When every stored
+   * record has a form that activity cannot change, observing would request account
+   * identity on each counter change during trading and return unchanged. Consumed,
+   * completed and unrecognized records keep the validated observation path.
+   */
+  function hasRearmableAutomaticUsdtRebalanceEpisode() {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key.startsWith(AUTOMATIC_USDT_REBALANCE_EPISODE_PREFIX)
+        && !NON_CONSUMED_AUTOMATIC_USDT_REBALANCE_EPISODES.has(localStorage.getItem(key))) return true;
+    }
+    return false;
+  }
+
   function queueAutomaticUsdtRebalanceActivityObservation() {
     if (automaticUsdtRebalanceObservationTask || !cachedBncHeaders) return;
+    if (!hasRearmableAutomaticUsdtRebalanceEpisode()) return;
     automaticUsdtRebalanceObservationTask = observeAutomaticUsdtRebalanceActivity()
       .catch((error) => {
         // Background rearming must not replace the outcome of the user's trading task.

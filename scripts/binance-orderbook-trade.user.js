@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.230
+// @version      2.7.231
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -5837,6 +5837,28 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     return parts.join("");
   }
 
+  // src/binance-orderbook-trade/dom/order-feedback-scan.js
+  var ORDER_FEEDBACK_SELECTOR = [
+    '[role="alert"]',
+    "[aria-live]",
+    '[class*="toast"]',
+    '[class*="Toast"]',
+    '[class*="message"]',
+    '[class*="Message"]',
+    '[class*="notification"]',
+    '[class*="Notification"]'
+  ].join(",");
+  var MAX_ORDER_FEEDBACK_TEXT_LENGTH = 300;
+  function readVisibleOrderFeedbackEntries(document2, { isVisibleElement }) {
+    const entries = [];
+    for (const el of document2.querySelectorAll(ORDER_FEEDBACK_SELECTOR)) {
+      const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text || text.length > MAX_ORDER_FEEDBACK_TEXT_LENGTH || !isPotentialOrderFeedbackText(text)) continue;
+      if (isVisibleElement(el)) entries.push({ el, text });
+    }
+    return entries;
+  }
+
   // src/binance-orderbook-trade/dom/chart-orders.js
   var ACTIVE_POPOVER_SELECTOR = ".bn-bubble.active";
   var OPEN_ORDERS_LABEL_PATTERN = /^(?:当前委托|Open Orders)$/i;
@@ -7490,20 +7512,60 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
   // src/binance-orderbook-trade/chart-storage/json.js
   var encoder = new TextEncoder();
   var nativeObjectSource = Function.prototype.toString.call(Object);
+  var nativeObjectConstructors = /* @__PURE__ */ new WeakSet();
   function assert(condition, message) {
     if (!condition) throw new Error(message);
+  }
+  function isNativeObjectConstructor(candidate) {
+    if (nativeObjectConstructors.has(candidate)) return true;
+    if (Function.prototype.toString.call(candidate) !== nativeObjectSource) return false;
+    nativeObjectConstructors.add(candidate);
+    return true;
   }
   function isPlainJsonObject(value) {
     const prototype = Object.getPrototypeOf(value);
     if (prototype === null || Object.getPrototypeOf(prototype) !== null) return false;
     const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor");
     if (!constructor || !Object.hasOwn(constructor, "value") || typeof constructor.value !== "function") return false;
-    if (Function.prototype.toString.call(constructor.value) !== nativeObjectSource) return false;
+    if (!isNativeObjectConstructor(constructor.value)) return false;
     const descriptor = Object.getOwnPropertyDescriptor(constructor.value, "prototype");
     return !!descriptor && Object.hasOwn(descriptor, "value") && descriptor.value === prototype;
   }
   function byteLength(value) {
     return encoder.encode(JSON.stringify(value)).byteLength;
+  }
+  function jsonStringByteLength(text) {
+    if (text.length >= 256) return byteLength(text);
+    let bytes = 2;
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if (code < 128) {
+        if (code === 34 || code === 92) bytes += 2;
+        else if (code >= 32) bytes += 1;
+        else bytes += code === 8 || code === 9 || code === 10 || code === 12 || code === 13 ? 2 : 6;
+      } else if (code < 2048) {
+        bytes += 2;
+      } else if (code >= 55296 && code <= 56319) {
+        const next = text.charCodeAt(index + 1);
+        if (next >= 56320 && next <= 57343) {
+          bytes += 4;
+          index += 1;
+        } else {
+          bytes += 6;
+        }
+      } else if (code >= 56320 && code <= 57343) {
+        bytes += 6;
+      } else {
+        bytes += 3;
+      }
+    }
+    return bytes;
+  }
+  function primitiveJsonByteLength(value) {
+    if (value === null) return 4;
+    if (typeof value === "boolean") return value ? 4 : 5;
+    if (typeof value === "number") return String(value).length;
+    return jsonStringByteLength(value);
   }
   function snapshotJson(value, budget = { remaining: Infinity }, seen = /* @__PURE__ */ new Set()) {
     function consume(bytes) {
@@ -7512,7 +7574,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     }
     if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
       assert(typeof value !== "number" || Number.isFinite(value), "Chart JSON numbers must be finite");
-      consume(byteLength(value));
+      consume(primitiveJsonByteLength(value));
       return value;
     }
     assert(typeof value === "object", "Chart values must be JSON");
@@ -7525,19 +7587,18 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     if (array) assert(keys.length === value.length && keys.every((key, index) => key === String(index)), "Chart JSON arrays must be dense");
     seen.add(value);
     consume(2 + Math.max(0, keys.length - 1));
-    const result = array ? [] : {};
+    const copies = [];
     for (const key of keys) {
       const descriptor = descriptors[key];
       assert(descriptor.enumerable && Object.hasOwn(descriptor, "value"), "Chart JSON requires enumerable data properties");
-      if (!array) consume(byteLength(key) + 1);
-      Object.defineProperty(result, key, {
-        value: snapshotJson(descriptor.value, budget, seen),
-        enumerable: true,
-        writable: true,
-        configurable: true
-      });
+      if (array) {
+        copies.push(snapshotJson(descriptor.value, budget, seen));
+        continue;
+      }
+      consume(jsonStringByteLength(key) + 1);
+      copies.push([key, snapshotJson(descriptor.value, budget, seen)]);
     }
-    return result;
+    return array ? copies : Object.fromEntries(copies);
   }
   function equalJson(first, second) {
     if (Object.is(first, second)) return true;
@@ -15581,6 +15642,10 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     const USDT_REBALANCE_FLAT_STABLE_MS = 2e3;
     const USDT_REBALANCE_REQUEST_TIMEOUT_MS = 5e3;
     const USDT_REBALANCE_BALANCE_POLL_MS = 1e3;
+    const AUTOMATIC_USDT_REBALANCE_EPISODE_PREFIX = "userscripts:automatic-usdt-rebalance:v1:";
+    const NON_CONSUMED_AUTOMATIC_USDT_REBALANCE_EPISODES = new Set(
+      ["active", "in_flight", "blocked"].map((status) => JSON.stringify({ version: 1, status }))
+    );
     const USDT_REBALANCE_RATIO = formatUsdtRebalanceRatio(USDT_REBALANCE_TARGET_PERCENTS);
     const USDT_REBALANCE_COPY = Object.freeze({
       allocated: formatUsdtRebalanceAllocatedStatus(USDT_REBALANCE_RATIO),
@@ -17912,30 +17977,11 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         `下单按钮 ${TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS} 秒内未达到可点击状态`
       );
     }
-    function readVisibleOrderFeedbackEntries() {
-      const selectors = [
-        '[role="alert"]',
-        "[aria-live]",
-        '[class*="toast"]',
-        '[class*="Toast"]',
-        '[class*="message"]',
-        '[class*="Message"]',
-        '[class*="notification"]',
-        '[class*="Notification"]'
-      ];
-      const seen = /* @__PURE__ */ new Set();
-      const entries = [];
-      for (const el of document.querySelectorAll(selectors.join(","))) {
-        if (seen.has(el) || !isVisibleElement(el)) continue;
-        seen.add(el);
-        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (!text || text.length > 300) continue;
-        if (isPotentialOrderFeedbackText(text)) entries.push({ el, text });
-      }
-      return entries;
+    function readVisibleOrderFeedbackEntries2() {
+      return readVisibleOrderFeedbackEntries(document, { isVisibleElement });
     }
     function takeOrderFeedbackSnapshot() {
-      const entries = readVisibleOrderFeedbackEntries();
+      const entries = readVisibleOrderFeedbackEntries2();
       return {
         elements: new Set(entries.map(({ el }) => el)),
         textByElement: new Map(entries.map(({ el, text }) => [el, text])),
@@ -17944,7 +17990,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     }
     function readNewVisibleOrderFeedbackText(previousSnapshot) {
       const snapshot = previousSnapshot || { elements: /* @__PURE__ */ new Set(), textByElement: /* @__PURE__ */ new Map(), htmlByElement: /* @__PURE__ */ new Map() };
-      for (const { el, text } of readVisibleOrderFeedbackEntries()) {
+      for (const { el, text } of readVisibleOrderFeedbackEntries2()) {
         if (!snapshot.elements.has(el)) return text;
         if (snapshot.textByElement.get(el) !== text) return text;
         if (snapshot.htmlByElement.get(el) !== el.innerHTML) return text;
@@ -21000,7 +21046,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         throw new Error("Unsupported or unverified account identity");
       }
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload.data.userId));
-      return "userscripts:automatic-usdt-rebalance:v1:" + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      return AUTOMATIC_USDT_REBALANCE_EPISODE_PREFIX + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
     }
     function readUsdtRebalanceEpisode(key) {
       return readAutomaticRebalanceEpisode(localStorage.getItem(key));
@@ -21048,8 +21094,16 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
         if (next.status !== previous.status) writeUsdtRebalanceEpisode(key, next.status);
       }, null, false);
     }
+    function hasRearmableAutomaticUsdtRebalanceEpisode() {
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (key.startsWith(AUTOMATIC_USDT_REBALANCE_EPISODE_PREFIX) && !NON_CONSUMED_AUTOMATIC_USDT_REBALANCE_EPISODES.has(localStorage.getItem(key))) return true;
+      }
+      return false;
+    }
     function queueAutomaticUsdtRebalanceActivityObservation() {
       if (automaticUsdtRebalanceObservationTask || !cachedBncHeaders) return;
+      if (!hasRearmableAutomaticUsdtRebalanceEpisode()) return;
       automaticUsdtRebalanceObservationTask = observeAutomaticUsdtRebalanceActivity().catch((error) => {
         log("Automatic USDT activity observation failed", error.name, error.message.slice(0, 240));
       }).finally(() => {
