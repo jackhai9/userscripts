@@ -30,11 +30,14 @@ export function byteLength(value) {
 }
 
 /**
- * Exact UTF-8 size of `JSON.stringify(text)` without building the escaped text.
- * Well-formed stringify uses two-byte escapes for quote, backslash and \b\t\n\f\r,
- * six-byte \u escapes for other controls and lone surrogates, and raw UTF-8 otherwise.
+ * Exact UTF-8 size of `JSON.stringify(text)`. Short strings, which dominate chart
+ * state, are counted without building the escaped text; at 256 code units native
+ * encoding becomes faster for ASCII and still defines the exact same size. Well-formed
+ * stringify uses two-byte escapes for quote, backslash and \b\t\n\f\r, six-byte \u
+ * escapes for other controls and lone surrogates, and raw UTF-8 otherwise.
  */
 function jsonStringByteLength(text) {
+  if (text.length >= 256) return byteLength(text);
   let bytes = 2;
   for (let index = 0; index < text.length; index += 1) {
     const code = text.charCodeAt(index);
@@ -73,8 +76,8 @@ function primitiveJsonByteLength(value) {
  * Snapshot only JSON trees without invoking getters or changing structured-clone
  * identity. A global seen set rejects aliases as well as cycles. The shared byte
  * budget bounds traversal before cloning the rest of an oversized snapshot and
- * consumes the exact UTF-8 JSON size. Copies use data-property creation, so a
- * `__proto__` key stays an own value and inherited setters never run.
+ * consumes the exact UTF-8 JSON size. Objects are built with data-property
+ * creation, so a `__proto__` key stays an own value.
  */
 export function snapshotJson(value, budget = { remaining: Infinity }, seen = new Set()) {
   function consume(bytes) {
@@ -96,13 +99,19 @@ export function snapshotJson(value, budget = { remaining: Infinity }, seen = new
   if (array) assert(keys.length === value.length && keys.every((key, index) => key === String(index)), 'Chart JSON arrays must be dense');
   seen.add(value);
   consume(2 + Math.max(0, keys.length - 1));
-  const copies = keys.map(key => {
+  // A plain loop keeps one stack frame per nesting level, as the native depth limit expects.
+  const copies = [];
+  for (const key of keys) {
     const descriptor = descriptors[key];
     assert(descriptor.enumerable && Object.hasOwn(descriptor, 'value'), 'Chart JSON requires enumerable data properties');
-    if (!array) consume(jsonStringByteLength(key) + 1);
-    return snapshotJson(descriptor.value, budget, seen);
-  });
-  return array ? copies : Object.fromEntries(keys.map((key, index) => [key, copies[index]]));
+    if (array) {
+      copies.push(snapshotJson(descriptor.value, budget, seen));
+      continue;
+    }
+    consume(jsonStringByteLength(key) + 1);
+    copies.push([key, snapshotJson(descriptor.value, budget, seen)]);
+  }
+  return array ? copies : Object.fromEntries(copies);
 }
 
 /** Signed zero and property insertion order remain observable through native reads. */

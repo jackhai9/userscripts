@@ -59,10 +59,11 @@ test('user mirrors a large chart snapshot without encoding each value separately
 });
 
 test('user copies a snapshot within a budget equal to its exact UTF-8 JSON size', () => {
-  // Given text with escapes, control characters, non-ASCII, emoji and lone surrogates
+  // Given short and long text with escapes, control characters, non-ASCII, emoji and lone surrogates
   const value = {
     plain: 'line\nfeed\t"quoted" back\\slash \b\f\r \u0000\u001f\u007f é 中文 😀 \ud83d \ude00',
     numbers: [0, -1.5, 1e21, 1e-7, 123456789.125],
+    long: `${'chart "content"\n'.repeat(40)}${'趋势'.repeat(20)}😀\ud800`,
     flags: [true, false, null],
     '键 "k"': { nested: [' ', ' '] },
   };

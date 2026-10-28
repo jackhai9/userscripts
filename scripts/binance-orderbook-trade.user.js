@@ -7535,6 +7535,7 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     return encoder.encode(JSON.stringify(value)).byteLength;
   }
   function jsonStringByteLength(text) {
+    if (text.length >= 256) return byteLength(text);
     let bytes = 2;
     for (let index = 0; index < text.length; index += 1) {
       const code = text.charCodeAt(index);
@@ -7586,13 +7587,18 @@ Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com>
     if (array) assert(keys.length === value.length && keys.every((key, index) => key === String(index)), "Chart JSON arrays must be dense");
     seen.add(value);
     consume(2 + Math.max(0, keys.length - 1));
-    const copies = keys.map((key) => {
+    const copies = [];
+    for (const key of keys) {
       const descriptor = descriptors[key];
       assert(descriptor.enumerable && Object.hasOwn(descriptor, "value"), "Chart JSON requires enumerable data properties");
-      if (!array) consume(jsonStringByteLength(key) + 1);
-      return snapshotJson(descriptor.value, budget, seen);
-    });
-    return array ? copies : Object.fromEntries(keys.map((key, index) => [key, copies[index]]));
+      if (array) {
+        copies.push(snapshotJson(descriptor.value, budget, seen));
+        continue;
+      }
+      consume(jsonStringByteLength(key) + 1);
+      copies.push([key, snapshotJson(descriptor.value, budget, seen)]);
+    }
+    return array ? copies : Object.fromEntries(copies);
   }
   function equalJson(first, second) {
     if (Object.is(first, second)) return true;

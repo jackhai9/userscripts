@@ -411,7 +411,10 @@ observe an ongoing script trade while remaining excluded by transfers. It starts
 only while a stored record could change: a `consumed` or completed record, or any
 unrecognized value, which keeps the validating path that reports it. Stored
 `active`, `in_flight` and `blocked` records alone never request account identity
-on account-counter changes during trading. The
+on account-counter changes during trading. Skipping those no-op observations leaves
+persisted episodes and transfer decisions unchanged; it only removes the
+eligibility-window restart and shared-lock hold that each finished observation
+used to cause incidentally. The
 `in_flight` marker is persisted before each transfer POST. It and `blocked` remain
 terminal across reloads and later activity; neither a timer nor another tab
 clears an uncertain outcome. There is no automatic retry or rollback. Missing
