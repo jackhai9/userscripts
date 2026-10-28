@@ -32,8 +32,8 @@ try {
     await expect(frame.locator('#jh-binance-cmc-data-panel-footer a')).toHaveText('CMC data-api');
     if (scenario.locale !== 'zh-CN') await page.locator('#locale').selectOption(scenario.locale);
     if (scenario.theme !== 'light') await page.locator('#theme').selectOption(scenario.theme);
-    await expect(frame.locator('#jh-binance-trading-data-panel .td-title')).toHaveText(scenario.locale === 'zh-CN' ? '交易数据' : 'Trading data');
-    await expect(frame.locator('#jh-binance-cmc-data-panel .cmc-title')).toHaveText(scenario.locale === 'zh-CN' ? 'CMC 数据' : 'CMC data');
+    await expect(frame.locator('#jh-binance-trading-data-panel .td-title')).toHaveText(scenario.locale === 'zh-CN' ? '交易数据' : 'Trading');
+    await expect(frame.locator('#jh-binance-cmc-data-panel .cmc-title')).toHaveText(scenario.locale === 'zh-CN' ? 'CMC 数据' : 'CMC');
     await expect(frame.locator('#jh-binance-trading-data-panel')).toHaveCSS('background-color', scenario.theme === 'dark' ? 'rgb(30, 35, 41)' : 'rgb(255, 255, 255)');
     await expect(frame.locator('[data-role="current-funding"]')).toHaveText('0.00378%');
     await expect(frame.locator('[data-metric="funding"] .td-last-value')).toHaveText('0.000029%');

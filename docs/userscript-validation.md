@@ -104,10 +104,12 @@ primary button already released is canceled without saving.
 
 For every resize, project the saved preference into the current viewport while
 keeping the header reachable. Enlarging the viewport restores the saved
-coordinates. Trading is 320 px wide and CMC is 336 px wide, limited by the viewport. Without a
+coordinates. Trading is 236 px wide and CMC is 280 px wide, limited by the viewport, so
+both fit side by side in the roughly 527-by-563 px area that Binance's futures page
+leaves free in its bottom-right corner. Without a
 saved preference, one panel uses the
 right edge with a 16 px margin and a 60 px top offset. When both are present,
-viewports at least 704 px wide place them side by side, with CMC to the left of
+viewports at least 564 px wide place them side by side, with CMC to the left of
 trading and a 16 px gap. Smaller viewports split the available height into two
 scrollable panels with 8 px outer margins and an 8 px vertical gap. These defaults
 are never persisted. Saved positions remain authoritative, even when a user's
@@ -292,8 +294,9 @@ Refresh keeps its explicit superseding-request behavior. Browser throttling or
 freezing can delay the schedule; missed intervals are not replayed.
 
 The CMC table has metric, value, and interpretation columns, with expandable
-definitions. A short name and separate qualifier identify each ratio's numerator,
-denominator, period, and unit. The display uses CMC-reported turnover and liquidity
+definitions. Each row shows a short name; the ratio's numerator, denominator,
+period, and threshold rule are in its tooltip and expanded basis. Only the price
+row shows the 24-hour change. The display uses CMC-reported turnover and liquidity
 ratios rather than recomputing them from potentially asynchronous fields. FDV's
 comparison is the snapshot's FDV divided by circulating market cap; supply share
 uses circulating divided by total supply. Missing or non-positive comparison
@@ -315,11 +318,17 @@ both default panels, all metric rows, and both footers to fit a 1366-by-768 desk
 without scrolling in Chinese and English. Narrow screens retain separate scroll
 areas and no horizontal overflow.
 
-Interpretations describe what the value supports. The volume ratio's 50% threshold
-is explicitly a descriptive convention, not a statistical anomaly or trading
-signal. Valuation comparisons need peers, volume changes need history, DEX
-liquidity is not Binance order-book depth, and profile disclosure scores do not
-establish project safety. The refresh schedule, mapping rules, source timestamps,
+Each interpretation states the comparison already calculated from the snapshot and
+takes a bullish, bearish, or neutral stance, shown by the row tone. The comparisons
+use CMC fields in the same detail response: the 30-day high/low range with the
+7-day change for price, rank and dominance for market cap, FDV and unlocked cap
+against market cap, 24-hour volume against the 7-day daily average, turnover, DEX
+liquidity, circulating/total/max supply, the largest holder-list share, and the
+profile score. Each threshold is stated in the row's expanded basis. A missing
+comparison input leaves the reading as `--` instead of guessing. The header shows
+the overall stance only when bullish or bearish readings lead by at least three,
+otherwise neutral, with the counts in its tooltip. The holder share does not
+exclude exchange or burn addresses. The refresh schedule, mapping rules, source timestamps,
 and API/page-snapshot provenance remain separate from presentation.
 
 For a browser-openable offline implementation preview, run
@@ -358,6 +367,16 @@ interpretation column, and timestamp-only footers in both languages, including
 three-digit daily changes.
 Small prices remain inside their value cells, and resized or reopened panels
 retain the original saved position preferences.
+
+### Bottom-right fit and CMC stance readings (2026-10-28)
+
+On the logged-in 1663-by-1750 Binance futures page, the free bottom-right area
+starts near x=1136 and y=1187. The previous 320 px and 336 px panels could not sit
+side by side there. Trading-data `1.2.6` (236 px) and CMC-data `0.3.0` (280 px) fit
+next to each other in both languages without overlap or body scrolling in the
+generated-panel browser scenario. CMC readings now state calculated comparisons
+with a stance, verified against the 2026-10-26 ARB data-api snapshot. Live
+Tampermonkey installation was not part of this validation.
 
 The four offline preview combinations were rendered and checked without external
 requests, panel overlap, or horizontal overflow. Desktop body text remains 13 px
@@ -510,8 +529,9 @@ claim live behavior from source inspection alone.
   must not start extra work.
 - Navigate between matching and non-matching Binance routes and verify the
   route watcher does not leave a business loop running off-route.
-- Expand interpretations for FDV, volume/cap, liquidity/cap, supply, holders, and
-  profile score; their stated bases must agree with the displayed data.
+- Expand interpretations for price, FDV, volume, turnover, DEX liquidity, supply,
+  holders, and profile score; each stance must follow the threshold its basis
+  states, and the header stance must match the bullish/bearish counts.
 - Check partial/missing fields and very small token prices in both languages;
   unavailable values and genuine zero must remain distinguishable.
 

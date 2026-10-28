@@ -61,9 +61,9 @@ function styles() {
     ${scope} button:focus-visible { outline: 2px solid var(--td-focus); outline-offset: 2px; }
     ${scope} #${PANEL_ID}-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
     ${scope} table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-    ${scope} .td-name-col { width: 40%; }
-    ${scope} .td-trend-col { width: 30%; }
-    ${scope} .td-value-col { width: 30%; }
+    ${scope} .td-name-col { width: 37%; }
+    ${scope} .td-trend-col { width: 28%; }
+    ${scope} .td-value-col { width: 35%; }
     ${scope} thead { position: sticky; top: 0; z-index: 1; background: var(--td-head); }
     ${scope} thead th { color: var(--td-muted); font-size: 11px; font-weight: 500; padding: 4px; text-align: left; }
     ${scope} thead th:nth-child(2) { text-align: center; }
@@ -72,7 +72,7 @@ function styles() {
     ${scope} .td-name { color: var(--td-muted); text-align: left; font-weight: 400; overflow-wrap: anywhere; }
     ${scope} .td-trend { padding: 4px 2px; text-align: center; }
     ${scope} .td-value { text-align: right; font-variant-numeric: tabular-nums; }
-    ${scope} .td-number { font-weight: 500; overflow-wrap: anywhere; }
+    ${scope} .td-number { font-weight: 500; white-space: nowrap; }
     ${scope} .jh-td-flash { animation: jh-td-value-change 1s ease-out; }
     @keyframes jh-td-value-change { from { background: color-mix(in srgb, var(--td-chart) 25%, transparent); } to { background: transparent; } }
     ${scope} small { display: block; margin-top: 1px; font-size: 11px; font-weight: 400; color: var(--td-muted); }

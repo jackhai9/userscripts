@@ -3,7 +3,7 @@
 // @namespace    binance.coinmarketcap.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.2.5
+// @version      0.3.0
 // @author       jackhai9
 // @description  Show localized CoinMarketCap valuation, supply, and metric interpretations on Binance futures pages
 // @match        https://www.binance.com/*/futures/*
@@ -27,7 +27,7 @@ import {
   ensureSpaRouteChangePatched,
   installSpaRouteChangeListener,
 } from '../shared/spa-route-change.js';
-import { buildCmcMetricRows, numberOrNull } from './metrics.js';
+import { buildCmcMetricRows, numberOrNull, summarizeCmcStance } from './metrics.js';
 import { CMC_COPY, formatLocalizedText, resolveUiLocaleFromPathname } from './ui-copy.js';
 import { cmcPanelStyles } from './panel-styles.js';
 import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, hasVisibleDataPanelPeer } from '../shared/data-panel-layout.js';
@@ -365,6 +365,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     }
     assertRefreshActive(signal);
     if (holderCount !== null) detail = { ...detail, cmcHolderCount: holderCount };
+    const locale = resolveUiLocaleFromPathname(location.pathname);
+    const rows = buildCmcMetricRows(detail, locale);
     return {
       url,
       name: detail.name || '',
@@ -372,7 +374,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
       rank: detail.statistics && detail.statistics.rank,
       lastUpdated: detail.latestUpdateTime || '',
       source,
-      rows: buildCmcMetricRows(detail, resolveUiLocaleFromPathname(location.pathname)),
+      rows,
+      stance: summarizeCmcStance(rows, locale),
     };
   }
 
@@ -394,6 +397,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
           '<span aria-hidden="true">&#9776;</span>',
           '<span class="cmc-title" data-copy="title"></span>',
           '<span id="', PANEL_ID, '-symbol"></span>',
+          '<span id="', PANEL_ID, '-stance" hidden></span>',
         '</div>',
         '<div class="cmc-controls">',
           '<button type="button" id="', PANEL_ID, '-refresh">&#8635;</button>',
@@ -446,6 +450,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     const rowsEl = panel.querySelector('#' + PANEL_ID + '-rows');
     const footerEl = panel.querySelector('#' + PANEL_ID + '-footer');
     if (symbolEl) symbolEl.textContent = symbol || '';
+    renderStance(panel, null);
     if (rowsEl) rowsEl.innerHTML = '<tr><td colspan="3"><div class="cmc-status" role="status">' + escapeHtml(uiText(CMC_COPY.loading)) + '</div></td></tr>';
     if (footerEl) footerEl.textContent = '';
   }
@@ -456,6 +461,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     const rowsEl = panel.querySelector('#' + PANEL_ID + '-rows');
     const footerEl = panel.querySelector('#' + PANEL_ID + '-footer');
     if (symbolEl) symbolEl.textContent = symbol || '';
+    renderStance(panel, null);
     if (rowsEl) {
       lastRowsHtml = [
         '<tr><td colspan="3"><div class="cmc-status" role="status">',
@@ -468,6 +474,15 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     if (footerEl) footerEl.textContent = uiText(CMC_COPY.source);
   }
 
+  function renderStance(panel, stance) {
+    const stanceEl = panel.querySelector('#' + PANEL_ID + '-stance');
+    stanceEl.hidden = stance === null;
+    if (stance === null) return;
+    stanceEl.dataset.tone = stance.tone;
+    stanceEl.textContent = stance.label;
+    stanceEl.title = stance.detail;
+  }
+
   function renderData(symbol, data) {
     const panel = ensurePanel();
     const symbolEl = panel.querySelector('#' + PANEL_ID + '-symbol');
@@ -477,6 +492,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
       const rank = numberOrNull(data.rank) !== null ? ' #' + data.rank : '';
       symbolEl.textContent = (data.symbol || symbol || '') + rank;
     }
+    renderStance(panel, data.stance);
     if (rowsEl) {
       lastRowsHtml = data.rows.map(function (row) {
         const changeTone = row.change && row.change.startsWith('-') ? 'negative'
@@ -488,7 +504,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
         const expanded = expandedMetricId === row.id;
         return [
           '<tr data-metric="', row.id, '" data-tone="', row.tone, '" class="', row.highlight ? 'cmc-key ' : '', row.group ? 'cmc-group' : '', '">',
-            '<th scope="row" class="cmc-name">', escapeHtml(row.label), row.qualifier ? '<small>' + escapeHtml(row.qualifier) + '</small>' : '', '</th>',
+            '<th scope="row" class="cmc-name">', escapeHtml(row.label), '</th>',
             '<td class="cmc-value"><span class="cmc-number" data-role="metric-value">', escapeHtml(row.value), '</span>',
               row.unit ? '<small class="cmc-unit">' + escapeHtml(row.unit) + '</small>' : '', change,
             '</td>',

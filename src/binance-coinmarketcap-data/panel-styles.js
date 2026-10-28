@@ -47,6 +47,9 @@ export function cmcPanelStyles(panelId) {
     ${scope} .cmc-heading { display: flex; align-items: center; gap: 7px; min-width: 0; }
     ${scope} .cmc-title { font-size: 14px; font-weight: 600; white-space: nowrap; }
     ${scope} #${panelId}-symbol { color: var(--cmc-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    ${scope} #${panelId}-stance { flex: 0 0 auto; padding: 0 6px; border: 1px solid currentColor; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--cmc-muted); }
+    ${scope} #${panelId}-stance[data-tone="positive"] { color: var(--cmc-buy); }
+    ${scope} #${panelId}-stance[data-tone="negative"] { color: var(--cmc-sell); }
     ${scope} .cmc-controls { display: flex; gap: 2px; flex: 0 0 auto; }
     ${scope} button { font: inherit; cursor: pointer; color: inherit; background: transparent; border: 0; }
     ${scope} .cmc-controls button { min-width: 24px; min-height: 24px; font-size: 16px; padding: 2px 4px; color: var(--cmc-muted); }
@@ -54,9 +57,9 @@ export function cmcPanelStyles(panelId) {
     ${scope} #${panelId}-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
     /* Reserve space for complete prices and changes before wrapping the surrounding prose. */
     ${scope} table { width: 100%; table-layout: auto; border-collapse: collapse; }
-    ${scope} .cmc-name-col { width: 33%; }
-    ${scope} .cmc-value-col { width: 28%; }
-    ${scope} .cmc-reading-col { width: 39%; }
+    ${scope} .cmc-name-col { width: 24%; }
+    ${scope} .cmc-value-col { width: 33%; }
+    ${scope} .cmc-reading-col { width: 43%; }
     ${scope} thead { position: sticky; top: 0; z-index: 1; background: var(--cmc-head); }
     ${scope} thead th { color: var(--cmc-muted); font-size: 11px; font-weight: 500; padding: 4px 3px; text-align: left; }
     ${scope} thead th:nth-child(2) { text-align: right; }
@@ -74,9 +77,8 @@ export function cmcPanelStyles(panelId) {
     ${scope} .cmc-key { background: color-mix(in srgb, var(--color-PrimaryYellow, #f0b90b) 7%, var(--cmc-bg)); }
     ${scope} .cmc-group th, ${scope} .cmc-group td { border-top-width: 2px; }
     ${scope} .cmc-reading-button { display: flex; align-items: center; justify-content: flex-end; gap: 3px; width: 100%; min-height: 24px; padding: 0; line-height: inherit; text-align: right; }
-    ${scope} .cmc-reading-text { font-weight: 500; }
+    ${scope} .cmc-reading-text { font-size: 11px; font-weight: 500; line-height: 1.3; }
     ${scope} [data-tone="missing"] .cmc-reading-text { color: var(--cmc-muted); }
-    ${scope} [data-tone="active"] .cmc-reading-text { color: var(--cmc-accent); }
     ${scope} .cmc-info { color: var(--cmc-muted); flex: 0 0 auto; font-size: 11px; }
     ${scope} .cmc-explanation td { padding: 6px 8px; color: var(--cmc-muted); background: var(--cmc-head); font-size: 11px; line-height: 1.5; user-select: text; }
     ${scope} .cmc-explanation strong { color: var(--cmc-text); margin-right: 8px; font-weight: 600; }
