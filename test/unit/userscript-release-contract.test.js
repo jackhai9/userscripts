@@ -24,7 +24,7 @@ test('user installs Strategy29 with its independent observation-only identity', 
   // Then the installer retains its pinned identity and declared observation boundary.
   assert.equal(contract.name, '【自写】Binance Strategy 29 布林带信号');
   assert.equal(contract.namespace, 'binance.strategy29.bollinger');
-  assert.equal(contract.version, '0.5.15');
+  assert.equal(contract.version, '0.5.16');
   assert.equal(contract.runAt, 'document-start');
   assert.equal(contract.updateURL, 'https://raw.githubusercontent.com/jackhai9/userscripts/main/scripts/binance-strategy29-bollinger.user.js');
   assert.equal(contract.downloadURL, contract.updateURL);

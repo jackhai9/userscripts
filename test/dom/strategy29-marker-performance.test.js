@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createBollingerMonitor } from '../../src/binance-strategy29-bollinger/monitor.js';
+import { detectBollingerSignals } from '../../src/binance-strategy29-bollinger/core/bearish-bollinger-pattern.js';
 import { createChartMarkerOverlay } from '../../src/shared/chart-marker-overlay.js';
 import { findBearishBollingerChartTarget } from '../../src/binance-strategy29-bollinger/dom/tradingview-bearish-alerts.js';
 import { createStrategy29ChartHost } from '../helpers/strategy29-runtime-boundary-host.js';
@@ -439,4 +440,21 @@ test('user retains text and removal updates through reconciliation and rebuilds 
   assert.notEqual(host.overlay.pane.querySelector('svg'), originalSvg);
   assert.deepEqual(host.overlay.markers().map(node => node.dataset.markerId), ['warning', 'label']);
   assert.equal(host.overlay.markers()[1].textContent, 'Original');
+});
+
+test('user detects a newly closed bar on long history by analyzing only its bounded tail', async t => {
+  // Given a monitor that has analyzed three thousand closed one-minute bars
+  const bars = history(3001);
+  const fixture = monitorFixture(t, bars.slice(0, 3000));
+  await fixture.sample();
+  assert.equal(fixture.monitor.diagnostics.lastAnalyzedBarCount, 3000);
+
+  // When the next bar closes on the chart
+  fixture.setBars(bars);
+  await fixture.sample();
+
+  // Then only the affected tail is analyzed and the cached signals equal full detection
+  assert.equal(fixture.monitor.diagnostics.lastAnalyzedBarCount, 207);
+  assert.equal(fixture.monitor.diagnostics.cachedSignalCount, detectBollingerSignals(bars).length);
+  assert.deepEqual(fixture.errors, []);
 });

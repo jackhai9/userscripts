@@ -249,6 +249,22 @@ The exposed chart API can exist before its internal model during initial loading
 
 Indicator calculation traverses each fixed window directly without allocating sliced/mapped close arrays for every bar. Summation order and detector thresholds remain unchanged.
 
+Each chart context keeps an incremental detector
+(`core/incremental-bollinger-signals.js`) that returns exactly what full detection
+would. It compares every closed bar against its last accepted window to find the
+first changed bar `k`. Signals before `k` are unchanged, because each setup scans
+forward and a shared reversal belongs to the newest setup before it. Signals at
+or after `k` can only come from setups starting at `k - 80` or later (20
+post-cross bars plus 60 reversal bars), so the pinned detector reruns on bars from
+`k - 147` with the 59-bar moving-average lookback before them. A newly closed bar
+on a 1S chart therefore analyzes 207 bars instead of the whole loaded history.
+Revisions of older bars, prepended history and a first window rerun from the
+point they change. The detector source and its hash pin stay unchanged; the
+incremental layer calls only its exported entry points, so validation errors
+inside the window name window-relative indexes.
+`diagnostics.lastAnalyzedBarCount` reports the bars analyzed by the last
+detection.
+
 When the full export comparison finds unchanged signals, the monitor reconciles
 the retained overlay instead of normalizing and projecting the same markers
 again. This reuse also requires the overlay to match the committed detector

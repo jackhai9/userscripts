@@ -84,6 +84,18 @@ function createMonitorHarness(fixture, dependencyOverrides = {}) {
     clearInterval: () => {},
     ...dependencyOverrides,
   };
+  // Lifecycle scenarios substitute the detector boundary; each context's detector delegates to it.
+  dependencies.createIncrementalBollingerSignalDetector = () => {
+    let lastAnalyzedBarCount = null;
+    return {
+      detect(bars) {
+        const signals = dependencies.detectBollingerSignals(bars);
+        lastAnalyzedBarCount = bars.length;
+        return signals;
+      },
+      get lastAnalyzedBarCount() { return lastAnalyzedBarCount; },
+    };
+  };
   const factory = new Function(...Object.keys(dependencies), `
     let bearishBollingerAlertTask = null;
     let bearishBollingerAlertContext = null;
@@ -669,7 +681,7 @@ test('user observes that on-demand diagnostics distinguish active, awaiting-data
   // Then user observes that on-demand diagnostics distinguish active, awaiting-data and torn-down states without drawing calls
   assert.deepEqual(harness.monitor.diagnostics, {
     taskPending: false, contextPresent: true, failed: false, lastLocalFailure: null,
-    cleanupPending: false, cachedSignalCount: 1, layerSize: 1, retiredCount: 0,
+    cleanupPending: false, cachedSignalCount: 1, layerSize: 1, lastAnalyzedBarCount: 1, retiredCount: 0,
     markerOverlayStats: { renderedFrames: 1, visibleMarkers: 1, signalCount: 1, attached: true, pendingFrame: false, subscriptions: 9 },
     sessionPresent: true, sessionRevision: 0, contextIntervalRevision: 0,
     sessionMatchesContext: true, sessionCurrent: true,
