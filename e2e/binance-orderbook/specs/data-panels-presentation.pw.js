@@ -114,9 +114,9 @@ test('user switches both real panels between Chinese and English while retaining
   await page.evaluate(() => history.pushState({}, '', '/en/futures/BTCUSDT'));
 
   // Then both panels change their labels without changing the observed numerical values
-  await expect(trading.locator('.td-title')).toHaveText('Trading data');
-  await expect(cmc.locator('.cmc-title')).toHaveText('CMC data');
-  await expect(trading.locator('[data-metric="top-accounts"] .td-name')).toHaveText('Top Trader Long/Short Ratio (Accounts)');
+  await expect(trading.locator('.td-title')).toHaveText('Trading');
+  await expect(cmc.locator('.cmc-title')).toHaveText('CMC');
+  await expect(trading.locator('[data-metric="top-accounts"] .td-name')).toHaveText('Top L/S (Accounts)');
   await expect(trading.locator('[data-metric="top-accounts"] .td-number')).toHaveText('1.23');
   await expect(trading.locator('[data-metric="funding"] .td-last-value')).toHaveText('0.000029%');
   await expect(trading.locator('[data-role="funding-period"]')).toHaveText('Current · 4h');
@@ -238,6 +238,37 @@ for (const locale of ['zh-CN', 'en']) {
     });
   }
 
+  test(`user fits both complete ${locale} panels side by side into the free bottom-right corner of the Binance page`, async ({ page, context }) => {
+    // Given the measured 1663x1750 Binance page leaves about 527x563 free from x=1136 and y=1187
+    const detail = cmcDetail({ holders: { holderCount: 67008, holderList: [{ share: 34.19 }] }, profileCompletionScore: { percentage: 83.2 } });
+    Object.assign(detail.statistics, {
+      price: 0.006746, priceChangePercentage24h: -3.31, priceChangePercentage7d: -13.97, high30d: 0.0099, low30d: 0.0063,
+      marketCap: 69754293, fullyDilutedMarketCap: 337300000, ucm: 77537141, volume24h: 50456522, volume7d: 248262765,
+      turnover: 0.7233, liquidityMcapRatio: 0.017, totalSupply: 50e9, circulatingSupply: 10.34e9, maxSupply: 50e9,
+    });
+    const fixture = await createDataPanelsFixture(context, { dataset: tradingDataset(DATA_PANEL_NOW, { ratio: 1.234567, funding: 0.00063305 }), detail });
+    const corner = { trading: { left: 1663 - DATA_PANELS[0].width, top: 1187 }, cmc: { left: 1663 - DATA_PANELS[0].width - DATA_PANELS[1].width - 4, top: 1187 } };
+
+    // When the user places both generated panels next to each other in that corner
+    await fixture.open(page, { locale, viewport: { width: 1663, height: 1750 }, positions: corner });
+    await expect(page.locator('#jh-binance-cmc-data-panel-stance')).toHaveText(locale === 'zh-CN' ? '偏空' : 'Bearish');
+
+    // Then both panels fit inside the corner without overlapping and neither body needs scrolling
+    const boxes = Object.fromEntries(await Promise.all(DATA_PANELS.map(async ({ id, name }) => [name, await page.locator(`#${id}`).boundingBox()])));
+    expect(boxes.cmc.x).toBeGreaterThanOrEqual(1136);
+    expect(boxes.cmc.x + boxes.cmc.width).toBeLessThanOrEqual(boxes.trading.x);
+    for (const { id, name } of DATA_PANELS) {
+      expect(boxes[name].y + boxes[name].height).toBeLessThanOrEqual(1750);
+      const body = await page.locator(`#${id}-body`).evaluate(element => ({
+        height: element.clientHeight, scrollHeight: element.scrollHeight, width: element.clientWidth, scrollWidth: element.scrollWidth,
+      }));
+      expect(body.scrollHeight).toBeLessThanOrEqual(body.height);
+      expect(body.scrollWidth).toBeLessThanOrEqual(body.width);
+      await expect(page.locator(`#${id}-footer`)).toBeInViewport({ ratio: 1 });
+    }
+    expect(fixture.errors).toEqual([]);
+  });
+
   test(`user reads every ${locale} data row on a laptop without scrolling and can open the signal rules`, async ({ page, context }) => {
     // Given both panels have complete data with a three-digit daily change and no saved position
     const detail = cmcDetail();
@@ -256,7 +287,7 @@ for (const locale of ['zh-CN', 'en']) {
     await expect(trading.locator('tr[data-metric]')).toHaveCount(8);
     await expect(page.locator('#jh-binance-cmc-data-panel tr[data-metric]')).toHaveCount(12);
     for (const { id, name } of DATA_PANELS) {
-      expect(await page.locator(`#${id}`).boundingBox()).toMatchObject({ width: name === 'trading' ? 320 : 336 });
+      expect(await page.locator(`#${id}`).boundingBox()).toMatchObject({ width: name === 'trading' ? 236 : 280 });
       const body = page.locator(`#${id}-body`);
       const dimensions = await body.evaluate(element => ({
         height: element.clientHeight, scrollHeight: element.scrollHeight,
@@ -345,16 +376,16 @@ for (const installation of [['trading', 'cmc'], ['cmc', 'trading']]) {
     await expect(cmc.locator('#jh-binance-cmc-data-panel-footer a')).toHaveText('CMC data-api');
 
     // Then each desktop panel has its own column regardless of installation order
-    expect(await trading.boundingBox()).toMatchObject({ x: 1264, y: 60, width: 320 });
-    expect(await cmc.boundingBox()).toMatchObject({ x: 912, y: 60, width: 336 });
+    expect(await trading.boundingBox()).toMatchObject({ x: 1348, y: 60, width: 236 });
+    expect(await cmc.boundingBox()).toMatchObject({ x: 1052, y: 60, width: 280 });
 
     // When the viewport just fits the two different panel widths and their outer margins
-    await page.setViewportSize({ width: 704, height: 760 });
+    await page.setViewportSize({ width: 564, height: 760 });
     await completedLayoutFrames(page);
 
     // Then the panels retain separate columns with a sixteen-pixel gap
-    expect(await trading.boundingBox()).toMatchObject({ x: 368, y: 60, width: 320 });
-    expect(await cmc.boundingBox()).toMatchObject({ x: 16, y: 60, width: 336 });
+    expect(await trading.boundingBox()).toMatchObject({ x: 312, y: 60, width: 236 });
+    expect(await cmc.boundingBox()).toMatchObject({ x: 16, y: 60, width: 280 });
 
     // When the viewport becomes too narrow for adjacent columns
     await page.setViewportSize({ width: 320, height: 680 });
@@ -447,7 +478,7 @@ test('user releases a stationary CMC header after the trading panel mounts witho
 
   // When trading mounts and automatically moves the CMC panel into the adjacent column
   await installDataPanels(page, { panels: ['trading'] });
-  await expect.poll(async () => (await page.locator('#jh-binance-cmc-data-panel').boundingBox()).x).toBe(912);
+  await expect.poll(async () => (await page.locator('#jh-binance-cmc-data-panel').boundingBox()).x).toBe(1052);
   await page.mouse.up();
   await completedLayoutFrames(page);
 
@@ -467,7 +498,7 @@ test('user releases a stationary CMC header after its peer closes without saving
   // When keyboard activation closes trading while the mouse remains pressed on CMC
   await page.locator('#jh-binance-trading-data-panel-close').focus();
   await page.keyboard.press('Enter');
-  await expect.poll(async () => (await page.locator('#jh-binance-cmc-data-panel').boundingBox()).x).toBe(1248);
+  await expect.poll(async () => (await page.locator('#jh-binance-cmc-data-panel').boundingBox()).x).toBe(1304);
   await page.mouse.up();
   await completedLayoutFrames(page);
 
@@ -484,7 +515,7 @@ test('user keeps the one saved panel coordinate when the other panel uses an aut
 
   // When the desktop shrinks and then returns to its original size
   await page.setViewportSize({ width: 1000, height: 760 });
-  await expect.poll(async () => (await page.locator('#jh-binance-cmc-data-panel').boundingBox()).x).toBe(664);
+  await expect.poll(async () => (await page.locator('#jh-binance-cmc-data-panel').boundingBox()).x).toBe(720);
   await page.setViewportSize({ width: 1600, height: 1200 });
   await completedLayoutFrames(page);
 

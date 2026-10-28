@@ -4,7 +4,7 @@ import {
 } from '../shared/ui-locale.js';
 
 const COPY = Object.freeze({
-  title: localizedText('交易数据', 'Trading data'),
+  title: localizedText('交易数据', 'Trading'),
   metric: localizedText('指标', 'Metric'),
   history: localizedText('历史趋势', 'History'),
   value: localizedText('数值', 'Value'),
@@ -58,14 +58,14 @@ const METRICS = Object.freeze({
     ),
   },
   'top-accounts': {
-    name: localizedText('大户账户数多空比', 'Top Trader Long/Short Ratio (Accounts)'),
+    name: localizedText('大户账户数多空比', 'Top L/S (Accounts)'),
     detail: localizedText(
       '大户净多头账户数 ÷ 净空头账户数。大户按保证金余额前 20% 定义。',
       'Top-trader net-long accounts divided by net-short accounts. Top traders are the top 20% by margin balance.',
     ),
   },
   'top-positions': {
-    name: localizedText('大户持仓量多空比', 'Top Trader Long/Short Ratio (Positions)'),
+    name: localizedText('大户持仓量多空比', 'Top L/S (Positions)'),
     detail: localizedText(
       '大户多头持仓量 ÷ 空头持仓量，按仓位规模统计。',
       'Top-trader long position quantity divided by short position quantity, weighted by position size.',
@@ -79,7 +79,7 @@ const METRICS = Object.freeze({
     ),
   },
   taker: {
-    name: localizedText('合约主动买卖量', 'Taker Buy/Sell Volume'),
+    name: localizedText('合约主动买卖量', 'Taker Buy/Sell'),
     detail: localizedText(
       '柱图分别显示主动买入量与主动卖出量；右侧数值是买入量 ÷ 卖出量。',
       'Bars show taker buy and sell volumes separately. The value at right is buy volume divided by sell volume.',
@@ -97,7 +97,7 @@ const METRICS = Object.freeze({
     detail: COPY.fundingNote,
   },
   'oi-supply': {
-    name: localizedText('未平仓量与市值比率', 'Open Interest to Market Cap Ratio'),
+    name: localizedText('未平仓量与市值比率', 'OI / Market Cap'),
     detail: localizedText(
       '未平仓币数 ÷ CMC 流通供应量，分子与分母按同一币种计量。这一项不参与综合信号投票。',
       'Open-interest token quantity divided by CMC circulating supply, measured in the same asset. This row does not vote in the composite signal.',

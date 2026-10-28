@@ -64,38 +64,50 @@ test('user sees unavailable CMC values instead of zero when the provider returns
   assert.equal(host.element('symbol').textContent, 'BTC');
 });
 
-test('user can read calculated CMC interpretations and expand their basis in a three-column table', { timeout: 5_000 }, async t => {
-  // Given CMC reports a positive daily move and a fully specified valuation snapshot
+test('user can read calculated CMC stances and expand their basis in a three-column table', { timeout: 5_000 }, async t => {
+  // Given a small-cap snapshot with a positive daily move, heavy dilution, and sixty percent of supply locked
   const host = createCmcHost(t);
   const detail = cmcDetail();
   Object.assign(detail.statistics, {
     price: 2, priceChangePercentage24h: 12.5, marketCap: 200_000_000,
     fullyDilutedMarketCap: 500_000_000, volume24h: 150_000_000, turnover: 0.75,
-    totalSupply: 250_000_000, circulatingSupply: 100_000_000,
+    totalSupply: 250_000_000, circulatingSupply: 100_000_000, maxSupply: 250_000_000, rank: 150,
   });
   await host.start();
 
   // When the current asset snapshot is rendered through the userscript entrypoint
   await completeCmcData(host, detail);
 
-  // Then every metric has a value and interpretation and the supply comparison uses the response
+  // Then each row shows its computed reading and lean, and the header sums the leans
   assert.deepEqual([...host.panel().querySelectorAll('thead th')].map(node => node.textContent), ['指标', '数值', '解读']);
-  assert.equal(host.element('rows').querySelectorAll('tr[data-metric]').length, 12);
-  const fdv = host.element('rows').querySelector('[data-metric="fdv"]');
-  assert.match(fdv.textContent, /2\.50倍/);
-  const supply = host.element('rows').querySelector('[data-metric="circulating-supply"]');
-  assert.match(supply.textContent, /40\.0%/);
-  const button = supply.querySelector('button');
+  const rows = [...host.element('rows').querySelectorAll('tr[data-metric]')];
+  assert.deepEqual(rows.map(row => [row.dataset.metric, row.querySelector('.cmc-reading-text').textContent, row.dataset.tone]), [
+    ['price', '24小时涨12.5%', 'positive'],
+    ['market-cap', '第150名，小盘币波动大', 'negative'],
+    ['fdv', '流通的2.50倍，稀释压力大', 'negative'],
+    ['unlocked', '比流通多400%，潜在抛压大', 'negative'],
+    ['volume', '--', 'missing'],
+    ['turnover', '换手过高，投机过热', 'negative'],
+    ['liquidity', '链上池子偏薄', 'neutral'],
+    ['total-supply', '已达上限，全部铸造', 'neutral'],
+    ['circulating-supply', '还有60%未流通，解锁压力大', 'negative'],
+    ['max-supply', '封顶，不再增发', 'positive'],
+    ['holders', '--', 'missing'],
+    ['profile', '披露较完整', 'neutral'],
+  ]);
+  const stance = host.element('stance');
+  assert.deepEqual([stance.hidden, stance.textContent, stance.dataset.tone, stance.title], [false, '偏空', 'negative', '多2 / 空5']);
+  const button = rows.find(row => row.dataset.metric === 'circulating-supply').querySelector('button');
   assert.equal(button.getAttribute('aria-expanded'), 'false');
 
-  // When the user opens the explanation for circulating supply
+  // When the user opens the basis for circulating supply
   button.click();
 
-  // Then the associated explanation becomes readable without issuing a data request
+  // Then the threshold rule becomes readable without issuing a data request
   const explanation = host.document.getElementById(button.getAttribute('aria-controls'));
   assert.equal(button.getAttribute('aria-expanded'), 'true');
   assert.equal(explanation.hidden, false);
-  assert.match(explanation.textContent, /40\.0%/);
+  assert.match(explanation.textContent, /低于70%解锁压力大（偏空）/);
   assert.equal(host.network.requests.length, 3);
 });
 
@@ -136,7 +148,8 @@ test('user switches the complete CMC panel language and number units while retai
 
   // Then all text, units, controls, and source links are English but the reported CMC time is unchanged
   assert.deepEqual([...host.panel().querySelectorAll('thead th')].map(node => node.textContent), ['Metric', 'Value', 'Interpretation']);
-  assert.equal(host.panel().querySelector('.cmc-title').textContent, 'CMC data');
+  assert.equal(host.panel().querySelector('.cmc-title').textContent, 'CMC');
+  assert.deepEqual([host.element('stance').textContent, host.element('stance').title], ['Bullish', '4 bull / 0 bear']);
   assert.equal(host.element('rows').querySelector('[data-metric="price"] [data-role="metric-value"]').textContent, '$60K');
   assert.equal(host.element('rows').querySelector('[data-metric="total-supply"] .cmc-number').textContent, '21M');
   assert.doesNotMatch(host.element('rows').textContent, /\p{Script=Han}/u);
@@ -186,7 +199,7 @@ test('user sees an English page-snapshot source and treasury unit after an API f
   const treasury = host.element('rows').querySelector('[data-metric="treasury"]');
   assert.equal(treasury.querySelector('.cmc-number').textContent, '1.2K');
   assert.equal(treasury.querySelector('.cmc-unit').textContent, 'RAVE');
-  assert.match(treasury.textContent, /Treasury token holdings/);
+  assert.deepEqual([treasury.querySelector('th').textContent, treasury.querySelector('.cmc-reading-text').textContent], ['Treasuries', 'Held by corporate treasuries']);
   assert.equal(host.network.requests.length, 2);
   const sourceClock = new host.window.Date(detail.latestUpdateTime).toTimeString().slice(0, 8);
   assert.equal(host.element('footer').querySelector('.cmc-times > span').textContent, `CMC ${sourceClock}`);

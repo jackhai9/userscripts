@@ -1,5 +1,5 @@
 export const DATA_PANEL_LAYOUT_EVENT = 'jh-data-panels-layout-change';
-export const DATA_PANEL_WIDTHS = Object.freeze({ trading: 320, cmc: 336 });
+export const DATA_PANEL_WIDTHS = Object.freeze({ trading: 236, cmc: 280 });
 
 const PANEL_IDS = Object.freeze({
   trading: 'jh-binance-trading-data-panel',

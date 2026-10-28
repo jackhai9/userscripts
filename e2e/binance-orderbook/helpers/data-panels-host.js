@@ -8,11 +8,11 @@ export const DATA_PANEL_NOW = Date.UTC(2026, 9, 9, 0, 0, 0);
 export const POSITION_AUDIT_KEY = '__data_panel_fixture_position_writes__';
 export const DATA_PANELS = Object.freeze([
   {
-    name: 'trading', id: 'jh-binance-trading-data-panel', width: 320,
+    name: 'trading', id: 'jh-binance-trading-data-panel', width: 236,
     key: 'jh_binance_trading_data_pos', artifact: 'binance-trading-data',
   },
   {
-    name: 'cmc', id: 'jh-binance-cmc-data-panel', width: 336,
+    name: 'cmc', id: 'jh-binance-cmc-data-panel', width: 280,
     key: 'jh_binance_cmc_data_pos', artifact: 'binance-coinmarketcap-data',
   },
 ]);

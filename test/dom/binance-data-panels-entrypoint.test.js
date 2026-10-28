@@ -207,7 +207,8 @@ test('user sees CMC API provenance and all valuation rows after a deterministic 
   assert.equal(host.element('symbol').textContent, 'BTC #1');
   assert.equal(host.element('rows').querySelectorAll('tr[data-metric]').length, 12);
   assert.equal(host.element('rows').querySelector('[data-metric="market-cap"] [data-role="metric-value"]').textContent, '$1.2万亿');
-  assert.equal(host.element('rows').querySelector('[data-metric="market-cap"] .cmc-change').textContent, '-1.00% · 24小时');
+  assert.equal(host.element('rows').querySelector('[data-metric="price"] .cmc-change').textContent, '+2.50% · 24h');
+  assert.equal(host.element('rows').querySelector('[data-metric="market-cap"] .cmc-change'), null);
   assert.equal(host.element('rows').querySelector('[data-metric="holders"] [data-role="metric-value"]').textContent, '1万');
   assert.equal(host.element('rows').querySelector('[data-metric="profile"] [data-role="metric-value"]').textContent, '85%');
   assert.equal(host.element('footer').querySelector('a').href, 'https://coinmarketcap.com/zh/currencies/bitcoin/');

@@ -95,8 +95,8 @@ test('user sees the approved eight indicator names in Chinese and English', t =>
 
   // Then every indicator name and header action follows the English locale
   assert.deepEqual([...h.element('rows').querySelectorAll('.td-name')].map(node => node.textContent), [
-    'Open Interest', 'Top Trader Long/Short Ratio (Accounts)', 'Top Trader Long/Short Ratio (Positions)',
-    'Long/Short Ratio', 'Taker Buy/Sell Volume', 'Basis', 'Funding Rate', 'Open Interest to Market Cap Ratio',
+    'Open Interest', 'Top L/S (Accounts)', 'Top L/S (Positions)',
+    'Long/Short Ratio', 'Taker Buy/Sell', 'Basis', 'Funding Rate', 'OI / Market Cap',
   ]);
   assert.equal(h.element('close').getAttribute('aria-label'), 'Close');
   assert.equal(h.element('collapse').getAttribute('aria-label'), 'Collapse panel');
