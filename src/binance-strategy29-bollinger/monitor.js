@@ -1,7 +1,5 @@
-import {
-  applyBollingerAlertTaskFailure,
-  detectBollingerSignals,
-} from './core/bearish-bollinger-pattern.js';
+import { applyBollingerAlertTaskFailure } from './core/bearish-bollinger-pattern.js';
+import { createIncrementalBollingerSignalDetector } from './core/incremental-bollinger-signals.js';
 import {
   createBollingerIntervalSession,
   createBollingerMarkerLayer,
@@ -114,6 +112,7 @@ export function createBollingerMonitor({
           canMutate: () => !isTradingViewDrawingMutationBusy(),
           onRenderError: (error) => handleFailure(nextContext, error, 'render'),
         }),
+        detector: createIncrementalBollingerSignalDetector(),
         failed: false,
         cleanupPending: false,
         lastProcessedClosedBarsWindowKey: null,
@@ -145,7 +144,7 @@ export function createBollingerMonitor({
         cachedSignals: context.lastProcessedSignals,
         detectSignals: (bars) => {
           stage = 'detect';
-          const signals = detectBollingerSignals(bars);
+          const signals = context.detector.detect(bars);
           stage = 'reconcile';
           return signals;
         },
@@ -253,6 +252,7 @@ export function createBollingerMonitor({
       cachedSignalCount: context?.lastProcessedSignals === null || !context
         ? null : context.lastProcessedSignals.length,
       layerSize: context ? context.layer.size : null,
+      lastAnalyzedBarCount: context ? context.detector.lastAnalyzedBarCount : null,
       markerOverlayStats: context ? context.layer.overlayStats : null,
       retiredCount: retiredBollingerLayers.size,
       sessionPresent: session !== null,

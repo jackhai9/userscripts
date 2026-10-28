@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.15
+// @version      0.5.16
 // @author       jackhai9
 // @description  Bollinger/SMA60 overlay markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -35,6 +35,7 @@
     lowerTouchBandFraction: 0.05,
     reversalFollowBars: 60
   });
+  var BEARISH_BOLLINGER_PATTERN = BOLLINGER_PATTERN;
   var TradingViewBarSnapshotInconsistentError = class extends Error {
     constructor(message) {
       super(message);
@@ -129,6 +130,9 @@
         ma60: maSum / config.maPeriod
       };
     });
+  }
+  function calculateBearishBollingerIndicatorBars(bars) {
+    return calculateBollingerIndicatorBars(bars, "Bearish");
   }
   function bandWidth(bar) {
     const width = bar.upper - bar.lower;
@@ -316,6 +320,88 @@
     return detectBollingerSignalsFromIndicatorBars(
       calculateBollingerIndicatorBars(bars, "Bollinger")
     );
+  }
+
+  // src/binance-strategy29-bollinger/core/incremental-bollinger-signals.js
+  var PATTERN = BEARISH_BOLLINGER_PATTERN;
+  var FIRST_SETUP_INDEX = Math.max(
+    PATTERN.maPeriod,
+    PATTERN.maPeriod - 1 + PATTERN.preCrossBars,
+    PATTERN.trendLookbackBars
+  );
+  var SETUP_SIGNAL_SPAN = PATTERN.postCrossBars + PATTERN.reversalFollowBars;
+  var INDICATOR_LOOKBACK = PATTERN.maPeriod - 1;
+  var BAR_FIELDS = ["time", "open", "high", "low", "close"];
+  var FIELD_COUNT = BAR_FIELDS.length;
+  function writeBarSnapshot(snapshot, bars, fromIndex) {
+    let { values } = snapshot;
+    if (values.length < bars.length * FIELD_COUNT) {
+      const grown = new Float64Array(Math.max(bars.length * FIELD_COUNT, values.length * 2));
+      grown.set(values.subarray(0, fromIndex * FIELD_COUNT));
+      values = grown;
+    }
+    for (let index = fromIndex; index < bars.length; index += 1) {
+      for (let field = 0; field < FIELD_COUNT; field += 1) {
+        values[index * FIELD_COUNT + field] = bars[index][BAR_FIELDS[field]];
+      }
+    }
+    return { values, length: bars.length };
+  }
+  function firstChangedBarIndex(snapshot, bars) {
+    const sharedLength = Math.min(bars.length, snapshot.length);
+    const { values } = snapshot;
+    for (let index = 0; index < sharedLength; index += 1) {
+      const bar = bars[index];
+      if (!bar || typeof bar !== "object") return index;
+      for (let field = 0; field < FIELD_COUNT; field += 1) {
+        if (!Object.is(values[index * FIELD_COUNT + field], bar[BAR_FIELDS[field]])) return index;
+      }
+    }
+    return sharedLength;
+  }
+  function createIncrementalBollingerSignalDetector() {
+    let previous = null;
+    let lastAnalyzedBarCount = null;
+    function detect(bars) {
+      if (!Array.isArray(bars)) throw new Error("Bollinger bars must be an array");
+      const changedIndex = previous ? firstChangedBarIndex(previous.snapshot, bars) : 0;
+      let signals;
+      let analyzedBarCount;
+      if (previous && changedIndex === bars.length && previous.snapshot.length === bars.length) {
+        signals = previous.signals;
+        analyzedBarCount = 0;
+      } else {
+        const windowStart = changedIndex >= bars.length ? 0 : Math.max(0, changedIndex - SETUP_SIGNAL_SPAN - FIRST_SETUP_INDEX);
+        if (windowStart === 0) {
+          signals = detectBollingerSignals(bars);
+          analyzedBarCount = bars.length;
+        } else {
+          const indicatorStart = Math.max(0, windowStart - INDICATOR_LOOKBACK);
+          const indicatorBars = calculateBearishBollingerIndicatorBars(bars.slice(indicatorStart));
+          const windowSignals = detectBollingerSignalsFromIndicatorBars(indicatorBars.slice(windowStart - indicatorStart));
+          const boundaryTime = bars[changedIndex].time;
+          signals = [
+            ...previous.signals.filter((signal) => signal.time < boundaryTime),
+            ...windowSignals.filter((signal) => signal.time >= boundaryTime)
+          ];
+          analyzedBarCount = bars.length - indicatorStart;
+        }
+      }
+      const snapshot = writeBarSnapshot(
+        previous?.snapshot || { values: new Float64Array(0), length: 0 },
+        bars,
+        Math.min(changedIndex, bars.length)
+      );
+      previous = { snapshot, signals };
+      lastAnalyzedBarCount = analyzedBarCount;
+      return signals;
+    }
+    return Object.freeze({
+      detect,
+      get lastAnalyzedBarCount() {
+        return lastAnalyzedBarCount;
+      }
+    });
   }
 
   // src/shared/chart-marker-overlay.js
@@ -1062,6 +1148,7 @@
             canMutate: () => !isTradingViewDrawingMutationBusy(),
             onRenderError: (error) => handleFailure(nextContext, error, "render")
           }),
+          detector: createIncrementalBollingerSignalDetector(),
           failed: false,
           cleanupPending: false,
           lastProcessedClosedBarsWindowKey: null,
@@ -1091,7 +1178,7 @@
           cachedSignals: context.lastProcessedSignals,
           detectSignals: (bars2) => {
             stage = "detect";
-            const signals = detectBollingerSignals(bars2);
+            const signals = context.detector.detect(bars2);
             stage = "reconcile";
             return signals;
           },
@@ -1179,6 +1266,7 @@
         cleanupPending: context ? context.cleanupPending : null,
         cachedSignalCount: context?.lastProcessedSignals === null || !context ? null : context.lastProcessedSignals.length,
         layerSize: context ? context.layer.size : null,
+        lastAnalyzedBarCount: context ? context.detector.lastAnalyzedBarCount : null,
         markerOverlayStats: context ? context.layer.overlayStats : null,
         retiredCount: retiredBollingerLayers.size,
         sessionPresent: session !== null,
