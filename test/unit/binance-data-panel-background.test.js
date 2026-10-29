@@ -343,11 +343,13 @@ test('user preserves the pending historical retry deadline across visibility cha
   // Given one period endpoint is delayed and scheduled to retry ten seconds after the first attempt
   const host = createDataPanelHost(t, 'trading');
   const previous = tradingDataset(Date.now() - 300_000);
+  // Basis rows carry their period start, so a delayed row is two periods back.
+  const delayed = tradingDataset(Date.now() - 600_000);
   await host.start();
   await activateTradingData(host, previous);
   host.clock.tick(5_000);
   const partial = tradingDataset(Date.now());
-  partial.basis = previous.basis;
+  partial.basis = delayed.basis;
   await completeTradingBatch(host, partial);
   await afterDataMediaResponseTurn();
 

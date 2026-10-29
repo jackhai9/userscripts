@@ -234,11 +234,23 @@ export function createTradingDataView({ document, panel, locale, collapsed, onCo
   collapseButton.addEventListener('click', collapse);
   closeButton.addEventListener('click', close);
 
+  // Funding cells refresh every second; unchanged properties must not queue mutations.
   function showStatus(element, key, error) {
     const text = key === null ? '' : tradingText(key, locale);
     setText(element, text);
-    element.hidden = text === '';
-    element.title = error ? `${text}: ${error}` : text;
+    const hidden = text === '';
+    if (element.hidden !== hidden) element.hidden = hidden;
+    const title = error ? `${text}: ${error}` : text;
+    if (element.title !== title) element.title = title;
+  }
+
+  let fundingTitle = { time: undefined, locale: null, text: '' };
+  function fundingNumberTitle(time) {
+    if (fundingTitle.time !== time || fundingTitle.locale !== locale) {
+      const note = tradingText('fundingNote', locale);
+      fundingTitle = { time, locale, text: time === null ? note : `${note}\n${formatHistoryTime(time, locale)}` };
+    }
+    return fundingTitle.text;
   }
 
   function updateCountdown() {
@@ -269,8 +281,8 @@ export function createTradingDataView({ document, panel, locale, collapsed, onCo
       && state.current.nextFundingTime <= currentClock.now;
     setText(fundingNodes.number, formatFundingPercent(state.current === null || expired ? null : state.current.value));
     setText(fundingNodes.period, formatFundingPeriod(state.intervalHours, locale));
-    fundingNodes.number.title = tradingText('fundingNote', locale);
-    if (state.current !== null) fundingNodes.number.title += `\n${formatHistoryTime(state.current.time, locale)}`;
+    const numberTitle = fundingNumberTitle(state.current === null ? null : state.current.time);
+    if (fundingNodes.number.title !== numberTitle) fundingNodes.number.title = numberTitle;
     const status = expired && state.error === null ? 'waitingUpdate' : state.current === null
       ? state.error ? 'loadFailed' : 'loading'
       : state.cached ? state.error ? 'cachedFailure' : 'cached' : state.error ? 'refreshFailed' : null;
