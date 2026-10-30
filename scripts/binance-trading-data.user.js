@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.6
+// @version      1.2.7
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -184,6 +184,15 @@
     if (!Number.isInteger(hours) || hours <= 0) throw new RangeError("Invalid funding interval");
     return hours;
   }
+  var decimalFormats = /* @__PURE__ */ new Map();
+  function formatDecimal(value, decimals) {
+    let format = decimalFormats.get(decimals);
+    if (!format) {
+      format = new Intl.NumberFormat("en-US", { maximumFractionDigits: decimals, useGrouping: false });
+      decimalFormats.set(decimals, format);
+    }
+    return format.format(value);
+  }
   function formatFundingPercent(value) {
     if (value === null) return "--";
     if (!Number.isFinite(value)) throw new TypeError("Invalid funding rate");
@@ -192,14 +201,14 @@
     const magnitude = Math.abs(percent);
     if (magnitude < 1e-12) return percent.toExponential(2) + "%";
     const decimals = Math.max(6, Math.min(14, 2 - Math.floor(Math.log10(magnitude))));
-    return new Intl.NumberFormat("en-US", { maximumFractionDigits: decimals, useGrouping: false }).format(percent) + "%";
+    return formatDecimal(percent, decimals) + "%";
   }
   function compactQuantity(value, locale) {
     const scales = locale === "zh-CN" ? [[1e12, "万亿"], [1e8, "亿"], [1e4, "万"]] : [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
     const scale = scales.find(([base]) => Math.abs(value) >= base);
     const amount = scale ? value / scale[0] : value;
     const decimals = locale === "zh-CN" ? 4 : 2;
-    return new Intl.NumberFormat("en-US", { maximumFractionDigits: decimals, useGrouping: false }).format(amount) + (scale ? scale[1] : "");
+    return formatDecimal(amount, decimals) + (scale ? scale[1] : "");
   }
   function formatMetricValue(id, value, locale) {
     if (value === null) return "--";
@@ -846,8 +855,19 @@ ${item.value}`;
     function showStatus(element, key, error) {
       const text = key === null ? "" : tradingText(key, locale);
       setText(element, text);
-      element.hidden = text === "";
-      element.title = error ? `${text}: ${error}` : text;
+      const hidden = text === "";
+      if (element.hidden !== hidden) element.hidden = hidden;
+      const title2 = error ? `${text}: ${error}` : text;
+      if (element.title !== title2) element.title = title2;
+    }
+    let fundingTitle = { time: void 0, locale: null, text: "" };
+    function fundingNumberTitle(time) {
+      if (fundingTitle.time !== time || fundingTitle.locale !== locale) {
+        const note = tradingText("fundingNote", locale);
+        fundingTitle = { time, locale, text: time === null ? note : `${note}
+${formatHistoryTime(time, locale)}` };
+      }
+      return fundingTitle.text;
     }
     function updateCountdown() {
       if (fundingNodes === null || !fundingNodes.number.isConnected) return;
@@ -875,9 +895,8 @@ ${item.value}`;
       const expired = state.current !== null && currentClock !== null && currentClock.calibrated && state.current.nextFundingTime <= currentClock.now;
       setText(fundingNodes.number, formatFundingPercent(state.current === null || expired ? null : state.current.value));
       setText(fundingNodes.period, formatFundingPeriod(state.intervalHours, locale));
-      fundingNodes.number.title = tradingText("fundingNote", locale);
-      if (state.current !== null) fundingNodes.number.title += `
-${formatHistoryTime(state.current.time, locale)}`;
+      const numberTitle = fundingNumberTitle(state.current === null ? null : state.current.time);
+      if (fundingNodes.number.title !== numberTitle) fundingNodes.number.title = numberTitle;
       const status = expired && state.error === null ? "waitingUpdate" : state.current === null ? state.error ? "loadFailed" : "loading" : state.cached ? state.error ? "cachedFailure" : "cached" : state.error ? "refreshFailed" : null;
       const intervalStatus = state.intervalHours !== null && state.intervalCached ? state.intervalError ? "intervalCachedFailure" : "intervalCached" : state.intervalError ? "intervalLoadFailed" : null;
       showStatus(fundingNodes.status, status, state.error);
@@ -1242,37 +1261,33 @@ ${formatHistoryTime(state.current.time, locale)}`;
     function applyResults(symbol, periodEntries, fundingEntry) {
       if (!dataStore[symbol]) dataStore[symbol] = {};
       if (!dataCache[symbol]) dataCache[symbol] = {};
-      if (periodEntries) {
-        for (var key in periodEntries) {
-          var e = periodEntries[key];
-          dataStore[symbol][key] = e.data;
-          endpointErrors[key] = e.error;
-          if (!e.cached) {
-            dataCache[symbol][key] = e.data;
-            failedKeys.delete(key);
-          } else {
-            failedKeys.add(key);
-          }
-        }
-      }
-      if (fundingEntry) {
-        dataStore[symbol].fundingRate = fundingEntry.data;
-        endpointErrors.fundingRate = fundingEntry.error;
-        if (!fundingEntry.cached) {
-          dataCache[symbol].fundingRate = fundingEntry.data;
-          failedKeys.delete("fundingRate");
+      var changed = false;
+      function record(key2, e) {
+        if (JSON.stringify(dataStore[symbol][key2]) !== JSON.stringify(e.data) || endpointErrors[key2] !== e.error || failedKeys.has(key2) !== e.cached) changed = true;
+        dataStore[symbol][key2] = e.data;
+        endpointErrors[key2] = e.error;
+        if (!e.cached) {
+          dataCache[symbol][key2] = e.data;
+          failedKeys.delete(key2);
         } else {
-          failedKeys.add("fundingRate");
+          failedKeys.add(key2);
         }
       }
+      if (periodEntries) {
+        for (var key in periodEntries) record(key, periodEntries[key]);
+      }
+      if (fundingEntry) record("fundingRate", fundingEntry);
       const freshHistory = periodEntries && Object.values(periodEntries).some((entry) => !entry.cached) || fundingEntry && !fundingEntry.cached;
       if (freshHistory) historyUpdatedAt[symbol] = Date.now();
       lastUpdateTs = historyUpdatedAt[symbol] || 0;
+      return changed;
     }
-    function getPendingKeys(symbol, targetTs) {
+    const PERIOD_ROW_START_KEYS = /* @__PURE__ */ new Set(["takerRatio", "basis"]);
+    function getPendingKeys(symbol, boundary) {
       var store = dataStore[symbol] || {};
       return PERIOD_KEYS.filter(function(key) {
-        return extractEndpointTs(store[key]) < targetTs;
+        var newestRow = PERIOD_ROW_START_KEYS.has(key) ? boundary - PERIOD_MS : boundary;
+        return extractEndpointTs(store[key]) < newestRow;
       });
     }
     let panelView = null;
@@ -1337,14 +1352,21 @@ ${formatHistoryTime(state.current.time, locale)}`;
       clearInterval(agoTimer);
       agoTimer = null;
     }
+    let footerClock = { ts: 0, locale: null, text: "" };
     function updateFooter(el) {
       const locale = uiLocale();
       let updatedText = locale === "zh-CN" ? "等待数据" : "Waiting for data";
       let elapsedText = "";
       if (lastUpdateTs) {
-        const clock = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(lastUpdateTs);
+        if (footerClock.ts !== lastUpdateTs || footerClock.locale !== locale) {
+          footerClock = {
+            ts: lastUpdateTs,
+            locale,
+            text: new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(lastUpdateTs)
+          };
+        }
         const ago = Math.max(0, Math.floor((Date.now() - lastUpdateTs) / 1e3));
-        updatedText = (locale === "zh-CN" ? "更新于 " : "Updated ") + clock;
+        updatedText = (locale === "zh-CN" ? "更新于 " : "Updated ") + footerClock.text;
         elapsedText = locale === "zh-CN" ? ago + "秒前" : ago + "s ago";
       }
       const updated = el.querySelector('[data-role="updated-at"]');
@@ -1560,6 +1582,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
     let lastUpdateTs = 0;
     let fetching = 0;
     let epoch = 0;
+    let fullFetchBoundary = null;
     let lastPath = location.pathname;
     function renderAll(symbol) {
       if (!isActiveTradingPage() || getCurrentSymbol() !== symbol) return;
@@ -1573,7 +1596,8 @@ ${formatHistoryTime(state.current.time, locale)}`;
       const signal = session.historyController.signal;
       epoch++;
       var myEpoch = epoch;
-      const boundary = Math.floor(serverNow() / PERIOD_MS) * PERIOD_MS;
+      const requestedAt = serverNow();
+      const boundary = Math.floor(requestedAt / PERIOD_MS) * PERIOD_MS;
       clearTimeout(cycleTimer);
       clearTimeout(retryTimer);
       if (symbol !== lastSymbol) {
@@ -1591,6 +1615,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
         if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
         if (serverNow() >= boundary + PERIOD_MS) return;
         applyResults(symbol, periodEntries, fundingEntry);
+        if (requestedAt >= boundary + FIRST_DELAY) fullFetchBoundary = boundary;
         renderAll(symbol);
       } catch (e) {
         if (!sessionIsCurrent(session) || signal.aborted || e.name === "AbortError") return;
@@ -1612,10 +1637,15 @@ ${formatHistoryTime(state.current.time, locale)}`;
       var now = serverNow();
       var boundary = Math.floor(now / PERIOD_MS) * PERIOD_MS;
       if (!forceNext) {
-        var targetTs = boundary;
         var symbol = getCurrentSymbol();
-        var pending = symbol ? getPendingKeys(symbol, targetTs) : [];
+        var pending = symbol ? getPendingKeys(symbol, boundary) : [];
         if (pending.length > 0 && now < boundary + PERIOD_MS) {
+          if (fullFetchBoundary === boundary) {
+            cycleTimer = setTimeout(function() {
+              runCycleAttempt(boundary, 1);
+            }, RETRY_DELAYS[0]);
+            return;
+          }
           var delay = Math.max(0, boundary + FIRST_DELAY - now);
           cycleTimer = setTimeout(function() {
             runCycleAttempt(boundary, 0);
@@ -1657,7 +1687,6 @@ ${formatHistoryTime(state.current.time, locale)}`;
         failedKeys = /* @__PURE__ */ new Set();
         log("交易对:", symbol);
       }
-      var targetTs = boundary;
       var myEpoch = ++epoch;
       fetching = myEpoch;
       try {
@@ -1670,10 +1699,9 @@ ${formatHistoryTime(state.current.time, locale)}`;
           refreshFundingInterval(session);
           [periodEntries, fundingEntry] = await history;
         } else {
-          var pending = getPendingKeys(symbol, targetTs);
+          var pending = getPendingKeys(symbol, boundary);
           if (pending.length === 0) {
             log("所有 5m 接口已更新");
-            renderAll(symbol);
             scheduleCycle();
             return;
           }
@@ -1684,9 +1712,9 @@ ${formatHistoryTime(state.current.time, locale)}`;
           scheduleCycle();
           return;
         }
-        applyResults(symbol, periodEntries, fundingEntry || null);
-        renderAll(symbol);
-        var stillPending = getPendingKeys(symbol, targetTs);
+        if (applyResults(symbol, periodEntries, fundingEntry || null)) renderAll(symbol);
+        if (attempt === 0) fullFetchBoundary = boundary;
+        var stillPending = getPendingKeys(symbol, boundary);
         if (stillPending.length === 0) {
           log("所有 5m 接口已更新");
           scheduleCycle();
@@ -1805,6 +1833,7 @@ ${formatHistoryTime(state.current.time, locale)}`;
       lastPath = session.path;
       failedKeys = /* @__PURE__ */ new Set([...PERIOD_KEYS, "fundingRate"]);
       endpointErrors = {};
+      fullFetchBoundary = null;
       currentFundingState = emptyCurrentFundingState(symbol);
       lastUpdateTs = historyUpdatedAt[symbol] || 0;
       ensurePanel();

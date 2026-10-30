@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.6
+// @version      1.2.7
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -269,45 +269,49 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   // 将 fetch 结果写入全局状态（仅在 epoch 校验通过后调用）
+  // Returns whether the displayed series or their provenance changed; a retry that only
+  // confirms unchanged rows must not rebuild the panel and close an open detail view.
   function applyResults(symbol, periodEntries, fundingEntry) {
     if (!dataStore[symbol]) dataStore[symbol] = {};
     if (!dataCache[symbol]) dataCache[symbol] = {};
+    var changed = false;
+
+    function record(key, e) {
+      if (JSON.stringify(dataStore[symbol][key]) !== JSON.stringify(e.data)
+        || endpointErrors[key] !== e.error
+        || failedKeys.has(key) !== e.cached) changed = true;
+      dataStore[symbol][key] = e.data;
+      endpointErrors[key] = e.error;
+      if (!e.cached) {
+        dataCache[symbol][key] = e.data;
+        failedKeys.delete(key);
+      } else {
+        failedKeys.add(key);
+      }
+    }
 
     if (periodEntries) {
-      for (var key in periodEntries) {
-        var e = periodEntries[key];
-        dataStore[symbol][key] = e.data;
-        endpointErrors[key] = e.error;
-        if (!e.cached) {
-          dataCache[symbol][key] = e.data;
-          failedKeys.delete(key);
-        } else {
-          failedKeys.add(key);
-        }
-      }
+      for (var key in periodEntries) record(key, periodEntries[key]);
     }
-
-    if (fundingEntry) {
-      dataStore[symbol].fundingRate = fundingEntry.data;
-      endpointErrors.fundingRate = fundingEntry.error;
-      if (!fundingEntry.cached) {
-        dataCache[symbol].fundingRate = fundingEntry.data;
-        failedKeys.delete('fundingRate');
-      } else {
-        failedKeys.add('fundingRate');
-      }
-    }
+    if (fundingEntry) record('fundingRate', fundingEntry);
     const freshHistory = (periodEntries && Object.values(periodEntries).some(entry => !entry.cached))
       || (fundingEntry && !fundingEntry.cached);
     if (freshHistory) historyUpdatedAt[symbol] = Date.now();
     lastUpdateTs = historyUpdatedAt[symbol] || 0;
+    return changed;
   }
 
-  // 哪些 5m 接口的最新数据时间戳还没到 targetTs
-  function getPendingKeys(symbol, targetTs) {
+  // 哪些 5m 接口还没发布本周期应有的最新一行
+  // Open interest and ratio rows are stamped with the boundary that closes them. Taker
+  // volume and basis rows carry the start of the period they cover, so after boundary B
+  // their newest possible row is B - 5m (verified against live responses on 2026-10-29).
+  const PERIOD_ROW_START_KEYS = new Set(['takerRatio', 'basis']);
+
+  function getPendingKeys(symbol, boundary) {
     var store = dataStore[symbol] || {};
     return PERIOD_KEYS.filter(function (key) {
-      return extractEndpointTs(store[key]) < targetTs;
+      var newestRow = PERIOD_ROW_START_KEYS.has(key) ? boundary - PERIOD_MS : boundary;
+      return extractEndpointTs(store[key]) < newestRow;
     });
   }
 
@@ -381,14 +385,22 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     agoTimer = null;
   }
 
+  // The footer redraws every second; format its fixed update time only when it changes.
+  let footerClock = { ts: 0, locale: null, text: '' };
+
   function updateFooter(el) {
     const locale = uiLocale();
     let updatedText = locale === 'zh-CN' ? '等待数据' : 'Waiting for data';
     let elapsedText = '';
     if (lastUpdateTs) {
-      const clock = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(lastUpdateTs);
+      if (footerClock.ts !== lastUpdateTs || footerClock.locale !== locale) {
+        footerClock = {
+          ts: lastUpdateTs, locale,
+          text: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(lastUpdateTs),
+        };
+      }
       const ago = Math.max(0, Math.floor((Date.now() - lastUpdateTs) / 1000));
-      updatedText = (locale === 'zh-CN' ? '更新于 ' : 'Updated ') + clock;
+      updatedText = (locale === 'zh-CN' ? '更新于 ' : 'Updated ') + footerClock.text;
       elapsedText = locale === 'zh-CN' ? ago + '秒前' : ago + 's ago';
     }
     const updated = el.querySelector('[data-role="updated-at"]');
@@ -630,6 +642,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   let lastUpdateTs = 0;
   let fetching = 0; // 0=空闲, 非零=正在拉取的 epoch
   let epoch = 0; // 递增计数器，用于作废过期的异步回调
+  let fullFetchBoundary = null; // 本会话在发布宽限后完整拉取过的 5 分钟周期边界
   let lastPath = location.pathname;
 
   function renderAll(symbol) {
@@ -647,7 +660,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     // 作废所有正在进行的异步操作
     epoch++;
     var myEpoch = epoch;
-    const boundary = Math.floor(serverNow() / PERIOD_MS) * PERIOD_MS;
+    const requestedAt = serverNow();
+    const boundary = Math.floor(requestedAt / PERIOD_MS) * PERIOD_MS;
     clearTimeout(cycleTimer);
     clearTimeout(retryTimer);
 
@@ -666,6 +680,8 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
       if (epoch !== myEpoch || !sessionIsCurrent(session)) return;
       if (serverNow() >= boundary + PERIOD_MS) return;
       applyResults(symbol, periodEntries, fundingEntry);
+      // A batch requested before the publication grace still gets the regular full attempt.
+      if (requestedAt >= boundary + FIRST_DELAY) fullFetchBoundary = boundary;
       renderAll(symbol);
     } catch (e) {
       if (!sessionIsCurrent(session) || signal.aborted || e.name === 'AbortError') return;
@@ -675,7 +691,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
   }
 
   // boundary = 刚过去的 5 分钟边界（floor）
-  // targetTs = boundary = Binance 数据 timestamp 推进到关闭边界
+  // 每个接口本周期应有的最新一行见 getPendingKeys
   // 重试窗口 = boundary ~ boundary + PERIOD_MS
 
   function scheduleCycle(forceNext) {
@@ -694,11 +710,17 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     var boundary = Math.floor(now / PERIOD_MS) * PERIOD_MS;
 
     if (!forceNext) {
-      var targetTs = boundary;
       var symbol = getCurrentSymbol();
-      var pending = symbol ? getPendingKeys(symbol, targetTs) : [];
+      var pending = symbol ? getPendingKeys(symbol, boundary) : [];
 
       if (pending.length > 0 && now < boundary + PERIOD_MS) {
+        // A complete batch requested after this period's publication grace exists; retry only missing rows.
+        if (fullFetchBoundary === boundary) {
+          cycleTimer = setTimeout(function () {
+            runCycleAttempt(boundary, 1);
+          }, RETRY_DELAYS[0]);
+          return;
+        }
         // 当前周期还有数据没拿到，异步进入重试
         var delay = Math.max(0, boundary + FIRST_DELAY - now);
         cycleTimer = setTimeout(function () {
@@ -747,7 +769,6 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
       log('交易对:', symbol);
     }
 
-    var targetTs = boundary;
     var myEpoch = ++epoch;
 
     fetching = myEpoch;
@@ -761,10 +782,9 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
         refreshFundingInterval(session);
         [periodEntries, fundingEntry] = await history;
       } else {
-        var pending = getPendingKeys(symbol, targetTs);
+        var pending = getPendingKeys(symbol, boundary);
         if (pending.length === 0) {
           log('所有 5m 接口已更新');
-          renderAll(symbol);
           scheduleCycle();
           return;
         }
@@ -778,10 +798,10 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
         return;
       }
 
-      applyResults(symbol, periodEntries, fundingEntry || null);
-      renderAll(symbol);
+      if (applyResults(symbol, periodEntries, fundingEntry || null)) renderAll(symbol);
+      if (attempt === 0) fullFetchBoundary = boundary;
 
-      var stillPending = getPendingKeys(symbol, targetTs);
+      var stillPending = getPendingKeys(symbol, boundary);
 
       if (stillPending.length === 0) {
         log('所有 5m 接口已更新');
@@ -905,6 +925,7 @@ import { calculateDataPanelLayout, DATA_PANEL_LAYOUT_EVENT, DATA_PANEL_WIDTHS, h
     lastPath = session.path;
     failedKeys = new Set([...PERIOD_KEYS, 'fundingRate']);
     endpointErrors = {};
+    fullFetchBoundary = null;
     currentFundingState = emptyCurrentFundingState(symbol);
     lastUpdateTs = historyUpdatedAt[symbol] || 0;
     ensurePanel();

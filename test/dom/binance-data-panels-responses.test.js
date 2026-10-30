@@ -245,16 +245,27 @@ test('user sees no fabricated open-interest trend before enough history is avail
   assert.match(host.element('composite').textContent, /偏多 6:0/);
 });
 
+/** Each endpoint's rows one period older than its newest live row after `boundary`. */
+function delayedPeriodDataset(boundary) {
+  const dataset = tradingDataset(boundary - 300_000);
+  const older = tradingDataset(boundary - 600_000);
+  dataset.basis = older.basis;
+  dataset.takerlongshortRatio = older.takerlongshortRatio;
+  return dataset;
+}
+
 test('user retries only delayed period endpoints after the publication grace interval', { timeout: 5_000 }, async t => {
   // Given the page opens on a new boundary while the exchange still serves the prior period
   const host = createDataPanelHost(t, 'trading');
   const old = tradingDataset(Date.now() - 300_000);
+  // Basis and taker rows carry their period start, so a delayed row is two periods back.
+  const delayed = tradingDataset(Date.now() - 600_000);
   await host.start();
   await activateTradingData(host, old);
   host.clock.tick(5_000);
   const mixed = tradingDataset(Date.now());
-  mixed.basis = old.basis;
-  mixed.takerlongshortRatio = old.takerlongshortRatio;
+  mixed.basis = delayed.basis;
+  mixed.takerlongshortRatio = delayed.takerlongshortRatio;
   await completeTradingBatch(host, mixed);
   await afterDataMediaResponseTurn();
   const count = host.network.requests.filter(isTradingHistoryRequest).length;
@@ -304,9 +315,9 @@ test('user excludes an untimestamped trading metric until its dated publication 
 });
 
 test('user receives the documented bounded retry schedule while period data remains delayed', { timeout: 5_000 }, async t => {
-  // Given a new cycle repeatedly receives the previous period's six endpoint timestamps
+  // Given a new cycle repeatedly receives rows one period older than each endpoint publishes
   const host = createDataPanelHost(t, 'trading');
-  const stale = tradingDataset(Date.now() - 300_000);
+  const stale = delayedPeriodDataset(Date.now());
   await host.start();
   await activateTradingData(host, stale);
   host.clock.tick(5_000);
@@ -335,12 +346,9 @@ test('user stops retrying an expired period and resumes at the next publication 
   // Given installation occurs twenty seconds before the current period expires
   const boundary = Date.UTC(2026, 8, 16);
   const host = createDataPanelHost(t, 'trading', { now: boundary + 280_000 });
-  const stale = tradingDataset(boundary - 300_000);
+  const stale = delayedPeriodDataset(boundary);
   await host.start();
   await activateTradingData(host, stale);
-  host.clock.tick(0);
-  await completeTradingBatch(host, stale);
-  await afterDataMediaResponseTurn();
   host.clock.tick(10_000);
   host.network.requests.filter(request => !request.settled && isTradingHistoryRequest(request)).forEach(request => request.respond(stale[request.url.pathname.split('/').at(-1)]));
   await afterDataMediaResponseTurn();
@@ -353,8 +361,8 @@ test('user stops retrying an expired period and resumes at the next publication 
   await completeTradingBatch(host, tradingDataset(Date.now()));
   await afterDataMediaResponseTurn();
 
-  // Then one complete new-period batch replaces further retries of the expired window
+  // Then one complete new-period batch replaces further retries, with no repeated batch after installation
   assert.equal(host.network.requests.filter(isTradingHistoryRequest).length, count + 7);
-  assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/fundingRate')).length, 3);
+  assert.equal(host.network.requests.filter(request => request.url.pathname.endsWith('/fundingRate')).length, 2);
   assert.match(host.element('composite').textContent, /偏多 7:0/);
 });

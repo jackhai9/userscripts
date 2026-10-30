@@ -73,6 +73,17 @@ export function parseFundingInterval(payload, symbol) {
   return hours;
 }
 
+// Formatting runs per value and every second for funding; reuse one formatter per precision.
+const decimalFormats = new Map();
+function formatDecimal(value, decimals) {
+  let format = decimalFormats.get(decimals);
+  if (!format) {
+    format = new Intl.NumberFormat('en-US', { maximumFractionDigits: decimals, useGrouping: false });
+    decimalFormats.set(decimals, format);
+  }
+  return format.format(value);
+}
+
 /** Fractional rates need more precision than ratios; genuine zero remains distinguishable. */
 export function formatFundingPercent(value) {
   if (value === null) return '--';
@@ -82,7 +93,7 @@ export function formatFundingPercent(value) {
   const magnitude = Math.abs(percent);
   if (magnitude < 1e-12) return percent.toExponential(2) + '%';
   const decimals = Math.max(6, Math.min(14, 2 - Math.floor(Math.log10(magnitude))));
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: decimals, useGrouping: false }).format(percent) + '%';
+  return formatDecimal(percent, decimals) + '%';
 }
 
 function compactQuantity(value, locale) {
@@ -92,7 +103,7 @@ function compactQuantity(value, locale) {
   const scale = scales.find(([base]) => Math.abs(value) >= base);
   const amount = scale ? value / scale[0] : value;
   const decimals = locale === 'zh-CN' ? 4 : 2;
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: decimals, useGrouping: false }).format(amount) + (scale ? scale[1] : '');
+  return formatDecimal(amount, decimals) + (scale ? scale[1] : '');
 }
 
 export function formatMetricValue(id, value, locale) {

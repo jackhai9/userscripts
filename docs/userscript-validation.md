@@ -213,6 +213,16 @@ not become zero or fresh votes. The open-interest-to-market-cap row divides
 `sumOpenInterest` by `CMCCirculatingSupply` in the same contract base unit; it does
 not apply another multiplier to 1000-token contracts.
 
+A period is complete when each series publishes its newest possible row. After
+boundary `B`, open interest and the three ratio series stamp that row `B`, while
+taker volume and basis stamp the start of the period they cover, `B - 5m`
+(verified against live responses on 2026-10-29). Retries request only series that
+have not reached that row. A complete batch requested after the five-second grace
+is not repeated within its period; an activation before the grace still receives
+the regular full attempt at the grace. A retry that returns unchanged rows and
+provenance updates the footer time without rebuilding the panel, so an open
+detail view stays open.
+
 The single funding row combines the last settled rate and its historical chart
 with the separate current rate, interval, and countdown. Only the settled value
 participates in the existing simplified funding vote. Current funding follows
