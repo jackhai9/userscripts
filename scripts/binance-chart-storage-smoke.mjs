@@ -37,15 +37,18 @@ async function bounded(operation, timeout = 10000) {
   }
 }
 
-/** Observe only aggregate destination transactions; never inspect keys, values, or account state. */
-function observeDestinationTransactions() {
+/**
+ * Observe only aggregate chart-database write transactions and the native puts that
+ * reach IndexedDB below the userscript filter; never inspect keys, values, or account state.
+ */
+function observeChartTransactions() {
   if (self !== top || location.href !== 'https://www.binance.com/zh-CN/futures/USUSDT') return;
   const originalTransaction = IDBDatabase.prototype.transaction;
   const originalPut = IDBObjectStore.prototype.put;
   const stats = { transactions: 0, completed: 0, aborted: 0, puts: 0, pending: 0 };
   IDBDatabase.prototype.transaction = function (...args) {
     const transaction = Reflect.apply(originalTransaction, this, args);
-    if (this.name === 'chart_delivery' && transaction.mode === 'readwrite') {
+    if (this.name.startsWith('chart_') && transaction.mode === 'readwrite') {
       stats.transactions += 1;
       stats.pending += 1;
       transaction.addEventListener('complete', () => { stats.completed += 1; stats.pending -= 1; }, { once: true });
@@ -55,7 +58,7 @@ function observeDestinationTransactions() {
   };
   IDBObjectStore.prototype.put = function (...args) {
     const request = Reflect.apply(originalPut, this, args);
-    if (this.transaction.db.name === 'chart_delivery') stats.puts += 1;
+    if (this.transaction.db.name.startsWith('chart_')) stats.puts += 1;
     return request;
   };
   Object.defineProperty(self, '__CHART_STORAGE_SMOKE_OBSERVATION__', {
@@ -71,25 +74,11 @@ async function assertAnonymousPage() {
   report.anonymousRegisterVisible = true;
 }
 
-function assertOptimized(snapshot) {
-  assert.equal(snapshot.status, 'active');
-  assert.equal(snapshot.phase, 'active');
-  assert.equal(snapshot.matches, 1);
-  assert.equal(snapshot.executions, 1);
-  assert.equal(snapshot.drawingScope.status, 'active');
-  assert.equal(snapshot.drawingScope.executions, 1);
-  for (const field of ['rejectedBatches', 'failedBatches', 'abortedTransactions', 'pendingBatches', 'pendingBytes', 'nativePassthroughBatches']) {
-    assert.equal(snapshot.writer[field], 0, field);
-  }
-  assert(snapshot.writer.committedTransactions > 0);
-  assert(snapshot.writer.committedWrites > 0);
-}
-
 async function snapshot() {
   return page.evaluate(() => {
     const panel = document.getElementById('jh-binance-close-qty-multiplier-panel');
     const style = panel && getComputedStyle(panel);
-    return { optimizer: self.__BINANCE_CHART_STORAGE__.snapshot(), destination: self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot(),
+    return { filter: self.__BINANCE_CHART_STORAGE__.snapshot(), chart: self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot(),
       startupDOM: self.__CHART_STORAGE_SMOKE_START__,
       orderbook: {
         panelCount: document.querySelectorAll('#jh-binance-close-qty-multiplier-panel').length,
@@ -102,40 +91,36 @@ async function snapshot() {
   });
 }
 
-async function changeInterval(label, resolution, optimized) {
+/** A chart save after an interval change must compare every record and write only real changes. */
+async function changeInterval(label, resolution) {
   await assertAnonymousPage();
   const before = await snapshot();
   const interval = page.getByText(label, { exact: true });
   assert.equal(await interval.count(), 1);
   assert.notEqual(await page.evaluate(() => document.querySelector('#chart_futures-tradingview iframe').contentWindow.tradingViewApi.activeChart().resolution()), resolution);
   await interval.click({ timeout: 10000 });
-  await page.waitForFunction(({ committed, destinationCompleted, resolution, optimized }) => {
+  await page.waitForFunction(({ compared, completed, resolution }) => {
     const chart = document.querySelector('#chart_futures-tradingview iframe')?.contentWindow?.tradingViewApi?.activeChart();
-    if (chart?.resolution() !== resolution || !chart.dataReady()) return false;
-    const optimizer = self.__BINANCE_CHART_STORAGE__.snapshot();
-    const destination = self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot();
-    return optimizer.writer.pendingBatches === 0 && destination.pending === 0
-      && (optimized ? optimizer.writer.committedTransactions > committed : destination.completed > destinationCompleted);
-  }, { committed: before.optimizer.writer.committedTransactions, destinationCompleted: before.destination.completed, resolution, optimized }, { timeout: 25000 });
+    if (!chart?.hasModel() || chart.resolution() !== resolution) return false;
+    const filter = self.__BINANCE_CHART_STORAGE__.snapshot();
+    const observed = self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot();
+    return observed.pending === 0 && observed.completed > completed && filter.compared > compared;
+  }, { compared: before.filter.compared, completed: before.chart.completed, resolution }, { timeout: 25000 });
   await assertAnonymousPage();
   const after = await snapshot();
   const delta = {
-    optimizedCommits: after.optimizer.writer.committedTransactions - before.optimizer.writer.committedTransactions,
-    destinationCommits: after.destination.completed - before.destination.completed,
-    destinationPuts: after.destination.puts - before.destination.puts,
+    compared: after.filter.compared - before.filter.compared,
+    skipped: after.filter.skipped - before.filter.skipped,
+    written: after.filter.written - before.filter.written,
+    nativePuts: after.chart.puts - before.chart.puts,
+    commits: after.chart.completed - before.chart.completed,
   };
-  if (optimized) {
-    assertOptimized(after.optimizer);
-    assert(delta.optimizedCommits > 0);
-  } else {
-    assert.equal(after.optimizer.phase, 'stopped');
-    assert.equal(after.optimizer.status, 'native');
-    assert.deepEqual(after.optimizer.writer, before.optimizer.writer);
-    assert(delta.destinationCommits > 0);
-    assert(delta.destinationPuts > 0);
-  }
-  assert.equal(after.destination.aborted, 0);
-  report.stages.push({ stage, resolution, chartDataReady: true, before, after, delta });
+  assert(delta.compared > 0);
+  assert.equal(delta.compared, delta.skipped + delta.written);
+  assert.equal(delta.nativePuts, delta.written);
+  assert.equal(after.filter.unreadable, 0);
+  assert.equal(after.chart.aborted, 0);
+  report.stages.push({ stage, resolution, chartModelReady: true, before, after, delta });
   console.log(JSON.stringify({ stage, resolution, delta }));
 }
 
@@ -144,7 +129,7 @@ try {
   browser = await chromium.launch({ channel: 'chrome', headless: true, timeout: 30000 });
   report.browserVersion = browser.version();
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' });
-  await context.addInitScript(observeDestinationTransactions);
+  await context.addInitScript(observeChartTransactions);
   await context.addInitScript({ content: `self.__CHART_STORAGE_SMOKE_START__ = {
     hasDocumentElement: Boolean(document.documentElement), hasHead: Boolean(document.head)
   };\n${artifact}` });
@@ -181,32 +166,27 @@ try {
   await assertAnonymousPage();
   stage = 'chart_ready';
   await page.getByText('Trading View', { exact: true }).click({ timeout: 10000 });
-  await page.waitForFunction(() => document.querySelector('#chart_futures-tradingview iframe')?.contentWindow?.tradingViewApi?.activeChart().dataReady() === true,
+  // trading-platform-321 returns a non-boolean from dataReady(); the model is the readiness contract here.
+  await page.waitForFunction(() => document.querySelector('#chart_futures-tradingview iframe')?.contentWindow?.tradingViewApi?.activeChart().hasModel() === true,
     null, { timeout: 45000 });
   const initial = await snapshot();
-  assert.equal(initial.optimizer.matches, 1);
-  assert.equal(initial.optimizer.executions, 1);
-  assert.equal(initial.optimizer.drawingScope.status, 'active');
-  assert.equal(initial.optimizer.drawingScope.executions, 1);
+  assert.equal(Object.keys(initial.filter).join(), 'compared,skipped,written,unreadable');
   assert.equal(initial.orderbook.panelCount, 1);
   assert.equal(initial.orderbook.styleCount, 1);
   assert.equal(initial.orderbook.initialized, true);
   report.initial = initial;
-  stage = 'optimized_one_hour';
-  await changeInterval('1小时', '60', true);
-  stage = 'optimized_fifteen_minutes';
-  await changeInterval('15分钟', '15', true);
-  stage = 'stop';
-  report.stopped = await bounded(page.evaluate(() => self.__BINANCE_CHART_STORAGE__.stop()));
-  assert.equal(report.stopped.phase, 'stopped');
-  assert.equal(report.stopped.drawingScope.status, 'active');
-  stage = 'native_after_stop';
-  await changeInterval('4小时', '240', false);
+  stage = 'filtered_one_hour';
+  await changeInterval('1小时', '60');
+  stage = 'filtered_fifteen_minutes';
+  await changeInterval('15分钟', '15');
+  stage = 'filtered_four_hours';
+  await changeInterval('4小时', '240');
+  assert(report.stages.slice(1).some(entry => entry.delta.skipped > 0), 'Repeated saves must skip unchanged chart records');
   assert.equal(report.navigationRefused, undefined);
   assert.equal(report.pageErrors, 0);
   await bounded(page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
   await page.screenshot({ path: join(directory, 'page.png'), timeout: 10000 });
-  report.outcome = 'production_bulk_and_native_continuation_verified';
+  report.outcome = 'production_unchanged_write_filter_verified';
 } catch (error) {
   report.outcome = 'incomplete';
   report.failure = { stage, name: error.name };
@@ -216,10 +196,9 @@ try {
   try {
     if (page && !page.isClosed()) {
       report.final = await bounded(page.evaluate(async () => {
-        const optimizer = self.__BINANCE_CHART_STORAGE__;
-        if (!optimizer) return { installed: false };
-        await optimizer.stop();
-        return { optimizer: optimizer.snapshot(), destination: self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot(),
+        const filter = self.__BINANCE_CHART_STORAGE__;
+        if (!filter) return { installed: false };
+        return { filter: filter.snapshot(), chart: self.__CHART_STORAGE_SMOKE_OBSERVATION__.snapshot(),
           startupDOM: self.__CHART_STORAGE_SMOKE_START__ };
       }));
       await page.screenshot({ path: join(directory, 'final.png'), timeout: 10000 });

@@ -14,16 +14,6 @@ export const HAND_MAINTAINED_SCRIPTS = [
   'scripts/auto_refresh.user.js',
   'scripts/coinmarketcap-valuation-helper.user.js',
 ];
-/**
- * Byte-pinned copies of Binance's native webpack factories. Their bodies are host code
- * that controlled fixtures cannot execute, so coverage maps them like bundled
- * dependencies; the hand-written chart-storage modules that install them stay in scope.
- */
-export const GENERATED_HOST_FACTORIES = [
-  'src/binance-orderbook-trade/chart-storage/drawing-save-module.js',
-  'src/binance-orderbook-trade/chart-storage/mirror-module.js',
-];
-
 export function relativeSourcePath(value) {
   const path = value.startsWith('file:') ? fileURLToPath(value) : value;
   return (isAbsolute(path) ? relative(ROOT, path) : path).split(sep).join('/');
@@ -31,13 +21,12 @@ export function relativeSourcePath(value) {
 
 export function isProductionSource(value) {
   const path = relativeSourcePath(value);
-  return (path.startsWith('src/') && path.endsWith('.js') && !GENERATED_HOST_FACTORIES.includes(path))
-    || HAND_MAINTAINED_SCRIPTS.includes(path);
+  return (path.startsWith('src/') && path.endsWith('.js')) || HAND_MAINTAINED_SCRIPTS.includes(path);
 }
 
 /** Bundled code that artifacts may contain but production coverage never credits. */
 export function isVendoredSource(path) {
-  return path.startsWith('node_modules/') || GENERATED_HOST_FACTORIES.includes(path);
+  return path.startsWith('node_modules/');
 }
 
 export async function productionSourceFiles() {
