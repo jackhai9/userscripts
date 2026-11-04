@@ -34,6 +34,45 @@ it never touches Binance's module queue. It stays installed for the document
 lifetime, including after SPA navigation away from a trading route. See
 [the storage contract](binance-chart-storage-development.md).
 
+### Order sound scope
+
+Binance plays one trade sound, with no symbol, in every open futures tab whenever
+any order of the account fills, partially fills or expires: each tab opens its own
+account stream and receives every symbol's `ORDER_TRADE_UPDATE`. `order-sound/`
+restricts that sound to the tab showing the filled symbol through two standard
+boundaries, installed at document-start on top-level trading routes:
+
+- every page WebSocket gets one extra read-only `message` listener, added before
+  Binance's own, that parses only frames containing `"ORDER_TRADE_UPDATE"` and
+  records whether a sounding fill belongs to the route symbol;
+- `HTMLMediaElement.prototype.play` is wrapped for audio elements whose source
+  path ends in `/trade-sound.mp3`.
+
+A trade-sound `play()` is allowed when an own fill arrived within the last 10 s
+and not yet sounded; that fill is then consumed. Otherwise it resolves without
+playing when another symbol filled within the last 120 s, which covers Binance's
+500 ms debounce and 2 s queue spacing even in throttled hidden tabs. Without
+recent fill evidence the native call proceeds. Liquidations, `CALCULATED`
+executions, system client IDs (`autoclose-`, `adl_autoclose`,
+`settlement_autoclose-`), unknown shapes and non-trading routes count as own
+fills, so every tab keeps sounding for them.
+
+Binance's audio helper calls `play()` twice per sound; the second call reaches an
+element that is already playing or already silenced. Binance's queue keeps at most
+two sounds, so attribution is per sound, not per fill: when own and foreign fills
+alternate inside one queue window, the own fill may sound on the foreign sound's
+slot. Order toasts are not scoped.
+
+The scope depends on the documented account event, the order fields `s`, `X`,
+`x`, `o`, `ot` and `c`, and the trade-sound asset path, never on Binance's bundle.
+If Binance renamed the asset or changed the stream, the native sound would return
+in every tab. `self.__BINANCE_ORDER_SOUND__.snapshot()` returns counts only:
+`ownFills`, `foreignFills`, `allowed`, `suppressed` and `unattributed`.
+
+Earlier versions scoped sounds and toasts by replacing three Binance modules; that
+stopped matching after Binance's 2026-10 rebuild and was removed with the chart
+module pins (see [the storage contract](binance-chart-storage-development.md)).
+
 ### Chart save completion and serialization
 
 `core/chart-save-coalescer.js` batches the observed default
