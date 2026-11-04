@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.232
+// @version      2.7.233
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -5456,8 +5456,104 @@
     });
   }
 
+  // src/binance-orderbook-trade/order-sound/fill-sound-scope.js
+  var SOUND_STATUSES = /* @__PURE__ */ new Set(["FILLED", "PARTIALLY_FILLED", "EXPIRED"]);
+  var ORDINARY_TYPES = /* @__PURE__ */ new Set([
+    "LIMIT",
+    "MARKET",
+    "STOP",
+    "STOP_MARKET",
+    "TAKE_PROFIT",
+    "TAKE_PROFIT_MARKET",
+    "TRAILING_STOP_MARKET"
+  ]);
+  var ORDINARY_EXECUTIONS = /* @__PURE__ */ new Set(["NEW", "CANCELED", "EXPIRED", "TRADE", "AMENDMENT"]);
+  var SYSTEM_CLIENT_ID_PREFIXES = ["autoclose-", "adl_autoclose", "settlement_autoclose-"];
+  var OWN_SOUND_WINDOW_MS = 1e4;
+  var FOREIGN_SOUND_WINDOW_MS = 12e4;
+  function readOrdinaryOrderSymbol(order) {
+    if (!isBinanceSymbol(order.s) || !ORDINARY_TYPES.has(order.o) || !ORDINARY_TYPES.has(order.ot) || !ORDINARY_EXECUTIONS.has(order.x) || typeof order.c !== "string" || order.c.length === 0 || SYSTEM_CLIENT_ID_PREFIXES.some((prefix) => order.c.startsWith(prefix))) return null;
+    return order.s;
+  }
+  function createFillSoundScope({ now, readCurrentSymbol }) {
+    let ownFillAt = null;
+    let foreignFillAt = null;
+    const stats = { ownFills: 0, foreignFills: 0, allowed: 0, suppressed: 0, unattributed: 0 };
+    function within(time, windowMs) {
+      return time !== null && now() - time <= windowMs;
+    }
+    return Object.freeze({
+      recordOrderUpdate(order) {
+        if (!SOUND_STATUSES.has(order.X)) return;
+        const symbol = readOrdinaryOrderSymbol(order);
+        const currentSymbol = readCurrentSymbol();
+        if (symbol === null || currentSymbol === null || symbol === currentSymbol) {
+          ownFillAt = now();
+          stats.ownFills += 1;
+          return;
+        }
+        foreignFillAt = now();
+        stats.foreignFills += 1;
+      },
+      allowSound() {
+        if (within(ownFillAt, OWN_SOUND_WINDOW_MS)) {
+          ownFillAt = null;
+          stats.allowed += 1;
+          return true;
+        }
+        if (within(foreignFillAt, FOREIGN_SOUND_WINDOW_MS)) {
+          stats.suppressed += 1;
+          return false;
+        }
+        stats.unattributed += 1;
+        return true;
+      },
+      snapshot: () => ({ ...stats })
+    });
+  }
+
+  // src/binance-orderbook-trade/order-sound/install.js
+  var ORDER_UPDATE_MARKER = '"ORDER_TRADE_UPDATE"';
+  var TRADE_SOUND_PATH = /\/trade-sound\.mp3$/;
+  function isTradeSound(element, view) {
+    return element instanceof view.HTMLAudioElement && TRADE_SOUND_PATH.test(new URL(element.src, view.location.href).pathname);
+  }
+  function installFillSoundScope(view) {
+    const scope = createFillSoundScope({
+      now: () => view.Date.now(),
+      readCurrentSymbol: () => parseFuturesTradingSymbolFromPathname(view.location.pathname)
+    });
+    const NativeWebSocket = view.WebSocket;
+    const nativeAddEventListener = NativeWebSocket.prototype.addEventListener;
+    const playDescriptor = Object.getOwnPropertyDescriptor(view.HTMLMediaElement.prototype, "play");
+    const nativePlay = playDescriptor.value;
+    function observeFrame(event) {
+      if (typeof event.data !== "string" || !event.data.includes(ORDER_UPDATE_MARKER)) return;
+      const update = JSON.parse(event.data).data;
+      if (update?.e === "ORDER_TRADE_UPDATE") scope.recordOrderUpdate(update.o);
+    }
+    view.WebSocket = new Proxy(NativeWebSocket, {
+      construct(target, args, newTarget) {
+        const socket = Reflect.construct(target, args, newTarget);
+        Reflect.apply(nativeAddEventListener, socket, ["message", observeFrame]);
+        return socket;
+      }
+    });
+    function play() {
+      if (isTradeSound(this, view) && !scope.allowSound()) return view.Promise.resolve();
+      return Reflect.apply(nativePlay, this, arguments);
+    }
+    Object.defineProperty(view.HTMLMediaElement.prototype, "play", { ...playDescriptor, value: play });
+    return Object.freeze({ snapshot: scope.snapshot });
+  }
+  function installOrderSoundScope() {
+    if (!isTopLevelTradingPage() || Object.hasOwn(self, "__BINANCE_ORDER_SOUND__")) return;
+    Object.defineProperty(self, "__BINANCE_ORDER_SOUND__", { value: installFillSoundScope(self), configurable: true });
+  }
+
   // src/binance-orderbook-trade/index.user.js
   installChartWriteFilter();
+  installOrderSoundScope();
   (function initializeOrderbookTrade() {
     "use strict";
     if (!document.documentElement) {

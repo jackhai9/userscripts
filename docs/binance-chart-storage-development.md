@@ -97,7 +97,9 @@ modules matched by normalized syntax trees. After Binance's 2026-10 frontend
 rebuild, module IDs and sources changed (`20272`, `22092`), every pin stopped
 matching, and all protection silently fell back to native behavior. Both
 mechanisms bound userscript code to Binance's minified bundle and were removed
-together with their generators, fixtures and the bundled parser.
+together with their generators, fixtures and the bundled parser. Trade-sound
+scoping now uses standard browser boundaries; see the orderbook development
+manual.
 
 ## Diagnostics
 
