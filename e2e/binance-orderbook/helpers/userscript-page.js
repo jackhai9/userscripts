@@ -137,7 +137,12 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
   return {
     errors,
     userscript,
-    /** Network delivery is controlled separately from the page's simulated clock. */
+    /**
+     * Network delivery is controlled separately from the page's simulated clock. This
+     * resolves when the route is fulfilled, not when the page has handled the response,
+     * so wait for a page signal before advancing the clock: timers the page starts
+     * after a clock run stay pending while the clock is paused.
+     */
     async releaseSubmitResponse(submitSequence, response) {
       const pending = pendingSubmitResponses.get(submitSequence);
       if (!pending) throw new Error('No pending submit response exists for this sequence');

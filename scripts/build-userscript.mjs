@@ -17,7 +17,6 @@ export const TARGETS = {
   'binance-orderbook-trade': {
     entry: 'src/binance-orderbook-trade/index.user.js',
     output: 'scripts/binance-orderbook-trade.user.js',
-    licenseNotices: 'docs/licenses/binance-notification-parser.txt',
   },
   'binance-trading-data': {
     entry: 'src/binance-trading-data/index.user.js',

@@ -30,7 +30,7 @@ test('user gets one working orderbook when document-start injection precedes the
       initial = await page.evaluate(() => ({
         entry: window.__EARLY_ORDERBOOK_ENTRY__,
         storageInstalled: Object.hasOwn(self, '__BINANCE_CHART_STORAGE__'),
-        queueIntercepted: typeof Object.getOwnPropertyDescriptor(self.webpackChunkfutures_trade_ui, 'push').get === 'function',
+        queueCreated: Object.hasOwn(self, 'webpackChunkfutures_trade_ui'),
       }));
       expect(errors, 'The initial artifact must complete without a later reinjection repairing it').toEqual([]);
     },
@@ -43,7 +43,7 @@ test('user gets one working orderbook when document-start injection precedes the
   await page.locator(INPUT).blur();
 
   // Then the first injection owns storage and initializes exactly one usable panel after the root appears.
-  expect(initial).toEqual({ entry: { documentRootPresent: false, injections: 1, fixtureScriptLoads: 1 }, storageInstalled: true, queueIntercepted: true });
+  expect(initial).toEqual({ entry: { documentRootPresent: false, injections: 1, fixtureScriptLoads: 1 }, storageInstalled: true, queueCreated: false });
   expect(await page.evaluate(() => typeof window.__TM_CLOSE_LONG_DEBUG__)).toBe('object');
   await expect(page.locator('style#jh-disabled-control-style')).toHaveCount(1);
   expect(disabledStyle).toEqual({ disabled: true, background: 'rgb(245, 245, 245)', cursor: 'not-allowed' });
@@ -56,11 +56,12 @@ test('user gets one working orderbook when document-start injection precedes the
   expect((await readFixtureState(page)).events.filter(({ type }) => ['order-submitted', 'cancel-requested'].includes(type))).toEqual([]);
 });
 
-test('user installs chart storage before the generated orderbook starts its native network observation', async ({ page }) => {
+test('user installs the chart write filter before the generated orderbook starts its native network observation', async ({ page }) => {
   // Given every request is isolated and a native constructor read records the first business initialization.
   await page.route('**/*', route => route.abort('blockedbyclient'));
   const observeStartup = `
     {
+      const nativePut = IDBObjectStore.prototype.put;
       const descriptor = Object.getOwnPropertyDescriptor(window, 'WebSocket');
       let value = window.WebSocket;
       window.__CHART_ENTRY_OBSERVATIONS__ = [];
@@ -68,11 +69,10 @@ test('user installs chart storage before the generated orderbook starts its nati
       Object.defineProperty(window, 'WebSocket', {
         configurable: true,
         get() {
-          const queue = self.webpackChunkfutures_trade_ui;
-          const push = queue && Object.getOwnPropertyDescriptor(queue, 'push');
           window.__CHART_ENTRY_OBSERVATIONS__.push({
             storageInstalled: Object.hasOwn(self, '__BINANCE_CHART_STORAGE__'),
-            queueIntercepted: Boolean(push && typeof push.get === 'function'),
+            writeFilterInstalled: IDBObjectStore.prototype.put !== nativePut,
+            queueCreated: Object.hasOwn(self, 'webpackChunkfutures_trade_ui'),
             bookDebug: typeof window.__TM_CLOSE_LONG_DEBUG__,
             readyState: document.readyState,
           });
@@ -90,61 +90,12 @@ test('user installs chart storage before the generated orderbook starts its nati
   });
   const first = await page.evaluate(() => window.__CHART_ENTRY_OBSERVATIONS__[0]);
 
-  // Then queue interception precedes the first business network observer and the normal panel still mounts.
-  expect(first).toEqual({ storageInstalled: true, queueIntercepted: true, bookDebug: 'undefined', readyState: 'loading' });
+  // Then the write filter precedes the first business network observer and Binance's module queue stays untouched.
+  expect(first).toEqual({ storageInstalled: true, writeFilterInstalled: true, queueCreated: false, bookDebug: 'undefined', readyState: 'loading' });
   await expect(page.locator(PANEL)).toBeVisible();
   await expect(page.locator(INPUT)).toHaveValue('1');
   expect(host.errors).toEqual([]);
 });
-
-for (const kind of ['source-mismatch', 'late-bootstrap']) {
-  test(`user can edit the orderbook multiplier when chart storage retires after ${kind}`, async ({ page }) => {
-    // Given the fixture supplies either an unsupported host module or an already populated native queue.
-    await page.route('**/*', route => route.abort('blockedbyclient'));
-    const beforeOrderbook = `
-      self.__CHART_ENTRY_NATIVE_FACTORY__ = function nativeHost(module) { module.exports = 'native-chart-module'; };
-      self.__CHART_ENTRY_NATIVE_CHUNK__ = [['existing-chart'], { 70940: self.__CHART_ENTRY_NATIVE_FACTORY__ }];
-      self.webpackChunkfutures_trade_ui = ${kind === 'late-bootstrap' ? '[self.__CHART_ENTRY_NATIVE_CHUNK__]' : '[]'};
-    `;
-
-    // When the generated orderbook loads and the user edits its real quantity control after storage retires.
-    const host = await openUserscriptScenario(page, createCancelScenario(), {
-      beforeOrderbook,
-      afterOrderbook: kind === 'source-mismatch'
-        ? 'self.webpackChunkfutures_trade_ui.push(self.__CHART_ENTRY_NATIVE_CHUNK__);' : '',
-    });
-    await page.locator(INPUT).fill('3');
-    await page.locator(INPUT).blur();
-    const storage = await page.evaluate(async () => {
-      const snapshot = await self.__BINANCE_CHART_STORAGE__.stop();
-      const chunk = self.webpackChunkfutures_trade_ui[0];
-      const module = { exports: {} };
-      chunk[1][70940](module);
-      return {
-        snapshot,
-        sameChunk: chunk === self.__CHART_ENTRY_NATIVE_CHUNK__,
-        sameFactory: chunk[1][70940] === self.__CHART_ENTRY_NATIVE_FACTORY__,
-        nativePush: self.webpackChunkfutures_trade_ui.push === Array.prototype.push,
-        nativeValue: module.exports,
-      };
-    });
-
-    // Then native chart execution remains intact and the normal orderbook calculation works without trading.
-    expect(storage.snapshot).toMatchObject({ status: 'native', phase: 'stopped',
-      reason: kind === 'source-mismatch' ? 'source_mismatch' : 'bootstrap_unavailable',
-      attempts: kind === 'source-mismatch' ? 1 : 0, matches: 0, executions: 0,
-      writer: { acceptedBatches: 0, transactions: 0 },
-    });
-    expect(storage).toMatchObject({ sameChunk: true, sameFactory: true,
-      nativePush: kind === 'late-bootstrap', nativeValue: 'native-chart-module' });
-    expect(storage.snapshot.drawingScope.status).toBe(kind === 'late-bootstrap' ? 'unavailable' : 'waiting');
-    await expect(page.locator(PANEL)).toBeVisible();
-    await expect(page.locator(INPUT)).toHaveValue('3');
-    await expect(page.locator('#jh-binance-close-qty-final')).toHaveText('0.21');
-    expect((await readFixtureState(page)).events.filter(({ type }) => ['order-submitted', 'cancel-requested'].includes(type))).toEqual([]);
-    expect(host.errors).toEqual([]);
-  });
-}
 
 test('user keeps storage and the trading panel absent on futures home before native SPA entry', async ({ page }) => {
   // Given the generated artifact starts on the futures homepage despite a stale trading host DOM.

@@ -20,27 +20,19 @@ scripts/binance-orderbook-trade.user.js
 
 ## Runtime
 
-### Native order reminders
+### Chart write filter
 
-`order-notifications/` scopes native ordinary order toasts and sound to the
-current futures symbol. The storage installer shares its single early queue
-observer with these independently verified structural targets; no separate userscript is
-installed. Risk and unknown events retain native handling. The native account
-data flow and trading feedback readers remain unchanged. See
-[notification scope](binance-order-notifications.md) for source pins, delayed
-delivery, cross-tab behavior and validation boundaries.
-
-### Chart mirror storage
-
-`chart-storage/install.js` runs before the orderbook business initializer. This
-module restricts native drawing saves to each chart's current symbols, batches
-the pinned TradingView mirror destination writes and skips unchanged records.
-This prevents different-symbol tabs from writing back stale hidden drawings.
-It is included in the existing orderbook installer, with no
-separate script. Its top-frame guard applies only to storage interception;
-source drift or late injection must leave the orderbook panel functional.
-See [the storage contract](binance-chart-storage-development.md) for native
-continuation, transaction boundaries and verification requirements.
+`chart-storage/install.js` runs at document-start, before Binance code, on
+top-level trading routes. It wraps the standard `IDBObjectStore.prototype.put` so
+writes of `#TV_SYMBOL-*` and `myTradingView*` records into localForage's
+`keyvaluepairs` store of `chart_*` databases are compared with the stored value
+inside the same transaction and skipped when identical. Binance rewrites every
+loaded symbol's drawings on each chart save, so unchanged rewrites dominated the
+IndexedDB writes that stalled long sessions. The filter depends only on that
+persisted layout, never on Binance's bundle, module IDs or minified names, and
+it never touches Binance's module queue. It stays installed for the document
+lifetime, including after SPA navigation away from a trading route. See
+[the storage contract](binance-chart-storage-development.md).
 
 ### Chart save completion and serialization
 

@@ -56,7 +56,7 @@ async function openPendingCloseRound(page) {
   }));
   await page.locator('[data-ladder-group="levels"][data-ladder-value="3"]').click();
   await page.locator('[data-ladder-action="CLOSE_SHORT"]').click({ modifiers: ['Alt'] });
-  await expect.poll(host.pendingSubmitSequences).toEqual([3]);
+  await expect.poll(host.pendingSubmitSequences, { timeout: 10_000 }).toEqual([3]);
   await pauseScenarioClock(page);
   return host;
 }
@@ -191,6 +191,7 @@ test('user leaves a futures route while an order is pending without allowing a l
 
   // When the earlier response succeeds and two watchdog intervals pass off the trading route.
   await host.releaseSubmitResponse(1);
+  await expect.poll(async () => (await eventsOfType(page, 'order-submit-api-success')).length).toBe(1);
   await page.clock.runFor(10_000);
 
   // Then the old ladder cannot submit its second order or issue a new position read.

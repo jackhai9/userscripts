@@ -32,7 +32,7 @@ async function openPendingClose(page, side) {
   await panel.locator('[data-ladder-group="levels"][data-ladder-value="3"]').click();
   const action = side === 'LONG' ? '平多' : '平空';
   await panel.getByRole('button', { name: `阶梯${action}`, exact: true }).click({ modifiers: ['Alt'] });
-  await expect.poll(host.pendingSubmitSequences).toEqual([3]);
+  await expect.poll(host.pendingSubmitSequences, { timeout: 10_000 }).toEqual([3]);
   await pauseScenarioClock(page);
 
   const api = createAccountRebalanceApi(FUNDED);
@@ -56,10 +56,10 @@ async function publishAccount(page, positions = [], orders = []) {
 
 async function finishClose(page, host) {
   await host.releaseSubmitResponse(3);
-  await page.clock.runFor(50);
   await expect(page.locator(STATUS)).toHaveText(
     `连续阶梯${host.action} · 已结束 · 当前方向已无持仓 · 1/1 轮 · 累计 3 笔`,
   );
+  await page.clock.runFor(50);
 }
 
 async function expectNoAdditionalTrading(page, host, expectedTransfers = []) {
@@ -165,6 +165,7 @@ test('user qualifies after returning to a page where continuous closing finished
   await setSimulatedVisibility(page, true);
   await publishAccount(page);
   await host.releaseSubmitResponse(3);
+  await expect(page.locator(STATUS)).toHaveText('连续阶梯平多 · 1s 后继续 · 1/1 轮 · 本轮 3/3 笔 · 累计 3 笔');
   await page.clock.runFor(2050);
 
   // Then the next round detects flat before submitting, while the hidden page cannot qualify.

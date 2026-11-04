@@ -1,140 +1,136 @@
-# Orderbook Chart Storage Optimization
+# Chart Write Filter
 
-`src/binance-orderbook-trade/chart-storage/` owns the production implementation. Build
-the existing `scripts/binance-orderbook-trade.user.js` with
-`npm run build:binance-orderbook-trade`. There is no separate install entry.
-The earlier `experiments/binance-chart-storage/` files are historical research
-and independent baselines; production imports none of them.
+`src/binance-orderbook-trade/chart-storage/` filters unchanged chart writes in the
+browser database. It is built into `scripts/binance-orderbook-trade.user.js` with
+`npm run build:binance-orderbook-trade`; there is no separate install entry.
+`experiments/binance-chart-storage/` contains earlier research and independent
+baselines; production imports none of it.
 
-## Behavior and scope
+## Problem
 
-The module installs before the orderbook business initializer at document-start
-in the page's MAIN_WORLD. It only admits
-top-level Binance perpetual trading routes accepted by the shared route parser,
-including USDT and USDC symbols. Futures home, landing and other subpages receive
-no storage hook or UI. The orderbook retains its own existing frame and SPA
-behavior. Landing-to-trading SPA navigation does not re-run the storage installer;
-only a fresh matching page starts early interception. It never places orders, changes leverage, reads credentials, changes
-the proxy, clears databases or replaces global storage methods.
+Binance persists TradingView chart state with localForage (IndexedDB driver) in
+databases named `chart_*` (`chart_futures` on USDⓈ-M pages), object store
+`keyvaluepairs`, with out-of-line string keys:
 
-Two complete pinned factories are intercepted before their first execution:
-`70940` changes only the mirror destination expression, while `76535` restricts
-the native save extractor's input to each chart's current MainSeries symbols.
-One queue observer owns both targets. Capture, source rejection and deadline
-outcomes are independent; one changed upstream module does not cancel a matching
-other module. Late injection leaves both native. Metadata does not guarantee
-early injection on every extension configuration; rejection remains explicit.
+- `#TV_SYMBOL-<SYMBOL>@PRICETYPE=...`: drawings of one symbol;
+- `myTradingView...`: chart layout and settings records.
 
-The orderbook installer also supplies independently tracked
-[notification targets](binance-order-notifications.md) to this same observer.
-`startChartStorageOptimizer({ additionalTargets })` accepts explicit
-`replace`, `onCapture` and `onFailure` callbacks for each non-storage module ID;
-storage IDs cannot be replaced by those descriptors. The original 30-second
-capture deadline applies only to the two storage targets. Lazy notification
-targets remain observable until capture, an explicit failure, or `pagehide`;
-mirror `stop()` does not stop their capture or handling. The shared queue
-observer restores native registration once every target has finished.
+About 100 ms after every drawing event, Binance asks TradingView to save the
+chart. Each placed or cancelled order draws or removes an order line, so automated
+ladders trigger saves continuously. Each save writes the chart record and layout
+list, then calls `setItem('#TV_SYMBOL-' + symbol, drawings)` for every symbol whose
+drawings are loaded in the chart (109 symbols observed), changed or not. Its
+mirror callback then reads every chart record again.
 
-### Drawing ownership
+In the user's Chrome, binance.com's IndexedDB LevelDB grew to about 690 MB and
+compacted about 35 GB within one browser session; write volume rose about twenty
+times during automated order sessions. Chrome's IndexedDB service then stopped
+answering, even `indexedDB.databases()`. TradingView initialization waits on chart
+storage, so its tab spins while Basic and Depth charts keep working. A Chrome
+restart recovered the service on 2026-10-30; it stalled again by 2026-11-04.
 
-Native loading puts historical symbols' drawings into every chart that shares
-their ownerSource. A different symbol's tab can therefore retain an old invisible
-copy of drawings that another page has edited or deleted. The native extractor
-previously wrote all those groups back on every save, restoring deleted drawings.
+## Design
 
-Before native drawing-ID deduplication, the scoped snapshot retains only drawings
-belonging to the current MainSeries symbols of their own chart. All indicator
-panes inherit that chart's symbol set. Other sources and drawing properties stay
-unchanged. Native extraction still produces an explicit empty array for a current
-symbol with no drawings, while unrelated symbols are not written. A whole chart
-containing drawings without any MainSeries is rejected before storage writes;
-an indicator pane without its own MainSeries is valid. The patch does not delete
-historical keys, replace save events or serialize charts through a new API.
+`installChartWriteFilter()` runs at document-start in the page world, before
+Binance code, on top-level Binance futures trading routes. It replaces
+`IDBObjectStore.prototype.put` with a wrapper. A put is filtered only when all of
+these hold; every other put calls the native method unchanged:
 
-All concurrently open trading tabs need the new version; an old tab can still
-write its stale hidden copies. Same-symbol concurrent editors and source-only
-cross-database interruptions remain separate conflicts, not solved by ownership
-filtering. No trading action is needed to validate the fix.
+- exactly two arguments and a string key starting with `#TV_SYMBOL-` or
+  `myTradingView`;
+- the store is named `keyvaluepairs`, has no key path, and belongs to a readwrite
+  transaction on a database whose name starts with `chart_`.
 
-Each accepted mirror uses one IndexedDB read/write transaction and compares the
-destination values before writing. Equal JSON trees must retain signed zero,
-property order and dense array structure. Missing keys remain distinct from stored
-null. Ordinary saves retain their native write sequence after drawing ownership
-filtering; source reads, Basic chart settings and `clear()` remain native. No
-record cache persists between batches.
+A filtered put:
 
-Input admission defaults to 512 entries, 4 MiB per batch and 16 pending batches
-with 64 MiB of copied input. Unsupported values, capacity limits, initialization
-or driver/configuration rejection and synchronous transaction-creation failure
-execute the original native expression once, before any optimized transaction
-exists. Native handling may exceed the optimizer's limits; these limits bound
-optimization, not Binance's original work. Shared references, cycles and non-JSON
-input use that native path instead of silently changing their stored meaning.
-The copy charges each value its exact UTF-8 JSON size while it walks the tree,
-without encoding every value separately; the accepted batch is measured once.
-Stored old values are validated inside the transaction with the same copy.
+1. clones the value with `structuredClone` at call time, as the native put
+   captures it; an uncloneable value throws the same synchronous error;
+2. reads the stored value with `get` in the same readwrite transaction and
+   returns that request to the caller;
+3. on success, skips the write when the stored and new values are equal JSON
+   trees, and otherwise issues the native put with the clone. When both are
+   `undefined` (localForage stores `null` as `undefined`), `getKey` decides
+   whether the key must still be created;
+4. if the read fails, prevents that failure from aborting the transaction and
+   writes the clone, as the native put would have overwritten the record;
+5. if the deferred write fails, stops its error event at the request, so the
+   transaction aborts with the real error and localForage rejects with it.
 
-Within a transaction, unsupported old values and exhausted comparison budgets
-cause direct writes. They do not reject otherwise valid replacements. A genuine
-transaction failure aborts the entire batch and stops future optimization; it
-never replays the failed batch. The original caller still receives the failure
-through its Promise boundary. Subsequent calls resume native handling.
+Readwrite transactions on the same store are serialized, so the comparison and
+the write cannot interleave with another tab's write. A later write that matches
+the value stored when it was requested is still written if another tab changed
+the record in between.
 
-## Lifecycle and diagnostics
+Equality covers primitives, arrays and plain objects, including objects created
+in the TradingView iframe realm. Property order and signed zero are significant,
+because native reads expose both. Dates, maps, blobs, sparse arrays and arrays
+with extra properties never compare equal, so such records are always written.
 
-`self.__BINANCE_CHART_STORAGE__.snapshot()` returns fixed aggregate counters and
-startup status and an independent `drawingScope` status. `stop()` drains the current instance's accepted mirror work, including
-every member of an early-rejecting native Promise array. Calls arriving during
-drain wait for that finite fence, then run their native expression. After stop,
-native arrays and errors pass through synchronously and statistics freeze.
-The public interface exposes no stored keys, values or storage methods.
-Stopping mirror optimization does not remove drawing ownership protection. If
-that factory has not been captured, its original bounded startup observation
-continues; pagehide terminates outstanding observations for both targets.
+The filter depends only on Binance's persisted data layout: the database prefix,
+the localForage store name and the key families. It does not depend on Binance's
+bundle, module IDs, minified names or chunk queue, and never touches that queue.
+If Binance changed the layout, writes would simply stop matching and keep their
+native behavior.
 
-`acceptedBatches` counts created optimized transactions. `committedTransactions`
-counts real completion events, while `committedWrites` and `skippedWrites` count
-only committed work. `rejectedBatches` and `nativePassthroughBatches` describe
-native routing before transaction creation, not failed saves. `failedBatches`
-counts failed optimized transactions. The separate native-only experiment's
-`completed` and `dispatches` fields must not be interpreted as commit counters.
+## Limits
 
-Stopping does not close shared connections, undo committed data, drain other tabs
-or guarantee persistence before page destruction. Leaving a supported route
-retires optimization when a retained callback runs; pagehide also requests stop.
+- The deferred write assumes the put is the caller's last request for that key in
+  its transaction and that the caller does not commit early. localForage meets
+  this: each `setItem` opens its own transaction with one put and resolves on
+  transaction completion. Requests issued after the put in the same transaction
+  would run before the deferred write.
+- Transactions are not reduced. Each `setItem` still opens one readwrite
+  transaction, and the mirror's reads are unchanged; only unchanged writes and
+  their LevelDB compaction are removed.
+- The filter stays installed for the document lifetime, including after SPA
+  navigation away from a trading route. It only skips identical writes.
+- A hidden tab that loaded another symbol's drawings earlier can still write its
+  stale copy when it differs from the stored value. The earlier drawing-ownership
+  patch that prevented this replaced Binance modules and is removed (see below).
 
-## Compatibility limits
+## Removed module replacement
 
-The native per-key mirror can partially commit; an optimized destination batch
-commits or aborts as a whole. Its interleaving with native clear and other tabs
-therefore differs. Source reads remain non-atomic, and two databases cannot share
-this transaction. No newest-revision ordering, cross-tab coordination, repair of
-already queued work or universal blank-page recovery is promised. The change
-addresses repeated destination transactions and unchanged writes specifically.
+Earlier versions intercepted Binance's Rspack chunk queue and replaced two Binance
+modules with byte-for-byte pinned copies: the TradingView mirror (`70940`) and the
+drawing save extractor (`76535`). Order notification scoping replaced three more
+modules matched by normalized syntax trees. After Binance's 2026-10 frontend
+rebuild, module IDs and sources changed (`20272`, `22092`), every pin stopped
+matching, and all protection silently fell back to native behavior. Both
+mechanisms bound userscript code to Binance's minified bundle and were removed
+together with their generators, fixtures and the bundled parser.
 
-The retained upstream factory is generated from the exact public response and
-verified with its manifest and inverse replacement. To update that source pin,
-first inspect and regenerate the fixture provenance; never broaden the matcher
-to accept an unknown module. The generation command accepts an explicit output:
+## Diagnostics
+
+`self.__BINANCE_CHART_STORAGE__.snapshot()` returns fixed counters only:
+
+- `compared`: filtered puts;
+- `skipped`: identical values not written;
+- `written`: native puts issued after comparison;
+- `unreadable`: stored values that failed to read and were overwritten.
+
+It exposes no keys, values or storage methods.
+
+## Validation
 
 ```sh
-node experiments/binance-chart-storage/generate-mirror-module.js /path/to/verified/TradingView.99bc5074.js src/binance-orderbook-trade/chart-storage/mirror-module.js
-node scripts/generate-chart-drawing-save-module.mjs /path/to/verified/36648.dd8ae7dc.js
+node --test test/unit/binance-chart-storage-json.test.js
+npx playwright test e2e/binance-orderbook/specs/chart-storage-write-filter.pw.js e2e/binance-orderbook/specs/chart-storage-orderbook-entry.pw.js
+npm run build:binance-orderbook-trade
+npm run check:binance-orderbook-trade
 ```
 
-## Validation and release
+The browser scenarios use real Chromium IndexedDB and the captured localForage
+1.10.0 module from `test/fixtures/binance-chart-storage/` (taken from
+`main.37a180b9.js` on 2026-10-06). The current `main.00641edb.js` contains the same
+`setItem` path: one `put`, resolve on transaction completion, reject with the
+request error or the transaction error. They cover repeated identical saves of
+110 records, changed, new, reordered and cleared records, other keys and
+databases, non-JSON values, values changed by the caller after the request,
+concurrent saves, aborted transactions, a real quota failure, an unreadable stored
+value and a cross-tab write behind a held lock.
 
-- Runtime unit scenarios execute the real bootstrap and exact native factory.
-- Production writer scenarios use real IndexedDB and the captured localForage,
-  covering original-value semantics, admission, reconnect, abort and drain.
-- Multi-tab scenarios use competing different revisions, native clear, reload
-  and actual transaction events; no fixed sleep determines business completion.
-- The anonymous smoke runner executes the generated install artifact in a fresh
-  Chrome context. Tampermonkey installation requires separate exact installed
-  and loaded-source checks in the user's authorized test tab.
-
-Run the affected Node and browser tests, `npm run lint:tests`, the build/check,
-one passing full `npm test`, and `git diff --check`. Publish through a reviewed
-GitHub PR; verify the main raw artifact before synchronizing Tampermonkey. A
-successful chart and committed test batch do not establish long-running stability
-or prove that every historic white-screen incident had the same cause.
+These tests do not prove live behavior. After installing a new version, verify the
+loaded artifact version, read the counters on a page with TradingView open, and
+compare LevelDB write and compaction activity in
+`~/Library/Application Support/Google/Chrome/Default/IndexedDB/https_www.binance.com_0.indexeddb.leveldb/LOG`
+over comparable trading periods.
