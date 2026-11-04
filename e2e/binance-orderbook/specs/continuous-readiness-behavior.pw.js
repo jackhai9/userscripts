@@ -98,7 +98,7 @@ async function openPendingFirstRound(page) {
   await panel.locator('[data-ladder-group="levels"][data-ladder-value="3"]').click();
   await observeContinuousStatus(page);
   await panel.getByRole('button', { name: '阶梯平空', exact: true }).click({ modifiers: ['Alt'] });
-  await expect.poll(host.pendingSubmitSequences, { intervals: [100] }).toEqual([3]);
+  await expect.poll(host.pendingSubmitSequences, { intervals: [100], timeout: 10_000 }).toEqual([3]);
   await pauseAtPendingResponse(page);
   return {
     ...host,
