@@ -20,10 +20,12 @@ scripts/binance-orderbook-trade.user.js
 
 ## Runtime
 
-### Chart write filter
+### Chart saves and write filter
 
 `chart-storage/install.js` runs at document-start, before Binance code, on
-top-level trading routes. It wraps the standard `IDBObjectStore.prototype.put` so
+top-level trading routes. When the native chart starts, the script filters order-line
+updates and removals in Binance's drawing-save listener. Other listeners still
+receive those events. At the storage boundary, it wraps the standard `IDBObjectStore.prototype.put` so
 writes of `#TV_SYMBOL-*` and `myTradingView*` records into localForage's
 `keyvaluepairs` store of `chart_*` databases are compared with the stored value
 inside the same transaction and skipped when identical. Binance rewrites every
