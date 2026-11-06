@@ -1,7 +1,7 @@
 # Chart Write Filter
 
-`src/binance-orderbook-trade/chart-storage/` filters unchanged chart writes in the
-browser database. It is built into `scripts/binance-orderbook-trade.user.js` with
+`src/binance-orderbook-trade/chart-storage/` filters saves caused by native order lines and skips unchanged
+chart writes in the browser database. It is built into `scripts/binance-orderbook-trade.user.js` with
 `npm run build:binance-orderbook-trade`; there is no separate install entry.
 `experiments/binance-chart-storage/` contains earlier research and independent
 baselines; production imports none of it.
@@ -28,6 +28,40 @@ times during automated order sessions. Chrome's IndexedDB service then stopped
 answering, even `indexedDB.databases()`. TradingView initialization waits on chart
 storage, so its tab spins while Basic and Depth charts keep working. A Chrome
 restart recovered the service on 2026-10-30; it stalled again by 2026-11-04.
+
+## Order-line events
+
+The host subscribes separately to TradingView's `onAutoSaveNeeded` and
+`drawing_event`. Its drawing listener schedules a complete save for every
+event except click and move. In a 52-second AINUSDT observation, nine order-line
+property changes and three order-line removals scheduled twelve saves. Each of
+the thirteen snapshots entering persistence in that window contained 130 drawing
+keys. Saved layout and drawing callbacks can straddle an observation window.
+
+`order-line-saves.js` installs during the same-origin iframe bootstrap. After
+Binance rewrites the bootstrap document, `innerWindowLoad` lets the script
+enqueue a `widgetReady` handler before Binance registers its drawing listener.
+Binance registers six topics in one synchronous batch. The script checks that
+the study and drawing callbacks test the same readiness flag and call the same
+save function, and that the drawing callback contains only the observed switch.
+Minified variable names can change together. A different batch or callback body
+keeps the native subscription. Repeat subscriptions and cancellations retain
+TradingView's one-registration-per-call semantics.
+
+Only `properties_changed` and `remove` of an identified `LineToolOrder` skip
+this listener. For property changes, each chart model can resolve the source ID;
+a conflict with a hand drawing preserves the save. For deletion, TradingView
+detaches the source before emitting the event. The script captures the order ID
+for the synchronous duration of the model's `removeSource` call and restores
+the previous context on exit. A later drawing can reuse the same ID safely.
+The integration depends on the host callback, iframe bootstrap and model methods
+from [the audited build](https://bin.bnbstatic.com/static/chunks/94661.4723577e.js).
+Native order lines, user drawings and their events remain visible to other
+subscribers. Layout saves and ordinary autosave run through their original paths.
+If a chart model disappears during identification, Binance receives the event.
+Restoring a previously hidden order-line checkbox can complete without a save
+while its native drawing listener is filtered. On other widgets the recovery
+still coalesces and waits for the original save callbacks.
 
 ## Design
 
@@ -110,12 +144,15 @@ manual.
 - `written`: native puts issued after comparison;
 - `unreadable`: stored values that failed to read and were overwritten.
 
-It exposes no keys, values or storage methods.
+`self.__BINANCE_CHART_STORAGE__.orderLineSaves()` reports `matched` (recognized
+listener instances) and `skipped` (order-line save notifications suppressed).
+A zero match count after the chart is ready means the listener filter has not
+attached. Neither diagnostic exposes stored keys, drawings or storage methods.
 
 ## Validation
 
 ```sh
-node --test test/unit/binance-chart-storage-json.test.js
+node --test test/unit/binance-chart-storage-json.test.js test/unit/binance-order-line-saves.test.js
 npx playwright test e2e/binance-orderbook/specs/chart-storage-write-filter.pw.js e2e/binance-orderbook/specs/chart-storage-orderbook-entry.pw.js
 npm run build:binance-orderbook-trade
 npm run check:binance-orderbook-trade

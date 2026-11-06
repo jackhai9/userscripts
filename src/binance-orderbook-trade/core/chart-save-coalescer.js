@@ -1,3 +1,5 @@
+import { hasOrderLineSaveListener } from '../chart-storage/order-line-saves.js';
+
 const IGNORED_DRAWING_EVENT_TYPES = new Set(['click', 'move']);
 
 /** Only the observed default callback signature permits deferred completion. */
@@ -519,6 +521,12 @@ export function createTradingViewRemovalSaveController(
       return getStats();
     },
   };
+}
+
+/** With native order saves already filtered, restoring visibility has no save to await. */
+export async function coalesceChartOrderVisibilitySaves(api, action, options) {
+  if (hasOrderLineSaveListener(api)) return action();
+  return coalesceTradingViewDrawingSaves(api, action, options);
 }
 
 /**
