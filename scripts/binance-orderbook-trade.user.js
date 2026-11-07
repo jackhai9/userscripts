@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.239
+// @version      2.7.240
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2885,7 +2885,7 @@
       check();
     });
   }
-  function waitForStableTradeControl(observationRoot, readCandidate, isSameCandidate, timeoutMs, requiredStableFrames, abortSignal, missingSchedulerMessage) {
+  function waitForStableTradeControl(observationRoot, readCandidate, isSameCandidate, timeoutMs, requiredStableFrames, abortSignal, missingSchedulerMessage, foregroundObservation = null) {
     const document2 = observationRoot?.ownerDocument || observationRoot;
     const view = document2?.defaultView;
     if (!view || typeof view.requestAnimationFrame !== "function" || typeof view.cancelAnimationFrame !== "function") {
@@ -2893,6 +2893,9 @@
     }
     if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
       throw new Error("稳定帧数必须为正整数");
+    }
+    if (foregroundObservation && (!Number.isFinite(foregroundObservation.observationGapMs) || foregroundObservation.observationGapMs <= 0 || !Number.isFinite(foregroundObservation.supplementalTimeoutMs) || foregroundObservation.supplementalTimeoutMs <= 0)) {
+      throw new Error("Invalid foreground observation window");
     }
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -2902,6 +2905,10 @@
       let stableFrames = 0;
       let stableCandidate = null;
       let hiddenObservations = 0;
+      let lastForegroundObservationAt = view.performance.now();
+      let foregroundDeadlineAt = lastForegroundObservationAt + timeoutMs;
+      let observationStarved = false;
+      let supplementalDeadlineAt = null;
       const maxHiddenObservations = Math.max(requiredStableFrames, Math.ceil(timeoutMs / 100));
       const finish = (value, error = null) => {
         if (settled) return;
@@ -2915,8 +2922,27 @@
         else resolve(value);
       };
       const onAbort = () => finish(null, abortSignal.reason);
+      const cannotObserve = () => {
+        if (settled) return true;
+        if (abortSignal?.aborted) {
+          onAbort();
+          return true;
+        }
+        if (supplementalDeadlineAt !== null && view.performance.now() >= supplementalDeadlineAt) {
+          finish(null);
+          return true;
+        }
+        return false;
+      };
+      const observeForegroundGap = () => {
+        const now = view.performance.now();
+        if (now - lastForegroundObservationAt >= foregroundObservation.observationGapMs) {
+          observationStarved = true;
+        }
+        lastForegroundObservationAt = now;
+      };
       const scheduleObservation = () => {
-        if (document2.hidden) {
+        if (supplementalDeadlineAt !== null || document2.hidden) {
           observationTimer = view.setTimeout(check, 100);
         } else {
           frameHandle = view.requestAnimationFrame(check);
@@ -2925,7 +2951,20 @@
       const check = () => {
         frameHandle = 0;
         observationTimer = 0;
+        if (cannotObserve()) return;
+        if (foregroundObservation && supplementalDeadlineAt === null && !document2.hidden) {
+          observeForegroundGap();
+          if (view.performance.now() >= foregroundDeadlineAt) {
+            onForegroundDeadline();
+            return;
+          }
+        }
         const candidate = readCandidate();
+        if (cannotObserve()) return;
+        if (foregroundObservation && supplementalDeadlineAt === null && !document2.hidden && view.performance.now() >= foregroundDeadlineAt) {
+          onForegroundDeadline();
+          return;
+        }
         if (candidate) {
           stableFrames = isSameCandidate(candidate, stableCandidate) ? stableFrames + 1 : 1;
           stableCandidate = candidate;
@@ -2937,7 +2976,7 @@
           stableFrames = 0;
           stableCandidate = null;
         }
-        if (document2.hidden) {
+        if (document2.hidden && supplementalDeadlineAt === null) {
           hiddenObservations += 1;
           if (hiddenObservations >= maxHiddenObservations) {
             finish(null);
@@ -2946,13 +2985,38 @@
         }
         scheduleObservation();
       };
+      const onForegroundDeadline = () => {
+        if (cannotObserve()) return;
+        if (!foregroundObservation) {
+          finish(null);
+          return;
+        }
+        observeForegroundGap();
+        if (!observationStarved) {
+          finish(null);
+          return;
+        }
+        supplementalDeadlineAt = foregroundDeadlineAt + foregroundObservation.supplementalTimeoutMs;
+        if (cannotObserve()) return;
+        if (frameHandle) view.cancelAnimationFrame(frameHandle);
+        frameHandle = 0;
+        view.clearTimeout(deadlineTimer);
+        deadlineTimer = view.setTimeout(() => finish(null), supplementalDeadlineAt - view.performance.now());
+        scheduleObservation();
+      };
       const onVisibilityChange = () => {
+        if (supplementalDeadlineAt !== null || cannotObserve()) return;
         if (frameHandle) view.cancelAnimationFrame(frameHandle);
         view.clearTimeout(observationTimer);
         view.clearTimeout(deadlineTimer);
         frameHandle = 0;
         observationTimer = 0;
-        if (!document2.hidden) deadlineTimer = view.setTimeout(() => finish(null), timeoutMs);
+        if (!document2.hidden) {
+          lastForegroundObservationAt = view.performance.now();
+          foregroundDeadlineAt = lastForegroundObservationAt + timeoutMs;
+          observationStarved = false;
+          deadlineTimer = view.setTimeout(onForegroundDeadline, timeoutMs);
+        }
         scheduleObservation();
       };
       document2.addEventListener("visibilitychange", onVisibilityChange);
@@ -2961,11 +3025,11 @@
         onAbort();
         return;
       }
-      if (!document2.hidden) deadlineTimer = view.setTimeout(() => finish(null), timeoutMs);
+      if (!document2.hidden) deadlineTimer = view.setTimeout(onForegroundDeadline, timeoutMs);
       scheduleObservation();
     });
   }
-  function waitForTradeFormFrameState(observationRoot, readState, timeoutMs, requiredStableFrames = 2, abortSignal = null) {
+  function waitForTradeFormFrameState(observationRoot, readState, timeoutMs, requiredStableFrames = 2, abortSignal = null, foregroundObservation = null) {
     return waitForStableTradeControl(
       observationRoot,
       readState,
@@ -2973,7 +3037,8 @@
       timeoutMs,
       requiredStableFrames,
       abortSignal,
-      "交易表单帧调度器不可用"
+      "交易表单帧调度器不可用",
+      foregroundObservation
     );
   }
   function waitForTradeActionButtonFrameState(observationRoot, findButton, isVisibleElement, timeoutMs, requiredStableFrames = 2, abortSignal = null) {
@@ -8389,7 +8454,11 @@
         readTradeState,
         syncTimeoutMs,
         TRADE_INPUT_SYNC_STABLE_FRAMES,
-        options?.abortSignal
+        options?.abortSignal,
+        settleControlledForm ? {
+          observationGapMs: LADDER_INPUT_SETTLE_STABLE_MS,
+          supplementalTimeoutMs: LADDER_INPUT_SETTLE_TIMEOUT_MS
+        } : null
       );
       if (synchronized) return synchronized;
       assertSubmittedPriceMatchesExpectedPrice(

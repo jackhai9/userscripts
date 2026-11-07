@@ -566,6 +566,7 @@ function waitForStableTradeControl(
   requiredStableFrames,
   abortSignal,
   missingSchedulerMessage,
+  foregroundObservation = null,
 ) {
   const document = observationRoot?.ownerDocument || observationRoot;
   const view = document?.defaultView;
@@ -579,6 +580,14 @@ function waitForStableTradeControl(
   if (!Number.isInteger(requiredStableFrames) || requiredStableFrames < 1) {
     throw new Error('稳定帧数必须为正整数');
   }
+  if (foregroundObservation && (
+    !Number.isFinite(foregroundObservation.observationGapMs)
+    || foregroundObservation.observationGapMs <= 0
+    || !Number.isFinite(foregroundObservation.supplementalTimeoutMs)
+    || foregroundObservation.supplementalTimeoutMs <= 0
+  )) {
+    throw new Error('Invalid foreground observation window');
+  }
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -588,6 +597,10 @@ function waitForStableTradeControl(
     let stableFrames = 0;
     let stableCandidate = null;
     let hiddenObservations = 0;
+    let lastForegroundObservationAt = view.performance.now();
+    let foregroundDeadlineAt = lastForegroundObservationAt + timeoutMs;
+    let observationStarved = false;
+    let supplementalDeadlineAt = null;
     const maxHiddenObservations = Math.max(requiredStableFrames, Math.ceil(timeoutMs / 100));
     const finish = (value, error = null) => {
       if (settled) return;
@@ -601,8 +614,27 @@ function waitForStableTradeControl(
       else resolve(value);
     };
     const onAbort = () => finish(null, abortSignal.reason);
+    const cannotObserve = () => {
+      if (settled) return true;
+      if (abortSignal?.aborted) {
+        onAbort();
+        return true;
+      }
+      if (supplementalDeadlineAt !== null && view.performance.now() >= supplementalDeadlineAt) {
+        finish(null);
+        return true;
+      }
+      return false;
+    };
+    const observeForegroundGap = () => {
+      const now = view.performance.now();
+      if (now - lastForegroundObservationAt >= foregroundObservation.observationGapMs) {
+        observationStarved = true;
+      }
+      lastForegroundObservationAt = now;
+    };
     const scheduleObservation = () => {
-      if (document.hidden) {
+      if (supplementalDeadlineAt !== null || document.hidden) {
         observationTimer = view.setTimeout(check, 100);
       } else {
         frameHandle = view.requestAnimationFrame(check);
@@ -611,7 +643,22 @@ function waitForStableTradeControl(
     const check = () => {
       frameHandle = 0;
       observationTimer = 0;
+      if (cannotObserve()) return;
+      if (foregroundObservation && supplementalDeadlineAt === null && !document.hidden) {
+        observeForegroundGap();
+        if (view.performance.now() >= foregroundDeadlineAt) {
+          onForegroundDeadline();
+          return;
+        }
+      }
       const candidate = readCandidate();
+      // Input events can synchronously stop the task or consume the remaining budget.
+      if (cannotObserve()) return;
+      if (foregroundObservation && supplementalDeadlineAt === null && !document.hidden
+        && view.performance.now() >= foregroundDeadlineAt) {
+        onForegroundDeadline();
+        return;
+      }
       if (candidate) {
         stableFrames = isSameCandidate(candidate, stableCandidate) ? stableFrames + 1 : 1;
         stableCandidate = candidate;
@@ -623,7 +670,7 @@ function waitForStableTradeControl(
         stableFrames = 0;
         stableCandidate = null;
       }
-      if (document.hidden) {
+      if (document.hidden && supplementalDeadlineAt === null) {
         hiddenObservations += 1;
         if (hiddenObservations >= maxHiddenObservations) {
           finish(null);
@@ -632,13 +679,43 @@ function waitForStableTradeControl(
       }
       scheduleObservation();
     };
+    const onForegroundDeadline = () => {
+      if (cannotObserve()) return;
+      if (!foregroundObservation) {
+        finish(null);
+        return;
+      }
+      observeForegroundGap();
+      if (!observationStarved) {
+        finish(null);
+        return;
+      }
+      // Anchor to the original deadline, not callback delivery. A stalled event
+      // loop must not earn a fresh budget when its overdue timeout finally runs.
+      supplementalDeadlineAt = foregroundDeadlineAt + foregroundObservation.supplementalTimeoutMs;
+      if (cannotObserve()) return;
+      if (frameHandle) view.cancelAnimationFrame(frameHandle);
+      frameHandle = 0;
+      view.clearTimeout(deadlineTimer);
+      deadlineTimer = view.setTimeout(() => finish(null), supplementalDeadlineAt - view.performance.now());
+      scheduleObservation();
+    };
     const onVisibilityChange = () => {
+      // Once granted, the supplement keeps its timer observations and absolute
+      // endpoint across visibility changes. Ordinary hidden waits keep their
+      // existing observation-count budget because Chrome can throttle timers.
+      if (supplementalDeadlineAt !== null || cannotObserve()) return;
       if (frameHandle) view.cancelAnimationFrame(frameHandle);
       view.clearTimeout(observationTimer);
       view.clearTimeout(deadlineTimer);
       frameHandle = 0;
       observationTimer = 0;
-      if (!document.hidden) deadlineTimer = view.setTimeout(() => finish(null), timeoutMs);
+      if (!document.hidden) {
+        lastForegroundObservationAt = view.performance.now();
+        foregroundDeadlineAt = lastForegroundObservationAt + timeoutMs;
+        observationStarved = false;
+        deadlineTimer = view.setTimeout(onForegroundDeadline, timeoutMs);
+      }
       scheduleObservation();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -647,7 +724,7 @@ function waitForStableTradeControl(
       onAbort();
       return;
     }
-    if (!document.hidden) deadlineTimer = view.setTimeout(() => finish(null), timeoutMs);
+    if (!document.hidden) deadlineTimer = view.setTimeout(onForegroundDeadline, timeoutMs);
     scheduleObservation();
   });
 }
@@ -662,6 +739,7 @@ export function waitForTradeFormFrameState(
   timeoutMs,
   requiredStableFrames = 2,
   abortSignal = null,
+  foregroundObservation = null,
 ) {
   return waitForStableTradeControl(
     observationRoot,
@@ -671,6 +749,7 @@ export function waitForTradeFormFrameState(
     requiredStableFrames,
     abortSignal,
     '交易表单帧调度器不可用',
+    foregroundObservation,
   );
 }
 
