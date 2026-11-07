@@ -6,6 +6,7 @@ import { loadFixtureDom } from '../../helpers/dom.js';
 import {
   findOpenOrderRowElements,
   getOpenOrderRowCells,
+  readNativeReplacementOrder,
   readOpenOrdersScopeText,
 } from '../../../src/binance-orderbook-trade/dom/open-order-rows.js';
 import {
@@ -47,6 +48,84 @@ function createRow({ symbol = 'HYPEUSDT', side = '开空', quantity = '0.07' } =
       </div>
     </div>
   `;
+}
+
+function createNativeQuantityRow(quantity) {
+  const { window } = loadFixtureDom('<div id="native-order"></div>');
+  const row = window.document.querySelector('#native-order');
+  const identity = { symbol: 'HYPEUSDT', orderId: 1001, clientOrderId: 'native-quantity-client' };
+  row.__reactFiber$fixture = {
+    stateNode: row,
+    return: { memoizedProps: { ...identity, ...quantity } },
+  };
+  return { row, identity };
+}
+
+for (const sample of [
+  { name: 'numeric zero from account updates', origQty: '1', executedQty: 0, filled: '0', remaining: '1' },
+  { name: 'string zero from initial orders', origQty: '1', executedQty: '0', filled: '0', remaining: '1' },
+  { name: 'numeric partial fills', origQty: '1', executedQty: 0.125, filled: '0.125', remaining: '0.875' },
+  { name: 'string partial fills', origQty: '1', executedQty: '0.125', filled: '0.125', remaining: '0.875' },
+  { name: 'small numeric partial fills', origQty: '1', executedQty: 1e-8, filled: '0.00000001', remaining: '0.99999999' },
+  { name: 'precise fractional strings', origQty: '1.000000000000000001', executedQty: '0.000000000000000001', filled: '0.000000000000000001', remaining: '1' },
+  { name: 'integer strings beyond floating point precision', origQty: '9007199254740994', executedQty: '9007199254740993', filled: '9007199254740993', remaining: '1' },
+  { name: 'fully filled string quantities', origQty: '1', executedQty: '1', filled: '1', remaining: '0' },
+]) {
+  test(`user reads exact remaining quantity for ${sample.name}`, () => {
+    // Given a real native row owner exposes one of Binance's observed quantity forms.
+    const { row, identity } = createNativeQuantityRow(sample);
+
+    // When replacement preflight reads that row through the production adapter.
+    const observed = readNativeReplacementOrder(row, identity.symbol);
+
+    // Then identity and exact decimal quantities are preserved without rounding string input.
+    assert.deepEqual(observed, {
+      ...identity, origQty: sample.origQty, executedQty: sample.filled, remainingQty: sample.remaining,
+    });
+  });
+}
+
+for (const sample of [
+  { name: 'missing executed quantity', executedQty: undefined },
+  { name: 'null executed quantity', executedQty: null },
+  { name: 'empty executed quantity', executedQty: '' },
+  { name: 'blank executed quantity', executedQty: ' ' },
+  { name: 'padded executed quantity', executedQty: ' 0 ' },
+  { name: 'exponent string quantity', executedQty: '1e-8' },
+  { name: 'negative string quantity', executedQty: '-0.1' },
+  { name: 'negative numeric quantity', executedQty: -0.1 },
+  { name: 'NaN executed quantity', executedQty: NaN },
+  { name: 'infinite executed quantity', executedQty: Infinity },
+  { name: 'boolean executed quantity', executedQty: false },
+  { name: 'object executed quantity', executedQty: { value: 0 } },
+  { name: 'numeric original quantity', origQty: 1, executedQty: 0 },
+  { name: 'exponent original quantity', origQty: '1e3', executedQty: 0 },
+]) {
+  test(`user refuses cancellation preflight with ${sample.name}`, () => {
+    // Given native props contain an invalid quantity instead of a supported decimal form.
+    const { row, identity } = createNativeQuantityRow({ origQty: '1', ...sample });
+
+    // When replacement preflight reads the invalid native quantity.
+    const error = captureThrownError(() => readNativeReplacementOrder(row, identity.symbol));
+
+    // Then the explicit quantity failure stops the workflow without coercing the input.
+    assert.equal(error.name, 'Error');
+    assert.equal(error.message, '无法确认原生订单数量，已停止撤单');
+  });
+}
+
+for (const executedQty of [1.001, '1.000000000000000001']) {
+  test(`user refuses executed quantity ${executedQty} above the original order amount`, () => {
+    // Given the native row claims more executed quantity than the original order.
+    const { row, identity } = createNativeQuantityRow({ origQty: '1', executedQty });
+
+    // When the production adapter computes the remaining amount.
+    const error = captureThrownError(() => readNativeReplacementOrder(row, identity.symbol));
+
+    // Then a negative remaining quantity is rejected as an inconsistent order.
+    assert.equal(error.name, 'Error');
+    assert.equal(error.message, '原生订单数量不一致，已停止撤单');
+  });
 }
 
 test("user finds current Binance open-order rows from their semantic cancel action", () => {

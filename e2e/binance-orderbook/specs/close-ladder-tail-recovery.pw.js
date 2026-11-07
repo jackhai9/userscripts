@@ -45,18 +45,23 @@ async function openTailRecovery(page, {
   initialLevels = 3,
   finishAfterSubmissions = null,
   holdFlatResponse = false,
+  orders,
+  holdRowCancelResponses = false,
+  holdTerminalUpdates = false,
 }) {
   await installScenarioClock(page);
   const scenario = createCancelScenario({
     positions: [{ symbol: CURRENT_SYMBOL, side: positionSide, quantity: (initialLevels / 100).toFixed(2) }],
-    orders: tailOrders(levels, positionSide),
+    orders: orders ?? tailOrders(levels, positionSide),
     ui: {
       tradeMode: 'CLOSE', accountTab: 'history', openOrdersSubTab: 'conditional',
       hideOtherSymbols: false, orderbookPrecision: '0.1',
     },
     host: { rowCancelMode, rowCancelDelayMs },
   });
-  const host = await openUserscriptScenario(page, scenario, { replacementStream: true });
+  const host = await openUserscriptScenario(page, scenario, {
+    replacementStream: true, holdRowCancelResponses, holdTerminalUpdates,
+  });
   const flatResponse = Promise.withResolvers();
   const positionResponses = [];
   let flatRequests = 0;
@@ -129,6 +134,113 @@ const INITIAL_SUBMISSIONS = [
   { action: '平空', price: '80.4', quantity: '0.01' },
   { action: '平空', price: '79.9', quantity: '0.01' },
 ];
+
+for (const firstReceipt of ['HTTP', 'terminal stream']) {
+  test(`user replaces the exact mixed-type remaining quantity only after ${firstReceipt} and its matching cancellation receipt`, async ({ page }) => {
+    // Given four native close-long rows have mixed numeric/string fills and release only three minimum units together.
+    const executedQuantities = [0, '0', 0.005, '0.005'];
+    const orders = tailOrders(4, 'LONG').map((order, index) => index < 4
+      ? { ...order, executedQty: executedQuantities[index] } : order);
+    const host = await openTailRecovery(page, {
+      positionSide: 'LONG', initialLevels: 5, levels: 4, tailQuantity: '0.03', orders,
+      finishAfterSubmissions: 8, holdRowCancelResponses: true, holdTerminalUpdates: true,
+    });
+    const terminalFor = order => ({
+      s: order.symbol, i: order.orderId, c: order.clientOrderId, x: 'CANCELED', X: 'CANCELED',
+      q: order.quantity, z: String(order.executedQty),
+    });
+
+    // When continuous close reaches its first scoped cancellation and receives only one required receipt.
+    await page.locator('[data-ladder-action="CLOSE_LONG"]').click({ modifiers: ['Alt'] });
+    await advanceUntil(page, async () => host.pendingCancelOrderIds().includes(orders[0].orderId)
+      || await hasTerminalStatus(page), 'The mixed-type quantity preflight must admit the first row');
+    expect(host.pendingCancelOrderIds()).toEqual([orders[0].orderId]);
+    if (firstReceipt === 'HTTP') {
+      host.releaseCancelResponse(orders[0].orderId);
+      await advanceUntil(page, async () => (await readFixtureState(page)).events
+        .some(({ type, orderId }) => type === 'row-cancel-response' && orderId === orders[0].id),
+      'The first cancellation HTTP receipt must reach the host');
+    } else {
+      await page.evaluate(() => {
+        window.__MIXED_QUANTITY_TERMINAL_DELIVERY__ = new Promise(resolve => {
+          window.__fixtureReplacementSocket.addEventListener('message', event => {
+            resolve(JSON.parse(event.data).data.o.i);
+          }, { once: true });
+        });
+      });
+      host.publishTerminalUpdate(terminalFor(orders[0]));
+      expect(await page.evaluate(() => window.__MIXED_QUANTITY_TERMINAL_DELIVERY__)).toBe(orders[0].orderId);
+    }
+    await page.clock.runFor(500);
+
+    // Then neither the next native cancellation nor any replacement can run before both receipts agree.
+    const pending = await readFixtureState(page);
+    expect(pending.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
+      .toEqual([orders[0].id]);
+    expect(submittedOrders(pending).map(({ action, quantity }) => ({ action, quantity })))
+      .toEqual(Array(5).fill({ action: '平多', quantity: '0.01' }));
+    expect(pending.events.filter(({ type }) => type === 'order-submit-api-success')).toHaveLength(4);
+
+    // When the missing first receipt and both exact receipts for each subsequent selected row arrive.
+    if (firstReceipt === 'HTTP') host.publishTerminalUpdate(terminalFor(orders[0]));
+    else host.releaseCancelResponse(orders[0].orderId);
+    for (const order of orders.slice(1, 4)) {
+      await advanceUntil(page, () => host.pendingCancelOrderIds().includes(order.orderId),
+        'The next selected native row must await its own receipts');
+      host.publishTerminalUpdate(terminalFor(order));
+      host.releaseCancelResponse(order.orderId);
+    }
+    await advanceUntil(page, () => hasTerminalStatus(page), 'The three-unit replacement must finish continuous close');
+
+    // Then exact remaining quantities select all four targets, preserve unrelated rows, and submit only the fresh three-unit tail.
+    const state = await readFixtureState(page);
+    await expect(page.locator(STATUS)).toContainText('当前方向已无持仓');
+    await expect(page.locator(STATUS)).toContainText('累计 7 笔');
+    await expect(page.locator(STATUS)).toContainText('撤 4 笔');
+    for (const type of ['row-cancel-requested', 'row-cancel-response', 'row-cancel-cleared']) {
+      expect(state.events.filter(event => event.type === type).map(({ orderId }) => orderId))
+        .toEqual(orders.slice(0, 4).map(({ id }) => id));
+    }
+    expect(state.orders).toEqual(orders.slice(4));
+    expect(submittedOrders(state).map(({ action, quantity }) => ({ action, quantity })))
+      .toEqual(Array(8).fill({ action: '平多', quantity: '0.01' }));
+    expect(state.events.filter(({ type }) => type === 'order-submit-api-rejected').map(({ code }) => code))
+      .toEqual(['90802022']);
+    expect(state.events.filter(({ type }) => type === 'order-submit-api-success')).toHaveLength(7);
+    expect(host.positionResponses.some(({ submissions, positions }) => submissions === 5
+      && positions[0]?.quantity === '0.03')).toBe(true);
+    expectRestoredScope(state);
+    expect(host.errors).toEqual([]);
+  });
+}
+
+test('user preserves every order when a later selected native row has an invalid executed quantity string', async ({ page }) => {
+  // Given the first close-long row is valid but the second required row has a non-decimal executed quantity.
+  const orders = tailOrders(2, 'LONG').map((order, index) => index < 2
+    ? { ...order, executedQty: index === 0 ? 0 : '0tail' } : order);
+  const host = await openTailRecovery(page, {
+    positionSide: 'LONG', initialLevels: 5, levels: 2, tailQuantity: '0.02', orders,
+  });
+
+  // When continuous close preflights all required targets after four accepted submissions and a native rejection.
+  await page.locator('[data-ladder-action="CLOSE_LONG"]').click({ modifiers: ['Alt'] });
+  await advanceUntil(page, () => hasTerminalStatus(page), 'Invalid executed quantity must stop before any cancellation');
+
+  // Then the exact quantity failure retains partial progress and prevents cancellation of even the earlier valid row.
+  await expect(page.locator(STATUS)).toContainText('无法确认原生订单数量，已停止撤单');
+  await expect(page.locator(STATUS)).toContainText('90802022');
+  await expect(page.locator(STATUS)).toContainText('本轮 4/5 笔');
+  await expect(page.locator(STATUS)).toContainText('累计 4 笔');
+  await page.clock.runFor(10_000);
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(orders);
+  expect(state.events.filter(({ type }) => /cancel/.test(type))).toEqual([]);
+  expect(submittedOrders(state).map(({ action, quantity }) => ({ action, quantity })))
+    .toEqual(Array(5).fill({ action: '平多', quantity: '0.01' }));
+  expect(state.events.filter(({ type }) => type === 'order-submit-api-success')).toHaveLength(4);
+  expectRestoredScope(state);
+  expect(host.errors).toEqual([]);
+});
 
 for (const tail of [
   { label: 'one minimum unit', quantity: '0.01', levels: 1 },
