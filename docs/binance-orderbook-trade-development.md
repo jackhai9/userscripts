@@ -363,6 +363,20 @@ cumulative confirmed submissions. After cancellation, wait and reread the
 position before building the execution plan, including a normal finish when
 the position has become flat.
 
+After the native cancellation receipts confirm enough released quantity, check
+the cancelled IDs against the complete, committed Basic list for this symbol.
+The scroll window can still display the previous rows after the list data has
+removed them. Window alignment is required for selecting rows to cancel, but
+not for this post-cancellation ID check. If the data is loading, paginated,
+unverifiable, or still contains a cancelled ID, do not replan until the check
+passes; stop if it times out. Only this continuous-close check also rereads the
+data every 250 ms, because committed React props can change without a DOM
+mutation. DOM changes still wake the check immediately. Both wake paths share
+one timer and the original 6.5-second deadline; completion, Stop, or a thrown
+scope/read error disposes the timer and observer. Browser timer throttling can
+delay a recheck. Ordinary DOM waits and the three-second recovery cooldown
+retain their existing behavior.
+
 Recovery rebuilds use the smaller of the confirmed API position quantity and the
 latest valid DOM closeable quantity. Missing DOM quantity never falls back to the
 API amount. Symbol, direction, precision, and option context stay pinned to the

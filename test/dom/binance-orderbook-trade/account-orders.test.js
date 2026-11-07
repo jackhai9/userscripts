@@ -488,6 +488,186 @@ test('user rejects a pre-aborted account wait before reading or observing state'
   assert.equal(reads, 0);
 });
 
+test('user detects a silent account-data update on the next bounded recheck', async (t) => {
+  // Given an account owner can update its data without changing any observed DOM.
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const root = window.document.querySelector('#account-orders');
+  const controller = new AbortController();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  let state = null;
+  let outcome = 'pending';
+  const reads = [];
+  const pending = waitForAccountOrdersMutationState(root, () => {
+    reads.push(Date.now());
+    return state;
+  }, 6500, controller.signal, 250)
+    .then(value => { outcome = value; }, error => { outcome = error; });
+  try {
+    // When the owner publishes cleared data without a DOM mutation.
+    state = 'cancelled IDs absent';
+    t.mock.timers.tick(249);
+    await Promise.resolve();
+
+    // Then the next recheck, rather than the full deadline, resolves the current data.
+    assert.equal(outcome, 'pending');
+    t.mock.timers.tick(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(reads.at(-1), 1250);
+    await pending;
+    assert.equal(outcome, 'cancelled IDs absent');
+    assert.equal(Date.now(), 1250);
+  } finally {
+    controller.abort(new Error('Test completed'));
+    await pending;
+  }
+});
+
+test('user still receives DOM updates immediately between account-data rechecks', async (t) => {
+  // Given a bounded recheck is pending and the caller has not reached that interval.
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const root = window.document.querySelector('#account-orders');
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  let reads = 0;
+  const pending = waitForAccountOrdersMutationState(root, () => {
+    reads += 1;
+    return root.className === 'ready' ? root : null;
+  }, 6500, null, 250);
+
+  // When the native account owner commits a DOM update before the timer.
+  t.mock.timers.tick(25);
+  root.className = 'ready';
+
+  // Then the event resolves immediately and completion removes further observation and rechecks.
+  assert.equal(await pending, root);
+  assert.equal(Date.now(), 1025);
+  const completedReads = reads;
+  root.className = 'later';
+  t.mock.timers.tick(6500);
+  await Promise.resolve();
+  assert.equal(reads, completedReads);
+});
+
+test('user stops bounded account-data rechecks immediately without processing late data', async (t) => {
+  // Given the account wait has a pending data-recheck timer.
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const root = window.document.querySelector('#account-orders');
+  const controller = new AbortController();
+  const reason = new Error('User stopped the close task');
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  let reads = 0;
+  const pending = waitForAccountOrdersMutationState(root, () => {
+    reads += 1;
+    return root.className === 'ready' ? root : null;
+  }, 6500, controller.signal, 250);
+
+  // When Stop arrives before the next recheck and native data updates afterwards.
+  t.mock.timers.tick(100);
+  controller.abort(reason);
+  await assert.rejects(pending, error => error === reason);
+  const stoppedReads = reads;
+  root.className = 'ready';
+  t.mock.timers.tick(6500);
+  await Promise.resolve();
+
+  // Then the caller's stop reason wins and no later timer or mutation reads account data.
+  assert.equal(Date.now(), 7600);
+  assert.equal(reads, stoppedReads);
+});
+
+test('user keeps the original account-data deadline across early events and repeated rechecks', async (t) => {
+  // Given data remains unavailable throughout a bounded wait with proactive checks.
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const root = window.document.querySelector('#account-orders');
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  let outcome = 'pending';
+  const reads = [];
+  const pending = waitForAccountOrdersMutationState(root, () => {
+    reads.push(Date.now());
+    return null;
+  }, 6500, null, 250).then(value => { outcome = value; });
+
+  // When an early DOM event shifts the recheck cadence off the deadline's interval.
+  t.mock.timers.tick(125);
+  root.className = 'still-loading';
+  await Promise.resolve();
+  await Promise.resolve();
+  for (let elapsed = 125; elapsed < 6375; elapsed += 250) {
+    t.mock.timers.tick(250);
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+  t.mock.timers.tick(124);
+  await Promise.resolve();
+
+  // Then the last short interval stops at the original deadline, not one full extra period.
+  assert.equal(outcome, 'pending');
+  assert.equal(Date.now(), 7499);
+  assert.ok(reads.includes(7375));
+  t.mock.timers.tick(1);
+  await pending;
+  assert.equal(outcome, null);
+  assert.equal(Date.now(), 7500);
+  assert.equal(reads.at(-1), 7500);
+  const completedReads = reads.length;
+  root.className = 'late-update';
+  t.mock.timers.tick(6500);
+  await Promise.resolve();
+  assert.equal(reads.length, completedReads);
+});
+
+test('user retains event-only waiting when account-data rechecks are not requested', async (t) => {
+  // Given an ordinary caller uses only the existing DOM notification and deadline contract.
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const root = window.document.querySelector('#account-orders');
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  let state = null;
+  let outcome = 'pending';
+  const pending = waitForAccountOrdersMutationState(root, () => state, 6500)
+    .then(value => { outcome = value; });
+
+  // When JavaScript data changes without any observed DOM update.
+  state = 'data ready';
+  t.mock.timers.tick(6499);
+  await Promise.resolve();
+
+  // Then the ordinary caller has no additional periodic wake and retains its final deadline read.
+  assert.equal(outcome, 'pending');
+  t.mock.timers.tick(1);
+  await pending;
+  assert.equal(outcome, 'data ready');
+  assert.equal(Date.now(), 7500);
+});
+
+test('user ends account-data observation when a proactive scope check throws', async (t) => {
+  // Given a live wait will detect an invalid scope on its next data recheck.
+  const { window } = loadFixtureDom(openOrdersHtml);
+  const root = window.document.querySelector('#account-orders');
+  const reason = new Error('Order scope changed');
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  let invalidScope = false;
+  let reads = 0;
+  const pending = waitForAccountOrdersMutationState(root, () => {
+    reads += 1;
+    if (invalidScope) throw reason;
+    return null;
+  }, 6500, null, 250);
+  const rejected = assert.rejects(pending, error => error === reason);
+
+  // When the next scheduled read finds that its pinned scope is invalid.
+  invalidScope = true;
+  t.mock.timers.tick(250);
+  await rejected;
+
+  // Then the exact error propagates and later timers or DOM changes cannot resume the wait.
+  assert.equal(Date.now(), 1250);
+  const failedReads = reads;
+  root.className = 'late-update';
+  t.mock.timers.tick(6500);
+  await Promise.resolve();
+  assert.equal(reads, failedReads);
+});
+
 test('user finds visible conditional and selected basic subtabs while ignoring hidden candidates', () => {
   // Given the native pane contains hidden stale tabs and current English subtabs
   const { window } = loadFixtureDom(`

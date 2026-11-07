@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.235
+// @version      2.7.237
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -2261,7 +2261,7 @@
       }
     };
   }
-  async function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs, abortSignal = null) {
+  async function waitForAccountOrdersMutationState(observationRoot, readState, timeoutMs, abortSignal = null, recheckIntervalMs = timeoutMs) {
     throwIfAborted(abortSignal);
     const currentState = readState();
     if (currentState) return currentState;
@@ -2277,7 +2277,7 @@
         const remainingMs = deadline - Date.now();
         if (remainingMs <= 0) return readState();
         await waitForPromiseOrAbort(
-          signal.waitForChange(version, remainingMs),
+          signal.waitForChange(version, Math.min(remainingMs, recheckIntervalMs)),
           abortSignal
         );
       }
@@ -5312,7 +5312,7 @@
     const fields = Object.keys(item);
     return fields.length > 0 && fields.every((field) => Object.hasOwn(props, field) && Object.is(item[field], props[field]));
   }
-  function readNativeOpenOrderWindow(root, symbol) {
+  function readCommittedList(root, symbol) {
     let found = null;
     for (const host of root.querySelectorAll("div[style]")) {
       if (host.style.overflowY !== "auto") continue;
@@ -5322,28 +5322,35 @@
         const list = child?.props?.children?.props;
         if (list?.conRef?.current !== host) continue;
         if (found || list.loading !== false || list.hasMore !== void 0 || list.loadMore !== void 0 || !Array.isArray(list.data) || typeof list.renderItem !== "function") return null;
-        const body = committedProps(host)?.children?.[1];
         const data = list.data;
         if (!data.every((item) => item?.symbol === symbol || item?.strategySubIdTwo?.symbol === symbol && item?.strategySubIdThree?.symbol === symbol)) return null;
-        if (!data.length) {
-          if (!list.emptyState || body !== list.emptyState) return null;
-          found = { host, data, complete: true };
-          continue;
-        }
-        const rows = body?.props?.children?.[1];
-        if (!Array.isArray(rows)) return null;
-        const offset = data.findIndex((item) => represents(item, rows[0]));
-        const aligned = offset >= 0 && rows.every((row, i) => represents(data[offset + i], row));
-        found = {
-          host,
-          data,
-          count: rows.length,
-          offset: aligned ? offset : -1,
-          complete: aligned && offset === 0 && rows.length === data.length
-        };
+        if (!data.length && !list.emptyState) return null;
+        found = { host, list };
       }
     }
     return found;
+  }
+  function readCommittedOpenOrderData(root, symbol) {
+    return readCommittedList(root, symbol)?.list.data ?? null;
+  }
+  function readNativeOpenOrderWindow(root, symbol) {
+    const owner = readCommittedList(root, symbol);
+    if (!owner) return null;
+    const { host, list } = owner;
+    const { data } = list;
+    const body = committedProps(host)?.children?.[1];
+    if (!data.length) return body === list.emptyState ? { host, data, complete: true } : null;
+    const rows = body?.props?.children?.[1];
+    if (!Array.isArray(rows)) return null;
+    const offset = data.findIndex((item) => represents(item, rows[0]));
+    const aligned = offset >= 0 && rows.every((row, i) => represents(data[offset + i], row));
+    return {
+      host,
+      data,
+      count: rows.length,
+      offset: aligned ? offset : -1,
+      complete: aligned && offset === 0 && rows.length === data.length
+    };
   }
 
   // src/binance-orderbook-trade/dom/order-feedback-scan.js
@@ -6058,6 +6065,7 @@
     const CONTINUOUS_CLOSE_POSITION_CHECK_MS = 1e3;
     const MULTIPLIER_PRESS_FEEDBACK_MS = 140;
     const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
+    const CONTINUOUS_CLOSE_ORDER_DATA_RECHECK_MS = 250;
     const LADDER_REPLACE_ROW_SETTLE_MS = 240;
     const MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT = 50;
     const OPEN_ORDERS_LAZY_LOAD_TIMEOUT_MS = 7e3;
@@ -6621,6 +6629,7 @@
       ["订单行身份发生变化，已停止撤单", "The native order ID changed; cancellation stopped"],
       ["无法确认原生订单编号，已停止撤单", "Could not verify the native order ID; cancellation stopped"],
       ["已撤订单列表尚未更新，已停止重新挂单", "Cancelled orders have not cleared from the list; replacement stopped"],
+      ["无法核实当前委托完整数据，已停止重新挂单", "Could not verify the complete open-order data; replacement stopped"],
       ["未连接到账户订单更新，已停止撤单", "Account order updates are unavailable; cancellation stopped"],
       ["已有撤单任务正在执行", "A cancellation is already running"],
       ["待替换挂单的撤单按钮点击失败，已停止重新挂单", "Could not click the replacement-order cancel control; replacement stopped"],
@@ -9360,13 +9369,14 @@
       const tabGroup = getAccountOrdersTabGroup2(tab);
       return tabGroup?.closest(".react-grid-item") || tabGroup?.parentElement || null;
     }
-    function waitForAccountOrdersState(readState, timeoutMs, abortSignal = null) {
+    function waitForAccountOrdersState(readState, timeoutMs, abortSignal = null, recheckIntervalMs = timeoutMs) {
       const observationRoot = getAccountOrdersObservationRoot() || document.body;
       return waitForAccountOrdersMutationState(
         observationRoot,
         readState,
         timeoutMs,
-        abortSignal
+        abortSignal,
+        recheckIntervalMs
       );
     }
     async function activateOpenOrdersTab(abortSignal = null) {
@@ -9804,7 +9814,7 @@
       if (plan?.spec?.mode === "CLOSE" && plan.spec.side === "SHORT") return "平空";
       return "";
     }
-    async function cancelOpenOrderRowsForPlan(targets, plan, progress, setExecutionStatus, abortSignal) {
+    async function cancelOpenOrderRowsForPlan(targets, plan, progress, setExecutionStatus, abortSignal, strategy) {
       if (activeCancelReceipts) throw new Error("已有撤单任务正在执行");
       const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS);
       const cancelledIds = /* @__PURE__ */ new Set();
@@ -9859,14 +9869,35 @@
           }
         }
         if (compareDecimalStrings(cancelQty, plan.totalQty) < 0) throw new Error("同向可撤挂单数量不足，已停止重新挂单");
-        const listUpdated = await waitForAccountOrdersState(() => {
-          checkScope();
-          const view = readNativeOpenOrderWindow(getActiveOpenOrdersScope2(), plan.symbol);
-          if (!view || view.offset === -1) return false;
-          const absent = (order) => sameNativeOrder(order, order) && !cancelledIds.has(String(order.orderId));
-          return view.data.every((item) => item.symbol === plan.symbol ? absent(item) : absent(item.strategySubIdTwo) && absent(item.strategySubIdThree));
-        }, LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS, abortSignal);
-        if (!listUpdated) throw new Error("已撤订单列表尚未更新，已停止重新挂单");
+        const continuousCloseRecovery = strategy === "confirmed_reduce_only_conflict";
+        let synchronizationFailure = "已撤订单列表尚未更新，已停止重新挂单";
+        const listUpdated = await waitForAccountOrdersState(
+          () => {
+            checkScope();
+            const root = getActiveOpenOrdersScope2();
+            let data;
+            if (continuousCloseRecovery) {
+              synchronizationFailure = "无法核实当前委托完整数据，已停止重新挂单";
+              data = readCommittedOpenOrderData(root, plan.symbol);
+              if (!data) return false;
+            } else {
+              const view = readNativeOpenOrderWindow(root, plan.symbol);
+              if (!view || view.offset === -1) return false;
+              data = view.data;
+            }
+            const absent = (order) => {
+              if (!sameNativeOrder(order, order)) return false;
+              if (!cancelledIds.has(String(order.orderId))) return true;
+              if (continuousCloseRecovery) synchronizationFailure = "待替换挂单仍存在，已停止重新挂单";
+              return false;
+            };
+            return data.every((item) => item.symbol === plan.symbol ? absent(item) : absent(item.strategySubIdTwo) && absent(item.strategySubIdThree));
+          },
+          LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS,
+          abortSignal,
+          continuousCloseRecovery ? CONTINUOUS_CLOSE_ORDER_DATA_RECHECK_MS : LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS
+        );
+        if (!listUpdated) throw new Error(synchronizationFailure);
       } finally {
         activeCancelReceipts = null;
       }
@@ -10828,7 +10859,8 @@
           plan,
           progress,
           setExecutionStatus,
-          abortSignal
+          abortSignal,
+          options?.strategy
         );
         throwIfAborted(abortSignal);
         setPlanStepStatus("原挂单已撤，继续阶梯挂单");
@@ -10970,7 +11002,8 @@
           plan,
           progress,
           setExecutionStatus,
-          abortSignal
+          abortSignal,
+          { strategy: "confirmed_reduce_only_conflict" }
         ),
         waitForRecovery: async (plan) => {
           let nextPositionCheckAt = Date.now() + CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS;
