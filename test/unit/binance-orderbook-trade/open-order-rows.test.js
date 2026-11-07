@@ -104,6 +104,40 @@ const scopeOptions = {
   isRowCancelIcon: (icon) => icon.getAttribute('aria-label') === '撤销挂单',
 };
 
+test("user can locate duplicate order rows after remount without measuring unrelated prices", () => {
+  // Given two identical visible orders, a hidden column, and unrelated prices in a large list.
+  const target = createRow().replace('82.00000', '1,082.00').replace('限价委托', 'Limit | Order');
+  const unrelated = createRow().repeat(198);
+  const dom = loadFixtureDom('<section><div>' + unrelated + target + target + '</div></section>');
+  const root = dom.window.document.querySelector('section');
+  const list = root.firstElementChild;
+  const key = '2026-08-26 10:24:05|HYPEUSDT永续|Limit | Order|开空|1,082.00|0.07 HYPE|0.00 HYPE|否|是|–';
+  const measuredRows = new Set();
+  const options = { ...scopeOptions, isVisibleElement(element) {
+    const row = element.closest('.typography-caption2');
+    if (row) measuredRows.add(row);
+    return isVisibleElement(element);
+  } };
+  list.lastElementChild.insertAdjacentHTML('afterbegin', '<div data-hidden>hidden</div>');
+
+  // When both duplicates are sought by their visible order details.
+  const duplicates = findOpenOrderRowElements(root, options, key);
+
+  // Then both rows are returned in native order and unrelated rows need no layout measurement.
+  assert.deepEqual(duplicates, [list.children[198], list.children[199]]);
+  assert.deepEqual([...measuredRows].filter(row => !duplicates.includes(row)), []);
+
+  // When the host remounts a single remaining copy and hides a matching control.
+  const hiddenPrice = target.replace('<div class="cell">1,082.00</div>',
+    '<div data-hidden>1,082.00</div><div class="cell">912.00</div>');
+  list.innerHTML = target + hiddenPrice + target.replace('aria-label="撤销挂单"', 'data-hidden aria-label="撤销挂单"');
+  const remaining = findOpenOrderRowElements(root, options, key);
+
+  // Then only the newly mounted actionable row supplies evidence for the order.
+  assert.deepEqual(remaining, [list.firstElementChild]);
+  assert.equal(duplicates[0].isConnected, false);
+});
+
 for (const [scenarioIndex, symbol] of (['龙虾USDT', '4USDT']).entries()) {
   test(`user sees that scope evidence preserves Unicode symbol cells beside concatenated order columns (case ${scenarioIndex + 1})`, () => {
     // Given the native fixture represents this supported scenario

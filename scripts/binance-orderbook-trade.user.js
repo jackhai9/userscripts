@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.234
+// @version      2.7.235
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1844,6 +1844,104 @@
       throw new Error(`不支持的合约状态交易对：${symbol}`);
     }
     return baseAsset;
+  }
+
+  // src/binance-orderbook-trade/core/capacity-cancel-receipts.js
+  function exactOrderId(id) {
+    if (Number.isSafeInteger(id) && id > 0) return String(id);
+    return typeof id === "string" && /^[1-9]\d*$/.test(id) ? id : null;
+  }
+  function sameNativeOrder(target, order) {
+    const id = exactOrderId(target.orderId);
+    return typeof target.symbol === "string" && target.symbol.length > 0 && id !== null && id === exactOrderId(order?.orderId) && typeof target.clientOrderId === "string" && target.clientOrderId.length > 0 && target.clientOrderId === order.clientOrderId && target.symbol === order.symbol;
+  }
+  function createNativeCancelReceipts(timeoutMs) {
+    const tickets = /* @__PURE__ */ new Map();
+    let admissionClosed = false;
+    function expect(target, quantity = null) {
+      const key = exactOrderId(target.orderId);
+      if (!sameNativeOrder(target, target) || tickets.has(key)) throw new Error("Invalid or duplicate cancellation identity");
+      const started = Promise.withResolvers();
+      const result = Promise.withResolvers();
+      const released = quantity && Promise.withResolvers();
+      let terminalQty;
+      let httpConfirmed = false;
+      let timer;
+      let outstanding = 0;
+      let ambiguous = false;
+      const ticket = {
+        target,
+        started: started.promise,
+        result: result.promise,
+        released: released?.promise,
+        hasStarted: false,
+        recordTerminal(order) {
+          if (!quantity || !ticket.hasStarted || order.x !== "CANCELED" || order.X !== "CANCELED") return;
+          if (!sameNativeOrder(target, { symbol: order.s, orderId: order.i, clientOrderId: order.c })) return;
+          const valid = [order.q, order.z].every((value) => typeof value === "string" && /^\d+(?:\.\d+)?$/.test(value)) && compareDecimalStrings(order.q, quantity.origQty) === 0 && [0, 1].includes(compareDecimalStrings(order.z, quantity.executedQty));
+          const amount = valid ? subtractDecimalStrings(order.q, order.z) : null;
+          terminalQty = terminalQty === void 0 || terminalQty === amount ? amount : null;
+          if (httpConfirmed && !outstanding) ticket.finish(!ambiguous);
+        },
+        stopQuantityWait() {
+          terminalQty = null;
+          if (httpConfirmed && !outstanding) ticket.finish(!ambiguous);
+        },
+        finish(confirmed) {
+          if (tickets.get(key) !== ticket) return;
+          if (confirmed) httpConfirmed = true;
+          result.resolve(confirmed);
+          if (confirmed && released && terminalQty === void 0) return;
+          if (!confirmed) admissionClosed = true;
+          tickets.delete(key);
+          clearTimeout(timer);
+          released?.resolve(confirmed ? terminalQty : null);
+        },
+        start() {
+          outstanding += 1;
+          if (ticket.hasStarted) {
+            ambiguous = true;
+            admissionClosed = true;
+            return;
+          }
+          ticket.hasStarted = true;
+          timer = setTimeout(() => ticket.finish(false), timeoutMs);
+          started.resolve();
+        },
+        receive(confirmed) {
+          outstanding -= 1;
+          if (!outstanding) ticket.finish(confirmed && !ambiguous);
+        }
+      };
+      tickets.set(key, ticket);
+      return ticket;
+    }
+    function observe(body, promise) {
+      if (typeof body !== "string") return;
+      let request;
+      try {
+        request = JSON.parse(body);
+      } catch (error) {
+        if (error instanceof SyntaxError) return;
+        throw error;
+      }
+      const ticket = tickets.get(exactOrderId(request?.orderId));
+      if (!ticket || !sameNativeOrder(ticket.target, request)) return;
+      ticket.start();
+      promise.then(async (response) => {
+        if (response.status !== 200) return false;
+        const payload = await response.clone().json();
+        const data = payload?.data;
+        return payload?.success === true && payload.code === "000000" && data?.status === "CANCELED" && (data.symbol === void 0 || data.symbol === request.symbol) && exactOrderId(data.orderId) === exactOrderId(request.orderId) && data.clientOrderId === request.clientOrderId;
+      }).then(ticket.receive, () => ticket.receive(false));
+    }
+    function observeOrderUpdate(order) {
+      const ticket = tickets.get(exactOrderId(order?.i));
+      ticket?.recordTerminal(order);
+    }
+    return { expect, observe, observeOrderUpdate, get admissionClosed() {
+      return admissionClosed;
+    } };
   }
 
   // src/binance-orderbook-trade/core/open-order-capacity.js
@@ -5100,23 +5198,53 @@
   function findOpenOrderRowElement(actionIcon, root, { isVisibleElement }) {
     let candidate = actionIcon?.parentElement || null;
     while (candidate && candidate !== root) {
-      if (getVisibleDirectChildren(candidate, isVisibleElement).length >= MIN_OPEN_ORDER_COLUMNS) {
+      if (candidate.childElementCount >= MIN_OPEN_ORDER_COLUMNS && getVisibleDirectChildren(candidate, isVisibleElement).length >= MIN_OPEN_ORDER_COLUMNS) {
         return candidate;
       }
       candidate = candidate.parentElement;
     }
     return null;
   }
-  function findOpenOrderRowElements(root, {
-    isVisibleElement,
-    isRowCancelIcon
-  }) {
+  function cellKeyText(cell) {
+    return cell.textContent.replace(/\s+/g, " ").trim();
+  }
+  function getOpenOrderRowKey(cells) {
+    return cells.slice(0, MIN_OPEN_ORDER_COLUMNS).map(cellKeyText).join("|");
+  }
+  function couldHaveVisibleKey(row, keyParts) {
+    let next = 0;
+    for (const cell of row.children) {
+      for (const part of cellKeyText(cell).split("|")) {
+        if (part !== keyParts[next]) continue;
+        next += 1;
+        if (next === keyParts.length) return true;
+      }
+    }
+    return false;
+  }
+  function findCandidateOrderIcons(root, key) {
+    const icons = /* @__PURE__ */ new Set();
+    const keyParts = key.split("|");
+    for (const marker of root.querySelectorAll(`:nth-child(${MIN_OPEN_ORDER_COLUMNS})`)) {
+      const row = marker.parentElement;
+      if (row === root || !couldHaveVisibleKey(row, keyParts)) continue;
+      for (const icon of row.querySelectorAll("svg[aria-label]")) icons.add(icon);
+    }
+    return icons;
+  }
+  function findOpenOrderRowElements(root, options, key = null) {
     if (!root) return [];
+    const { isVisibleElement, isRowCancelIcon } = options;
+    const keyedIcons = key === null ? null : findCandidateOrderIcons(root, key);
+    if (keyedIcons?.size === 0) return [];
     const rows = /* @__PURE__ */ new Set();
     for (const icon of root.querySelectorAll("svg[aria-label]")) {
-      if (!isVisibleElement(icon) || !isRowCancelIcon(icon)) continue;
-      const row = findOpenOrderRowElement(icon, root, { isVisibleElement });
-      if (row) rows.add(row);
+      if (keyedIcons && !keyedIcons.has(icon)) continue;
+      if (!isRowCancelIcon(icon) || !isVisibleElement(icon)) continue;
+      const row = findOpenOrderRowElement(icon, root, options);
+      if (!row || rows.has(row)) continue;
+      if (key !== null && getOpenOrderRowKey(getOpenOrderRowCells(row, options)) !== key) continue;
+      rows.add(row);
     }
     return Array.from(rows);
   }
@@ -5145,6 +5273,77 @@
     }
     appendText(root);
     return parts.join("");
+  }
+  function readNativeOrderProps(row, symbol) {
+    const fiberKey = Object.keys(row).find((key) => key.startsWith("__reactFiber$"));
+    for (let owner = row[fiberKey]?.return; owner && !owner.stateNode?.nodeType; owner = owner.return) {
+      const props = owner.memoizedProps;
+      if (props?.orderId == null || props.symbol !== symbol) continue;
+      const previous = owner.alternate?.memoizedProps;
+      if (previous && !sameNativeOrder(props, previous)) throw new Error("订单行身份发生变化，已停止撤单");
+      if (!sameNativeOrder(props, props)) break;
+      return props;
+    }
+    throw new Error("无法确认原生订单编号，已停止撤单");
+  }
+  function readNativeOrderIdentity(row, symbol) {
+    const { orderId, clientOrderId } = readNativeOrderProps(row, symbol);
+    return { symbol, orderId, clientOrderId };
+  }
+  function readNativeReplacementOrder(row, symbol) {
+    const { orderId, clientOrderId, origQty, executedQty } = readNativeOrderProps(row, symbol);
+    if (typeof origQty !== "string" || !/^\d+(?:\.\d+)?$/.test(origQty) || typeof executedQty !== "number" || !Number.isFinite(executedQty) || executedQty < 0) {
+      throw new Error("无法确认原生订单数量，已停止撤单");
+    }
+    const filledQty = executedQty.toLocaleString("en-US", { useGrouping: false, maximumSignificantDigits: 21 });
+    const remainingQty = subtractDecimalStrings(origQty, filledQty);
+    if (remainingQty === null) throw new Error("原生订单数量不一致，已停止撤单");
+    return { symbol, orderId, clientOrderId, origQty, executedQty: filledQty, remainingQty };
+  }
+
+  // src/binance-orderbook-trade/dom/open-orders-pagination.js
+  function committedProps(host) {
+    const key = Object.keys(host).find((name) => name.startsWith("__reactProps$"));
+    return key && host[key];
+  }
+  function represents(item, element) {
+    const props = element?.props;
+    if (!item || !props) return false;
+    const fields = Object.keys(item);
+    return fields.length > 0 && fields.every((field) => Object.hasOwn(props, field) && Object.is(item[field], props[field]));
+  }
+  function readNativeOpenOrderWindow(root, symbol) {
+    let found = null;
+    for (const host of root.querySelectorAll("div[style]")) {
+      if (host.style.overflowY !== "auto") continue;
+      const children = committedProps(host.parentElement)?.children;
+      if (!Array.isArray(children)) continue;
+      for (const child of children) {
+        const list = child?.props?.children?.props;
+        if (list?.conRef?.current !== host) continue;
+        if (found || list.loading !== false || list.hasMore !== void 0 || list.loadMore !== void 0 || !Array.isArray(list.data) || typeof list.renderItem !== "function") return null;
+        const body = committedProps(host)?.children?.[1];
+        const data = list.data;
+        if (!data.every((item) => item?.symbol === symbol || item?.strategySubIdTwo?.symbol === symbol && item?.strategySubIdThree?.symbol === symbol)) return null;
+        if (!data.length) {
+          if (!list.emptyState || body !== list.emptyState) return null;
+          found = { host, data, complete: true };
+          continue;
+        }
+        const rows = body?.props?.children?.[1];
+        if (!Array.isArray(rows)) return null;
+        const offset = data.findIndex((item) => represents(item, rows[0]));
+        const aligned = offset >= 0 && rows.every((row, i) => represents(data[offset + i], row));
+        found = {
+          host,
+          data,
+          count: rows.length,
+          offset: aligned ? offset : -1,
+          complete: aligned && offset === 0 && rows.length === data.length
+        };
+      }
+    }
+    return found;
   }
 
   // src/binance-orderbook-trade/dom/order-feedback-scan.js
@@ -5704,7 +5903,7 @@
   function isTradeSound(element, view) {
     return element instanceof view.HTMLAudioElement && TRADE_SOUND_PATH.test(new URL(element.src, view.location.href).pathname);
   }
-  function installFillSoundScope(view) {
+  function installFillSoundScope(view, observeCancellation = null) {
     const scope = createFillSoundScope({
       now: () => view.Date.now(),
       readCurrentSymbol: () => parseFuturesTradingSymbolFromPathname(view.location.pathname)
@@ -5713,14 +5912,22 @@
     const nativeAddEventListener = NativeWebSocket.prototype.addEventListener;
     const playDescriptor = Object.getOwnPropertyDescriptor(view.HTMLMediaElement.prototype, "play");
     const nativePlay = playDescriptor.value;
+    const accountSockets = /* @__PURE__ */ new Set();
     function observeFrame(event) {
       if (typeof event.data !== "string" || !event.data.includes(ORDER_UPDATE_MARKER)) return;
       const update = JSON.parse(event.data).data;
-      if (update?.e === "ORDER_TRADE_UPDATE") scope.recordOrderUpdate(update.o);
+      if (update?.e !== "ORDER_TRADE_UPDATE") return;
+      scope.recordOrderUpdate(update.o);
+      if (event.isTrusted && accountSockets.has(this)) observeCancellation?.(update.o);
     }
     view.WebSocket = new Proxy(NativeWebSocket, {
       construct(target, args, newTarget) {
         const socket = Reflect.construct(target, args, newTarget);
+        const { origin, pathname } = new URL(socket.url);
+        if (origin === "wss://fstream.binance.com" && pathname === "/private/stream") {
+          accountSockets.add(socket);
+          Reflect.apply(nativeAddEventListener, socket, ["close", () => accountSockets.delete(socket), { once: true }]);
+        }
         Reflect.apply(nativeAddEventListener, socket, ["message", observeFrame]);
         return socket;
       }
@@ -5730,16 +5937,19 @@
       return Reflect.apply(nativePlay, this, arguments);
     }
     Object.defineProperty(view.HTMLMediaElement.prototype, "play", { ...playDescriptor, value: play });
-    return Object.freeze({ snapshot: scope.snapshot });
+    return Object.freeze({ snapshot: scope.snapshot, hasAccountStream: () => [...accountSockets].some((socket) => socket.readyState === NativeWebSocket.OPEN) });
   }
-  function installOrderSoundScope() {
+  function installOrderSoundScope(observeCancellation) {
     if (!isTopLevelTradingPage() || Object.hasOwn(self, "__BINANCE_ORDER_SOUND__")) return;
-    Object.defineProperty(self, "__BINANCE_ORDER_SOUND__", { value: installFillSoundScope(self), configurable: true });
+    const { snapshot, hasAccountStream } = installFillSoundScope(self, observeCancellation);
+    Object.defineProperty(self, "__BINANCE_ORDER_SOUND__", { value: Object.freeze({ snapshot }), configurable: true });
+    return hasAccountStream;
   }
 
   // src/binance-orderbook-trade/index.user.js
+  var activeCancelReceipts = null;
   installChartWriteFilter();
-  installOrderSoundScope();
+  var hasCancellationAccountStream = installOrderSoundScope((order) => activeCancelReceipts?.observeOrderUpdate(order));
   (function initializeOrderbookTrade() {
     "use strict";
     if (!document.documentElement) {
@@ -5850,7 +6060,6 @@
     const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
     const LADDER_REPLACE_ROW_SETTLE_MS = 240;
     const MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT = 50;
-    const OPEN_ORDERS_LAZY_LOAD_SETTLE_MS = 700;
     const OPEN_ORDERS_LAZY_LOAD_TIMEOUT_MS = 7e3;
     const CANCEL_OPEN_ORDERS_CLEAR_SETTLE_MS = 1200;
     const ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS = 6e4;
@@ -6402,6 +6611,18 @@
       ["撤销待替换挂单时交易对已变化", "Symbol changed while cancelling replacement orders"],
       ["同向可撤挂单数量不足，已停止重新挂单", "Not enough cancellable same-direction orders; replacement stopped"],
       ["待替换挂单的撤单按钮已失效，已停止重新挂单", "Replacement-order cancel control became unavailable; replacement stopped"],
+      ["无法确认原生订单数量，已停止撤单", "Could not verify the native order quantity; cancellation stopped"],
+      ["原生订单数量不一致，已停止撤单", "Native order quantities are inconsistent; cancellation stopped"],
+      ["无法确认待替换订单，已停止重新挂单", "Could not identify the replacement order; replacement stopped"],
+      ["未收到匹配的成功撤单回执，已停止重新挂单", "Cancellation was not confirmed; replacement stopped"],
+      ["无法确认已撤挂单数量，已停止重新挂单", "Could not verify the cancelled quantity; replacement stopped"],
+      ["当前委托范围已变化或存在弹窗，已停止撤单", "Open-order scope changed or a dialog is open; cancellation stopped"],
+      ["待撤挂单包含重复订单编号，已停止撤单", "Selected orders contain a duplicate order ID; cancellation stopped"],
+      ["订单行身份发生变化，已停止撤单", "The native order ID changed; cancellation stopped"],
+      ["无法确认原生订单编号，已停止撤单", "Could not verify the native order ID; cancellation stopped"],
+      ["已撤订单列表尚未更新，已停止重新挂单", "Cancelled orders have not cleared from the list; replacement stopped"],
+      ["未连接到账户订单更新，已停止撤单", "Account order updates are unavailable; cancellation stopped"],
+      ["已有撤单任务正在执行", "A cancellation is already running"],
       ["待替换挂单的撤单按钮点击失败，已停止重新挂单", "Could not click the replacement-order cancel control; replacement stopped"],
       ["待替换挂单仍存在，已停止重新挂单", "Replacement orders still exist; replacement stopped"],
       ["待替换挂单状态未稳定，已停止重新挂单", "Replacement-order state did not stabilize; replacement stopped"],
@@ -6923,6 +7144,12 @@
         const requestUrl = getFetchRequestUrl(args);
         const shouldObserveResponse = capture && getFetchRequestMethod(args) === "POST" && isBinancePlaceOrderRequestUrl(requestUrl);
         const request = originalFetch.apply(this, args);
+        if (activeCancelReceipts && getFetchRequestMethod(args) === "POST") {
+          const url = new URL(requestUrl, window.location.href);
+          if (url.origin === window.location.origin && url.pathname === "/bapi/futures/v1/private/future/order/cancel-order") {
+            activeCancelReceipts.observe(args[1]?.body, request);
+          }
+        }
         if (shouldObserveResponse) {
           trackLadderSubmitResponse(request, capture, requestUrl);
         }
@@ -8513,12 +8740,12 @@
               progress,
               setExecutionStatus,
               abortSignal,
-              { strategy: "farthest_for_capacity" }
+              { strategy: "farthest_for_capacity", unresolvedCapacityOrders: options.unresolvedCapacityOrders }
             );
             throwIfAborted(abortSignal);
             if (!recovery?.ok) {
               const message = recovery?.message || "未能释放挂单名额";
-              if (["symbol_changed", "dialog_not_closed"].includes(recovery?.status)) {
+              if (["symbol_changed", "dialog_not_closed", "capacity_terminal"].includes(recovery?.status)) {
                 throw new Error(message);
               }
               throw createContinuousRoundRecoveryError(
@@ -8582,7 +8809,7 @@
         return operation();
       });
     }
-    async function startLadder(actionType, continuousProgress = null, chartSaveController = null) {
+    async function startLadder(actionType, continuousProgress = null, chartSaveController = null, unresolvedCapacityOrders = null) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec) {
         setLadderStatus(localizedText("未知阶梯动作", "Unknown ladder action"));
@@ -8679,6 +8906,7 @@
           abortController.signal,
           {
             allowMaxOpenOrdersRecovery: continuousSession && spec.mode === "CLOSE",
+            unresolvedCapacityOrders,
             allowReduceOnlyRecovery: continuousSession && spec.mode === "CLOSE",
             chartSaveController,
             chartSaveRound
@@ -8936,6 +9164,7 @@
       }
       const abortController = new AbortController();
       const continuousProgress = createContinuousLadderProgress();
+      const unresolvedCapacityOrders = /* @__PURE__ */ new Set();
       const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
       let chartSaveCoalescer = null;
       continuousLadderAbortController = abortController;
@@ -8952,7 +9181,8 @@
           const outcome = await startLadder(
             actionType,
             continuousProgress,
-            chartSaveCoalescer
+            chartSaveCoalescer,
+            unresolvedCapacityOrders
           );
           let recovery = null;
           if (!outcome?.progress) {
@@ -9433,30 +9663,18 @@
         view: window
       }));
     }
-    function createOpenOrderCancellationUnconfirmedError(message) {
-      const error = new Error(message);
-      error.name = "OpenOrderCancellationUnconfirmedError";
-      return error;
-    }
-    function isOpenOrderCancellationUnconfirmedError(error) {
-      return error?.name === "OpenOrderCancellationUnconfirmedError";
-    }
-    function getOpenOrderRowKey(cells, row) {
-      const cellText = cells.slice(0, 10).map((cell) => (cell.textContent || "").replace(/\s+/g, " ").trim()).join("|");
-      return cellText || (row.textContent || "").replace(/\s+/g, " ").trim();
-    }
-    function readOpenOrderRowElements(root) {
+    function readOpenOrderRowElements(root, key = null) {
       return findOpenOrderRowElements(root, {
         isVisibleElement,
         isRowCancelIcon: (icon) => matchesBinancePageText(
           icon.getAttribute("aria-label"),
           BINANCE_PAGE_TEXT.accountOrders.rowCancel
         )
-      });
+      }, key);
     }
-    function readCurrentSymbolOpenOrderRows(root, symbol, plan = null) {
+    function readCurrentSymbolOpenOrderRows(root, symbol, plan = null, key = null) {
       if (!root || !symbol) return [];
-      return readOpenOrderRowElements(root).map((row) => {
+      return readOpenOrderRowElements(root, key).map((row) => {
         const cells = findOpenOrderRowCells(row);
         const symbolText = (cells[1]?.textContent || "").replace(/\s+/g, " ").trim();
         const sideText = (cells[3]?.textContent || "").replace(/\s+/g, " ").trim();
@@ -9472,7 +9690,7 @@
           price,
           qty,
           cancelButton,
-          key: getOpenOrderRowKey(cells, row)
+          key: getOpenOrderRowKey(cells)
         };
       }).filter((row) => isOpenOrderRowCurrentSymbol(row.symbolText, symbol) && isOpenOrderRowForPlan(row.sideText, plan) && row.price && isPositiveDecimalString(row.price) && row.qty && isPositiveDecimalString(row.qty) && row.cancelButton);
     }
@@ -9537,64 +9755,24 @@
       }
       return null;
     }
-    function scrollOpenOrderRowsToBottom(scrollContainer) {
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      scrollContainer.dispatchEvent(new Event("scroll", { bubbles: true }));
-    }
-    async function loadAllCurrentSymbolOpenOrderRows(root, symbol, plan, abortSignal = null) {
-      const deadline = Date.now() + OPEN_ORDERS_LAZY_LOAD_TIMEOUT_MS;
-      let stableEndPasses = 0;
-      let currentRoot = root;
-      while (Date.now() < deadline) {
-        throwIfAborted(abortSignal);
+    async function loadAllCurrentSymbolOpenOrderRows(symbol, plan, abortSignal = null) {
+      let requested;
+      const state = await waitForAccountOrdersState(() => {
         if (!isCurrentObservedSymbol(symbol)) throw new Error("加载待撤挂单时交易对已变化");
-        currentRoot = getActiveOpenOrdersScope2() || currentRoot;
-        if (!currentRoot) throw new Error("加载待撤挂单时当前委托面板已消失");
-        const renderRemainingMs = deadline - Date.now();
-        const renderState = await waitForAccountOrdersState(() => {
-          const refreshedRoot = getActiveOpenOrdersScope2();
-          if (!refreshedRoot || !isCurrentObservedSymbol(symbol)) return null;
-          const settledState2 = readCurrentSymbolOpenOrderRowsState(refreshedRoot, symbol, plan);
-          if (!settledState2) return null;
-          return {
-            root: refreshedRoot,
-            settledState: settledState2,
-            scrollContainer: findOpenOrderRowsScrollContainer(refreshedRoot)
-          };
-        }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, renderRemainingMs), abortSignal);
-        if (!renderState) continue;
-        currentRoot = renderState.root;
-        const { settledState, scrollContainer } = renderState;
-        if (!scrollContainer && settledState) return settledState.rows;
-        const beforeCount = readOpenOrderRowElements(currentRoot).length;
-        scrollOpenOrderRowsToBottom(scrollContainer);
-        const growthRemainingMs = deadline - Date.now();
-        if (growthRemainingMs <= 0) break;
-        const growth = await waitForAccountOrdersState(() => {
-          const refreshedRoot = getActiveOpenOrdersScope2();
-          if (!refreshedRoot || !isCurrentObservedSymbol(symbol)) return null;
-          const loadedCount = readOpenOrderRowElements(refreshedRoot).length;
-          return loadedCount > beforeCount ? { root: refreshedRoot, loadedCount } : null;
-        }, Math.min(OPEN_ORDERS_LAZY_LOAD_SETTLE_MS, growthRemainingMs), abortSignal);
-        throwIfAborted(abortSignal);
-        currentRoot = growth?.root || getActiveOpenOrdersScope2() || currentRoot;
-        const afterCount = readOpenOrderRowElements(currentRoot).length;
-        if (afterCount > beforeCount) {
-          stableEndPasses = 0;
-          continue;
+        const root = getActiveOpenOrdersScope2();
+        if (!root || !hasNativeCancelScope(symbol)) return null;
+        const view = readNativeOpenOrderWindow(root, symbol);
+        if (!view) return null;
+        if (view.complete) return readCurrentSymbolOpenOrderRowsState(root, symbol, plan);
+        if (requested?.host !== view.host || requested.data !== view.data || requested.count !== view.count || requested.offset !== view.offset) {
+          requested = view;
+          view.host.scrollTop = view.offset ? 0 : view.host.scrollHeight;
+          view.host.dispatchEvent(new Event("scroll", { bubbles: true }));
         }
-        if (afterCount < beforeCount) {
-          stableEndPasses = 0;
-          continue;
-        }
-        const refreshedScrollContainer = findOpenOrderRowsScrollContainer(currentRoot);
-        const reachedBottom = !refreshedScrollContainer || refreshedScrollContainer.scrollTop + refreshedScrollContainer.clientHeight >= refreshedScrollContainer.scrollHeight - 2;
-        stableEndPasses = reachedBottom ? stableEndPasses + 1 : 0;
-        if (stableEndPasses >= 2) {
-          return readCurrentSymbolOpenOrderRows(currentRoot, symbol, plan);
-        }
-      }
-      throw new Error("当前委托完整列表 7 秒内未加载完成");
+        return null;
+      }, OPEN_ORDERS_LAZY_LOAD_TIMEOUT_MS, abortSignal);
+      if (!state) throw new Error("当前委托完整列表 7 秒内未加载完成");
+      return state.rows;
     }
     function readOpenOrdersDistanceReferencePrice() {
       const referencePrice = normalizeDecimalString(getLatestTradePrices()[0] || "");
@@ -9603,17 +9781,21 @@
       }
       return referencePrice;
     }
-    function selectOpenOrderRowsToCancelForPlan(plan, rows, options = null) {
-      const { allowPartial = false } = options || {};
-      const rowsToCancel = [];
-      let cancelQty = "0";
+    function selectOpenOrderRowsToCancelForPlan(plan, rows) {
+      const targets = [];
+      const ids = /* @__PURE__ */ new Set();
+      let quantity = "0";
       for (const row of rows) {
-        if (!isOpenOrderRowForPlan(row.sideText, plan)) continue;
-        rowsToCancel.push(row);
-        cancelQty = addDecimalStrings(cancelQty, row.qty);
-        if (compareDecimalStrings(cancelQty, plan.totalQty) >= 0) break;
+        const target = readNativeReplacementOrder(row.row, plan.symbol);
+        const id = String(target.orderId);
+        if (ids.has(id)) throw new Error("待撤挂单包含重复订单编号，已停止撤单");
+        ids.add(id);
+        if (!isPositiveDecimalString(target.remainingQty)) continue;
+        targets.push(target);
+        quantity = addDecimalStrings(quantity, target.remainingQty);
+        if (compareDecimalStrings(quantity, plan.totalQty) >= 0) return targets;
       }
-      return compareDecimalStrings(cancelQty, plan.totalQty) >= 0 || allowPartial && rowsToCancel.length > 0 ? rowsToCancel : [];
+      return [];
     }
     function getPlanDirectionLabel(plan) {
       if (plan?.spec?.mode === "OPEN" && plan.spec.side === "LONG") return "开多";
@@ -9622,260 +9804,207 @@
       if (plan?.spec?.mode === "CLOSE" && plan.spec.side === "SHORT") return "平空";
       return "";
     }
-    function countOpenOrderRowsByKey(root, symbol, key) {
-      return readCurrentSymbolOpenOrderRows(root, symbol).filter((row) => row.key === key).length;
-    }
-    function readOpenOrderRowCancellationOutcome(symbol, key, previousCount, dialogsBefore) {
-      if (!isCurrentObservedSymbol(symbol)) return { status: "symbol_changed" };
-      const dialog = findNewVisibleDialog(dialogsBefore);
-      if (dialog) return { status: "dialog_open", dialog };
-      const activeRoot = getActiveOpenOrdersScope2();
-      if (activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount) {
-        return { status: "row_removed" };
-      }
-      return null;
-    }
-    async function waitForOpenOrderRowCancellationOutcome(symbol, key, previousCount, dialogsBefore, abortSignal = null) {
-      const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
-      while (true) {
+    async function cancelOpenOrderRowsForPlan(targets, plan, progress, setExecutionStatus, abortSignal) {
+      if (activeCancelReceipts) throw new Error("已有撤单任务正在执行");
+      const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS);
+      const cancelledIds = /* @__PURE__ */ new Set();
+      let cancelQty = "0";
+      let unclickedQty = targets.reduce((total, target) => addDecimalStrings(total, target.remainingQty), "0");
+      const checkScope = () => {
         throwIfAborted(abortSignal);
-        const currentOutcome = readOpenOrderRowCancellationOutcome(
-          symbol,
-          key,
-          previousCount,
-          dialogsBefore
-        );
-        if (currentOutcome) return currentOutcome;
-        const remainingMs = deadline - Date.now();
-        if (remainingMs <= 0) return { status: "timeout" };
-        const observationRoot = getAccountOrdersObservationRoot() || document.body;
-        const accountSignal = createAccountOrdersMutationSignal(observationRoot);
-        const dialogSignal = createDialogMutationSignal(document);
-        if (!accountSignal || !dialogSignal) {
-          accountSignal?.dispose();
-          dialogSignal?.dispose();
-          throw new Error("撤单结果无法观察，已停止");
+        assertLadderExecutionContext(plan);
+        if (!hasNativeCancelScope(plan.symbol) || getVisibleDialogs().length) {
+          throw new Error("当前委托范围已变化或存在弹窗，已停止撤单");
         }
-        try {
-          const observedAccountVersion = accountSignal.version;
-          const observedDialogVersion = dialogSignal.version;
-          const observedOutcome = readOpenOrderRowCancellationOutcome(
-            symbol,
-            key,
-            previousCount,
-            dialogsBefore
-          );
-          if (observedOutcome) return observedOutcome;
-          await waitForPromiseOrAbort(
-            Promise.race([
-              accountSignal.waitForChange(observedAccountVersion, remainingMs),
-              dialogSignal.waitForChange(observedDialogVersion, remainingMs)
-            ]),
-            abortSignal
-          );
-        } finally {
-          accountSignal.dispose();
-          dialogSignal.dispose();
-        }
-      }
-    }
-    async function confirmOpenOrderRowKeyCountBelow(symbol, key, previousCount, abortSignal = null) {
-      const deadline = Date.now() + LADDER_REPLACE_ROW_SETTLE_MS;
-      const observationRoot = getAccountOrdersObservationRoot() || document.body;
-      const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
-      if (!mutationSignal) throw new Error("当前委托状态无法观察，已停止");
+      };
+      activeCancelReceipts = receipts;
       try {
-        while (true) {
-          throwIfAborted(abortSignal);
-          const observedVersion = mutationSignal.version;
-          if (!isCurrentObservedSymbol(symbol)) return false;
-          const activeRoot = getActiveOpenOrdersScope2();
-          if (!activeRoot || countOpenOrderRowsByKey(activeRoot, symbol, key) >= previousCount) {
-            return false;
+        for (const target of targets) {
+          checkScope();
+          const rows = readCurrentSymbolOpenOrderRows(getActiveOpenOrdersScope2(), plan.symbol, plan);
+          const matches = rows.filter((row2) => sameNativeOrder(target, readNativeOrderIdentity(row2.row, plan.symbol)));
+          if (matches.length !== 1) throw new Error("无法确认待替换订单，已停止重新挂单");
+          const row = matches[0];
+          const current = readNativeReplacementOrder(row.row, plan.symbol);
+          if (compareDecimalStrings(current.origQty, target.origQty) !== 0 || compareDecimalStrings(current.executedQty, target.executedQty) < 0 || !isPositiveDecimalString(current.remainingQty)) throw new Error("原生订单数量不一致，已停止撤单");
+          unclickedQty = subtractDecimalStrings(unclickedQty, target.remainingQty);
+          const availableQty = addDecimalStrings(addDecimalStrings(unclickedQty, current.remainingQty), cancelQty);
+          if (compareDecimalStrings(availableQty, plan.totalQty) < 0) throw new Error("同向可撤挂单数量不足，已停止重新挂单");
+          if (!hasCancellationAccountStream?.()) throw new Error("未连接到账户订单更新，已停止撤单");
+          const ticket = receipts.expect(target, current);
+          const confirmed = ticket.result.then((ok) => {
+            if (ok) recordLadderCancelledOrder(progress);
+            return ok;
+          });
+          try {
+            if (!clickDomTarget(row.cancelButton)) throw new Error("待替换挂单的撤单按钮点击失败，已停止重新挂单");
+            await waitForNativeCancelDispatch(ticket, () => {
+              const detail = localizedText("单行撤单确认弹窗已打开", "Single-order cancellation dialog opened");
+              setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], "："), detail);
+            }, abortSignal);
+            if (!ticket.hasStarted) ticket.finish(false);
+            if (!await confirmed) throw new Error("未收到匹配的成功撤单回执，已停止重新挂单");
+            checkScope();
+            const releasedQty = await waitForPromiseOrAbort(ticket.released, abortSignal);
+            checkScope();
+            if (!isPositiveDecimalString(releasedQty)) throw new Error("无法确认已撤挂单数量，已停止重新挂单");
+            cancelQty = addDecimalStrings(cancelQty, releasedQty);
+            cancelledIds.add(String(target.orderId));
+            if (compareDecimalStrings(cancelQty, plan.totalQty) >= 0) break;
+          } finally {
+            if (!ticket.hasStarted) ticket.finish(false);
+            ticket.stopQuantityWait();
+            await confirmed;
+            await ticket.released;
           }
-          const remainingMs = deadline - Date.now();
-          if (remainingMs <= 0) return true;
-          await waitForPromiseOrAbort(
-            mutationSignal.waitForChange(observedVersion, remainingMs),
-            abortSignal
-          );
         }
+        if (compareDecimalStrings(cancelQty, plan.totalQty) < 0) throw new Error("同向可撤挂单数量不足，已停止重新挂单");
+        const listUpdated = await waitForAccountOrdersState(() => {
+          checkScope();
+          const view = readNativeOpenOrderWindow(getActiveOpenOrdersScope2(), plan.symbol);
+          if (!view || view.offset === -1) return false;
+          const absent = (order) => sameNativeOrder(order, order) && !cancelledIds.has(String(order.orderId));
+          return view.data.every((item) => item.symbol === plan.symbol ? absent(item) : absent(item.strategySubIdTwo) && absent(item.strategySubIdThree));
+        }, LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS, abortSignal);
+        if (!listUpdated) throw new Error("已撤订单列表尚未更新，已停止重新挂单");
       } finally {
-        mutationSignal.dispose();
+        activeCancelReceipts = null;
       }
     }
-    async function waitForOpenOrderRowKeyCountBelow(symbol, key, previousCount, abortSignal = null) {
-      const deadline = Date.now() + LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS;
-      const observationRoot = getAccountOrdersObservationRoot() || document.body;
-      const mutationSignal = createAccountOrdersMutationSignal(observationRoot);
-      if (!mutationSignal) throw new Error("当前委托状态无法观察，已停止");
+    function hasNativeCancelScope(symbol) {
+      if (!isCurrentObservedSymbol(symbol)) return false;
+      const root = getActiveOpenOrdersScope2();
+      const basic = root && findOpenOrdersBasicSubTab2(root);
+      return Boolean(basic && basic === findSelectedOpenOrdersSubTab2(root) && getCheckboxCheckedState(findHideOtherSymbolCheckbox(root)) === true);
+    }
+    async function waitForNativeCancelDispatch(ticket, showDialogStatus, abortSignal) {
+      if (ticket.hasStarted) return;
+      const watcher = new AbortController();
+      const signal = abortSignal ? AbortSignal.any([watcher.signal, abortSignal]) : watcher.signal;
       try {
-        while (true) {
-          throwIfAborted(abortSignal);
-          const observedVersion = mutationSignal.version;
-          if (!isCurrentObservedSymbol(symbol)) return false;
-          const activeRoot2 = getActiveOpenOrdersScope2();
-          if (activeRoot2 && countOpenOrderRowsByKey(activeRoot2, symbol, key) < previousCount) {
-            return true;
-          }
-          const remainingMs = deadline - Date.now();
-          if (remainingMs <= 0) break;
-          await waitForPromiseOrAbort(
-            mutationSignal.waitForChange(observedVersion, remainingMs),
-            abortSignal
-          );
-        }
-      } finally {
-        mutationSignal.dispose();
-      }
-      const activeRoot = getActiveOpenOrdersScope2();
-      return Boolean(activeRoot && countOpenOrderRowsByKey(activeRoot, symbol, key) < previousCount);
-    }
-    async function cancelOneOpenOrderRowForPlan(row, plan, progress, setExecutionStatus, abortSignal = null) {
-      if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("撤销待替换挂单前交易对已变化");
-      const previousKeyCount = countOpenOrderRowsByKey(row.root, plan.symbol, row.key);
-      if (!row.cancelButton?.isConnected || !isVisibleElement(row.cancelButton)) {
-        if (previousKeyCount === 0) return { status: "already_removed", qty: row.qty };
-        throw new Error("待替换挂单的撤单按钮已失效，已停止重新挂单");
-      }
-      const dialogsBefore = new Set(getVisibleDialogs());
-      throwIfAborted(abortSignal);
-      if (!clickDomTarget(row.cancelButton)) {
-        throw new Error("待替换挂单的撤单按钮点击失败，已停止重新挂单");
-      }
-      waitForTradeUiMutation({ timeoutMs: 800 });
-      const outcome = await waitForOpenOrderRowCancellationOutcome(
-        plan.symbol,
-        row.key,
-        previousKeyCount,
-        dialogsBefore,
-        abortSignal
-      );
-      if (outcome.status === "symbol_changed") {
-        throw new Error("撤销待替换挂单时交易对已变化");
-      }
-      if (outcome.status === "timeout") {
-        throw createOpenOrderCancellationUnconfirmedError("待替换挂单仍存在，已停止重新挂单");
-      }
-      if (outcome.status === "dialog_open") {
-        const { dialog } = outcome;
-        setExecutionStatus(
-          combineLocalizedText([
-            plan.spec.statusLabel,
-            localizedText("单行撤单确认弹窗已打开", "Single-order cancellation dialog opened")
-          ], "："),
-          localizedText("单行撤单确认弹窗已打开", "Single-order cancellation dialog opened")
-        );
-        const dialogClosed = await waitForDialogToClose(
-          dialog,
-          ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS,
-          abortSignal
-        );
-        if (!dialogClosed) {
+        const dialog = await Promise.race([
+          ticket.started.then(() => null),
+          waitForDialogMutationState(
+            document,
+            () => getVisibleDialogs()[0],
+            LADDER_SUBMIT_START_TIMEOUT_MS,
+            signal
+          )
+        ]);
+        if (!dialog) return;
+        showDialogStatus();
+        if (!await waitForDialogToClose(dialog, ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS, abortSignal)) {
           const error = new Error("单行撤单确认弹窗仍未关闭，未恢复页面状态");
           error.name = "DialogNotClosedError";
           throw error;
         }
-        if (!await waitForOpenOrderRowKeyCountBelow(
-          plan.symbol,
-          row.key,
-          previousKeyCount,
-          abortSignal
-        )) {
-          throw createOpenOrderCancellationUnconfirmedError("待替换挂单仍存在，已停止重新挂单");
+        if (!ticket.hasStarted) {
+          let timer;
+          try {
+            await waitForPromiseOrAbort(Promise.race([
+              ticket.started,
+              new Promise((resolve) => {
+                timer = setTimeout(resolve, LADDER_SUBMIT_START_TIMEOUT_MS);
+              })
+            ]), abortSignal);
+          } finally {
+            clearTimeout(timer);
+          }
         }
+      } finally {
+        watcher.abort();
       }
-      throwIfAborted(abortSignal);
-      if (!await confirmOpenOrderRowKeyCountBelow(
-        plan.symbol,
-        row.key,
-        previousKeyCount,
-        abortSignal
-      )) {
-        throw createOpenOrderCancellationUnconfirmedError("待替换挂单状态未稳定，已停止重新挂单");
-      }
-      recordLadderCancelledOrder(progress);
-      return { status: "cancelled", qty: row.qty };
     }
-    async function cancelOpenOrderRowsForPlan(root, plan, progress, setExecutionStatus, abortSignal = null) {
-      let cancelQty = "0";
-      let currentRoot = root;
-      while (compareDecimalStrings(cancelQty, plan.totalQty) < 0) {
-        throwIfAborted(abortSignal);
-        if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("撤销待替换挂单前交易对已变化");
-        const remainingQty = subtractDecimalStrings(plan.totalQty, cancelQty);
-        const refreshedRoot = getActiveOpenOrdersScope2();
-        if (refreshedRoot) currentRoot = refreshedRoot;
-        const rows = readCurrentSymbolOpenOrderRows(currentRoot, plan.symbol, plan);
-        const row = selectOpenOrderRowsToCancelForPlan(
-          { ...plan, totalQty: remainingQty },
-          rows,
-          { allowPartial: true }
-        )[0];
-        if (!row) {
-          throw new Error("同向可撤挂单数量不足，已停止重新挂单");
-        }
-        currentRoot = row.root || currentRoot;
-        const result = await cancelOneOpenOrderRowForPlan(
-          row,
-          plan,
-          progress,
-          setExecutionStatus,
-          abortSignal
-        );
-        if (result.status === "already_removed") continue;
-        cancelQty = addDecimalStrings(cancelQty, result.qty);
+    async function cancelFarthestOpenOrderRowsForPlan(plan, targets, progress, setExecutionStatus, abortSignal, unresolvedOrders) {
+      const selected = targets.map((row) => ({
+        key: row.key,
+        identity: readNativeOrderIdentity(row.row, plan.symbol)
+      }));
+      if (new Set(selected.map((t) => String(t.identity.orderId))).size !== selected.length) {
+        throw new Error("待撤挂单包含重复订单编号，已停止撤单");
       }
-      return { ok: true, cancelQty };
-    }
-    async function cancelFarthestOpenOrderRowsForPlan(root, plan, targets, progress, setExecutionStatus, abortSignal = null) {
+      if (selected.some((target) => unresolvedOrders.has(String(target.identity.orderId)))) {
+        throw new Error("本次连续任务已有未确认的撤单，已停止");
+      }
+      if (activeCancelReceipts) throw new Error("已有容量撤单任务正在执行");
+      const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS);
+      const pending = /* @__PURE__ */ new Set();
       let releasedCount = 0;
       let cancelledCount = 0;
       let unconfirmedCount = 0;
-      let currentRoot = root;
-      for (const target of targets) {
+      const report = (detail) => setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], "："), detail);
+      const reportReleased = () => {
+        if (!isCurrentObservedSymbol(plan.symbol)) return;
+        if (abortSignal?.aborted) {
+          report(localizedText("停止中", "Stopping"));
+          return;
+        }
+        report(localizedText(
+          `释放挂单名额 ${releasedCount}/${selected.length}`,
+          `Freeing order slots ${releasedCount}/${selected.length}`
+        ));
+      };
+      const checkScope = () => {
         throwIfAborted(abortSignal);
-        if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("释放挂单名额时交易对已变化");
-        currentRoot = getActiveOpenOrdersScope2() || currentRoot;
-        let row = readCurrentSymbolOpenOrderRows(currentRoot, plan.symbol, plan).find((candidate) => candidate.key === target.key) || null;
-        if (!row) {
-          const completeRows = await loadAllCurrentSymbolOpenOrderRows(
-            currentRoot,
-            plan.symbol,
-            plan,
-            abortSignal
-          );
-          currentRoot = getActiveOpenOrdersScope2() || currentRoot;
-          row = completeRows.find((candidate) => candidate.key === target.key) || null;
+        assertLadderExecutionContext(plan);
+        if (!hasNativeCancelScope(plan.symbol) || getVisibleDialogs().length) {
+          throw new Error("当前委托范围已变化或存在弹窗，已停止撤单");
         }
-        if (row) {
-          try {
-            const result = await cancelOneOpenOrderRowForPlan(
-              row,
-              plan,
-              progress,
-              setExecutionStatus,
-              abortSignal
-            );
-            if (result.status === "cancelled") cancelledCount += 1;
-          } catch (error) {
-            if (!isOpenOrderCancellationUnconfirmedError(error)) throw error;
-            unconfirmedCount += 1;
-            const detail2 = localizedText(
-              `已释放 ${releasedCount} 个挂单名额 · 当前撤单未确认，继续本轮`,
-              `Freed ${releasedCount} order slots · Current cancellation unconfirmed; continuing this round`
-            );
-            setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail2], "："), detail2);
-            break;
+      };
+      activeCancelReceipts = receipts;
+      try {
+        for (const target of selected) {
+          if (pending.size >= 2) await Promise.race(pending);
+          checkScope();
+          if (receipts.admissionClosed) break;
+          const matchesIdentity = (row2) => sameNativeOrder(target.identity, readNativeOrderIdentity(row2.row, plan.symbol));
+          const currentRoot = getActiveOpenOrdersScope2();
+          let row = readCurrentSymbolOpenOrderRows(currentRoot, plan.symbol, plan, target.key).find(matchesIdentity);
+          if (!row) {
+            const completeRows = await loadAllCurrentSymbolOpenOrderRows(plan.symbol, plan, abortSignal);
+            checkScope();
+            if (receipts.admissionClosed) break;
+            row = completeRows.find(matchesIdentity);
+            if (!row) {
+              releasedCount += 1;
+              reportReleased();
+              continue;
+            }
           }
+          const ticket = receipts.expect(target.identity);
+          const settled = ticket.result.then((confirmed) => {
+            pending.delete(settled);
+            if (confirmed) {
+              cancelledCount += 1;
+              releasedCount += 1;
+              recordLadderCancelledOrder(progress);
+              reportReleased();
+            } else {
+              unresolvedOrders.add(String(target.identity.orderId));
+              unconfirmedCount += 1;
+            }
+          });
+          pending.add(settled);
+          try {
+            if (!clickDomTarget(row.cancelButton)) throw new Error("待撤订单按钮已失效");
+            await waitForNativeCancelDispatch(ticket, () => report(localizedText(
+              "单行撤单确认弹窗已打开",
+              "Single-order cancellation dialog opened"
+            )), abortSignal);
+          } finally {
+            if (!ticket.hasStarted) ticket.finish(false);
+          }
+          if (!ticket.hasStarted) break;
         }
-        releasedCount += 1;
-        const detail = localizedText(
-          `释放挂单名额 ${releasedCount}/${targets.length}`,
-          `Freeing order slots ${releasedCount}/${targets.length}`
-        );
-        setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], "："), detail);
+      } finally {
+        try {
+          await Promise.all(pending);
+        } finally {
+          activeCancelReceipts = null;
+        }
       }
+      checkScope();
+      if (!releasedCount && unconfirmedCount) throw new Error("未收到匹配的成功撤单回执，已停止本轮");
       return { ok: true, releasedCount, cancelledCount, unconfirmedCount };
     }
     async function setHideOtherSymbolChecked(root, desiredChecked, symbol = getCurrentSymbol(), abortSignal = null) {
@@ -9946,14 +10075,6 @@
       return Array.from(document.querySelectorAll(
         '[role="dialog"], [class*="modal"], [class*="Modal"], [class*="popover"], [class*="Popover"], [class*="drawer"], [class*="Drawer"]'
       )).filter(isVisibleElement);
-    }
-    function findNewVisibleDialog(dialogsBefore) {
-      const previousDialogs = dialogsBefore || /* @__PURE__ */ new Set();
-      for (const dialog of getVisibleDialogs()) {
-        if (previousDialogs.has(dialog)) continue;
-        return dialog;
-      }
-      return null;
     }
     async function waitForDialogToClose(dialog, timeoutMs = ROW_CANCEL_DIALOG_CLOSE_TIMEOUT_MS, abortSignal = null) {
       return Boolean(await waitForDialogMutationState(
@@ -10575,6 +10696,8 @@
       let previousOpenOrdersSubTabIdentity = null;
       let symbolFilterOriginalChecked = null;
       let restoreTemporaryUiState = true;
+      let capacityDispatchEntered = false;
+      let replacementDispatchEntered = false;
       try {
         setPlanStepStatus("查找当前委托");
         const tabReady = await activateOpenOrdersTab(abortSignal);
@@ -10638,7 +10761,6 @@
           return { ok: false, status: "scope_not_found", message };
         }
         const rows = capacityRecovery ? await loadAllCurrentSymbolOpenOrderRows(
-          openOrdersScope,
           symbol,
           plan,
           abortSignal
@@ -10670,13 +10792,14 @@
             combineLocalizedText([plan.spec.statusLabel, preparingDetail], "："),
             preparingDetail
           );
+          capacityDispatchEntered = true;
           const result = await cancelFarthestOpenOrderRowsForPlan(
-            openOrdersScope,
             plan,
             targets,
             progress,
             setExecutionStatus,
-            abortSignal
+            abortSignal,
+            options.unresolvedCapacityOrders
           );
           throwIfAborted(abortSignal);
           const completedDetail = result.unconfirmedCount > 0 ? localizedText(
@@ -10699,8 +10822,9 @@
           return { ok: false, status: "rows_not_selected", message };
         }
         setPlanStepStatus(`撤销 ${rowsToCancel.length} 笔同向挂单`);
+        replacementDispatchEntered = true;
         await cancelOpenOrderRowsForPlan(
-          openOrdersScope,
+          rowsToCancel,
           plan,
           progress,
           setExecutionStatus,
@@ -10714,9 +10838,13 @@
         if (e?.name === "DialogNotClosedError") restoreTemporaryUiState = false;
         const message = e?.message || "待替换挂单撤销失败，已停止重新挂单";
         setPlanStepStatus(message);
-        const status = e?.name === "DialogNotClosedError" ? "dialog_not_closed" : "row_cancel_failed";
+        let status = capacityDispatchEntered ? "capacity_terminal" : "row_cancel_failed";
+        if (e?.name === "DialogNotClosedError") status = "dialog_not_closed";
         return { ok: false, status, message };
       } finally {
+        if ((capacityDispatchEntered || replacementDispatchEntered) && (getActiveTradeMode() !== plan.spec.mode || !hasNativeCancelScope(symbol) || getVisibleDialogs().length)) {
+          restoreTemporaryUiState = false;
+        }
         if (restoreTemporaryUiState && isCurrentObservedSymbol(symbol)) {
           openOrdersScope = await waitForActiveOpenOrdersScope();
           if (symbolFilterOriginalChecked === false) {

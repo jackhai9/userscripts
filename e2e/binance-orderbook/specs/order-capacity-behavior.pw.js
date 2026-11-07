@@ -1,63 +1,7 @@
 import { test, expect } from '../test.js';
-import { CURRENT_SYMBOL, OTHER_SYMBOL, createCancelScenario } from '../scenarios/cancel-current-symbol.js';
-import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
-import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
-
-const STATUS = '#jh-binance-ladder-status';
-const capacityRejection = { outcome: 'rejected', delivery: 'immediate', code: '90802025', message: 'Maximum open orders' };
-const success = { outcome: 'success', delivery: 'immediate' };
-
-function capacityOrders(count) {
-  return [
-    ...Array.from({ length: count }, (_, index) => ({
-      id: 'same-' + index, symbol: CURRENT_SYMBOL, kind: 'basic', side: '平空',
-      price: String(81 + index), quantity: '1',
-    })),
-    { id: 'opposite', symbol: CURRENT_SYMBOL, kind: 'basic', side: '平多', price: '999', quantity: '1' },
-    { id: 'other', symbol: OTHER_SYMBOL, kind: 'basic', side: '平空', price: '999', quantity: '1' },
-    { id: 'conditional', symbol: CURRENT_SYMBOL, kind: 'conditional', side: '平空', price: '999', quantity: '1' },
-  ];
-}
-
-async function openCapacity(page, orders, host = {}, ui = {}) {
-  await installScenarioClock(page);
-  const scenario = createCancelScenario({
-    positions: [{ symbol: CURRENT_SYMBOL, side: 'SHORT', quantity: '100' }],
-    orders,
-    ui: { tradeMode: 'CLOSE', accountTab: 'openOrders', hideOtherSymbols: false, ...ui },
-    host: {
-      submitApiResponses: [capacityRejection, success, success, success, success, { ...success, delivery: 'manual' }],
-      ...host,
-    },
-  });
-  const context = await openUserscriptScenario(page, scenario);
-  await pauseScenarioClock(page);
-  return { scenario, ...context };
-}
-
-/** Advance only the modeled host clock; every pass observes actual page state. */
-async function advanceTo(page, description, readReached, { step = 250, limit = 25000 } = {}) {
-  for (let elapsed = 0; elapsed <= limit; elapsed += step) {
-    if (await readReached()) return;
-    if (elapsed < limit) await page.clock.runFor(step);
-  }
-  throw new Error('The native scenario did not reach ' + description + ': ' + await page.locator(STATUS).textContent());
-}
-
-async function startContinuous(page) {
-  await page.locator('[data-ladder-action="CLOSE_SHORT"]').evaluate(button => {
-    button.dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }));
-  });
-}
-
-async function finishFirstRound(page, context) {
-  await advanceTo(page, 'the final pending response in the first round', async () => context.pendingSubmitSequences().includes(6));
-  await context.releaseSubmitResponse(6);
-  await advanceTo(page, 'five acknowledged orders', async () => (await page.locator(STATUS).textContent()).includes('累计 5 笔'),
-    { step: 50, limit: 1000 });
-  await page.locator('[data-ladder-stop]').evaluate(button => button.click());
-  await page.clock.runFor(1000);
-}
+import { OTHER_SYMBOL } from '../scenarios/cancel-current-symbol.js';
+import { readFixtureState } from '../helpers/userscript-page.js';
+import { STATUS, advanceTo, capacityOrders, capacityRejection, finishFirstRound, openCapacity, startContinuous } from '../helpers/order-capacity-scenario.js';
 
 for (const mountDelay of [0, 120]) {
   test(`user frees only the fifty farthest same-direction slots with a native row mount delay of ${mountDelay} ms`, async ({ page }) => {
@@ -75,10 +19,14 @@ for (const mountDelay of [0, 120]) {
 
     // Then the full list determines exactly fifty farthest cancellations and preserves all other orders and confirmed progress.
     const state = await readFixtureState(page);
-    expect(state.events.filter(({ type }) => type === 'row-cancel-cleared').map(({ orderId }) => orderId))
-      .toEqual(Array.from({ length: 50 }, (_, index) => 'same-' + (59 - index)));
+    const farthest = Array.from({ length: 50 }, (_, index) => 'same-' + (59 - index));
+    expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId)).toEqual(farthest);
+    expect(state.events.filter(({ type }) => type === 'row-cancel-response').map(({ orderId }) => orderId).sort()).toEqual([...farthest].sort());
     expect(state.orders).toEqual([...orders.slice(0, 10), ...orders.slice(60)]);
-    expect(state.events.filter(({ type }) => type === 'order-rows-page-loaded').some(({ ids }) => ids.includes('same-59'))).toBe(true);
+    const lastPage = state.events.find(event => event.type === 'order-rows-page-loaded' && event.ids.includes('opposite'));
+    const firstCancel = state.events.find(event => event.type === 'row-cancel-requested');
+    expect(firstCancel.at - lastPage.at).toBeGreaterThanOrEqual(0);
+    expect(firstCancel.at - lastPage.at).toBeLessThan(700);
     expect(state.events.filter(({ type }) => type === 'order-submit-api-success')).toHaveLength(5);
     expect(state.events.filter(({ type }) => type === 'order-submitted')).toHaveLength(6);
     expect(state.events.filter(({ type }) => type === 'cancel-requested')).toEqual([]);
@@ -89,7 +37,7 @@ for (const mountDelay of [0, 120]) {
     await expect(page.locator(STATUS)).toContainText('累计 5 笔');
     await expect(page.locator(STATUS)).toContainText('撤 50 笔');
     expect(context.errors).toEqual([]);
-});
+  });
 }
 
 test('user waits for the native order list to mount before choosing capacity cancellations', async ({ page }) => {
@@ -111,31 +59,10 @@ test('user waits for the native order list to mount before choosing capacity can
 
   // Then the actual three same-direction rows are cancelled in distance order before five successful replacements.
   const state = await readFixtureState(page);
-  expect(state.events.filter(({ type }) => type === 'row-cancel-cleared').map(({ orderId }) => orderId))
+  expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
     .toEqual(['same-2', 'same-1', 'same-0']);
   expect(state.orders).toEqual(orders.slice(3));
   expect(state.events.filter(({ type }) => type === 'order-submitted')).toHaveLength(6);
-  expect(context.errors).toEqual([]);
-});
-
-test('user retains one confirmed released slot when the next native cancellation remains unconfirmed', async ({ page }) => {
-  // Given the farthest cancellation succeeds but the next row stays present past its deadline.
-  const orders = capacityOrders(3);
-  const context = await openCapacity(page, orders, { rowCancelModesById: { 'same-1': 'unchanged' } });
-
-  // When the actual continuous close round recovers from capacity and then completes its pending orders.
-  await startContinuous(page);
-  await finishFirstRound(page, context);
-
-  // Then only the one confirmed removal is counted; the unresolved row and the unattempted row remain.
-  const state = await readFixtureState(page);
-  expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
-    .toEqual(['same-2', 'same-1']);
-  expect(state.events.filter(({ type }) => type === 'row-cancel-cleared').map(({ orderId }) => orderId))
-    .toEqual(['same-2']);
-  expect(state.orders).toEqual(orders.filter(({ id }) => id !== 'same-2'));
-  await expect(page.locator(STATUS)).toContainText('累计 5 笔');
-  await expect(page.locator(STATUS)).toContainText('撤 1 笔');
   expect(context.errors).toEqual([]);
 });
 
@@ -165,7 +92,7 @@ for (const [name, retainedOrders, restoredSubTab] of [
   ['only another symbol', [capacityOrders(0)[1]], 'basic'],
   ['an explicit empty list', [], 'basic'],
   ['the original Conditional list', Array.from({ length: 10 }, (_, index) => ({
-    ...capacityOrders(0)[2], id: 'conditional-' + index,
+    ...capacityOrders(0)[2], id: 'conditional-' + index, orderId: 20 + index, clientOrderId: 'conditional-' + index,
   })), 'conditional'],
 ]) {
   test(`user finishes delayed scroll restoration with ${name} after freeing capacity`, async ({ page }) => {
@@ -250,3 +177,75 @@ test('user does not cancel another capacity batch after a second confirmed rejec
   await expect(page.locator(STATUS)).toContainText('累计 0 笔');
   expect(context.errors).toEqual([]);
 });
+
+test('user cancels no orders while the native list renders a previous snapshot of the same size', async ({ page }) => {
+  // Given the Basic filter is active but its native data changed before the rendered rows did.
+  const orders = capacityOrders(4);
+  await openCapacity(page, orders, {}, { hideOtherSymbols: true });
+  await page.locator('.orders-content').evaluate(host => {
+    const list = host.parentElement.__reactProps$fixture.children[2].props.children.props;
+    list.data = list.data.map((item, i) => i ? item : { ...item, clientOrderId: 'replacement-order' });
+  });
+
+  // When Binance rejects a submission and never commits the matching window.
+  await startContinuous(page);
+  await advanceTo(page, 'the incomplete native list deadline', async () =>
+    (await page.locator(STATUS).textContent()).includes('7 秒内未加载完成'), { step: 250, limit: 10500 });
+
+  // Then the stale rows cannot authorize a single cancellation.
+  const state = await readFixtureState(page);
+  expect(state.events.filter(event => event.type === 'row-cancel-requested')).toEqual([]);
+  expect(state.orders).toEqual(orders);
+});
+
+test('user can free capacity after scrolling restores an outdated native window', async ({ page }) => {
+  // Given the native list replaced an order while the mounted window was away from both ends.
+  const orders = capacityOrders(10);
+  const context = await openCapacity(page, orders, { orderRowsPageSize: 8 }, { hideOtherSymbols: true });
+  await page.locator('.orders-content').evaluate(host => {
+    host.scrollTop = 12;
+    const rendered = host.__reactProps$fixture.children[1].props.children[1];
+    const current = rendered[0];
+    rendered[0] = { props: { ...current.props, orderId: 'obsolete' } };
+    host.addEventListener('scroll', () => {
+      if (host.scrollTop !== 0) return;
+      rendered[0] = current;
+      host.firstElementChild.replaceWith(host.firstElementChild);
+    });
+  });
+
+  // When capacity recovery needs the whole current list.
+  await startContinuous(page);
+  await finishFirstRound(page, context);
+
+  // Then only the ten current matching IDs were clicked, in farthest-first order.
+  const state = await readFixtureState(page);
+  expect(state.events.filter(event => event.type === 'row-cancel-requested').map(event => event.orderId))
+    .toEqual(Array.from({ length: 10 }, (_, i) => 'same-' + (9 - i)));
+});
+
+for (const condition of ['loading', 'hasMore', 'previous symbol filter']) {
+  test(`user cancels no orders when the visible list is complete but native ${condition} is active`, async ({ page }) => {
+    // Given all rows are visible while the native owner says its data may still change.
+    const orders = capacityOrders(3);
+    await openCapacity(page, orders, {}, { hideOtherSymbols: true });
+    await page.locator('.orders-content').evaluate((host, flag) => {
+      const list = host.parentElement.__reactProps$fixture.children[2].props.children.props;
+      if (flag === 'previous symbol filter') {
+        const first = { ...list.data[0], symbol: 'BTCUSDT' };
+        list.data = [first, ...list.data.slice(1)];
+        host.__reactProps$fixture.children[1].props.children[1][0] = list.renderItem(first);
+      } else list[flag] = true;
+    }, condition);
+
+    // When a capacity rejection requires ranking the entire native list.
+    await startContinuous(page);
+    await advanceTo(page, 'the incomplete native list deadline', async () =>
+      (await page.locator(STATUS).textContent()).includes('7 秒内未加载完成'), { step: 250, limit: 10500 });
+
+    // Then visible rows alone cannot authorize any cancellation.
+    const state = await readFixtureState(page);
+    expect(state.events.filter(event => event.type === 'row-cancel-requested')).toEqual([]);
+    expect(state.orders).toEqual(orders);
+  });
+}

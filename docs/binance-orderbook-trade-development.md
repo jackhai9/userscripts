@@ -510,6 +510,47 @@ The active continuous-close control keeps a compact direction-specific stop acti
 
 When a continuous close receives the observed Binance private-page response `code=90802025`, `success=false`, and the max-open-orders message, classify it as a confirmed no-submit capacity rejection. Load the complete lazy current-orders list before ranking rows; the first 50 rendered rows are not a complete candidate set. Release up to 50 current-symbol, same-close-direction Basic limit orders farthest from the current trade price, preserving the nearest orders that are most likely to complete the close. Resume the same unsubmitted ladder level so already confirmed levels are not duplicated. Permit this recovery once per round; a second confirmed capacity rejection ends the current round and lets continuous mode resume after its recovery delay. Do not use Cancel All, and do not touch open-direction, opposite-direction, conditional, or protection orders. If a selected row disappears because it fills while recovery is running, treat that slot as already released but count a cancellation only after the script confirms its own row-cancel action.
 
+The [desktop native list](https://bin.bnbstatic.com/static/chunks/47252.4bfb3452.js)
+receives the full filtered data and renders a separate window that grows by 50 near the bottom.
+Read both snapshots from the same mounted host in the active Basic scope. Start ranking only
+when loading is false and every rendered item's props match its source item in order, or when
+the native list commits its own empty state. Neither the Basic tab count, the scrollbar position,
+nor a period without new rows proves completeness. If the contract cannot be verified within
+seven seconds, this attempt must not click any row.
+
+Capacity recovery snapshots each selected row's symbol, order ID and client order ID from its native
+React owner. Before each click, reacquire the current Basic row and verify its direction and identity.
+The full display key prunes layout checks, while a price or quantity change requires a complete-list lookup by ID.
+Allow at most two native cancellations in flight. The observed USD-M Basic endpoint is
+`POST /bapi/futures/v1/private/future/order/cancel-order` (manual AINUSDT cancellation, 2026-11-07).
+Wait for its matching request to start before clicking the next row; a native confirmation is always manual. Count each successful HTTP 200 receipt once, only when
+the request's symbol and both IDs match the expected order and the business response has
+`success=true`, `code="000000"`, matching IDs and `data.status="CANCELED"`.
+Stop admitting clicks on Stop, scope change, or an unconfirmed result. Drain requests already in flight
+(up to 12 seconds per request) before completing the task; a missing or mismatched receipt stays unconfirmed.
+Zero known releases end the session. After a partial release, the unfinished ladder can continue;
+if a later recovery selects an unresolved order from the same session, end before issuing new cancellations.
+
+Ordinary quantity-based replacement stays sequential and does not wait 240 ms for a row to
+stay absent. The same live HTTP cancellation confirmed the order ID and status, but contained
+no quantity fields. For quantity, pair that response with the same order's terminal
+`ORDER_TRADE_UPDATE` on the page's existing `wss://fstream.binance.com/private/stream`
+connection. Match the symbol, order ID and client order ID, and require both execution type
+and order status to be `CANCELED`. The released amount is the original amount minus the
+cumulative fill (`q - z`), as in [Binance's account stream](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/user-data-streams)
+and its [native order adapter](https://bin.bnbstatic.com/static/chunks/35455.143e05da.js).
+An HTTP success counts as one cancellation; missing, contradictory or insufficient quantity
+cannot authorize replacement orders. Never extend the preselected set to make up a shortfall.
+Once the entire target quantity is confirmed, wait once for the original IDs to disappear
+from the committed Basic list before rebuilding the ladder from the current trading context.
+This confirms list synchronization; it does not certify the freshness of the trading form balance.
+On 2026-11-07, one manual AINUSDT Basic cancellation matched the clicked row, the native
+POST and a trusted private-stream event by symbol and both order IDs. Measured from the
+start of the request, the browser observed the terminal event at 128 ms and read the
+successful HTTP 200 response at 129 ms. Both `x` and `X` were `CANCELED`. The original
+quantity matched the native row and the cumulative fill was zero, so the entire original
+quantity was released. Partial fills are covered by offline tests.
+
 When selecting account-order tabs, scope to the bottom account-orders tab group. Do not globally match `当前委托` or `Open Orders`.
 
 When a pane is found through `aria-controls`, confirm it contains current-orders controls such as `隐藏其他合约` or `全撤`. Binance may reuse pane ids in unrelated tab systems.
