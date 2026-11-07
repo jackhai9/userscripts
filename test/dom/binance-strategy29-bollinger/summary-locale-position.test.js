@@ -5,12 +5,14 @@ import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { SUMMARY_COPY } from '../../../src/binance-strategy29-bollinger/ui-copy.js';
 import { createStrategy29SummaryPanel } from '../../../src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js';
+import { installPanelResizeObserverHost } from '../../helpers/panel-resize-observer-host.js';
 
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
 function fixture(locale = 'zh-CN', stored = { left: 100, top: 120 }) {
   const dom = new JSDOM('<body></body>', { url: `https://www.binance.com/${locale}/futures/BTCUSDT` });
+  const resize = installPanelResizeObserverHost(dom.window);
   const saves = [];
   const collapsedSaves = [];
   const controller = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', {
@@ -28,7 +30,7 @@ function fixture(locale = 'zh-CN', stored = { left: 100, top: 120 }) {
     button: 0, buttons: type === 'pointerup' ? 0 : 1, ...overrides,
   }));
   const close = () => { controller.destroy(); dom.window.close(); };
-  return { dom, controller, panel, header, captured, fire, saves, collapsedSaves, close };
+  return { dom, controller, panel, header, captured, fire, saves, collapsedSaves, resize, close };
 }
 
 test('user observes that Chinese panel translates retained status and signals and switches to English without losing rows', () => {
@@ -140,6 +142,7 @@ test('user observes that resize and content growth keep the panel visible, inclu
     assert.equal(f.panel.style.top, '200px');
     height = 300;
     f.controller.renderStatus(status);
+    f.resize.deliver(f.panel);
     assert.equal(f.panel.style.top, '100px');
     const collapse = f.panel.querySelector('[data-role=collapse]');
     collapse.click();

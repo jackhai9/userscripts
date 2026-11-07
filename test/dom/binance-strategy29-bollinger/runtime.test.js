@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
+import { installPanelResizeObserverHost } from '../../helpers/panel-resize-observer-host.js';
 import { installStrategy29 } from '../../../src/binance-strategy29-bollinger/runtime.js';
 import { installStrategyClock, observeStrategyCondition } from '../../helpers/strategy-migration-boundaries.js';
 
@@ -11,6 +12,7 @@ const gatewayEvents = JSON.parse(await readFile(new URL('../../fixtures/strategy
 function fixture(t) {
   const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTRUSDT' });
   const view = dom.window;
+  installPanelResizeObserverHost(view);
   let hidden = false;
   const clock = installStrategyClock(t, view);
   Object.defineProperty(view.document, 'hidden', { get: () => hidden });

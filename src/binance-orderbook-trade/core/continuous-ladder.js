@@ -291,9 +291,13 @@ export function formatContinuousLadderWaitReason(phase, cooldownMs) {
   return localizedText(`${duration} 后继续`, `Continue in ${duration}`);
 }
 
-export function formatContinuousLadderWaitProgress(label, progress, phase, cooldownMs) {
+export function formatContinuousLadderWaitProgress(label, progress, phase, cooldownMs, reason = null) {
+  if (reason !== null && !isValidLocalizedValue(reason)) {
+    throw new Error('Invalid continuous ladder recovery reason');
+  }
   const parts = buildContinuousLadderProgressParts(label, 'running', progress);
   parts.splice(1, 0, formatContinuousLadderWaitReason(phase, cooldownMs));
+  if (reason !== null) parts.splice(1, 0, reason);
   return combineLocalizedText(parts, ' · ');
 }
 

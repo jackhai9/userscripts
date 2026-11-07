@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
+import { installPanelResizeObserverHost } from '../../helpers/panel-resize-observer-host.js';
 import vm from 'node:vm';
 import { SIGNAL_GATEWAY_BRIDGE } from '../../../src/shared/signal-gateway-bridge.js';
 import { installStrategyClock } from '../../helpers/strategy-migration-boundaries.js';
@@ -17,6 +18,7 @@ function preferenceSandbox(t, stored, symbol = 'BTCUSDT') {
   const dom = new JSDOM('<body></body>', {
     url: `https://www.binance.com/en/futures/${symbol}`, pretendToBeVisual: true,
   });
+  installPanelResizeObserverHost(dom.window);
   const reads = [];
   const writes = [];
   Object.defineProperty(dom.window, SIGNAL_GATEWAY_BRIDGE, { value: {

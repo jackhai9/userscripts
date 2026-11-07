@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.240
+// @version      2.7.241
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1762,9 +1762,13 @@
     const duration = cooldownMs % 1e3 === 0 ? `${cooldownMs / 1e3}s` : `${cooldownMs}ms`;
     return localizedText(`${duration} 后继续`, `Continue in ${duration}`);
   }
-  function formatContinuousLadderWaitProgress(label, progress, phase, cooldownMs) {
+  function formatContinuousLadderWaitProgress(label, progress, phase, cooldownMs, reason = null) {
+    if (reason !== null && !isValidLocalizedValue(reason)) {
+      throw new Error("Invalid continuous ladder recovery reason");
+    }
     const parts = buildContinuousLadderProgressParts(label, "running", progress);
     parts.splice(1, 0, formatContinuousLadderWaitReason(phase, cooldownMs));
+    if (reason !== null) parts.splice(1, 0, reason);
     return combineLocalizedText(parts, " · ");
   }
   function assertReadinessState(state) {
@@ -4402,6 +4406,7 @@
       profile: null,
       profileUpdateId: null,
       profileBuildCount: 0,
+      pendingFrame: null,
       status: { symbol, status: "connecting", detail: "" },
       subscribers: /* @__PURE__ */ new Set()
     };
@@ -4418,6 +4423,8 @@
     );
     const baseUrl = globalObject.location?.href;
     if (typeof baseUrl !== "string") throw new Error("Invalid native depth page URL");
+    const requestFrame = assertFunction(globalObject.requestAnimationFrame, "animation frame request");
+    const cancelFrame = assertFunction(globalObject.cancelAnimationFrame, "animation frame cancellation");
     const records = /* @__PURE__ */ new Map();
     const socketSymbols = /* @__PURE__ */ new WeakMap();
     let restored = false;
@@ -4436,8 +4443,17 @@
     }
     function notifyProfile(record, profile) {
       record.profile = profile;
-      for (const subscriber of record.subscribers) subscriber.onProfile(profile);
+      for (const subscriber of record.subscribers) {
+        if (subscriber.profile === profile) continue;
+        subscriber.profile = profile;
+        subscriber.onProfile(profile);
+      }
       notifyStatus(record, "ready");
+    }
+    function cancelPendingProfile(record) {
+      if (record.pendingFrame === null) return;
+      Reflect.apply(cancelFrame, globalObject, [record.pendingFrame]);
+      record.pendingFrame = null;
     }
     function clearProfile(record) {
       record.profile = null;
@@ -4455,14 +4471,24 @@
         notifyStatus(record, "ready");
         return;
       }
-      notifyProfile(record, materializeProfile(record));
+      if (record.pendingFrame !== null) return;
+      record.pendingFrame = Reflect.apply(requestFrame, globalObject, [() => {
+        record.pendingFrame = null;
+        try {
+          notifyProfile(record, record.profile || materializeProfile(record));
+        } catch (error) {
+          failRecord(record, error);
+        }
+      }]);
     }
     function failRecord(record, error) {
+      cancelPendingProfile(record);
       clearProfile(record);
       notifyStatus(record, "failed", error?.message || String(error));
     }
     function beginSnapshot(symbol) {
       const record = ensureRecord(symbol);
+      cancelPendingProfile(record);
       record.book = createDepthProfileBook(symbol);
       clearProfile(record);
       notifyStatus(record, "synchronizing");
@@ -4492,6 +4518,7 @@
         if (ready) publishCurrentBook(record);
         else notifyStatus(record, "synchronizing");
       } catch (error) {
+        cancelPendingProfile(record);
         clearProfile(record);
         if (error instanceof DepthProfileSequenceError) {
           record.book = createDepthProfileBook(symbol);
@@ -4529,7 +4556,11 @@
         if (restored) return;
         for (const symbol of socketSymbols.get(socket) || []) {
           const record = records.get(symbol);
-          if (record) notifyStatus(record, "reconnecting", "Binance native depth socket closed");
+          if (record) {
+            cancelPendingProfile(record);
+            clearProfile(record);
+            notifyStatus(record, "reconnecting", "Binance native depth socket closed");
+          }
         }
       }]);
     }
@@ -4588,21 +4619,30 @@
         const record = ensureRecord(symbol);
         const subscriber = {
           onProfile: assertFunction(onProfile, "profile listener"),
-          onStatus: assertFunction(onStatus, "status listener")
+          onStatus: assertFunction(onStatus, "status listener"),
+          profile: null
         };
-        if (record.status.status === "ready" && record.profile === null) {
+        if ((record.status.status === "ready" || record.pendingFrame !== null) && record.profile === null) {
           try {
             materializeProfile(record);
+            record.status = { symbol: record.symbol, status: "ready", detail: "" };
           } catch (error) {
             failRecord(record, error);
           }
         }
         record.subscribers.add(subscriber);
         subscriber.onStatus(record.status);
-        if (record.profile) subscriber.onProfile(record.profile);
+        if (record.profile) {
+          subscriber.profile = record.profile;
+          subscriber.onProfile(record.profile);
+        }
         return () => {
           const removed = record.subscribers.delete(subscriber);
-          if (record.subscribers.size === 0) clearProfile(record);
+          if (record.subscribers.size === 0) {
+            if (record.pendingFrame !== null) notifyStatus(record, "ready");
+            cancelPendingProfile(record);
+            clearProfile(record);
+          }
           return removed;
         };
       },
@@ -4625,6 +4665,7 @@
       restore() {
         if (restored) return;
         restored = true;
+        for (const record of records.values()) cancelPendingProfile(record);
         if (globalObject.fetch === observedFetch) globalObject.fetch = nativeFetch;
         if (globalObject.WebSocket === ObservedWebSocket) globalObject.WebSocket = NativeWebSocket;
         records.clear();
@@ -5368,11 +5409,74 @@
     return { symbol, orderId, clientOrderId, origQty, executedQty: filledQty, remainingQty };
   }
 
-  // src/binance-orderbook-trade/dom/open-orders-pagination.js
-  function committedProps(host) {
-    const key = Object.keys(host).find((name) => name.startsWith("__reactProps$"));
-    return key && host[key];
+  // src/binance-orderbook-trade/dom/react-current-fiber.js
+  var HOST_ROOT = 3;
+  var PLACEMENT_OR_HYDRATING = 2 | 4096;
+  function nearestMounted(fiber) {
+    let node = fiber;
+    let nearest = fiber;
+    while (node) {
+      if (!fiber.alternate && node.flags & PLACEMENT_OR_HYDRATING) nearest = node.return;
+      if (!node.return) return node.tag === HOST_ROOT ? nearest : null;
+      node = node.return;
+    }
+    return null;
   }
+  function findCurrentReactFiber(fiber) {
+    if (!fiber) return null;
+    const alternate = fiber.alternate;
+    if (!alternate) return nearestMounted(fiber) === fiber ? fiber : null;
+    let a = fiber;
+    let b = alternate;
+    while (a.return) {
+      const parentA = a.return;
+      const parentB = parentA.alternate;
+      if (!parentB) {
+        if (!parentA.return) break;
+        a = b = parentA.return;
+        continue;
+      }
+      if (parentA.child === parentB.child) {
+        for (let child = parentA.child; child; child = child.sibling) {
+          if (child === a || child === b) {
+            if (nearestMounted(parentA) !== parentA) return null;
+            return child === a ? fiber : alternate;
+          }
+        }
+        return null;
+      }
+      if (a.return !== b.return) {
+        a = parentA;
+        b = parentB;
+      } else {
+        let found = false;
+        for (const parent of [parentA, parentB]) {
+          for (let child = parent.child; child; child = child.sibling) {
+            if (child !== a && child !== b) continue;
+            const other = parent === parentA ? parentB : parentA;
+            [a, b] = child === a ? [parent, other] : [other, parent];
+            found = true;
+            break;
+          }
+          if (found) break;
+        }
+        if (!found) return null;
+      }
+      if (a.alternate !== b) return null;
+    }
+    if (a.tag !== HOST_ROOT) return null;
+    if (a.stateNode.current === a) return fiber;
+    return a.stateNode.current === b ? alternate : null;
+  }
+  function readCurrentHostFiber(host) {
+    if (!host.isConnected) return null;
+    const keys = Object.keys(host).filter((key) => key.startsWith("__reactFiber$"));
+    if (keys.length !== 1) return null;
+    const current = findCurrentReactFiber(host[keys[0]]);
+    return current?.tag === 5 && current.stateNode === host ? current : null;
+  }
+
+  // src/binance-orderbook-trade/dom/open-orders-pagination.js
   function represents(item, element) {
     const props = element?.props;
     if (!item || !props) return false;
@@ -5383,30 +5487,89 @@
     let found = null;
     for (const host of root.querySelectorAll("div[style]")) {
       if (host.style.overflowY !== "auto") continue;
-      const children = committedProps(host.parentElement)?.children;
-      if (!Array.isArray(children)) continue;
-      for (const child of children) {
-        const list = child?.props?.children?.props;
+      const hostFiber = readCurrentHostFiber(host);
+      if (!hostFiber) continue;
+      for (let ancestor = hostFiber.return; ancestor; ancestor = ancestor.return) {
+        const current = findCurrentReactFiber(ancestor);
+        if (!current) return null;
+        const list = current.memoizedProps;
         if (list?.conRef?.current !== host) continue;
         if (found || list.loading !== false || list.hasMore !== void 0 || list.loadMore !== void 0 || !Array.isArray(list.data) || typeof list.renderItem !== "function") return null;
         const data = list.data;
         if (!data.every((item) => item?.symbol === symbol || item?.strategySubIdTwo?.symbol === symbol && item?.strategySubIdThree?.symbol === symbol)) return null;
+        const identities = /* @__PURE__ */ new Set();
+        for (const item of data) {
+          if (item.symbol !== symbol) continue;
+          if (!sameNativeOrder(item, item)) return null;
+          const key = String(item.orderId);
+          if (identities.has(key)) return null;
+          identities.add(key);
+        }
         if (!data.length && !list.emptyState) return null;
-        found = { host, list };
+        found = { host, hostFiber, list };
       }
     }
     return found;
   }
+  function windowMatchesDom(host, hostFiber, elements) {
+    const types = /* @__PURE__ */ new Map();
+    for (let index = 0; index < elements.length; index += 1) {
+      const element = elements[index];
+      if (!element.type || !element.props) return false;
+      if (!types.has(element.type)) types.set(element.type, /* @__PURE__ */ new Map());
+      const keys = types.get(element.type);
+      if (keys.has(element.key)) return false;
+      keys.set(element.key, index);
+    }
+    const nodes = new Array(elements.length);
+    function collectHosts(fiber, result) {
+      if (fiber.tag === 5) {
+        result.push(fiber.stateNode);
+        return;
+      }
+      for (let child = fiber.child; child; child = child.sibling) {
+        collectHosts(child, result);
+      }
+    }
+    function visit(fiber) {
+      for (let child = fiber; child; child = child.sibling) {
+        const index = types.get(child.elementType)?.get(child.key);
+        if (index !== void 0) {
+          if (child.tag === 14) return false;
+          const props = elements[index].props;
+          const committed = child.memoizedProps;
+          if (!committed || Object.keys(committed).length !== Object.keys(props).length || !Object.keys(props).every((key) => Object.hasOwn(committed, key) && Object.is(props[key], committed[key]))) return false;
+          if (nodes[index] || findCurrentReactFiber(child) !== child) return false;
+          const rowNodes = [];
+          collectHosts(child, rowNodes);
+          if (!rowNodes.length || rowNodes.some((node) => !node.isConnected || !host.contains(node))) return false;
+          nodes[index] = rowNodes;
+        } else if (!visit(child.child)) return false;
+      }
+      return true;
+    }
+    if (!visit(hostFiber.child)) return false;
+    let previous = null;
+    for (let index = 0; index < nodes.length; index += 1) {
+      if (!nodes[index]) return false;
+      for (const node of nodes[index]) {
+        if (previous && !(previous.compareDocumentPosition(node) & 4)) return false;
+        previous = node;
+      }
+    }
+    return true;
+  }
   function readNativeOpenOrderWindow(root, symbol) {
     const owner = readCommittedList(root, symbol);
     if (!owner) return null;
-    const { host, list } = owner;
+    const { host, hostFiber, list } = owner;
     const { data } = list;
-    const body = committedProps(host)?.children?.[1];
-    if (!data.length) return body === list.emptyState ? { host, data, complete: true } : null;
+    const body = hostFiber.memoizedProps?.children?.[1];
+    if (!data.length) return body?.props && body === list.emptyState && windowMatchesDom(host, hostFiber, [body]) ? { host, data, complete: true } : null;
     const rows = body?.props?.children?.[1];
-    if (!Array.isArray(rows)) return null;
-    const offset = data.findIndex((item) => represents(item, rows[0]));
+    if (!Array.isArray(rows) || !rows.every((row) => row?.props) || !windowMatchesDom(host, hostFiber, rows)) return null;
+    const offsets = data.flatMap((item, index) => represents(item, rows[0]) ? [index] : []);
+    const offset = offsets.length === 1 ? offsets[0] : -1;
     const aligned = offset >= 0 && rows.every((row, i) => represents(data[offset + i], row));
     return {
       host,
@@ -6676,6 +6839,7 @@
       ["执行中数量输入框已消失", "Quantity input disappeared during execution"],
       ["当前方向暂无可平数量", "No closable quantity in this direction"],
       ["查找当前委托", "Locating Open Orders"],
+      ["当前委托完整列表 7 秒内未加载完成", "The complete open-order list did not load within 7 seconds"],
       ["同向可撤挂单总量不足本轮目标，未撤销已有挂单", "Cancellable same-direction order quantity is below the target for this round; existing orders were not cancelled"],
       ["原挂单未完成替换，已停止重新挂单", "Previous orders were not fully replaced; replacement stopped"],
       ["撤销待替换挂单前交易对已变化", "Symbol changed before cancelling replacement orders"],
@@ -8461,12 +8625,13 @@
         } : null
       );
       if (synchronized) return synchronized;
+      const currentInputs = findTradeInputs();
       assertSubmittedPriceMatchesExpectedPrice(
         expectedPrice,
-        findPriceInput()?.value || "",
+        currentInputs?.priceInput.value || "",
         priceLabel
       );
-      assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || "", qtyLabel);
+      assertSubmittedQtyMatchesExpectedQty(expectedQty, currentInputs?.qtyInput.value || "", qtyLabel);
       throw createContinuousRecoverableLadderError(
         "input_unstable",
         "价格框或数量框未稳定"
@@ -8681,13 +8846,8 @@
       ));
     }
     async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null, options = null) {
-      const priceInput = findPriceInput();
-      const qtyInput = findQtyInput();
-      if (!priceInput) {
-        throw createContinuousRecoverableLadderError("controls_not_ready", "未找到价格输入框");
-      }
-      if (!qtyInput) {
-        throw createContinuousRecoverableLadderError("controls_not_ready", "未找到数量输入框");
+      if (!findTradeInputs()) {
+        throw createContinuousRecoverableLadderError("controls_not_ready", "未能确定唯一的当前交易表单输入框");
       }
       let done = 0;
       let repriceAttempts = 0;
@@ -8709,18 +8869,10 @@
           throwIfAborted(abortSignal);
           assertLadderExecutionContext(plan);
           assertLadderMakerPrice(plan, order.price);
-          const currentPriceInput = findPriceInput();
-          const currentQtyInput = findQtyInput();
-          if (!currentPriceInput) {
+          if (!findTradeInputs()) {
             throw createContinuousRecoverableLadderError(
               "controls_not_ready",
-              "执行中价格输入框已消失"
-            );
-          }
-          if (!currentQtyInput) {
-            throw createContinuousRecoverableLadderError(
-              "controls_not_ready",
-              "执行中数量输入框已消失"
+              "未能确定唯一的当前交易表单输入框"
             );
           }
           const synchronizedInputs = await syncTradeInputs(order.price, order.qty, {
@@ -8737,14 +8889,15 @@
           const button = await waitForReadyLadderSubmitButton(plan, abortSignal);
           throwIfAborted(abortSignal);
           assertLadderExecutionContext(plan);
+          const currentInputs = findTradeInputs();
           assertSubmittedPriceMatchesExpectedPrice(
             order.price,
-            findPriceInput()?.value || "",
+            currentInputs?.priceInput.value || "",
             "计划价"
           );
           assertSubmittedQtyMatchesExpectedQty(
             order.qty,
-            findQtyInput()?.value || "",
+            currentInputs?.qtyInput.value || "",
             "计划量"
           );
           if (!CFG.SAFE_MODE) {
@@ -9320,9 +9473,10 @@
                 spec.statusLabel,
                 continuousProgress,
                 phase,
-                cooldownMs
+                cooldownMs,
+                recovery?.reason ?? null
               );
-              setLadderStatus(recovery ? combineLocalizedText([waitStatus, recovery.reason], " · ") : waitStatus);
+              setLadderStatus(waitStatus);
             }
           });
           if (readiness.status === "stopped") {
@@ -9837,7 +9991,7 @@
       }
       return null;
     }
-    async function loadAllCurrentSymbolOpenOrderRows(symbol, plan, abortSignal = null) {
+    async function loadAllCurrentSymbolOpenOrderRows(symbol, plan, abortSignal, onProgress) {
       let requested;
       const state = await waitForAccountOrdersState(() => {
         if (!isCurrentObservedSymbol(symbol)) throw new Error("加载待撤挂单时交易对已变化");
@@ -9848,6 +10002,7 @@
         if (view.complete) return readCurrentSymbolOpenOrderRowsState(root, symbol, plan);
         if (requested?.host !== view.host || requested.data !== view.data || requested.count !== view.count || requested.offset !== view.offset) {
           requested = view;
+          onProgress(view.count, view.data.length);
           view.host.scrollTop = view.offset ? 0 : view.host.scrollHeight;
           view.host.dispatchEvent(new Event("scroll", { bubbles: true }));
         }
@@ -10055,7 +10210,15 @@
           const currentRoot = getActiveOpenOrdersScope2();
           let row = readCurrentSymbolOpenOrderRows(currentRoot, plan.symbol, plan, target.key).find(matchesIdentity);
           if (!row) {
-            const completeRows = await loadAllCurrentSymbolOpenOrderRows(plan.symbol, plan, abortSignal);
+            const completeRows = await loadAllCurrentSymbolOpenOrderRows(
+              plan.symbol,
+              plan,
+              abortSignal,
+              (count, total) => report(localizedText(
+                `上限恢复：委托 ${count}/${total}`,
+                `Releasing capacity: orders ${count}/${total}`
+              ))
+            );
             checkScope();
             if (receipts.admissionClosed) break;
             row = completeRows.find(matchesIdentity);
@@ -10858,7 +11021,11 @@
         let rows = capacityRecovery ? await loadAllCurrentSymbolOpenOrderRows(
           symbol,
           plan,
-          abortSignal
+          abortSignal,
+          (count, total) => setPlanStepStatus(localizedText(
+            `上限恢复：委托 ${count}/${total}`,
+            `Releasing capacity: orders ${count}/${total}`
+          ))
         ) : await waitForCurrentSymbolOpenOrderRows(
           openOrdersScope,
           symbol,

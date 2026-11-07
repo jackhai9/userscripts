@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
+import { installPanelResizeObserverHost } from '../../helpers/panel-resize-observer-host.js';
 
 import { createStrategy29SummaryPanel as createPanel } from '../../../src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js';
 
 function createStrategy29SummaryPanel(document, symbol, options = {}) {
+  installPanelResizeObserverHost(document.defaultView);
   let position = null;
   let collapsed = false;
   return createPanel(document, symbol, {

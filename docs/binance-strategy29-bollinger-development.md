@@ -13,7 +13,7 @@ already-loaded native chart candles. The summary reads the authenticated
 unified loopback gateway; it does not call Binance market-data or account APIs,
 submit orders, rotate hidden charts, or add remote events as chart drawings.
 
-Install Strategy29 0.5.14 directly and reload the page. The current orderbook
+Install Strategy29 0.5.17 directly and reload the page. The current orderbook
 script is optional; install CorsairQuant signal client 0.6.16 for the remote
 summary. This personal-use project targets the current scripts, without
 old-version runtime branches or preference migration.
@@ -75,7 +75,12 @@ configuration menus belong to the shared provider in the Strategy27 installation
 Drag the header with the primary mouse button. Header buttons do not start a drag.
 Mouse release or window blur saves only `{left, top}` under the private userscript
 key `strategy29SummaryPanelPosition`; route changes and page reloads restore it.
-The panel clamps its position after viewport, content, collapse and language changes.
+The completed initial panel clamps its position synchronously. A native
+`ResizeObserver` watches its border box and clamps after content, collapse,
+diagnostics or language changes alter its actual size. Same-size polling updates
+do not synchronously read panel geometry. Viewport resizing and header dragging
+retain the shared positioning behavior. Teardown disconnects the observer and
+rejects any stale delivery without measuring the detached panel.
 The title bar captures the primary pointer so dragging continues across the chart
 iframe. Pointer release, cancellation, lost capture and window blur finish once;
 destroying the panel releases capture and removes its listeners. Invalid persisted

@@ -249,7 +249,7 @@ test('user observes numeric and string executed quantities unchanged in native o
   const nativeRows = orders.map(order => structuredClone(host.document
     .querySelector(`[data-order-id="${order.id}"]`).__reactFiber$fixture.return.memoizedProps));
   const content = host.document.querySelector('.orders-content');
-  const nativeSource = structuredClone(content.parentElement.__reactProps$fixture.children[2].props.children.props.data);
+  const nativeSource = structuredClone(content.__reactFiber$fixture.return.return.return.stateNode.current.child.child.memoizedProps.data);
 
   // Then both owners preserve the supplied types and original quantities without normalizing away the live contract.
   assert.deepEqual(nativeRows, orders.map(({ symbol, orderId, clientOrderId, quantity, executedQty }) => ({
@@ -407,6 +407,57 @@ test('user sees native row mounting wait for its declared host deadline', (t) =>
     ['current-1', 'other-1']);
   assert.equal(host.document.querySelector('[data-orders-loading]'), null);
   assert.deepEqual(host.fixture.snapshot().orders, mixedOrders);
+});
+
+test('user observes current native rows on alternating React branches while mounted host event caches remain unchanged', (t) => {
+  // Given a five-order native list mounts two rows and retains the initial host Fiber and event-props handles.
+  const orders = Array.from({ length: 5 }, (_, index) => ({
+    ...ORDER_SETS.current[0], id: 'fiber-' + index, orderId: 300 + index, clientOrderId: 'fiber-client-' + index,
+  }));
+  const host = openNativeHost(t, createCancelScenario({
+    orders, ui: { accountTab: 'openOrders' }, host: { orderRowsPageSize: 2 },
+  }));
+  const content = host.document.querySelector('.orders-content');
+  const mountedFiber = content.__reactFiber$fixture;
+  const root = mountedFiber.return.return.return;
+  const cachedHost = content.__reactProps$fixture;
+  const cachedParent = content.parentElement.__reactProps$fixture;
+  const initialChildren = cachedHost.children[1].props.children[1];
+  assert.equal(initialChildren.length, 2);
+
+  // When loading two later windows commits both alternate branches without replacing the mounted scroll host.
+  content.scrollTop = 64;
+  content.dispatchEvent(new host.document.defaultView.Event('scroll'));
+  const firstCurrent = root.stateNode.current;
+  const firstWindow = firstCurrent.child.child.child.memoizedProps.children[1].props.children[1];
+  content.scrollTop = 224;
+  content.dispatchEvent(new host.document.defaultView.Event('scroll'));
+  const finalCurrent = root.stateNode.current;
+  const currentHost = finalCurrent.child.child.child;
+  const finalWindow = currentHost.memoizedProps.children[1].props.children[1];
+  const rowIdentities = [];
+  for (let row = currentHost.child; row; row = row.sibling) {
+    assert.equal(row.return, currentHost);
+    assert.equal(row.memoizedProps, finalWindow[rowIdentities.length].props);
+    assert.equal(row.elementType, finalWindow[rowIdentities.length].type);
+    assert.equal(row.key, finalWindow[rowIdentities.length].key);
+    assert.equal(row.child.child.stateNode.isConnected, true);
+    rowIdentities.push(row.child.child.stateNode.dataset.orderId);
+  }
+
+  // Then current Fiber children match actual DOM rows, while stale event caches and attached handles retain their original identity.
+  assert.equal(firstCurrent, root.alternate);
+  assert.equal(firstCurrent.alternate, root);
+  assert.equal(finalCurrent, root);
+  assert.equal(content.__reactFiber$fixture, mountedFiber);
+  assert.equal(firstWindow.length, 4);
+  assert.equal(finalWindow.length, 5);
+  assert.equal(content.__reactProps$fixture, cachedHost);
+  assert.equal(content.parentElement.__reactProps$fixture, cachedParent);
+  assert.equal(initialChildren.length, 2);
+  assert.deepEqual(rowIdentities, orders.map(order => order.id));
+  assert.deepEqual(Array.from(content.querySelectorAll('[data-order-id]'), row => row.dataset.orderId), rowIdentities);
+  assert.deepEqual(host.fixture.snapshot().orders, orders);
 });
 
 test('user cannot receive an old delayed native row mount in a newly selected symbol scope', (t) => {

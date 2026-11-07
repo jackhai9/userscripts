@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { loadFixtureDom } from './dom.js';
 import { attachChartMarkerOverlayHost } from './chart-marker-overlay-host.js';
+import { installPanelResizeObserverHost } from './panel-resize-observer-host.js';
 
 /** Positive OHLC candles provide both trend directions without supplying detector decisions. */
 export function createOscillatingStrategyBars(count = 165) {
@@ -34,6 +35,7 @@ function createNativeSubscription() {
 export function createStrategy29ChartHost({ bars = createOscillatingStrategyBars(), resolution = '1', omittedMethods = [] } = {}) {
   const dom = loadFixtureDom('<div class="chart-widget-root"><iframe></iframe></div>');
   const view = dom.window;
+  const panelResize = installPanelResizeObserverHost(view);
   const document = view.document;
   Object.defineProperty(document, 'hidden', { configurable: true, value: false });
   const root = document.querySelector('.chart-widget-root');
@@ -127,7 +129,7 @@ export function createStrategy29ChartHost({ bars = createOscillatingStrategyBars
   };
   document.querySelector('iframe').contentWindow.tradingViewApi = tradingViewApi;
   return {
-    dom, view, document, root, chart, tradingViewApi, overlay,
+    dom, view, document, root, chart, tradingViewApi, overlay, panelResize,
     created, removed, propertyWrites, exports, shapes, intervalChanged, dataLoaded,
     setBars(value) { currentBars = value; },
     setSymbol(value) { symbol = value; },

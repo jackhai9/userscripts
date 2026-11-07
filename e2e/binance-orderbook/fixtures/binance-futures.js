@@ -429,30 +429,100 @@ export function renderBinanceFuturesFixture(scenario) {
         }
       }
 
-      /** Mirrors the desktop list's committed data and its separately rendered React window. */
+      /** The fixture renders DOM directly; this component is its stable React element-type identity. */
+      function NativeOrderRow() { return null; }
+
+      /** Event caches stay on the mounted hosts while React commits child-only updates to the current Fiber tree. */
       function commitOrderWindow(content) {
         const data = visibleOrders();
-        const renderItem = item => ({ props: { ...item } });
-        const emptyState = { props: {} };
+        const renderItem = item => ({ type: NativeOrderRow, key: String(item.id), props: { ...item } });
+        const emptyState = { type: 'div', key: null, props: {} };
         const loading = Boolean(content.querySelector('[data-orders-loading]'));
         const list = { props: { data, renderItem, loading, emptyState, conRef: { current: content } } };
         const window = loadedOrderCount === null ? data : data.slice(0, loadedOrderCount);
-        content.parentElement.__reactProps$fixture = { children: [null, null, { props: { children: list } }] };
-        content.__reactProps$fixture = { children: [null, loading ? null : data.length
-          ? { props: { children: [null, window.map(renderItem), null] } } : emptyState] };
+        const elements = window.map(renderItem);
+        const parentProps = { children: [null, null, { props: { children: list } }] };
+        const contentProps = { children: [null, loading ? null : data.length
+          ? { props: { children: [null, elements, null] } } : emptyState] };
+        const previous = content.__reactFiber$fixture;
+        const makeFiber = (tag, stateNode, memoizedProps) => ({
+          tag, stateNode, memoizedProps, elementType: null, key: null,
+          flags: 0, child: null, sibling: null, return: null, alternate: null,
+        });
+        let root;
+        if (previous) {
+          const oldRoot = previous.return.return.return.stateNode.current;
+          root = oldRoot.alternate;
+          if (!root) {
+            root = makeFiber(3, oldRoot.stateNode, null);
+            const parent = makeFiber(5, content.parentElement, null);
+            const owner = makeFiber(0, null, null);
+            const host = makeFiber(5, content, null);
+            const next = [root, parent, owner, host];
+            const old = [oldRoot, oldRoot.child, oldRoot.child.child, oldRoot.child.child.child];
+            next.forEach((fiber, index) => {
+              fiber.alternate = old[index];
+              old[index].alternate = fiber;
+              if (index) {
+                fiber.return = next[index - 1];
+                next[index - 1].child = fiber;
+              }
+            });
+          }
+        } else {
+          root = makeFiber(3, { current: null }, null);
+          const parent = makeFiber(5, content.parentElement, null);
+          const owner = makeFiber(0, null, null);
+          const host = makeFiber(5, content, null);
+          root.child = parent;
+          parent.return = root;
+          parent.child = owner;
+          owner.return = parent;
+          owner.child = host;
+          host.return = owner;
+          content.parentElement.__reactFiber$fixture = parent;
+          content.__reactFiber$fixture = host;
+          content.parentElement.__reactProps$fixture = parentProps;
+          content.__reactProps$fixture = contentProps;
+        }
+        const host = root.child.child.child;
+        root.child.memoizedProps = parentProps;
+        root.child.child.memoizedProps = list.props;
+        host.memoizedProps = contentProps;
+        host.child = null;
+        if (!loading && !data.length) {
+          const empty = makeFiber(5, content.querySelector('[data-empty-orders]'), emptyState.props);
+          empty.elementType = emptyState.type;
+          empty.key = emptyState.key;
+          empty.return = host;
+          host.child = empty;
+        }
+        let previousRow = null;
+        content.querySelectorAll('.open-order-row').forEach((row, index) => {
+          const order = window[index];
+          const element = makeFiber(0, null, elements[index].props);
+          element.elementType = elements[index].type;
+          element.key = elements[index].key;
+          const { symbol, orderId, clientOrderId } = order;
+          const identity = makeFiber(0, null, { symbol, orderId, clientOrderId,
+            origQty: order.quantity, executedQty: order.executedQty ?? 0 });
+          const rowHost = makeFiber(5, row, null);
+          element.return = host;
+          element.child = identity;
+          identity.return = element;
+          identity.child = rowHost;
+          rowHost.return = identity;
+          row.__reactFiber$fixture = rowHost;
+          if (previousRow) previousRow.sibling = element;
+          else host.child = element;
+          previousRow = element;
+        });
+        root.stateNode.current = root;
       }
 
       function bindRowCancellation(content) {
         commitOrderWindow(content);
         content.querySelectorAll('.open-order-row').forEach((row) => {
-          const order = state.orders.find(item => item.id === row.dataset.orderId);
-          if ('orderId' in order) {
-            const { symbol, orderId, clientOrderId } = order;
-            row.__reactFiber$fixture = {
-              stateNode: row,
-              return: { memoizedProps: { symbol, orderId, clientOrderId, origQty: order.quantity, executedQty: order.executedQty ?? 0 } },
-            };
-          }
           row.querySelector('svg[aria-label="撤销挂单"]').addEventListener('click', () => {
             const orderId = row.dataset.orderId;
             record('row-cancel-requested', { orderId });

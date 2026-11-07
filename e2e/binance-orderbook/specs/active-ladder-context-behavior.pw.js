@@ -233,7 +233,7 @@ for (const change of CHANGES) {
     // When the native response confirms that second order and recovery approaches its one-second deadline.
     await host.releaseSubmitResponse(2);
     await expect.poll(() => readAcknowledgements(page)).toEqual([1, 2]);
-    const recovery = `连续阶梯平空 · 1s 后继续 · 0/1 轮 · 本轮 2/3 笔 · 累计 2 笔 · ${change.recovery}`;
+    const recovery = `连续阶梯平空 · ${change.recovery} · 1s 后继续 · 0/1 轮 · 本轮 2/3 笔 · 累计 2 笔`;
     await expect(host.status).toHaveText(recovery);
     await advanceToPhaseAge(page, recovery, 999);
 

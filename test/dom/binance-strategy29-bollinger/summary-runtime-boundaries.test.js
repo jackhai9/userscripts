@@ -227,10 +227,11 @@ test('user keeps existing rows when applying the same locale and clamps diagnost
   const originalRows = [...panel.querySelectorAll('[data-role=remote-event]')];
   const details = panel.querySelector('[data-role=diagnostics]');
 
-  // When the same locale is applied and native diagnostics toggle after a smaller viewport is observed.
+  // When the same locale is applied and native layout reports the diagnostics border box in a smaller viewport.
   controller.setLocale('en');
   Object.defineProperties(host.view, { innerWidth: { configurable: true, value: 300 }, innerHeight: { configurable: true, value: 200 } });
   details.dispatchEvent(new host.view.Event('toggle'));
+  host.panelResize.deliver(panel);
 
   // Then existing event elements are preserved and the live panel stays inside the viewport.
   assert.deepEqual([...panel.querySelectorAll('[data-role=remote-event]')], originalRows);
@@ -238,10 +239,11 @@ test('user keeps existing rows when applying the same locale and clamps diagnost
   assert.equal(panel.style.top, '176px');
   assert.deepEqual(saved, []);
 
-  // When a queued native toggle arrives after destruction.
+  // When a queued native size delivery arrives after destruction.
+  const callback = host.panelResize.observers[0].callback;
   controller.destroy();
   panel.style.left = '777px';
-  details.dispatchEvent(new host.view.Event('toggle'));
+  callback([{ target: panel }]);
 
   // Then the retired listener performs no clamp or persistence write.
   assert.equal(panel.isConnected, false);
