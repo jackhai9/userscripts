@@ -17,7 +17,7 @@ function isTradeSound(element, view) {
  * native sound in place, heard on every tab. Second `play()` calls from Binance's audio
  * helper reach an element already playing or already silenced, so they are safe either way.
  */
-export function installFillSoundScope(view) {
+export function installFillSoundScope(view, observeCancellation = null) {
   const scope = createFillSoundScope({
     now: () => view.Date.now(),
     readCurrentSymbol: () => parseFuturesTradingSymbolFromPathname(view.location.pathname),
@@ -27,15 +27,23 @@ export function installFillSoundScope(view) {
   const playDescriptor = Object.getOwnPropertyDescriptor(view.HTMLMediaElement.prototype, 'play');
   const nativePlay = playDescriptor.value;
 
+  const accountSockets = new Set();
   function observeFrame(event) {
     if (typeof event.data !== 'string' || !event.data.includes(ORDER_UPDATE_MARKER)) return;
     const update = JSON.parse(event.data).data;
-    if (update?.e === 'ORDER_TRADE_UPDATE') scope.recordOrderUpdate(update.o);
+    if (update?.e !== 'ORDER_TRADE_UPDATE') return;
+    scope.recordOrderUpdate(update.o);
+    if (event.isTrusted && accountSockets.has(this)) observeCancellation?.(update.o);
   }
 
   view.WebSocket = new Proxy(NativeWebSocket, {
     construct(target, args, newTarget) {
       const socket = Reflect.construct(target, args, newTarget);
+      const { origin, pathname } = new URL(socket.url);
+      if (origin === 'wss://fstream.binance.com' && pathname === '/private/stream') {
+        accountSockets.add(socket);
+        Reflect.apply(nativeAddEventListener, socket, ['close', () => accountSockets.delete(socket), { once: true }]);
+      }
       Reflect.apply(nativeAddEventListener, socket, ['message', observeFrame]);
       return socket;
     },
@@ -46,10 +54,12 @@ export function installFillSoundScope(view) {
     return Reflect.apply(nativePlay, this, arguments);
   }
   Object.defineProperty(view.HTMLMediaElement.prototype, 'play', { ...playDescriptor, value: play });
-  return Object.freeze({ snapshot: scope.snapshot });
+  return Object.freeze({ snapshot: scope.snapshot, hasAccountStream: () => [...accountSockets].some(socket => socket.readyState === NativeWebSocket.OPEN) });
 }
 
-export function installOrderSoundScope() {
+export function installOrderSoundScope(observeCancellation) {
   if (!isTopLevelTradingPage() || Object.hasOwn(self, '__BINANCE_ORDER_SOUND__')) return;
-  Object.defineProperty(self, '__BINANCE_ORDER_SOUND__', { value: installFillSoundScope(self), configurable: true });
+  const { snapshot, hasAccountStream } = installFillSoundScope(self, observeCancellation);
+  Object.defineProperty(self, '__BINANCE_ORDER_SOUND__', { value: Object.freeze({ snapshot }), configurable: true });
+  return hasAccountStream;
 }

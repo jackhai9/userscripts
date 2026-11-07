@@ -21,11 +21,17 @@ const mixedOrders = [...ORDER_SETS.both, ...protectedOrders];
 function openNativeHost(t, scenario) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const submission = Promise.withResolvers();
+  const rowCancellation = Promise.withResolvers();
+  const cancelRequests = [];
   const dom = new JSDOM(renderBinanceFuturesFixture(scenario), {
     url: 'https://www.binance.com/zh-CN/futures/' + CURRENT_SYMBOL,
     runScripts: 'dangerously',
     beforeParse(window) {
-      window.fetch = (path) => {
+      window.fetch = (path, init) => {
+        if (path === '/bapi/futures/v1/private/future/order/cancel-order') {
+          cancelRequests.push({ path, method: init.method, body: JSON.parse(init.body) });
+          return rowCancellation.promise;
+        }
         if (path === '/bapi/futures/v1/private/future/order/place-order') {
           return submission.promise;
         }
@@ -39,6 +45,11 @@ function openNativeHost(t, scenario) {
     dom.window.close();
   });
   return {
+    cancelRequests,
+    async respondToCancel(payload) {
+      rowCancellation.resolve(Response.json(payload));
+      await setImmediate();
+    },
     document: dom.window.document,
     fixture: {
       snapshot: () => structuredClone(dom.window.__BINANCE_FIXTURE__.snapshot()),
@@ -223,6 +234,34 @@ test('user can detect an unsafe row cancellation because the fake removes exactl
     { type: 'row-cancel-requested', orderId: 'other-1' },
     { type: 'row-cancel-cleared', orderId: 'other-1' },
   ]);
+});
+
+test('user sends a native cancellation for the exact order owned by the clicked row and waits for its receipt', async (t) => {
+  // Given two visually identical rows distinguishable only by their native IDs.
+  const orders = [1, 2].map(index => ({
+    ...ORDER_SETS.current[0], id: 'fixture-' + index, orderId: 100 + index, clientOrderId: 'client-' + index,
+  }));
+  const host = openNativeHost(t, createCancelScenario({ orders, ui: { accountTab: 'openOrders' } }));
+  const row = host.document.querySelector('[data-order-id="fixture-2"]');
+  const identity = { symbol: CURRENT_SYMBOL, orderId: 102, clientOrderId: 'client-2' };
+  assert.deepEqual(structuredClone(row.__reactFiber$fixture.return.memoizedProps), { ...identity, origQty: '0.01', executedQty: 0 });
+
+  // When the second row's native SVG is clicked before the host receives any response.
+  row.querySelector('svg').dispatchEvent(new host.document.defaultView.MouseEvent('click', { bubbles: true }));
+  t.mock.timers.tick(500);
+
+  // Then only the captured POST exists and both rows are still present.
+  assert.deepEqual(host.cancelRequests, [{
+    path: '/bapi/futures/v1/private/future/order/cancel-order', method: 'POST', body: identity,
+  }]);
+  assert.deepEqual(host.fixture.snapshot().orders, orders);
+
+  // When Binance returns its success envelope with both IDs but no response symbol.
+  await host.respondToCancel({ success: true, code: '000000', data: { orderId: 102, clientOrderId: 'client-2', status: 'CANCELED' } });
+  t.mock.timers.tick(0);
+
+  // Then the resulting native row removal preserves the identical-price sibling.
+  assert.deepEqual(host.fixture.snapshot().orders, orders.slice(0, 1));
 });
 
 for (const action of ['cancel', 'confirm']) {

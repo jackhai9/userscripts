@@ -379,7 +379,7 @@ export function renderBinanceFuturesFixture(scenario) {
               '<div role="tab" data-open-orders-sub-tab="conditional" aria-selected="' + selected(state.openOrdersSubTab, 'conditional') + '">条件委托(' + conditionalCount + ')</div>' +
             '</div>' +
             '<div role="checkbox" name="hideOtherSymbol" aria-checked="' + state.hideOtherSymbols + '">隐藏其他合约</div>' +
-            '<div class="orders-content"' + (scenario.host.orderRowsPageSize === null ? '' : ' style="height:96px;overflow-y:auto"') + '>' +
+            '<div class="orders-content"' + (scenario.host.orderRowsPageSize === null ? ' style="overflow-y:auto"' : ' style="height:96px;overflow-y:auto"') + '>' +
               (scenario.host.orderRowsMountDelayMs === 0 ? renderOrdersRows() : '<div data-orders-loading>Loading orders</div>') + '</div>' +
             (visibleOrders().length ? '<button class="bn-button bn-button__text bn-button__text__yellow data-size-tiny" data-cancel-all>全撤</button>' : '') +
           '</div>';
@@ -409,6 +409,7 @@ export function renderBinanceFuturesFixture(scenario) {
         accountWidget.querySelector('[data-cancel-all]')?.addEventListener('click', openCancelDialog);
         const content = accountWidget.querySelector('.orders-content');
         if (scenario.host.orderRowsMountDelayMs > 0) {
+          commitOrderWindow(content);
           setTimeout(() => {
             if (!content.isConnected) return;
             content.innerHTML = renderOrdersRows();
@@ -428,16 +429,59 @@ export function renderBinanceFuturesFixture(scenario) {
         }
       }
 
+      /** Mirrors the desktop list's committed data and its separately rendered React window. */
+      function commitOrderWindow(content) {
+        const data = visibleOrders();
+        const renderItem = item => ({ props: { ...item } });
+        const emptyState = { props: {} };
+        const loading = Boolean(content.querySelector('[data-orders-loading]'));
+        const list = { props: { data, renderItem, loading, emptyState, conRef: { current: content } } };
+        const window = loadedOrderCount === null ? data : data.slice(0, loadedOrderCount);
+        content.parentElement.__reactProps$fixture = { children: [null, null, { props: { children: list } }] };
+        content.__reactProps$fixture = { children: [null, loading ? null : data.length
+          ? { props: { children: [null, window.map(renderItem), null] } } : emptyState] };
+      }
+
       function bindRowCancellation(content) {
+        commitOrderWindow(content);
         content.querySelectorAll('.open-order-row').forEach((row) => {
+          const order = state.orders.find(item => item.id === row.dataset.orderId);
+          if ('orderId' in order) {
+            const { symbol, orderId, clientOrderId } = order;
+            row.__reactFiber$fixture = {
+              stateNode: row,
+              return: { memoizedProps: { symbol, orderId, clientOrderId, origQty: order.quantity, executedQty: order.executedQty ?? 0 } },
+            };
+          }
           row.querySelector('svg[aria-label="撤销挂单"]').addEventListener('click', () => {
             const orderId = row.dataset.orderId;
             record('row-cancel-requested', { orderId });
             const mode = scenario.host.rowCancelModesById[orderId] ?? scenario.host.rowCancelMode;
             if (mode === 'unchanged') return;
             if (mode === 'dialog') openRowCancelDialog(orderId);
-            else clearNativeOrder(orderId);
+            else requestRowCancellation(orderId);
           });
+        });
+      }
+
+      function requestRowCancellation(id) {
+        const order = state.orders.find(item => item.id === id);
+        if (!('orderId' in order)) {
+          clearNativeOrder(id);
+          return;
+        }
+        const { symbol, orderId, clientOrderId } = order;
+        fetch('/bapi/futures/v1/private/future/order/cancel-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbol, orderId, clientOrderId }),
+        }).then(async response => {
+          const payload = await response.json();
+          record('row-cancel-response', { orderId: id, httpStatus: response.status, payload });
+          if (response.status === 200 && payload.success === true && payload.code === '000000'
+            && payload.data?.status === 'CANCELED' && payload.data.orderId === orderId
+            && payload.data.clientOrderId === clientOrderId && (payload.data.symbol === undefined || payload.data.symbol === symbol)
+            && state.orders.some(item => item.id === id)) clearNativeOrder(id);
         });
       }
 
@@ -473,7 +517,7 @@ export function renderBinanceFuturesFixture(scenario) {
         root.querySelector('[data-row-dialog-action="cancel"]').addEventListener('click', () => closeDialog('row-cancel'));
         root.querySelector('[data-row-dialog-action="confirm"]').addEventListener('click', () => {
           closeDialog('row-confirm');
-          clearNativeOrder(orderId);
+          requestRowCancellation(orderId);
         });
         document.body.append(root);
       }

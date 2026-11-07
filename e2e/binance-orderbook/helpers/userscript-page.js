@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
+import { routeReplacementAccountStream } from './replacement-account-stream.js';
 import { renderBinanceFuturesFixture } from '../fixtures/binance-futures.js';
 
 const USERSCRIPT_PATH = fileURLToPath(
@@ -29,7 +30,10 @@ export function readScenarioEvidence(page) {
   return evidenceByPage.get(page) || null;
 }
 
-export async function openUserscriptScenario(page, scenario, { beforeOrderbook = '', afterOrderbook = '', afterNavigation } = {}) {
+export async function openUserscriptScenario(page, scenario, {
+  beforeOrderbook = '', afterOrderbook = '', afterNavigation, holdRowCancelResponses = false, replacementStream = false, holdTerminalUpdates = false,
+} = {}) {
+  const stream = replacementStream ? await routeReplacementAccountStream(page) : null;
   const errors = [];
   page.on('pageerror', (error) => errors.push(String(error?.stack || error)));
   const userscriptSource = await readFile(USERSCRIPT_PATH, 'utf8');
@@ -40,6 +44,7 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
   evidenceByPage.set(page, { scenario, userscript, errors });
   let placeOrderRequestCount = 0;
   const pendingSubmitResponses = new Map();
+  const pendingCancelResponses = new Map();
   await page.route('https://www.binance.com/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/__binance_orderbook_userscript__.js') {
@@ -77,6 +82,27 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
         body: JSON.stringify(submitResponseBody(response)),
       });
       delivered?.resolve();
+      return;
+    }
+    if (url.pathname === '/bapi/futures/v1/private/future/order/cancel-order') {
+      const request = route.request();
+      const { symbol, orderId, clientOrderId } = request.postDataJSON();
+      if (request.method() !== 'POST' || !scenario.orders.some(order => order.symbol === symbol
+        && order.orderId === orderId && order.clientOrderId === clientOrderId)) {
+        throw new Error('Native cancellation must POST the identity of a declared order');
+      }
+      let receipt = { status: 200, body: { success: true, code: '000000', data: { orderId, clientOrderId, status: 'CANCELED' } } };
+      if (holdRowCancelResponses) {
+        const release = Promise.withResolvers();
+        pendingCancelResponses.set(orderId, { receipt, release });
+        receipt = await release.promise;
+      }
+      if (stream && !holdTerminalUpdates && receipt.status === 200 && receipt.body.data?.status === 'CANCELED') {
+        const order = scenario.orders.find(item => item.orderId === orderId);
+        stream.publish({ s: symbol, i: orderId, c: clientOrderId, x: 'CANCELED', X: 'CANCELED',
+          q: order.quantity, z: String(order.executedQty ?? 0) });
+      }
+      await route.fulfill({ status: receipt.status, contentType: 'application/json', body: JSON.stringify(receipt.body) });
       return;
     }
     if (url.pathname === '/bapi/futures/v6/private/future/user-data/user-position') {
@@ -128,6 +154,7 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
   });
 
   await page.goto(`https://www.binance.com/zh-CN/futures/${scenario.currentSymbol}`);
+  if (stream) await stream.connect();
   if (afterNavigation) await afterNavigation(page);
   await page.locator('#jh-binance-close-qty-multiplier-panel').waitFor({ state: 'visible' });
   await page.locator('#jh-binance-ladder-body').waitFor({ state: 'visible' });
@@ -153,6 +180,14 @@ export async function openUserscriptScenario(page, scenario, { beforeOrderbook =
       await pending.delivered.promise;
     },
     pendingSubmitSequences: () => [...pendingSubmitResponses.keys()],
+    publishTerminalUpdate: stream?.publish,
+    pendingCancelOrderIds: () => [...pendingCancelResponses.keys()],
+    releaseCancelResponse(orderId, receipt) {
+      const pending = pendingCancelResponses.get(orderId);
+      if (!pending) throw new Error('No pending native cancellation for order ' + orderId);
+      pendingCancelResponses.delete(orderId);
+      pending.release.resolve(receipt ?? pending.receipt);
+    },
   };
 }
 

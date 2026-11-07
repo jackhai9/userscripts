@@ -61,8 +61,9 @@ function installDepthLabelProbe() {
 
   // The generated native adapter observes this page-owned socket without networking.
   window.WebSocket = class extends EventTarget {
-    constructor() {
+    constructor(url) {
       super();
+      this.url = new URL(url).href;
       state.socketCount += 1;
     }
   };

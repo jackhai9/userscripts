@@ -18,7 +18,7 @@ function tailOrders(levels) {
     order('opposite-direction', { side: '平多' }),
     order('other-symbol', { symbol: OTHER_SYMBOL }),
     order('conditional-current', { kind: 'conditional' }),
-  ];
+  ].map((item, index) => ({ ...item, orderId: 1001 + index, clientOrderId: item.id + '-client' }));
 }
 
 /** Browser locks and fetch delivery stay asynchronous while business timers use the page clock. */
@@ -51,7 +51,7 @@ async function openTailRecovery(page, {
     },
     host: { rowCancelMode },
   });
-  const host = await openUserscriptScenario(page, scenario);
+  const host = await openUserscriptScenario(page, scenario, { replacementStream: true });
   const flatResponse = Promise.withResolvers();
   const positionResponses = [];
   let flatRequests = 0;
@@ -223,7 +223,7 @@ test('user retains two confirmed close submissions when native tail cancellation
   await advanceUntil(page, () => hasTerminalStatus(page), 'Unconfirmed native cancellation must stop replacement');
 
   // Then the failure retains the accepted two-of-three progress and never submits or cancels again.
-  await expect(page.locator(STATUS)).toContainText('待替换挂单仍存在，已停止重新挂单');
+  await expect(page.locator(STATUS)).toContainText('未收到匹配的成功撤单回执，已停止重新挂单');
   await expect(page.locator(STATUS)).toContainText('90802022');
   await expect(page.locator(STATUS)).toContainText('本轮 2/3 笔');
   await expect(page.locator(STATUS)).toContainText('累计 2 笔');

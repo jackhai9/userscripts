@@ -15,8 +15,8 @@ function getDecimalDistance(left, right) {
 
 /**
  * Returns the farthest orders without mutating the DOM-derived input order.
- * Equal distances retain their original list order so duplicate Binance rows
- * can still be cancelled one at a time through their occurrence count.
+ * Equal distances retain their native list order. Each selected row is later
+ * reacquired by its exchange and client IDs before requesting cancellation.
  */
 export function selectFarthestOpenOrders(rows, referencePrice, limit) {
   const normalizedReference = normalizeDecimalString(referencePrice);

@@ -5,8 +5,9 @@ import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-
 const nativeSocketFixture = `
   window.__DEPTH_FIXTURE_SOCKET_COUNT__ = 0;
   window.WebSocket = class extends EventTarget {
-    constructor() {
+    constructor(url) {
       super();
+      this.url = new URL(url).href;
       window.__DEPTH_FIXTURE_SOCKET_COUNT__ += 1;
     }
   };
