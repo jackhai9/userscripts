@@ -131,12 +131,16 @@ export function readNativeOrderIdentity(row, symbol) {
 /** Rendered quantities can lag fills. Native props are a preflight bound, never proof of cancellation. */
 export function readNativeReplacementOrder(row, symbol) {
   const { orderId, clientOrderId, origQty, executedQty } = readNativeOrderProps(row, symbol);
+  const decimalFilledQty = typeof executedQty === 'string' && /^\d+(?:\.\d+)?$/.test(executedQty);
+  const numericFilledQty = typeof executedQty === 'number' && Number.isFinite(executedQty) && executedQty >= 0;
   if (typeof origQty !== 'string' || !/^\d+(?:\.\d+)?$/.test(origQty)
-    || typeof executedQty !== 'number' || !Number.isFinite(executedQty) || executedQty < 0) {
+    || (!decimalFilledQty && !numericFilledQty)) {
     throw new Error('无法确认原生订单数量，已停止撤单');
   }
-  // Decimal strings from the final account event stay exact. Expand tiny native numeric preflight values.
-  const filledQty = executedQty.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 });
+  // Initial REST rows retain decimal strings; account updates convert fills to numbers.
+  // Preserve string precision and expand only numeric values for exact decimal subtraction.
+  const filledQty = decimalFilledQty ? executedQty
+    : executedQty.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 });
   const remainingQty = subtractDecimalStrings(origQty, filledQty);
   if (remainingQty === null) throw new Error('原生订单数量不一致，已停止撤单');
   return { symbol, orderId, clientOrderId, origQty, executedQty: filledQty, remainingQty };

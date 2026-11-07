@@ -558,6 +558,15 @@ cumulative fill (`q - z`), as in [Binance's account stream](https://developers.b
 and its [native order adapter](https://bin.bnbstatic.com/static/chunks/35455.143e05da.js).
 An HTTP success counts as one cancellation; missing, contradictory or insufficient quantity
 cannot authorize replacement orders. Never extend the preselected set to make up a shortfall.
+Native row preflight accepts both current Binance `executedQty` forms: decimal strings
+retained by the initial REST list and finite nonnegative numbers produced by account
+updates. Keep valid strings exact; expand numeric values into non-exponent decimal text.
+Validate types and decimal syntax before the decimal parser, which otherwise accepts
+trimmed text. Reject invalid inputs and fills larger than `origQty`; a fully filled row
+has zero remaining quantity. On 2026-11-07, one AIN list contained two numeric-zero rows
+and two string-zero rows, all with string `origQty`. Treating only numbers as valid
+stopped replacement preflight before cancellation. Mixed-source browser scenarios must
+require quantity from both forms, and terminal account events remain the release proof.
 Once the entire target quantity is confirmed, ordinary replacements wait once for the original
 IDs to disappear from the Basic list. Continuous reduce-only recovery uses the terminal
 receipts, then waits and rereads the authoritative position before rebuilding the plan.

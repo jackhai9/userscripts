@@ -236,6 +236,29 @@ test('user can detect an unsafe row cancellation because the fake removes exactl
   ]);
 });
 
+test('user observes numeric and string executed quantities unchanged in native order rows after a host update', (t) => {
+  // Given the exchange supplies the same decimal values through numeric and string native representations.
+  const orders = [0, '0', 0.005, '0.005'].map((executedQty, index) => ({
+    ...ORDER_SETS.current[0], id: 'quantity-' + index, orderId: 101 + index,
+    clientOrderId: 'quantity-client-' + index, executedQty,
+  }));
+  const host = openNativeHost(t, createCancelScenario({ orders: [], ui: { accountTab: 'openOrders' } }));
+
+  // When the native host publishes those orders and mounts their React row owners.
+  host.fixture.setOrders(orders);
+  const nativeRows = orders.map(order => structuredClone(host.document
+    .querySelector(`[data-order-id="${order.id}"]`).__reactFiber$fixture.return.memoizedProps));
+  const content = host.document.querySelector('.orders-content');
+  const nativeSource = structuredClone(content.parentElement.__reactProps$fixture.children[2].props.children.props.data);
+
+  // Then both owners preserve the supplied types and original quantities without normalizing away the live contract.
+  assert.deepEqual(nativeRows, orders.map(({ symbol, orderId, clientOrderId, quantity, executedQty }) => ({
+    symbol, orderId, clientOrderId, origQty: quantity, executedQty,
+  })));
+  assert.deepEqual(nativeRows.map(({ executedQty }) => typeof executedQty), ['number', 'string', 'number', 'string']);
+  assert.deepEqual(nativeSource, orders);
+});
+
 test('user sends a native cancellation for the exact order owned by the clicked row and waits for its receipt', async (t) => {
   // Given two visually identical rows distinguishable only by their native IDs.
   const orders = [1, 2].map(index => ({
