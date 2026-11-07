@@ -314,7 +314,7 @@ async function startCloseLongAndWaitForCancellations(page, host) {
   await page.locator('[data-ladder-action="CLOSE_LONG"]').click({ modifiers: ['Alt'] });
   await advanceUntil(page, async () => (await readFixtureState(page)).events
     .filter(({ type }) => type === 'row-cancel-response').length === 2,
-  'The native host must receive both scoped cancellation responses before publishing its new list');
+  'The native host must receive both scoped cancellation responses while the old rows remain');
   const state = await readFixtureState(page);
   expect(submittedOrders(state).map(({ action, quantity }) => [action, quantity]))
     .toEqual(Array(5).fill(['平多', '0.01']));
@@ -346,73 +346,57 @@ async function publishTailSource(page, condition) {
   }, condition);
 }
 
-test('user resumes close replacement before the deadline when source props change without a DOM mutation', async ({ page }) => {
-  // Given both cancellation receipts succeeded and a final position publication is observed with the old source still mounted.
+test('user replaces the fresh remaining position after terminal receipts while cancelled source rows remain unchanged', async ({ page }) => {
+  // Given four close-long orders succeeded before rejection and both cancelled identities remain in the native source and mounted rows.
   const host = await openStaleCloseLongTail(page);
   await startCloseLongAndWaitForCancellations(page, host);
-  await page.locator('.orders-content').evaluate(content => {
-    const list = content.parentElement.__reactProps$fixture.children[2].props.children.props;
-    const oldRows = content.__reactProps$fixture.children[1].props.children[1];
-    let data = list.data;
-    const reads = [];
-    const mutations = [];
-    const observer = new MutationObserver(records => mutations.push(...records.map(record => record.type)));
-    observer.observe(content.closest('#account-widget'), {
-      subtree: true, childList: true, characterData: true, attributes: true,
-    });
-    // Observe only the fixture's source boundary; production readers and waits remain unchanged.
-    Object.defineProperty(list, 'data', {
-      configurable: true,
-      get() {
-        mutations.push(...observer.takeRecords().map(record => record.type));
-        reads.push({ at: Date.now(), ids: data.map(order => order.orderId), mutations: [...mutations] });
-        return data;
-      },
-    });
-    window.__TAIL_SOURCE_PROBE__ = {
-      snapshot: () => ({ reads, mutations, now: Date.now() }),
-      publish() {
-        observer.takeRecords();
-        mutations.length = 0;
-        const lastReadAt = reads.at(-1).at;
-        data = [{ ...data[0], orderId: 2001, clientOrderId: 'new-order' }, ...data.slice(2)];
-        return {
-          publishedAt: Date.now(), lastReadAt,
-          source: data.map(order => order.orderId),
-          window: oldRows.map(row => row.props.orderId),
-        };
-      },
-      disconnect: () => observer.disconnect(),
-    };
-  });
+
+  // When an additional fill leaves one minimum unit after both matching cancellation receipts have arrived.
   await page.evaluate(position => window.__BINANCE_FIXTURE__.setPositions([position]),
     { symbol: CURRENT_SYMBOL, side: 'LONG', quantity: '0.01' });
-  await expect.poll(() => page.evaluate(() => window.__TAIL_SOURCE_PROBE__.snapshot().reads.length)).toBeGreaterThan(0);
-  await page.clock.runFor(100);
-  const waiting = await page.evaluate(() => window.__TAIL_SOURCE_PROBE__.snapshot());
-  expect(waiting.reads.at(-1).ids).toEqual([1001, 1002, 1003]);
-  const positionReadsBeforePublication = host.positionResponses.length;
+  await advanceUntil(page, () => hasTerminalStatus(page), 'Terminal receipts must allow the fresh remaining unit to be replaced');
 
-  // When the complete source removes both IDs after the final observed commit, without touching any DOM node.
-  const published = await page.evaluate(() => window.__TAIL_SOURCE_PROBE__.publish());
-  expect(published.source).toEqual([2001, 1003]);
-  expect(published.window).toEqual([1001, 1002, 1003]);
-  expect(published.publishedAt).toBeGreaterThan(published.lastReadAt);
-  await advanceUntil(page, () => hasTerminalStatus(page),
-    'A props-only publication must resume and finish before the 6500ms list deadline', 4_500);
+  // Then the accepted replacement finishes the position while the stale source is never published or cancelled again.
+  await expect(page.locator(STATUS)).toContainText('当前方向已无持仓');
+  await expect(page.locator(STATUS)).toContainText('累计 5 笔');
+  await expect(page.locator(STATUS)).toContainText('撤 2 笔');
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(host.scenario.orders);
+  expect(submittedOrders(state)).toHaveLength(6);
+  expect(submittedOrders(state)[5]).toMatchObject({ action: '平多', quantity: '0.01' });
+  expect(host.positionResponses.some(({ submissions, positions }) =>
+    submissions === 5 && positions[0]?.quantity === '0.01')).toBe(true);
+  expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
+    .toEqual(['tail-1', 'tail-2']);
+  expect(state.events.filter(({ type }) => type === 'row-cancel-cleared')).toEqual([]);
+  expectRestoredScope(state);
+  expect(host.errors).toEqual([]);
+});
 
-  // Then the bounded recheck observes no DOM mutation, rereads the smaller position, and submits only its remaining unit.
-  const observed = await page.evaluate(() => {
-    const snapshot = window.__TAIL_SOURCE_PROBE__.snapshot();
-    window.__TAIL_SOURCE_PROBE__.disconnect();
-    return snapshot;
-  });
-  const updatedRead = observed.reads.find(({ ids }) => ids[0] === 2001);
-  expect(updatedRead.mutations).toEqual([]);
-  expect(updatedRead.at - published.publishedAt).toBeLessThanOrEqual(250);
-  expect(observed.now - published.lastReadAt).toBeLessThan(6500);
-  expect(host.positionResponses.slice(positionReadsBeforePublication)
-    .some(({ submissions, positions }) => submissions === 5 && positions[0]?.quantity === '0.01')).toBe(true);
+test('user waits for the recovery cooldown and caps replacement by the smaller current DOM quantity despite stale source rows', async ({ page }) => {
+  // Given both matching cancellations succeeded while their source remains unchanged and the authoritative position is two units.
+  const host = await openStaleCloseLongTail(page);
+  await startCloseLongAndWaitForCancellations(page, host);
+  const cancellation = (await readFixtureState(page)).events.filter(({ type }) => type === 'row-cancel-response').at(-1);
+  const elapsed = await page.evaluate(at => performance.now() - at, cancellation.at);
+  expect(elapsed).toBeLessThan(2999);
+
+  // When the native closeable display shrinks independently of the API position before three seconds have elapsed.
+  await page.locator('[data-testid="max-sell-amount"]').evaluate(element => { element.textContent = '可平 0.01 HYPE'; });
+  await page.clock.runFor(2999 - elapsed);
+
+  // Then receipts alone have not bypassed the recovery cooldown or submitted the stale two-unit quantity.
+  expect(submittedOrders(await readFixtureState(page))).toHaveLength(5);
+
+  // When the cooldown completes and the authoritative API still reports two remaining units.
+  await advanceUntil(page, () => hasTerminalStatus(page), 'Fresh API and DOM quantities must bound the replacement');
+
+  // Then the smaller current DOM amount limits the accepted replacement to one unit and the stale rows remain untouched.
+  const recoveryQuantities = host.positionResponses
+    .filter(({ submissions, positions }) => submissions === 5 && positions.length > 0)
+    .map(({ positions }) => positions[0].quantity);
+  expect(recoveryQuantities.length).toBeGreaterThanOrEqual(3);
+  expect([...new Set(recoveryQuantities)]).toEqual(['0.02']);
   await expect(page.locator(STATUS)).toContainText('当前方向已无持仓');
   await expect(page.locator(STATUS)).toContainText('累计 5 笔');
   await expect(page.locator(STATUS)).toContainText('撤 2 笔');
@@ -427,17 +411,28 @@ test('user resumes close replacement before the deadline when source props chang
   expect(host.errors).toEqual([]);
 });
 
-for (const condition of ['cleared', 'empty']) {
+for (const condition of [
+  'cleared', 'empty', 'contains a cancelled ID', 'is loading', 'has more pages',
+  'has an invalid native ID', 'contains another symbol',
+]) {
   test(`user replaces only the confirmed remaining position when cancelled rows stay mounted and source is ${condition}`, async ({ page }) => {
     // Given four close-long submissions succeed and the fifth is rejected, while both cancelled rows stay in the host for a minute.
     const host = await openStaleCloseLongTail(page);
+    let source;
+    await page.route('**/bapi/futures/v1/private/future/order/cancel-order', async route => {
+      if (route.request().postDataJSON().orderId === 1002) {
+        source = await publishTailSource(page, condition);
+        await page.evaluate(position => window.__BINANCE_FIXTURE__.setPositions([position]),
+          { symbol: CURRENT_SYMBOL, side: 'LONG', quantity: '0.01' });
+      }
+      await route.fallback();
+    });
 
-    // When the committed Basic source excludes both targets and a fill leaves only one minimum unit.
+    // When an independent source publication and fill precede the final matching receipt while the original Basic scope is active.
     await startCloseLongAndWaitForCancellations(page, host);
-    await page.evaluate(position => window.__BINANCE_FIXTURE__.setPositions([position]),
-      { symbol: CURRENT_SYMBOL, side: 'LONG', quantity: '0.01' });
-    const source = await publishTailSource(page, condition);
-    expect(source.source).toEqual(condition === 'empty' ? [] : [2001, 1003]);
+    const expectedIds = condition === 'empty' ? [] : [condition === 'has an invalid native ID' ? 'invalid' : 2001, 1003];
+    if (condition === 'contains a cancelled ID') expectedIds.push(1002);
+    expect(source.source).toEqual(expectedIds);
     expect(source.window).toEqual([1001, 1002, 1003]);
     await advanceUntil(page, () => hasTerminalStatus(page), 'The remaining unit must be submitted and confirmed flat');
 
@@ -460,42 +455,173 @@ for (const condition of ['cleared', 'empty']) {
   });
 }
 
-for (const condition of [
-  'contains a cancelled ID', 'is loading', 'has more pages', 'has an invalid native ID', 'contains another symbol',
-]) {
-  test(`user keeps four accepted submissions when the committed Basic source ${condition}`, async ({ page }) => {
-    // Given the two cancellations are confirmed while the native order list still displays their rows.
-    const host = await openStaleCloseLongTail(page);
+/** Model subsequent exchange outcomes while retaining every already-cancelled native row. */
+async function openFollowupTailRecovery(page, mode) {
+  const host = await openStaleCloseLongTail(page);
+  const sameRound = mode === 'same round';
+  const alternateConflict = mode === 'alternate identity conflict';
+  const conflict = mode === 'identity conflict' || alternateConflict;
+  const newOrder = {
+    ...host.scenario.orders[0], id: 'new-tail', orderId: 2001, clientOrderId: 'new-tail-client',
+    quantity: sameRound ? '0.01' : '0.02', price: '82',
+  };
+  const publishedOrders = [
+    ...host.scenario.orders.map((order, index) => conflict && index === 0
+      ? { ...order, clientOrderId: 'different-client-for-cancelled-id' } : order),
+    newOrder,
+  ];
+  let submissions = 0;
+  await page.route('**/bapi/futures/v1/private/future/order/cancel-order', async route => {
+    const identity = route.request().postDataJSON();
+    expect(route.request().method()).toBe('POST');
+    const order = [...host.scenario.orders, newOrder].find(item => item.symbol === identity.symbol
+      && item.orderId === identity.orderId && item.clientOrderId === identity.clientOrderId);
+    if (!order) throw new Error('Native cancellation must use an exact declared order identity');
+    host.publishTerminalUpdate({
+      s: order.symbol, i: order.orderId, c: order.clientOrderId, x: 'CANCELED', X: 'CANCELED',
+      q: order.quantity, z: '0',
+    });
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ success: true, code: '000000', data: {
+        orderId: identity.orderId, clientOrderId: identity.clientOrderId, status: 'CANCELED',
+      } }),
+    });
+  });
+  await page.route('**/bapi/futures/v1/private/future/order/place-order', async route => {
+    submissions += 1;
+    expect(submissions).toBeLessThanOrEqual(mode === 'identity conflict' ? 8 : sameRound ? 9 : 10);
+    if (submissions === 5 || (sameRound && submissions === 7)) {
+      await page.evaluate(position => window.__BINANCE_FIXTURE__.setPositions([position]), {
+        symbol: CURRENT_SYMBOL, side: 'LONG', quantity: submissions === 5 ? '0.02' : '0.01',
+      });
+    }
+    if (submissions === (sameRound ? 8 : 7)) {
+      await page.evaluate(orders => window.__BINANCE_FIXTURE__.setOrders(orders), publishedOrders);
+      if (alternateConflict) {
+        await page.evaluate(previousOrder => {
+          const observed = [];
+          const observer = new MutationObserver(() => {
+            const row = document.querySelector('[data-order-id="tail-1"]');
+            if (!row) return;
+            const owner = row.__reactFiber$fixture.return;
+            owner.alternate = { memoizedProps: {
+              ...owner.memoizedProps, clientOrderId: previousOrder.clientOrderId,
+            } };
+            observed.push({
+              orderId: owner.memoizedProps.orderId,
+              currentClientOrderId: owner.memoizedProps.clientOrderId,
+              previousClientOrderId: owner.alternate.memoizedProps.clientOrderId,
+            });
+          });
+          observer.observe(document.querySelector('#account-widget'), { subtree: true, childList: true });
+          window.__TAIL_NATIVE_IDENTITY_PROBE__ = {
+            snapshot: () => observed,
+            finish() { observer.disconnect(); return observed; },
+          };
+        }, host.scenario.orders[0]);
+      }
+    }
+    if (submissions === (sameRound ? 9 : 10)) {
+      await page.evaluate(() => window.__BINANCE_FIXTURE__.setPositions([]));
+    }
+    const rejected = (sameRound ? [5, 7, 8] : [5, 8]).includes(submissions);
+    const response = rejected && submissions === 8 && !sameRound
+      ? { success: false, code: '90802025', message: 'Maximum open orders' }
+      : rejected ? REDUCE_ONLY_REJECTION : { success: true };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(response) });
+  });
+  return { ...host, publishedOrders };
+}
 
-    // When the native source cannot confirm the batch's absence before the list-check deadline.
-    await startCloseLongAndWaitForCancellations(page, host);
-    await publishTailSource(page, condition);
-    await advanceUntil(page, () => hasTerminalStatus(page), 'Contradictory or unknown order state must end recovery');
+for (const mode of ['same round', 'next round capacity']) {
+  test(`user cancels only a new order during ${mode} recovery while earlier terminal rows stay mounted`, async ({ page }) => {
+    // Given old cancellation receipts release two units and later native publications retain those identities beside one new close order.
+    const host = await openFollowupTailRecovery(page, mode);
 
-    // Then four accepted orders and both cancellations count once without another financial action.
-    await expect(page.locator(STATUS)).toContainText('失败');
-    await expect(page.locator(STATUS)).toContainText(condition === 'contains a cancelled ID'
-      ? '待替换挂单仍存在，已停止重新挂单'
-      : '无法核实当前委托完整数据，已停止重新挂单');
-    await expect(page.locator(STATUS)).toContainText('本轮 4/5 笔');
-    await expect(page.locator(STATUS)).toContainText('累计 4 笔');
-    await expect(page.locator(STATUS)).toContainText('撤 2 笔');
-    await page.clock.runFor(10_000);
+    // When another rejection needs a fresh cancellation batch in the same continuous-close session.
+    await page.locator('[data-ladder-action="CLOSE_LONG"]').click({ modifiers: ['Alt'] });
+    await advanceUntil(page, () => hasTerminalStatus(page), 'The fresh batch must exclude already-confirmed cancellations', 35_000);
+
+    // Then only the new identity releases quantity or capacity, each cancellation counts once, and the remaining position finishes.
+    await expect(page.locator(STATUS)).toContainText('当前方向已无持仓');
+    await expect(page.locator(STATUS)).toContainText(`累计 ${mode === 'same round' ? 6 : 8} 笔`);
+    await expect(page.locator(STATUS)).toContainText('撤 3 笔');
     const state = await readFixtureState(page);
-    expect(submittedOrders(state)).toHaveLength(5);
+    expect(state.orders).toEqual(host.publishedOrders);
     expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
-      .toEqual(['tail-1', 'tail-2']);
+      .toEqual(['tail-1', 'tail-2', 'new-tail']);
+    expect(state.events.filter(({ type }) => type === 'row-cancel-cleared')).toEqual([]);
+    expect(state.events.filter(({ type }) => type === 'order-submit-api-rejected').map(({ code }) => code))
+      .toEqual(mode === 'same round' ? ['90802022', '90802022', '90802022'] : ['90802022', '90802025']);
+    expect(submittedOrders(state).map(({ quantity }) => quantity)).toEqual(Array(mode === 'same round' ? 9 : 10).fill('0.01'));
     expectRestoredScope(state);
     expect(host.errors).toEqual([]);
   });
 }
 
-test('user can stop close replacement while the committed Basic source still contains cancelled rows', async ({ page }) => {
+test('user stops later capacity recovery when a cancelled order ID returns with a different client identity', async ({ page }) => {
+  // Given the first recovery confirms both identities and the next native publication changes one cancelled order's client ID.
+  const host = await openFollowupTailRecovery(page, 'identity conflict');
+
+  // When a later continuous round receives a capacity rejection with the conflicting native identity still present.
+  await page.locator('[data-ladder-action="CLOSE_LONG"]').click({ modifiers: ['Alt'] });
+  await advanceUntil(page, () => hasTerminalStatus(page), 'Conflicting terminal identities must stop the session');
+
+  // Then the identity conflict is terminal and cannot cancel another row or restart after the normal recovery delay.
+  await expect(page.locator(STATUS)).toContainText('失败');
+  await expect(page.locator(STATUS)).toContainText('已撤订单身份发生冲突，已停止重新挂单');
+  await expect(page.locator(STATUS)).toContainText('累计 6 笔');
+  await expect(page.locator(STATUS)).toContainText('撤 2 笔');
+  await page.clock.runFor(10_000);
+  const state = await readFixtureState(page);
+  expect(state.orders).toEqual(host.publishedOrders);
+  expect(submittedOrders(state)).toHaveLength(8);
+  expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
+    .toEqual(['tail-1', 'tail-2']);
+  expect(state.events.filter(({ type }) => type === 'order-submit-api-rejected').map(({ code }) => code))
+    .toEqual(['90802022', '90802025']);
+  expectRestoredScope(state);
+  expect(host.errors).toEqual([]);
+});
+
+test('user never retries later capacity recovery when current and alternate native row identities disagree', async ({ page }) => {
+  // Given a cancelled ID is republished with a new current client ID while its native React alternate still owns the old client ID.
+  const host = await openFollowupTailRecovery(page, 'alternate identity conflict');
+
+  // When a later capacity rejection reads the conflicting native row before checking the confirmed-cancellation map.
+  await page.locator('[data-ladder-action="CLOSE_LONG"]').click({ modifiers: ['Alt'] });
+  await advanceUntil(page, () => page.evaluate(() => window.__TAIL_NATIVE_IDENTITY_PROBE__?.snapshot().length > 0),
+    'The native Basic row must expose the current/alternate identity conflict');
+  await page.clock.runFor(10_000);
+  await advanceUntil(page, async () => await hasTerminalStatus(page)
+    || submittedOrders(await readFixtureState(page)).length > 8,
+  'The conflict must terminate instead of entering another continuous round');
+
+  // Then no retry submission or further cancellation occurs after the recovery delay and the native identity failure remains terminal.
+  const state = await readFixtureState(page);
+  expect(submittedOrders(state)).toHaveLength(8);
+  await expect(page.locator(STATUS)).toContainText('失败');
+  await expect(page.locator(STATUS)).toContainText('订单行身份发生变化，已停止撤单');
+  await expect(page.locator(STATUS)).toContainText('累计 6 笔');
+  await expect(page.locator(STATUS)).toContainText('撤 2 笔');
+  expect(state.orders).toEqual(host.publishedOrders);
+  expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
+    .toEqual(['tail-1', 'tail-2']);
+  const nativeIdentities = await page.evaluate(() => window.__TAIL_NATIVE_IDENTITY_PROBE__.finish());
+  expect(nativeIdentities).toContainEqual({
+    orderId: 1001, currentClientOrderId: 'different-client-for-cancelled-id', previousClientOrderId: 'tail-1-client',
+  });
+  expectRestoredScope(state);
+  expect(host.errors).toEqual([]);
+});
+
+test('user can stop close replacement during its recovery cooldown while cancelled rows remain mounted', async ({ page }) => {
   // Given both cancellations are confirmed while their old rows remain in the Basic source.
   const host = await openStaleCloseLongTail(page);
   await startCloseLongAndWaitForCancellations(page, host);
 
-  // When the user stops before the delayed list commit removes those rows.
+  // When the user stops during the post-cancellation cooldown before the old rows disappear.
   await page.locator('[data-ladder-stop]').evaluate(button => button.click());
   await advanceUntil(page, async () => (await page.locator(STATUS).allTextContents()).some(text => text.includes('已停止')),
     'Stop must prevent the late snapshot from starting a replacement');
@@ -514,7 +640,7 @@ test('user can stop close replacement while the committed Basic source still con
   expect(host.errors).toEqual([]);
 });
 
-test('user keeps the new symbol when an old close replacement is waiting for its Basic source update', async ({ page }) => {
+test('user keeps the new symbol when an old close replacement is waiting for its recovery cooldown', async ({ page }) => {
   // Given both native cancellations succeeded while the original symbol's source still contains the old rows.
   const host = await openStaleCloseLongTail(page);
   await startCloseLongAndWaitForCancellations(page, host);

@@ -66,13 +66,11 @@ export function createAccountOrdersMutationSignal(observationRoot) {
   };
 }
 
-/** Opt-in rechecks also observe committed data changes that do not emit DOM mutations. */
 export async function waitForAccountOrdersMutationState(
   observationRoot,
   readState,
   timeoutMs,
   abortSignal = null,
-  recheckIntervalMs = timeoutMs,
 ) {
   throwIfAborted(abortSignal);
   const currentState = readState();
@@ -90,7 +88,7 @@ export async function waitForAccountOrdersMutationState(
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) return readState();
       await waitForPromiseOrAbort(
-        signal.waitForChange(version, Math.min(remainingMs, recheckIntervalMs)),
+        signal.waitForChange(version, remainingMs),
         abortSignal,
       );
     }

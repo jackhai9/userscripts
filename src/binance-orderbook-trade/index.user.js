@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.237
+// @version      2.7.238
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -256,7 +256,7 @@ import {
   getOpenOrderRowCells,
   readOpenOrdersScopeText as readOpenOrdersScopeTextDom,
 } from './dom/open-order-rows.js';
-import { readCommittedOpenOrderData, readNativeOpenOrderWindow } from './dom/open-orders-pagination.js';
+import { readNativeOpenOrderWindow } from './dom/open-orders-pagination.js';
 import { readVisibleOrderFeedbackEntries as readVisibleOrderFeedbackEntriesDom } from './dom/order-feedback-scan.js';
 import {
   assertSameBinanceChartOrdersTarget,
@@ -391,7 +391,6 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
   const CONTINUOUS_CLOSE_POSITION_CHECK_MS = 1000;
   const MULTIPLIER_PRESS_FEEDBACK_MS = 140;
   const LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS = 6500;
-  const CONTINUOUS_CLOSE_ORDER_DATA_RECHECK_MS = 250;
   const LADDER_REPLACE_ROW_SETTLE_MS = 240;
   const MAX_OPEN_ORDERS_RECOVERY_CANCEL_COUNT = 50;
   const OPEN_ORDERS_LAZY_LOAD_TIMEOUT_MS = 7000;
@@ -1051,11 +1050,10 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     ['订单行身份发生变化，已停止撤单', 'The native order ID changed; cancellation stopped'],
     ['无法确认原生订单编号，已停止撤单', 'Could not verify the native order ID; cancellation stopped'],
     ['已撤订单列表尚未更新，已停止重新挂单', 'Cancelled orders have not cleared from the list; replacement stopped'],
-    ['无法核实当前委托完整数据，已停止重新挂单', 'Could not verify the complete open-order data; replacement stopped'],
+    ['已撤订单身份发生冲突，已停止重新挂单', 'Cancelled order identity conflicts; replacement stopped'],
     ['未连接到账户订单更新，已停止撤单', 'Account order updates are unavailable; cancellation stopped'],
     ['已有撤单任务正在执行', 'A cancellation is already running'],
     ['待替换挂单的撤单按钮点击失败，已停止重新挂单', 'Could not click the replacement-order cancel control; replacement stopped'],
-    ['待替换挂单仍存在，已停止重新挂单', 'Replacement orders still exist; replacement stopped'],
     ['待替换挂单状态未稳定，已停止重新挂单', 'Replacement-order state did not stabilize; replacement stopped'],
     ['未能恢复隐藏其他合约状态', 'Could not restore Hide Other Symbols'],
     ['账户余额已变化，已停止账户再平衡', 'Account balances changed; account rebalance stopped'],
@@ -3608,7 +3606,11 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
             progress,
             setExecutionStatus,
             abortSignal,
-            { strategy: 'farthest_for_capacity', unresolvedCapacityOrders: options.unresolvedCapacityOrders },
+            {
+              strategy: 'farthest_for_capacity',
+              unresolvedCapacityOrders: options.unresolvedCapacityOrders,
+              confirmedCancelledOrders: options.confirmedCancelledOrders,
+            },
           );
           throwIfAborted(abortSignal);
           if (!recovery?.ok) {
@@ -3685,6 +3687,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     continuousProgress = null,
     chartSaveController = null,
     unresolvedCapacityOrders = null,
+    confirmedCancelledOrders = null,
   ) {
     const spec = getLadderActionSpec(actionType);
     if (!spec) {
@@ -3785,6 +3788,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
         {
           allowMaxOpenOrdersRecovery: continuousSession && spec.mode === 'CLOSE',
           unresolvedCapacityOrders,
+          confirmedCancelledOrders,
           allowReduceOnlyRecovery: continuousSession && spec.mode === 'CLOSE',
           chartSaveController,
           chartSaveRound,
@@ -4089,6 +4093,8 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     const abortController = new AbortController();
     const continuousProgress = createContinuousLadderProgress();
     const unresolvedCapacityOrders = new Set();
+    // Native lists can retain terminal orders across rounds. Keep identities, never reusable quantity.
+    const confirmedCancelledOrders = new Map();
     const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
     let chartSaveCoalescer = null;
     continuousLadderAbortController = abortController;
@@ -4109,6 +4115,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
           continuousProgress,
           chartSaveCoalescer,
           unresolvedCapacityOrders,
+          confirmedCancelledOrders,
         );
         let recovery = null;
         if (!outcome?.progress) {
@@ -4310,7 +4317,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
    * the stable account-orders component and re-read the semantic state instead
    * of sleeping or retaining nodes from the previous render.
    */
-  function waitForAccountOrdersState(readState, timeoutMs, abortSignal = null, recheckIntervalMs = timeoutMs) {
+  function waitForAccountOrdersState(readState, timeoutMs, abortSignal = null) {
     // The document root is observed only while React has temporarily removed
     // the verified account widget; normal waits remain scoped to that widget.
     const observationRoot = getAccountOrdersObservationRoot() || document.body;
@@ -4319,7 +4326,6 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
       readState,
       timeoutMs,
       abortSignal,
-      recheckIntervalMs,
     );
   }
 
@@ -4832,7 +4838,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
   }
 
   /** Only the admitted IDs may release quantity. Each click owns its HTTP receipt and terminal account event. */
-  async function cancelOpenOrderRowsForPlan(targets, plan, progress, setExecutionStatus, abortSignal, strategy) {
+  async function cancelOpenOrderRowsForPlan(targets, plan, progress, setExecutionStatus, abortSignal, options) {
     if (activeCancelReceipts) throw new Error('已有撤单任务正在执行');
     const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS);
     const cancelledIds = new Set();
@@ -4880,6 +4886,11 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
           if (!isPositiveDecimalString(releasedQty)) throw new Error('无法确认已撤挂单数量，已停止重新挂单');
           cancelQty = addDecimalStrings(cancelQty, releasedQty);
           cancelledIds.add(String(target.orderId));
+          if (options?.strategy === 'confirmed_reduce_only_conflict') {
+            options.confirmedCancelledOrders.set(String(target.orderId), {
+              symbol: target.symbol, orderId: target.orderId, clientOrderId: target.clientOrderId,
+            });
+          }
           if (compareDecimalStrings(cancelQty, plan.totalQty) >= 0) break;
         } finally {
           // Stop closes the quantity wait but every already observed HTTP request must drain.
@@ -4890,35 +4901,23 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
         }
       }
       if (compareDecimalStrings(cancelQty, plan.totalQty) < 0) throw new Error('同向可撤挂单数量不足，已停止重新挂单');
-      // After a confirmed reduce-only rejection we only need to know whether these IDs remain.
-      // Binance can keep rendering the old window even after its complete Basic data has changed.
-      const continuousCloseRecovery = strategy === 'confirmed_reduce_only_conflict';
-      let synchronizationFailure = '已撤订单列表尚未更新，已停止重新挂单';
+      // Matched HTTP and terminal account receipts prove cancellation; the native UI consumes
+      // those events separately. Continuous recovery next rereads the authoritative position.
+      if (options?.strategy === 'confirmed_reduce_only_conflict') return;
       const listUpdated = await waitForAccountOrdersState(() => {
         checkScope();
         const root = getActiveOpenOrdersScope();
-        let data;
-        if (continuousCloseRecovery) {
-          synchronizationFailure = '无法核实当前委托完整数据，已停止重新挂单';
-          data = readCommittedOpenOrderData(root, plan.symbol);
-          if (!data) return false;
-        } else {
-          const view = readNativeOpenOrderWindow(root, plan.symbol);
-          if (!view || view.offset === -1) return false;
-          data = view.data;
-        }
+        const view = readNativeOpenOrderWindow(root, plan.symbol);
+        if (!view || view.offset === -1) return false;
         const absent = order => {
           if (!sameNativeOrder(order, order)) return false;
-          if (!cancelledIds.has(String(order.orderId))) return true;
-          if (continuousCloseRecovery) synchronizationFailure = '待替换挂单仍存在，已停止重新挂单';
-          return false;
+          return !cancelledIds.has(String(order.orderId));
         };
-        return data.every(item => item.symbol === plan.symbol
+        return view.data.every(item => item.symbol === plan.symbol
           ? absent(item)
           : absent(item.strategySubIdTwo) && absent(item.strategySubIdThree));
-      }, LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS, abortSignal,
-        continuousCloseRecovery ? CONTINUOUS_CLOSE_ORDER_DATA_RECHECK_MS : LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS);
-      if (!listUpdated) throw new Error(synchronizationFailure);
+      }, LADDER_REPLACE_OPEN_ORDERS_CLEAR_TIMEOUT_MS, abortSignal);
+      if (!listUpdated) throw new Error('已撤订单列表尚未更新，已停止重新挂单');
     } finally {
       activeCancelReceipts = null;
     }
@@ -5851,6 +5850,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     let restoreTemporaryUiState = true;
     let capacityDispatchEntered = false;
     let replacementDispatchEntered = false;
+    let checkingConfirmedCancellationIdentities = false;
 
     try {
       setPlanStepStatus('查找当前委托');
@@ -5920,7 +5920,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
         return { ok: false, status: 'scope_not_found', message };
       }
 
-      const rows = capacityRecovery
+      let rows = capacityRecovery
         ? await loadAllCurrentSymbolOpenOrderRows(
           symbol,
           plan,
@@ -5933,6 +5933,23 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
           abortSignal,
         );
       throwIfAborted(abortSignal);
+      if (options?.confirmedCancelledOrders) {
+        // An invalid native identity cannot enter capacity recovery's retry loop,
+        // including a conflicting React alternate rejected before the ledger lookup.
+        checkingConfirmedCancellationIdentities = true;
+        rows = rows.filter(row => {
+          const identity = readNativeOrderIdentity(row.row, plan.symbol);
+          const cancelled = options.confirmedCancelledOrders.get(String(identity.orderId));
+          if (!cancelled) return true;
+          if (!sameNativeOrder(cancelled, identity)) {
+            const error = new Error('已撤订单身份发生冲突，已停止重新挂单');
+            error.name = 'CancelledOrderIdentityError';
+            throw error;
+          }
+          return false;
+        });
+        checkingConfirmedCancellationIdentities = false;
+      }
       if (!rows.length) {
         const directionLabel = getPlanDirectionLabel(plan);
         const message = `未找到${directionLabel || ''}方向的可撤基础单`;
@@ -5996,7 +6013,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
         progress,
         setExecutionStatus,
         abortSignal,
-        options?.strategy,
+        options,
       );
       throwIfAborted(abortSignal);
       setPlanStepStatus('原挂单已撤，继续阶梯挂单');
@@ -6006,7 +6023,8 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
       if (e?.name === 'DialogNotClosedError') restoreTemporaryUiState = false;
       const message = e?.message || '待替换挂单撤销失败，已停止重新挂单';
       setPlanStepStatus(message);
-      let status = capacityDispatchEntered ? 'capacity_terminal' : 'row_cancel_failed';
+      let status = capacityDispatchEntered || (capacityRecovery && checkingConfirmedCancellationIdentities)
+        ? 'capacity_terminal' : 'row_cancel_failed';
       if (e?.name === 'DialogNotClosedError') status = 'dialog_not_closed';
       return { ok: false, status, message };
     } finally {
@@ -6172,7 +6190,10 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
       },
       readPositionQty: async (plan) => (await throwIfClosePositionCompleted(plan, abortSignal)).positionQty,
       replaceOrders: (plan) => cancelCurrentSymbolOpenOrdersForPlan(
-        plan, progress, setExecutionStatus, abortSignal, { strategy: 'confirmed_reduce_only_conflict' },
+        plan, progress, setExecutionStatus, abortSignal, {
+          strategy: 'confirmed_reduce_only_conflict',
+          confirmedCancelledOrders: options.confirmedCancelledOrders,
+        },
       ),
       waitForRecovery: async (plan) => {
         let nextPositionCheckAt = Date.now() + CONTINUOUS_LADDER_RECOVERY_COOLDOWN_MS;
