@@ -122,6 +122,55 @@ native behavior.
   stale copy when it differs from the stored value. The earlier drawing-ownership
   patch that prevented this replaced Binance modules and is removed (see below).
 
+### Symbol switching and mirror reads (2026-11-06)
+
+On five open USDⓈ-M pages the TradingView snapshot contained 1,172 drawings per
+page. The chart collection's `skipLineToolsFromOtherSymbols` option retained the
+current symbol's 0, 1, 9, 2 and 1 drawings respectively, with their original IDs.
+This option belongs to the collection serializer. Binance calls the widget's
+default `save(callback)` and uses the resulting snapshot for persistence.
+
+An isolated Chromium replay used the same TradingView widget build, a synthetic
+datafeed, the captured Binance load/save functions and real IndexedDB. Two
+synthetic symbols each had one independently identified horizontal line. The
+experiment varied which drawing keys the loader could enumerate at startup,
+then switched from A to B with `activeChart().setSymbol()`. Before saving B,
+another write deleted A's line in storage. The third case passed the collection's
+symbol-scoped charts to the same host save function.
+
+| Startup reads | Save input on B | Drawing keys written | B's original line | A's deletion |
+| --- | --- | --- | --- | --- |
+| A and B | Default snapshot | A and B | Preserved | Reversed |
+| A only | Default snapshot | A and B | Erased | Reversed |
+| A and B | Symbol-scoped charts | B | Preserved | Preserved |
+
+The host calls its storage loader before constructing the widget. Its ordinary
+symbol-change path calls `setSymbol` on the existing chart. The incoming
+drawing must be restored before any save that could interpret its absence as
+deleting the last drawing. A two-chart layout also needs the drawing keys for
+both charts, including each price type. A save-side replay kept B's drawing
+and A's explicit deletion when the input snapshot contained just the drawings
+owned by those charts; a stale B snapshot that still included A revived A.
+
+The November mirror callback uses one regional futures database as its target.
+In a replay with the mirror enabled and five eligible keys (three drawing keys
+and two layout records), a matching source and target still incurred one key
+scan and five reads, then zero puts. Using a different source namespace copied
+all five records into an empty target. With the mirror disabled it issued zero
+storage requests. The October host fixture has two mirror targets. Use the
+matching host build when measuring either branch.
+
+Evaluate save scoping separately from initial loading and mirroring. Preserve
+the host's full layout, each chart's owned drawings, explicit last-line deletions
+and unrelated records. A load change also needs a switch-time restoration test;
+a mirror change needs both same-database and cold-destination coverage. The
+replay measured key access and persisted IDs.
+
+Public build inputs: [drawing storage](https://bin.bnbstatic.com/static/chunks/12952.c43077d1.js),
+[mirror](https://bin.bnbstatic.com/static/chunks/TradingView.43d7e8be.js),
+[widget lifecycle](https://bin.bnbstatic.com/static/chunks/94661.4723577e.js)
+and [regional target](https://bin.bnbstatic.com/static/main.00641edb.js).
+
 ## Removed module replacement
 
 Earlier versions intercepted Binance's Rspack chunk queue and replaced two Binance
