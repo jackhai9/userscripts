@@ -240,6 +240,16 @@ so later updates never mutate an earlier delivered profile. The UI may retain it
 last delivered snapshot while hidden; the source does not build additional
 display copies until a consumer subscribes again.
 
+For an active display, each symbol schedules at most one native animation frame
+to sort and publish the latest book. Every incoming message still validates and
+updates the book immediately; frames coalesce display snapshots, not market data.
+Protocol and sequence failures cancel pending publication immediately. Last
+unsubscribe, snapshot reset, socket close, sequence reset, and restore also cancel
+pending frames. A returning subscriber can synchronously materialize the latest
+ready book even while animation frames are paused. Geometry is validated when the
+display snapshot is built; a temporary empty side that recovers within one frame
+does not render an intermediate empty profile. This book remains display-only.
+
 The existing `nativeDepthState` diagnostic separates `bookBidCount` and
 `bookAskCount` from the materialized profile's `bidCount` and `askCount`.
 `profileBuildCount`, `profileUpdateId`, and `subscriberCount` expose fixed-size
@@ -506,6 +516,11 @@ Automatic rebalancing requires visibility again before each transfer. Hiding the
 
 Ladder replacement must stay scoped and direction-aware. Automatic replacement may cancel only visible basic open-order rows for the current symbol and the same plan direction (`开多`, `开空`, `平多`, or `平空`). It must not use current-symbol cancel-all for ladder replacement, must not touch conditional/protection orders, and must retry the ladder plan only after the replacement path is validated by current DOM rows.
 
+Ladder preflight and final price/quantity checks resolve one unique active input
+pair per synchronous check. Reacquire that pair after every awaited button or
+input-stability boundary; never retain it across asynchronous work or native writes.
+This avoids duplicate form scans without relaxing live-value or context checks.
+
 User-facing failures must preserve the observed reason instead of collapsing multiple states into one generic message. In particular, an unread openable quantity, a confirmed zero available balance, and a Binance-calculated openable quantity of zero are separate outcomes. Use the panel term `价格精度` consistently instead of exposing the internal `缩放值` name. Cancellation feedback should describe the user-visible action and result, not implementation details such as row-by-row processing, observer roots, context loss, or temporary chart-state manipulation. Combined `A or B` failures are allowed only when the code cannot distinguish the causes; when each branch is already known, report that branch directly.
 
 Ladder order acknowledgement uses two deadlines with different semantics. The script allows 3.5 seconds for the click to start the exact Binance place-order request. After that fetch is observed, it waits up to 12 seconds for the same response because Binance documents a 10-second matching-engine processing boundary. A normal response ends the wait immediately; this is not a fixed per-order delay. A response that remains unknown after the response deadline is terminal and must not be retried automatically because the original order may already exist.
@@ -536,6 +551,23 @@ when loading is false and every rendered item's props match its source item in o
 the native list commits its own empty state. Neither the Basic tab count, the scrollbar position,
 nor a period without new rows proves completeness. If the contract cannot be verified within
 seven seconds, this attempt must not click any row.
+
+Resolve the mounted host's current committed React Fiber before reading the list owner
+and rendered window. React 18.2 can leave DOM `__reactProps$` event caches unchanged
+after children-only commits; neither that cache nor an arbitrary alternate is the
+current list. A memoized row may also retain a different props object with equal
+values. Associate each rendered element with its current Fiber using element type,
+key, and all own prop values, then verify its mounted DOM order. Reject ambiguous
+ownership, duplicate order identities, or an unprovable window. The real React
+regression tests cover both stale event caches and memoized rows. During loading,
+show the loaded/total count before round counters; during recovery waits, show the
+failure reason before the wait duration and counters.
+
+React MemoComponent wrappers (tag 14) cannot prove a row's rendered values: a custom
+comparator can commit new outer props while preserving old inner DOM. Reject those
+windows. The observed native rows use SimpleMemoComponent (tag 15), whose committed
+row props are checked directly. This is a React 18.2 adapter, not a public Binance
+extension contract; changed host contracts must remain unavailable for cancellation.
 
 Capacity recovery snapshots each selected row's symbol, order ID and client order ID from its native
 React owner. Before each click, reacquire the current Basic row and verify its direction and identity.

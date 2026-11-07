@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createAnimationFrameBoundary } from '../../helpers/orderbook-migration-frames.js';
 import {
   isChartMutationBlocked,
   registerChartMutationOwner,
@@ -37,6 +38,7 @@ function createNativeDepthHost() {
     WebSocket: NativeSocket,
     location: { href: 'https://www.binance.com/en/futures/BTCUSDT' },
   };
+  createAnimationFrameBoundary(globalObject);
   return { globalObject, state, nativeFetch, NativeSocket, requests, sockets };
 }
 
@@ -267,6 +269,8 @@ for (const variant of [
   { name: 'a missing socket constructor', input: host => ({ ...host.globalObject, WebSocket: null }), message: 'Invalid native depth WebSocket constructor' },
   { name: 'a socket without event listeners', input: host => ({ ...host.globalObject, WebSocket: class Socket {} }), message: 'Invalid native depth WebSocket event listener' },
   { name: 'a missing native page URL', input: host => ({ ...host.globalObject, location: {} }), message: 'Invalid native depth page URL' },
+  { name: 'a missing native animation frame request', input: host => ({ ...host.globalObject, requestAnimationFrame: null }), message: 'Invalid native depth animation frame request' },
+  { name: 'a missing native animation frame cancellation', input: host => ({ ...host.globalObject, cancelAnimationFrame: null }), message: 'Invalid native depth animation frame cancellation' },
 ]) {
   test(`user rejects native depth installation with ${variant.name}`, () => {
     // Given one required native transport contract is absent.

@@ -4,13 +4,71 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { createStrategy29SummaryPanel } from '../../../src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js';
 import { SUMMARY_COPY } from '../../../src/binance-strategy29-bollinger/ui-copy.js';
+import { installPanelResizeObserverHost } from '../../helpers/panel-resize-observer-host.js';
 
 const status = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-status.json', import.meta.url)));
 const events = JSON.parse(await readFile(new URL('../../fixtures/strategy29-gateway-events.json', import.meta.url)));
 
+test('user receives fresh timestamps without repeated panel geometry reads until its border box changes', (t) => {
+  // Given a connected summary whose initial browser layout has already been delivered.
+  const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTCUSDT' });
+  const observer = installPanelResizeObserverHost(dom.window);
+  const saves = [];
+  const controller = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', {
+    loadPosition: () => ({ left: 200, top: 600 }), savePosition: value => saves.push(value),
+    loadCollapsed: () => false, saveCollapsed: value => saves.push(value),
+  });
+  t.after(() => { controller.destroy(); dom.window.close(); });
+  const panel = dom.window.document.getElementById('jh-strategy29-summary-panel');
+  let reads = 0;
+  let height = 100;
+  panel.getBoundingClientRect = () => {
+    reads += 1;
+    return { left: Number.parseFloat(panel.style.left), top: Number.parseFloat(panel.style.top), width: 340, height };
+  };
+  controller.renderStatus(status);
+  controller.addEvents(events.events, events.observed_at_ms);
+  observer.deliver(panel);
+  reads = 0;
+
+  // When polling repeatedly advances timestamps without a browser size-change delivery.
+  for (let index = 1; index <= 10; index += 1) {
+    controller.setConnection('connected', SUMMARY_COPY.connected);
+    controller.renderStatus({ ...status, observed_at_ms: status.observed_at_ms + index * 1000 });
+    controller.addEvents([], events.observed_at_ms + index * 1000);
+  }
+
+  // Then freshness advances without synchronously reading geometry or persisting coordinates.
+  assert.equal(reads, 0);
+  assert.match(panel.querySelector('[data-role=events-freshness]').textContent, /UTC\+08/);
+  assert.deepEqual(saves, []);
+
+  // When the browser delivers the actual grown border box.
+  height = 400;
+  observer.deliver(panel);
+
+  // Then the panel is measured once and moved inside the viewport without a preference write.
+  assert.equal(reads, 1);
+  assert.equal(panel.style.top, '368px');
+  assert.equal(observer.activeTargets, 1);
+  assert.deepEqual(saves, []);
+
+  // When teardown races with a callback already retained by the browser.
+  const callback = observer.observers[0].callback;
+  controller.destroy();
+  observer.deliver(panel);
+  callback([{ target: panel }]);
+
+  // Then observation is disconnected and the stale callback does not read the detached panel.
+  assert.equal(observer.activeTargets, 0);
+  assert.equal(reads, 1);
+  assert.equal(panel.isConnected, false);
+});
+
 test('user keeps a restored collapsed panel at its saved bottom position from the first layout', (t) => {
   // Given a saved position that fits the collapsed height but not the expanded summary.
   const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTCUSDT' });
+  installPanelResizeObserverHost(dom.window);
   t.after(() => dom.window.close());
   Object.defineProperty(dom.window, 'innerHeight', { value: 600 });
   const measurements = [];
@@ -42,6 +100,7 @@ test('user keeps a restored collapsed panel at its saved bottom position from th
 test('user saves fold changes only on clicks while locale and live data retain the active presentation', (t) => {
   // Given a restored expanded panel and separate position and collapsed storage adapters.
   const dom = new JSDOM('<body></body>', { url: 'https://www.binance.com/en/futures/BTCUSDT' });
+  installPanelResizeObserverHost(dom.window);
   const saves = [];
   const controller = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT', {
     loadPosition: () => null, savePosition: value => saves.push(['position', value]),

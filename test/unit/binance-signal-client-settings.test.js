@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
 import { readSignalGatewaySettings } from '../../src/shared/signal-client-settings.js';
+import { installPanelResizeObserverHost } from '../helpers/panel-resize-observer-host.js';
 
 test('user observes that signal settings retain the existing private installation keys', () => {
   // Given the installed scripts have explicit settings and ownership state
@@ -20,6 +21,7 @@ test('user observes that signal settings retain the existing private installatio
 
 async function fixture(t, existingStores = null) {
   const page = new JSDOM('<body></body>', { url: 'https://www.binance.com/zh-CN/futures/ARBUSDT', pretendToBeVisual: true }).window;
+  installPanelResizeObserverHost(page);
   const requests = [], menus = [], reads = [], writes = [], timers = new Map();
   let nextTimer = 0;
   page.setInterval = callback => { const id = ++nextTimer; timers.set(id, callback); return id; };

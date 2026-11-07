@@ -26,6 +26,20 @@ import {
 const zh = (value) => formatLocalizedText(value, UI_LOCALE_ZH_CN);
 const en = (value) => formatLocalizedText(value, UI_LOCALE_EN);
 
+test('user sees the recovery cause before counters in a continuous-close wait', () => {
+  // Given a continuous session is waiting for a complete native order list.
+  const progress = createContinuousLadderProgress();
+  const label = localizedText('阶梯平多', 'Close Long');
+  const reason = localizedText('委托列表尚未同步', 'Order list not synchronized');
+
+  // When a recoverable failure enters its three-second cooldown.
+  const message = formatContinuousLadderWaitProgress(label, progress, 'cooldown', 3000, reason);
+
+  // Then the cause remains ahead of round and order counters in either locale.
+  assert.equal(zh(message), '连续阶梯平多 · 委托列表尚未同步 · 3s 后继续 · 0 轮 · 累计 0 笔');
+  assert.equal(en(message), 'Continuous Close Long · Order list not synchronized · Continue in 3s · 0 rounds · Total 0');
+});
+
 test('user sees zero-round progress when continuous close stops before the first round', () => {
   // Given a continuous session that has not received any round outcome.
   const progress = createContinuousLadderProgress();

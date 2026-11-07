@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.16
+// @version      0.5.17
 // @author       jackhai9
 // @description  Bollinger/SMA60 overlay markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -2181,8 +2181,6 @@
     renderCollapsed();
     panel.append(header, body);
     document.body.appendChild(panel);
-    const initialPosition = stored === null ? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 } : stored;
-    const position = installPanelPosition(document, panel, header, { initialPosition, savePosition });
     const eventRecords = /* @__PURE__ */ new Map();
     let configuredTimeframes = null;
     let statusMessages = [];
@@ -2251,14 +2249,16 @@
     function onCollapse() {
       collapsed = !collapsed;
       renderCollapsed();
-      position.clamp();
       saveCollapsed(collapsed);
     }
     collapse.addEventListener("click", onCollapse);
-    diagnostics.addEventListener("toggle", () => {
+    renderEvents([]);
+    const initialPosition = stored === null ? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 } : stored;
+    const position = installPanelPosition(document, panel, header, { initialPosition, savePosition });
+    const resizeObserver = new view.ResizeObserver(() => {
       if (!destroyed) position.clamp();
     });
-    renderEvents([]);
+    resizeObserver.observe(panel, { box: "border-box" });
     const api = Object.freeze({
       setLocale(nextLocale) {
         assertLive();
@@ -2280,7 +2280,6 @@
         if (lastStatus !== null) api.renderStatus(lastStatus);
         else clearCurrentStatus();
         renderEvents([...eventRecords.values()].sort(newestSignalFirst));
-        position.clamp();
       },
       setConnection(state, message) {
         assertLive();
@@ -2292,7 +2291,6 @@
         connection.textContent = text(message);
         if (["disabled", "module_disabled", "gateway_unavailable", "unavailable"].includes(state)) clearCurrentStatus();
         renderNotices();
-        position.clamp();
       },
       renderStatus(snapshot) {
         assertLive();
@@ -2313,7 +2311,6 @@
           units.replaceChildren();
           delivery.textContent = text(SUMMARY_COPY.incompatibleDelivery);
           renderNotices();
-          position.clamp();
           return;
         }
         const universe = snapshot.universe;
@@ -2365,7 +2362,6 @@
         delivery.textContent = text(SUMMARY_COPY.delivery(counts));
         renderMissingSignals();
         renderNotices();
-        position.clamp();
       },
       addEvents(incoming, observedAtMs = null) {
         assertLive();
@@ -2392,7 +2388,6 @@
           eventsFreshness.textContent = text(SUMMARY_COPY.eventsAt(formatClock(observedAtMs)));
         }
         renderMissingSignals();
-        position.clamp();
       },
       clearEvents() {
         assertLive();
@@ -2400,11 +2395,11 @@
         lastEventsAt = null;
         eventsFreshness.textContent = text(SUMMARY_COPY.noEventsCheck);
         renderEvents([]);
-        position.clamp();
       },
       destroy() {
         if (destroyed) return;
         destroyed = true;
+        resizeObserver.disconnect();
         eventRecords.clear();
         collapse.removeEventListener("click", onCollapse);
         position.destroy();
@@ -2414,7 +2409,6 @@
         return eventRecords.size;
       }
     });
-    position.clamp();
     return api;
   }
 

@@ -136,10 +136,6 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
   panel.append(header, body);
   document.body.appendChild(panel);
 
-  const initialPosition = stored === null
-    ? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 }
-    : stored;
-  const position = installPanelPosition(document, panel, header, { initialPosition, savePosition });
   const eventRecords = new Map();
   let configuredTimeframes = null;
   let statusMessages = [];
@@ -209,12 +205,20 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
   function onCollapse() {
     collapsed = !collapsed;
     renderCollapsed();
-    position.clamp();
     saveCollapsed(collapsed);
   }
   collapse.addEventListener('click', onCollapse);
-  diagnostics.addEventListener('toggle', () => { if (!destroyed) position.clamp(); });
   renderEvents([]);
+
+  const initialPosition = stored === null
+    ? { left: view.innerWidth - panel.getBoundingClientRect().width - 84, top: 68 }
+    : stored;
+  const position = installPanelPosition(document, panel, header, { initialPosition, savePosition });
+  /** Polling can change text without changing size; let native layout deliver only border-box changes. */
+  const resizeObserver = new view.ResizeObserver(() => {
+    if (!destroyed) position.clamp();
+  });
+  resizeObserver.observe(panel, { box: 'border-box' });
 
   const api = Object.freeze({
     setLocale(nextLocale) {
@@ -237,7 +241,6 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       if (lastStatus !== null) api.renderStatus(lastStatus);
       else clearCurrentStatus();
       renderEvents([...eventRecords.values()].sort(newestSignalFirst));
-      position.clamp();
     },
     setConnection(state, message) {
       assertLive();
@@ -249,7 +252,6 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       connection.textContent = text(message);
       if (['disabled', 'module_disabled', 'gateway_unavailable', 'unavailable'].includes(state)) clearCurrentStatus();
       renderNotices();
-      position.clamp();
     },
     renderStatus(snapshot) {
       assertLive();
@@ -272,7 +274,6 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
         units.replaceChildren();
         delivery.textContent = text(COPY.incompatibleDelivery);
         renderNotices();
-        position.clamp();
         return;
       }
       const universe = snapshot.universe;
@@ -327,7 +328,6 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       delivery.textContent = text(COPY.delivery(counts));
       renderMissingSignals();
       renderNotices();
-      position.clamp();
     },
     addEvents(incoming, observedAtMs = null) {
       assertLive();
@@ -355,7 +355,6 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
         eventsFreshness.textContent = text(COPY.eventsAt(formatClock(observedAtMs)));
       }
       renderMissingSignals();
-      position.clamp();
     },
     clearEvents() {
       assertLive();
@@ -363,11 +362,11 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       lastEventsAt = null;
       eventsFreshness.textContent = text(COPY.noEventsCheck);
       renderEvents([]);
-      position.clamp();
     },
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      resizeObserver.disconnect();
       eventRecords.clear();
       collapse.removeEventListener('click', onCollapse);
       position.destroy();
@@ -375,6 +374,5 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
     },
     get size() { return eventRecords.size; },
   });
-  position.clamp();
   return api;
 }

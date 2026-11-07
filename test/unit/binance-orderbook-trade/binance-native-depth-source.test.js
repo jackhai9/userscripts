@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { captureThrownError } from '../../helpers/orderbook-migration-errors.js';
+import { createAnimationFrameBoundary } from '../../helpers/orderbook-migration-frames.js';
 
 import { installBinanceNativeDepthSource } from '../../../src/binance-orderbook-trade/core/binance-native-depth-source.js';
 import { createDepthProfileSession } from '../../../src/binance-orderbook-trade/core/depth-profile-session.js';
@@ -64,12 +65,13 @@ test('user keeps hidden depth current without materializing unused profiles', as
 
 test('user releases the last depth display copy and resumes with current quantities', async () => {
   // Given a visible display has received its initial synchronized profile
-  const { globalObject, source } = createHarness();
+  const { globalObject, source, frames } = createHarness();
   const events = recordDepthEvents(source);
   const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   void globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
   socket.message(rpiMessage());
-  await events.waitFor(({ statuses }) => statuses.at(-1).status === 'ready');
+  await new Promise(resolve => setImmediate(resolve));
+  frames.runFrame(16);
 
   // When the display closes and the native stream continues
   events.unsubscribe();
@@ -94,12 +96,13 @@ test('user releases the last depth display copy and resumes with current quantit
 
 test('user avoids duplicate depth paints while malformed stale updates still fail', async () => {
   // Given a subscribed native book is ready at update 102
-  const { globalObject, source } = createHarness();
+  const { globalObject, source, frames } = createHarness();
   const events = recordDepthEvents(source);
   const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   void globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
   socket.message(rpiMessage());
-  await events.waitFor(({ statuses }) => statuses.at(-1).status === 'ready');
+  await new Promise(resolve => setImmediate(resolve));
+  frames.runFrame(16);
   const statusCount = events.statuses.length;
 
   // When the already applied update is delivered again
@@ -129,12 +132,13 @@ test('user avoids duplicate depth paints while malformed stale updates still fai
 for (const interruptedStatus of ['reconnecting', 'failed']) {
   test(`user recovers ${interruptedStatus} depth when the native socket repeats the current update`, async () => {
     // Given the native book is synchronized before its transport is interrupted
-    const { globalObject, source, fetchCalls } = createHarness();
+    const { globalObject, source, fetchCalls, frames } = createHarness();
     const events = recordDepthEvents(source);
     const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
     void globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
     socket.message(rpiMessage());
-    await events.waitFor(({ statuses }) => statuses.at(-1).status === 'ready');
+    await new Promise(resolve => setImmediate(resolve));
+    frames.runFrame(16);
     const originalProfile = events.profiles[0];
     if (interruptedStatus === 'reconnecting') socket.emit('close');
     else socket.message(rpiMessage(update({ s: 'ETHUSDT' })));
@@ -143,8 +147,9 @@ for (const interruptedStatus of ['reconnecting', 'failed']) {
     // When the recovered native socket sends the latest valid update again
     const resumedSocket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
     resumedSocket.message(rpiMessage());
+    frames.runFrame(32);
 
-    // Then the current profile becomes ready immediately without an extra snapshot
+    // Then the current profile becomes ready on the next frame without an extra snapshot
     assert.equal(events.statuses.at(-1).status, 'ready');
     assert.equal(events.profiles.length, 2);
     assert.deepEqual(events.profiles[1], originalProfile);
@@ -157,12 +162,13 @@ for (const interruptedStatus of ['reconnecting', 'failed']) {
 
 test('user retains hidden depth failures until native synchronization recovers', async () => {
   // Given a ready display has been hidden and unsubscribed
-  const { globalObject, source } = createHarness();
+  const { globalObject, source, frames } = createHarness();
   const events = recordDepthEvents(source);
   const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   void globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
   socket.message(rpiMessage());
-  await events.waitFor(({ statuses }) => statuses.at(-1).status === 'ready');
+  await new Promise(resolve => setImmediate(resolve));
+  frames.runFrame(16);
   events.unsubscribe();
 
   // When a sequence gap arrives before the user reopens the display
@@ -177,7 +183,8 @@ test('user retains hidden depth failures until native synchronization recovers',
   // When Binance supplies a fresh snapshot and matching stream update
   void globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
   socket.message(rpiMessage());
-  await resumed.waitFor(({ statuses }) => statuses.at(-1).status === 'ready');
+  await new Promise(resolve => setImmediate(resolve));
+  frames.runFrame(16);
 
   // Then the reopened display receives only the newly synchronized profile
   assert.equal(resumed.profiles.length, 1);
@@ -279,8 +286,253 @@ function createHarness(response = new FakeResponse(snapshot())) {
     WebSocket: FakeNativeSocket,
     location: { href: 'https://www.binance.com/zh-CN/futures/BTCUSDT' },
   };
+  const frames = createAnimationFrameBoundary(globalObject);
   const source = installBinanceNativeDepthSource(globalObject);
-  return { fetchCalls, globalObject, originalFetch, source };
+  return { fetchCalls, globalObject, originalFetch, source, frames };
+}
+
+test('user receives one current depth profile per frame after a burst of native updates', async () => {
+  // Given a native book is ready before the display subscribes
+  const { globalObject, source, frames, fetchCalls } = createHarness();
+  const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+  await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+  socket.message(rpiMessage());
+  await new Promise(resolve => setImmediate(resolve));
+  const events = recordDepthEvents(source);
+
+  // When consecutive updates change different levels before the next browser frame
+  socket.message(rpiMessage(update({ U: 103, u: 103, pu: 102, b: [['100', '8']], a: [] })));
+  socket.message(rpiMessage(update({ U: 104, u: 104, pu: 103, b: [['99', '0']], a: [['103', '6']] })));
+  socket.message(rpiMessage(update({ U: 105, u: 105, pu: 104, b: [['98', '7']], a: [['102', '0']] })));
+
+  // Then every increment has applied but only one publication is pending
+  assert.equal(events.profiles.length, 1);
+  assert.equal(source.getState('BTCUSDT').profileBuildCount, 1);
+  assert.equal(source.getState('BTCUSDT').bookBidCount, 2);
+  assert.equal(source.getState('BTCUSDT').bookAskCount, 2);
+  assert.equal(frames.pendingCount, 1);
+
+  // When the browser permits the next animation frame
+  frames.runFrame(16);
+
+  // Then the one delivered profile contains every update in sequence
+  assert.equal(events.profiles.length, 2);
+  assert.equal(source.getState('BTCUSDT').profileBuildCount, 2);
+  assert.equal(source.getState('BTCUSDT').profileUpdateId, 105);
+  assert.deepEqual(events.profiles[1].bids, [
+    { price: 100, quantity: 8, cumulative: 8 }, { price: 98, quantity: 7, cumulative: 15 },
+  ]);
+  assert.deepEqual(events.profiles[1].asks, [
+    { price: 101, quantity: 4, cumulative: 4 }, { price: 103, quantity: 6, cumulative: 10 },
+  ]);
+  assert.equal(events.profiles[0].bids[0].quantity, 2);
+  assert.equal(frames.pendingCount, 0);
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(FakeNativeSocket.instances.length, 1);
+  source.restore();
+});
+
+for (const boundary of [
+  { name: 'last unsubscribe', status: 'ready', apply: ({ events }) => events.unsubscribe() },
+  { name: 'source restoration', status: null, apply: ({ source }) => source.restore() },
+  { name: 'malformed payload', status: 'failed', apply: ({ socket }) => socket.message(rpiMessage(update({ b: [['100', '-1']] }))) },
+  { name: 'malformed envelope', status: 'failed', apply: ({ socket }) => socket.emit('message', { data: '{@rpiDepth@500ms' }) },
+  { name: 'snapshot contract failure', status: 'failed', apply: ({ globalObject }) => globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=500') },
+  { name: 'new snapshot', status: 'synchronizing', apply: ({ globalObject }) => globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000') },
+  { name: 'sequence gap', status: 'resyncing', apply: ({ socket }) => socket.message(rpiMessage(update({ U: 110, u: 110, pu: 109 }))) },
+  { name: 'socket close', status: 'reconnecting', apply: ({ socket }) => socket.emit('close') },
+]) {
+  test(`user cancels an unpublished depth frame at ${boundary.name}`, async () => {
+    // Given the display has a current profile and a newer native increment queued for painting
+    let response = new FakeResponse(snapshot());
+    const harness = createHarness(() => response);
+    const { globalObject, source, frames } = harness;
+    const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+    await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+    socket.message(rpiMessage());
+    await new Promise(resolve => setImmediate(resolve));
+    const events = recordDepthEvents(source);
+    socket.message(rpiMessage(update({ U: 103, u: 103, pu: 102, b: [['100', '8']] })));
+    assert.equal(frames.pendingCount, 1);
+    response = Promise.withResolvers().promise;
+
+    // When the source crosses the boundary before the browser permits a frame
+    boundary.apply({ ...harness, socket, events });
+
+    // Then pending display work is cancelled immediately and exposes the boundary status
+    assert.equal(frames.pendingCount, 0);
+    assert.equal(source.getState('BTCUSDT')?.status.status ?? null, boundary.status);
+    assert.equal(source.getState('BTCUSDT')?.profileUpdateId ?? null, null);
+    const statusesAfterBoundary = [...events.statuses];
+
+    // When the browser later advances its frame queue
+    frames.runFrame(16);
+
+    // Then no stale ready notification or obsolete profile crosses the boundary
+    assert.deepEqual(events.statuses, statusesAfterBoundary);
+    assert.equal(events.profiles.length, 1);
+    assert.equal(events.profiles[0].bids[0].quantity, 2);
+    source.restore();
+  });
+}
+
+test('user resumes the latest depth synchronously after cancelling a frame while hidden', async () => {
+  // Given a visible display has a pending frame for an already validated update
+  const { globalObject, source, frames } = createHarness();
+  const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+  await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+  socket.message(rpiMessage());
+  await new Promise(resolve => setImmediate(resolve));
+  const first = recordDepthEvents(source);
+  socket.message(rpiMessage(update({ U: 103, u: 103, pu: 102, b: [['100', '8']] })));
+
+  // When the user hides the display and more increments arrive without any animation frame
+  first.unsubscribe();
+  socket.message(rpiMessage(update({ U: 104, u: 104, pu: 103, b: [['100', '9']] })));
+
+  // Then hidden updates retain no display arrays and schedule no frame
+  assert.equal(frames.pendingCount, 0);
+  assert.equal(source.getState('BTCUSDT').profileBuildCount, 1);
+  assert.equal(source.getState('BTCUSDT').bidCount, 0);
+  assert.equal(source.getState('BTCUSDT').askCount, 0);
+
+  // When the user returns while animation frames are still paused
+  const resumed = recordDepthEvents(source);
+
+  // Then the first synchronous display snapshot contains the latest native quantity
+  assert.equal(resumed.profiles.length, 1);
+  assert.equal(resumed.profiles[0].bids[0].quantity, 9);
+  assert.equal(source.getState('BTCUSDT').profileUpdateId, 104);
+  assert.equal(source.getState('BTCUSDT').profileBuildCount, 2);
+  assert.equal(frames.pendingCount, 0);
+  source.restore();
+});
+
+test('user can reopen depth before the first native animation frame ever runs', async () => {
+  // Given a display has synchronized its native book but the browser has paused its first frame
+  const { globalObject, source, frames } = createHarness();
+  const first = recordDepthEvents(source);
+  const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+  await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+  socket.message(rpiMessage());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(frames.pendingCount, 1);
+
+  // When the display closes and reopens without any further stream event or frame
+  first.unsubscribe();
+  const resumed = recordDepthEvents(source);
+
+  // Then the reopened display receives the already synchronized book immediately
+  assert.equal(first.profiles.length, 0);
+  assert.equal(resumed.statuses.at(-1).status, 'ready');
+  assert.equal(resumed.profiles.length, 1);
+  assert.equal(resumed.profiles[0].bids[0].quantity, 2);
+  assert.equal(source.getState('BTCUSDT').profileBuildCount, 1);
+  assert.equal(frames.pendingCount, 0);
+  source.restore();
+});
+
+test('user keeps another symbol publication pending when the first symbol socket closes', async () => {
+  // Given two visible symbols each have a synchronized book awaiting their first frame
+  const { globalObject, source, frames, fetchCalls } = createHarness();
+  const bitcoin = recordDepthEvents(source);
+  const ether = recordDepthEvents(source, 'ETHUSDT');
+  const bitcoinSocket = new globalObject.WebSocket('wss://native-binance-stream.example/btc');
+  const etherSocket = new globalObject.WebSocket('wss://native-binance-stream.example/eth');
+  await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+  bitcoinSocket.message(rpiMessage());
+  await globalObject.fetch('/fapi/v1/rpiDepth?symbol=ETHUSDT&limit=1000');
+  etherSocket.message({ stream: 'ethusdt@rpiDepth@500ms', data: update({ s: 'ETHUSDT' }) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(frames.pendingCount, 2);
+
+  // When only the Bitcoin socket closes before the next frame
+  bitcoinSocket.emit('close');
+  frames.runFrame(16);
+
+  // Then Bitcoin stays reconnecting and Ether publishes its own synchronized book
+  assert.equal(bitcoin.statuses.at(-1).status, 'reconnecting');
+  assert.equal(bitcoin.profiles.length, 0);
+  assert.equal(ether.statuses.at(-1).status, 'ready');
+  assert.equal(ether.profiles.length, 1);
+  assert.equal(ether.profiles[0].symbol, 'ETHUSDT');
+  assert.equal(source.getState('BTCUSDT').profileBuildCount, 0);
+  assert.equal(source.getState('ETHUSDT').profileBuildCount, 1);
+  assert.equal(frames.pendingCount, 0);
+  assert.equal(fetchCalls.length, 2);
+  assert.equal(FakeNativeSocket.instances.length, 2);
+  source.restore();
+});
+
+for (const initialFramePublished of [false, true]) {
+  test(`user shares the latest pending depth with new subscribers after initial publication ${initialFramePublished}`, async () => {
+    // Given a native snapshot and stream are ready with one existing display
+    const { globalObject, source, frames } = createHarness();
+    const first = recordDepthEvents(source);
+    const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+    await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+    socket.message(rpiMessage());
+    await new Promise(resolve => setImmediate(resolve));
+    if (initialFramePublished) frames.runFrame(16);
+    const previousBuilds = source.getState('BTCUSDT').profileBuildCount;
+    socket.message(rpiMessage(update({ U: 103, u: 103, pu: 102, b: [['100', '8']] })));
+
+    // When two more displays subscribe while the native frame is pending
+    const second = recordDepthEvents(source);
+    const third = recordDepthEvents(source);
+
+    // Then both receive the latest synchronous profile from just one materialization
+    assert.equal(first.profiles.length, Number(initialFramePublished));
+    assert.equal(second.profiles.length, 1);
+    assert.equal(second.profiles[0].bids[0].quantity, 8);
+    assert.equal(second.profiles[0], third.profiles[0]);
+    assert.equal(second.statuses.at(-1).status, 'ready');
+    assert.equal(source.getState('BTCUSDT').profileBuildCount, previousBuilds + 1);
+    assert.equal(frames.pendingCount, 1);
+
+    // When the browser permits the pending frame
+    frames.runFrame(32);
+
+    // Then the original display catches up without rebuilding or duplicating new displays' profiles
+    assert.equal(first.profiles.length, Number(initialFramePublished) + 1);
+    assert.equal(first.profiles.at(-1), second.profiles[0]);
+    assert.equal(second.profiles.length, 1);
+    assert.equal(third.profiles.length, 1);
+    assert.equal(source.getState('BTCUSDT').profileBuildCount, previousBuilds + 1);
+    assert.equal(frames.pendingCount, 0);
+    source.restore();
+  });
+}
+
+for (const restoresAskBeforeFrame of [false, true]) {
+  test(`user validates only the displayed depth geometry when an empty side recovers before frame ${restoresAskBeforeFrame}`, async () => {
+    // Given a synchronized native book is displayed before its ask side becomes empty
+    const { globalObject, source, frames } = createHarness();
+    const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
+    await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
+    socket.message(rpiMessage());
+    await new Promise(resolve => setImmediate(resolve));
+    const events = recordDepthEvents(source);
+
+    // When valid consecutive messages remove all asks and optionally restore one before painting
+    socket.message(rpiMessage(update({ U: 103, u: 103, pu: 102, a: [['101', '0'], ['102', '0']] })));
+    if (restoresAskBeforeFrame) {
+      socket.message(rpiMessage(update({ U: 104, u: 104, pu: 103, a: [['101', '6']] })));
+    }
+    frames.runFrame(16);
+
+    // Then materialization validates the latest book and never publishes invalid intermediate geometry
+    assert.equal(events.statuses.at(-1).status, restoresAskBeforeFrame ? 'ready' : 'failed');
+    assert.equal(events.profiles.length, restoresAskBeforeFrame ? 2 : 1);
+    assert.equal(source.getState('BTCUSDT').profileBuildCount, 2);
+    if (restoresAskBeforeFrame) {
+      assert.deepEqual(events.profiles[1].asks, [{ price: 101, quantity: 6, cumulative: 6 }]);
+    } else {
+      assert.equal(events.statuses.at(-1).detail, 'Depth profile requires bids and asks');
+      assert.equal(source.getState('BTCUSDT').profileUpdateId, null);
+    }
+    source.restore();
+  });
 }
 
 function recordDepthEvents(source, symbol = 'BTCUSDT') {
@@ -312,7 +564,7 @@ function recordDepthEvents(source, symbol = 'BTCUSDT') {
 
 test("user observes the native RPI snapshot and stream without creating another socket", async () => {
   // Given the native transport and depth subscription are initialized
-  const { fetchCalls, globalObject, source } = createHarness();
+  const { fetchCalls, globalObject, source, frames } = createHarness();
   const profiles = [];
   const statuses = [];
   source.subscribe({
@@ -327,6 +579,7 @@ test("user observes the native RPI snapshot and stream without creating another 
   const response = await responsePromise;
   // When Binance delivers the observed depth event
   await new Promise((resolve) => setImmediate(resolve));
+  frames.runFrame(16);
 
   // Then observes the native RPI snapshot and stream without creating another socket
   assert.equal(response.ok, true);
@@ -348,7 +601,7 @@ test("user retains distant active prices delivered after the 1000-level native s
     bids: Array.from({ length: 1000 }, (_, index) => [String(100 - index / 1000), '1']),
     asks: Array.from({ length: 1000 }, (_, index) => [String(101 + index / 1000), '1']),
   });
-  const { globalObject, source } = createHarness(new FakeResponse(denseSnapshot));
+  const { globalObject, source, frames } = createHarness(new FakeResponse(denseSnapshot));
   const profiles = [];
   source.subscribe({
     symbol: 'BTCUSDT',
@@ -361,6 +614,7 @@ test("user retains distant active prices delivered after the 1000-level native s
   nativeSocket.message(rpiMessage());
   await responsePromise;
   await new Promise((resolve) => setImmediate(resolve));
+  frames.runFrame(16);
   // When Binance delivers the observed depth event
   nativeSocket.message(rpiMessage(update({
     U: 103,
@@ -370,6 +624,7 @@ test("user retains distant active prices delivered after the 1000-level native s
     a: [['150', '8']],
   })));
 
+  frames.runFrame(32);
   const profile = profiles.at(-1);
   // Then retains distant active prices delivered after the 1000-level native snapshot
   assert.equal(profile.bids.length, 1002);
@@ -455,12 +710,13 @@ test("user does not block a malformed native snapshot request", async () => {
 
 test("user keeps the latest native profile for subscribers that start after page initialization", async () => {
   // Given the native transport and depth subscription are initialized
-  const { globalObject, source } = createHarness();
+  const { globalObject, source, frames } = createHarness();
   const nativeSocket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   const responsePromise = globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
   nativeSocket.message(rpiMessage());
   await responsePromise;
   await new Promise((resolve) => setImmediate(resolve));
+  frames.runFrame(16);
 
   const profiles = [];
   const statuses = [];
@@ -501,7 +757,7 @@ test("user ignores unrelated native fetches and WebSocket streams", async () => 
 
 test("user waits for Binance native resynchronization after a sequence gap", async () => {
   // Given the native transport and depth subscription are initialized
-  const { globalObject, source } = createHarness();
+  const { globalObject, source, frames } = createHarness();
   const profiles = [];
   const statuses = [];
   source.subscribe({
@@ -515,6 +771,7 @@ test("user waits for Binance native resynchronization after a sequence gap", asy
   await responsePromise;
   // When Binance delivers the observed depth event
   await new Promise((resolve) => setImmediate(resolve));
+  frames.runFrame(16);
   // Then waits for Binance native resynchronization after a sequence gap
   assert.equal(profiles.length, 1, JSON.stringify({ statuses, state: source.getState('BTCUSDT') }));
 
@@ -529,7 +786,7 @@ test("user waits for Binance native resynchronization after a sequence gap", asy
 test("user recovers when Binance performs its next native snapshot synchronization", async () => {
   // Given the native transport and depth subscription are initialized
   let currentResponse = new FakeResponse(snapshot());
-  const { globalObject, source } = createHarness(() => currentResponse);
+  const { globalObject, source, frames } = createHarness(() => currentResponse);
   const profiles = [];
   const statuses = [];
   source.subscribe({
@@ -543,6 +800,7 @@ test("user recovers when Binance performs its next native snapshot synchronizati
   nativeSocket.message(rpiMessage());
   await responsePromise;
   await new Promise((resolve) => setImmediate(resolve));
+  frames.runFrame(16);
   // When Binance delivers the observed depth event
   nativeSocket.message(rpiMessage(update({ U: 105, u: 106, pu: 104 })));
   // Then a sequence gap leaves the profile waiting for native resynchronization
@@ -553,6 +811,7 @@ test("user recovers when Binance performs its next native snapshot synchronizati
   nativeSocket.message(rpiMessage(update({ U: 106, u: 107, pu: 106 })));
   await responsePromise;
   await new Promise((resolve) => setImmediate(resolve));
+  frames.runFrame(16);
 
   assert.equal(profiles.length, 2);
   assert.equal(statuses.at(-1).status, 'ready');
@@ -562,7 +821,7 @@ test("user recovers when Binance performs its next native snapshot synchronizati
 for (const symbol of ['龙虾USDT', '币安人生USDT', '4USDT', '1INCHUSDT', '1000龙虾USDT']) {
   test(`user connects the encoded ${symbol} route to native snapshot, stream, and session`, async () => {
     // Given the native transport and depth subscription are initialized
-    const { globalObject, source, fetchCalls } = createHarness();
+    const { globalObject, source, fetchCalls, frames } = createHarness();
     const route = new URL(`https://www.binance.com/zh-CN/futures/${symbol}`);
     const profiles = [];
     const statuses = [];
@@ -578,6 +837,7 @@ for (const symbol of ['龙虾USDT', '币安人生USDT', '4USDT', '1INCHUSDT', '1
     await response;
     // When Binance delivers the observed depth event
     await new Promise((resolve) => setImmediate(resolve));
+    frames.runFrame(16);
 
     // Then the encoded symbol has one ready native profile and stops delivering after cleanup
     assert.equal(profiles.length, 1);
@@ -627,7 +887,7 @@ test('user retains native response cloning, JSON failure, and socket event seman
 
 test('user observes a Request-based native snapshot and waits for its first covering update', { timeout: 2000 }, async () => {
   // Given an active subscription and a native Request object
-  const { globalObject, source, fetchCalls } = createHarness();
+  const { globalObject, source, fetchCalls, frames } = createHarness();
   const events = recordDepthEvents(source);
   const request = new Request('https://www.binance.com/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
 
@@ -645,6 +905,8 @@ test('user observes a Request-based native snapshot and waits for its first cove
   const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   socket.message(rpiMessage());
 
+  frames.runFrame(16);
+
   // Then exactly one ready profile reflects the stream's absolute quantities
   assert.equal(events.profiles.length, 1);
   assert.equal(events.profiles[0].bids[0].quantity, 2);
@@ -654,7 +916,7 @@ test('user observes a Request-based native snapshot and waits for its first cove
 
 test('user receives a ready RPI profile when the first event directly follows the snapshot', { timeout: 2000 }, async () => {
   // Given the native snapshot has synchronized through update 101
-  const { globalObject, source } = createHarness();
+  const { globalObject, source, frames } = createHarness();
   const events = recordDepthEvents(source);
   const response = await globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
   await events.waitFor(({ statuses }) => statuses.length === 3);
@@ -662,7 +924,7 @@ test('user receives a ready RPI profile when the first event directly follows th
   // When the first RPI event starts later but names the snapshot as its predecessor
   const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   socket.message(rpiMessage(update({ U: 103, u: 104, pu: 101 })));
-  await events.waitFor(({ profiles }) => profiles.length === 1);
+  frames.runFrame(16);
 
   // Then the native source publishes one ready profile without entering resynchronization
   assert.equal(response.ok, true);
@@ -675,13 +937,14 @@ test('user receives a ready RPI profile when the first event directly follows th
 
 test('user sees reconnection only for symbols observed on the native socket that closes', { timeout: 2000 }, async () => {
   // Given a synchronized native BTC stream and an unrelated ETH subscription
-  const { globalObject, source } = createHarness();
+  const { globalObject, source, frames } = createHarness();
   const bitcoin = recordDepthEvents(source);
   const ether = recordDepthEvents(source, 'ETHUSDT');
   const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
   socket.message(rpiMessage());
-  await bitcoin.waitFor(({ statuses }) => statuses.at(-1).status === 'ready');
+  await new Promise(resolve => setImmediate(resolve));
+  frames.runFrame(16);
 
   // When the observed native socket closes
   socket.emit('close');
@@ -815,7 +1078,7 @@ test('user rejects depth updates for a different symbol without publishing their
 
 test('user releases unsubscribed symbol state when the next native snapshot starts', { timeout: 2000 }, async () => {
   // Given BTC no longer has a subscriber and ETH becomes the active native snapshot
-  const { globalObject, source } = createHarness();
+  const { globalObject, source, frames } = createHarness();
   const bitcoin = recordDepthEvents(source);
   const ether = recordDepthEvents(source, 'ETHUSDT');
   bitcoin.unsubscribe();
@@ -824,7 +1087,8 @@ test('user releases unsubscribed symbol state when the next native snapshot star
   globalObject.fetch('/fapi/v1/rpiDepth?symbol=ETHUSDT&limit=1000');
   const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   socket.message({ stream: 'ethusdt@rpiDepth@500ms', data: update({ s: 'ETHUSDT' }) });
-  await ether.waitFor(({ statuses }) => statuses.at(-1).status === 'ready');
+  await new Promise(resolve => setImmediate(resolve));
+  frames.runFrame(16);
 
   // Then only the subscribed symbol retains a ready profile
   assert.equal(source.getState('BTCUSDT'), null);
@@ -858,7 +1122,7 @@ test('user keeps later native transport owners when the depth source is restored
 test('user receives no later profile or reconnect event after source restoration', { timeout: 2000 }, async () => {
   // Given a native snapshot request is pending while a socket already has a BTC update
   const pendingResponse = Promise.withResolvers();
-  const { globalObject, source } = createHarness(() => pendingResponse.promise);
+  const { globalObject, source, frames } = createHarness(() => pendingResponse.promise);
   const events = recordDepthEvents(source);
   const socket = new globalObject.WebSocket('wss://native-binance-stream.example/ws');
   const request = globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
@@ -872,6 +1136,7 @@ test('user receives no later profile or reconnect event after source restoration
   socket.message(rpiMessage(update({ U: 103, u: 104, pu: 102 })));
   socket.emit('close');
   await new Promise((resolve) => setImmediate(resolve));
+  frames.runFrame(16);
 
   // Then old transport events cannot revive the stopped visualization
   assert.equal(source.getState('BTCUSDT'), null);
@@ -900,7 +1165,7 @@ for (const { label, settlement, resultField, expectedStatus, nativeResult } of [
   test(`user keeps a restored source empty when a pending native request completes with ${label}`, async () => {
     // Given a native snapshot is pending while the depth subscriber is active
     const pendingResponse = Promise.withResolvers();
-    const { globalObject, source, fetchCalls } = createHarness(() => pendingResponse.promise);
+    const { globalObject, source, fetchCalls, frames } = createHarness(() => pendingResponse.promise);
     const events = recordDepthEvents(source);
     const request = globalObject.fetch('/fapi/v1/rpiDepth?symbol=BTCUSDT&limit=1000');
     const statusesBeforeRestore = [...events.statuses];
@@ -910,6 +1175,7 @@ for (const { label, settlement, resultField, expectedStatus, nativeResult } of [
     pendingResponse[settlement](nativeResult);
     const [result] = await Promise.allSettled([request]);
     await new Promise((resolve) => setImmediate(resolve));
+    frames.runFrame(16);
 
     // Then callers retain native results and late observation cannot revive source state
     assert.equal(request, pendingResponse.promise);
@@ -932,7 +1198,7 @@ for (const { label, limit, rejects } of [
     // Given page code cached the wrapper before its source was restored
     const response = new FakeResponse(snapshot());
     const nativeError = new TypeError('cached native fetch rejection');
-    const { globalObject, source, fetchCalls } = createHarness(
+    const { globalObject, source, fetchCalls, frames } = createHarness(
       () => rejects ? Promise.reject(nativeError) : response,
     );
     const cachedFetch = globalObject.fetch;
@@ -947,6 +1213,7 @@ for (const { label, limit, rejects } of [
     const nativePromise = Reflect.apply(cachedFetch, receiver, [request, options]);
     const [result] = await Promise.allSettled([nativePromise]);
     await new Promise((resolve) => setImmediate(resolve));
+    frames.runFrame(16);
 
     // Then the wrapper only delegates once and preserves the native promise and outcome
     assert.equal(fetchCalls.length, 1);

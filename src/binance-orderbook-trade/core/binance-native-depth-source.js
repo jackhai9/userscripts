@@ -51,6 +51,7 @@ function createRecord(symbol) {
     profile: null,
     profileUpdateId: null,
     profileBuildCount: 0,
+    pendingFrame: null,
     status: { symbol, status: 'connecting', detail: '' },
     subscribers: new Set(),
   };
@@ -72,6 +73,8 @@ export function installBinanceNativeDepthSource(globalObject) {
   );
   const baseUrl = globalObject.location?.href;
   if (typeof baseUrl !== 'string') throw new Error('Invalid native depth page URL');
+  const requestFrame = assertFunction(globalObject.requestAnimationFrame, 'animation frame request');
+  const cancelFrame = assertFunction(globalObject.cancelAnimationFrame, 'animation frame cancellation');
 
   const records = new Map();
   const socketSymbols = new WeakMap();
@@ -94,8 +97,18 @@ export function installBinanceNativeDepthSource(globalObject) {
 
   function notifyProfile(record, profile) {
     record.profile = profile;
-    for (const subscriber of record.subscribers) subscriber.onProfile(profile);
+    for (const subscriber of record.subscribers) {
+      if (subscriber.profile === profile) continue;
+      subscriber.profile = profile;
+      subscriber.onProfile(profile);
+    }
     notifyStatus(record, 'ready');
+  }
+
+  function cancelPendingProfile(record) {
+    if (record.pendingFrame === null) return;
+    Reflect.apply(cancelFrame, globalObject, [record.pendingFrame]);
+    record.pendingFrame = null;
   }
 
   function clearProfile(record) {
@@ -110,23 +123,37 @@ export function installBinanceNativeDepthSource(globalObject) {
     return record.profile;
   }
 
-  /** Keep stream continuity in hidden tabs without retaining sorted display copies. */
+  /**
+   * Sequence validation and book writes stay synchronous. Sorting is display work,
+   * so a burst shares one native frame and hidden books retain no display copies.
+   */
   function publishCurrentBook(record) {
     clearProfile(record);
     if (record.subscribers.size === 0) {
       notifyStatus(record, 'ready');
       return;
     }
-    notifyProfile(record, materializeProfile(record));
+    if (record.pendingFrame !== null) return;
+    record.pendingFrame = Reflect.apply(requestFrame, globalObject, [() => {
+      record.pendingFrame = null;
+      try {
+        // A subscriber may already have materialized this version while frames paused.
+        notifyProfile(record, record.profile || materializeProfile(record));
+      } catch (error) {
+        failRecord(record, error);
+      }
+    }]);
   }
 
   function failRecord(record, error) {
+    cancelPendingProfile(record);
     clearProfile(record);
     notifyStatus(record, 'failed', error?.message || String(error));
   }
 
   function beginSnapshot(symbol) {
     const record = ensureRecord(symbol);
+    cancelPendingProfile(record);
     record.book = createDepthProfileBook(symbol);
     clearProfile(record);
     notifyStatus(record, 'synchronizing');
@@ -160,6 +187,7 @@ export function installBinanceNativeDepthSource(globalObject) {
       if (ready) publishCurrentBook(record);
       else notifyStatus(record, 'synchronizing');
     } catch (error) {
+      cancelPendingProfile(record);
       clearProfile(record);
       if (error instanceof DepthProfileSequenceError) {
         record.book = createDepthProfileBook(symbol);
@@ -202,7 +230,11 @@ export function installBinanceNativeDepthSource(globalObject) {
       if (restored) return;
       for (const symbol of socketSymbols.get(socket) || []) {
         const record = records.get(symbol);
-        if (record) notifyStatus(record, 'reconnecting', 'Binance native depth socket closed');
+        if (record) {
+          cancelPendingProfile(record);
+          clearProfile(record);
+          notifyStatus(record, 'reconnecting', 'Binance native depth socket closed');
+        }
       }
     }]);
   }
@@ -267,10 +299,12 @@ export function installBinanceNativeDepthSource(globalObject) {
       const subscriber = {
         onProfile: assertFunction(onProfile, 'profile listener'),
         onStatus: assertFunction(onStatus, 'status listener'),
+        profile: null,
       };
-      if (record.status.status === 'ready' && record.profile === null) {
+      if ((record.status.status === 'ready' || record.pendingFrame !== null) && record.profile === null) {
         try {
           materializeProfile(record);
+          record.status = { symbol: record.symbol, status: 'ready', detail: '' };
         } catch (error) {
           // Deferred geometry validation uses the same visible failure boundary as updates.
           failRecord(record, error);
@@ -278,10 +312,18 @@ export function installBinanceNativeDepthSource(globalObject) {
       }
       record.subscribers.add(subscriber);
       subscriber.onStatus(record.status);
-      if (record.profile) subscriber.onProfile(record.profile);
+      if (record.profile) {
+        subscriber.profile = record.profile;
+        subscriber.onProfile(record.profile);
+      }
       return () => {
         const removed = record.subscribers.delete(subscriber);
-        if (record.subscribers.size === 0) clearProfile(record);
+        if (record.subscribers.size === 0) {
+          // A paused first paint must not discard the book's completed synchronization.
+          if (record.pendingFrame !== null) notifyStatus(record, 'ready');
+          cancelPendingProfile(record);
+          clearProfile(record);
+        }
         return removed;
       };
     },
@@ -304,6 +346,7 @@ export function installBinanceNativeDepthSource(globalObject) {
     restore() {
       if (restored) return;
       restored = true;
+      for (const record of records.values()) cancelPendingProfile(record);
       if (globalObject.fetch === observedFetch) globalObject.fetch = nativeFetch;
       if (globalObject.WebSocket === ObservedWebSocket) globalObject.WebSocket = NativeWebSocket;
       records.clear();

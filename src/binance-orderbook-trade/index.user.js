@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.240
+// @version      2.7.241
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1034,6 +1034,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     ['执行中数量输入框已消失', 'Quantity input disappeared during execution'],
     ['当前方向暂无可平数量', 'No closable quantity in this direction'],
     ['查找当前委托', 'Locating Open Orders'],
+    ['当前委托完整列表 7 秒内未加载完成', 'The complete open-order list did not load within 7 seconds'],
     ['同向可撤挂单总量不足本轮目标，未撤销已有挂单', 'Cancellable same-direction order quantity is below the target for this round; existing orders were not cancelled'],
     ['原挂单未完成替换，已停止重新挂单', 'Previous orders were not fully replaced; replacement stopped'],
     ['撤销待替换挂单前交易对已变化', 'Symbol changed before cancelling replacement orders'],
@@ -3176,12 +3177,13 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     );
     if (synchronized) return synchronized;
 
+    const currentInputs = findTradeInputs();
     assertSubmittedPriceMatchesExpectedPrice(
       expectedPrice,
-      findPriceInput()?.value || '',
+      currentInputs?.priceInput.value || '',
       priceLabel,
     );
-    assertSubmittedQtyMatchesExpectedQty(expectedQty, findQtyInput()?.value || '', qtyLabel);
+    assertSubmittedQtyMatchesExpectedQty(expectedQty, currentInputs?.qtyInput.value || '', qtyLabel);
     throw createContinuousRecoverableLadderError(
       'input_unstable',
       '价格框或数量框未稳定',
@@ -3470,13 +3472,8 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     abortSignal = null,
     options = null,
   ) {
-    const priceInput = findPriceInput();
-    const qtyInput = findQtyInput();
-    if (!priceInput) {
-      throw createContinuousRecoverableLadderError('controls_not_ready', '未找到价格输入框');
-    }
-    if (!qtyInput) {
-      throw createContinuousRecoverableLadderError('controls_not_ready', '未找到数量输入框');
+    if (!findTradeInputs()) {
+      throw createContinuousRecoverableLadderError('controls_not_ready', '未能确定唯一的当前交易表单输入框');
     }
 
     let done = 0;
@@ -3501,18 +3498,10 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
         assertLadderExecutionContext(plan);
         assertLadderMakerPrice(plan, order.price);
 
-        const currentPriceInput = findPriceInput();
-        const currentQtyInput = findQtyInput();
-        if (!currentPriceInput) {
+        if (!findTradeInputs()) {
           throw createContinuousRecoverableLadderError(
             'controls_not_ready',
-            '执行中价格输入框已消失',
-          );
-        }
-        if (!currentQtyInput) {
-          throw createContinuousRecoverableLadderError(
-            'controls_not_ready',
-            '执行中数量输入框已消失',
+            '未能确定唯一的当前交易表单输入框',
           );
         }
 
@@ -3531,14 +3520,16 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
         const button = await waitForReadyLadderSubmitButton(plan, abortSignal);
         throwIfAborted(abortSignal);
         assertLadderExecutionContext(plan);
+        // Reacquire after the button wait; share only this synchronous validation read.
+        const currentInputs = findTradeInputs();
         assertSubmittedPriceMatchesExpectedPrice(
           order.price,
-          findPriceInput()?.value || '',
+          currentInputs?.priceInput.value || '',
           '计划价',
         );
         assertSubmittedQtyMatchesExpectedQty(
           order.qty,
-          findQtyInput()?.value || '',
+          currentInputs?.qtyInput.value || '',
           '计划量',
         );
 
@@ -4179,10 +4170,9 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
               continuousProgress,
               phase,
               cooldownMs,
+              recovery?.reason ?? null,
             );
-            setLadderStatus(recovery
-              ? combineLocalizedText([waitStatus, recovery.reason], ' · ')
-              : waitStatus);
+            setLadderStatus(waitStatus);
           },
         });
         if (readiness.status === 'stopped') {
@@ -4786,7 +4776,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     return null;
   }
 
-  async function loadAllCurrentSymbolOpenOrderRows(symbol, plan, abortSignal = null) {
+  async function loadAllCurrentSymbolOpenOrderRows(symbol, plan, abortSignal, onProgress) {
     let requested;
     const state = await waitForAccountOrdersState(() => {
       if (!isCurrentObservedSymbol(symbol)) throw new Error('加载待撤挂单时交易对已变化');
@@ -4798,6 +4788,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
       if (requested?.host !== view.host || requested.data !== view.data
         || requested.count !== view.count || requested.offset !== view.offset) {
         requested = view;
+        onProgress(view.count, view.data.length);
         // A window starting in the middle must grow from the first order to rank all candidates.
         view.host.scrollTop = view.offset ? 0 : view.host.scrollHeight;
         view.host.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -5021,7 +5012,13 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
         let row = readCurrentSymbolOpenOrderRows(currentRoot, plan.symbol, plan, target.key).find(matchesIdentity);
         if (!row) {
           // A remount may hide the original ID or a partial fill may change its display key.
-          const completeRows = await loadAllCurrentSymbolOpenOrderRows(plan.symbol, plan, abortSignal);
+          const completeRows = await loadAllCurrentSymbolOpenOrderRows(
+            plan.symbol, plan, abortSignal,
+            (count, total) => report(localizedText(
+              `上限恢复：委托 ${count}/${total}`,
+              `Releasing capacity: orders ${count}/${total}`,
+            )),
+          );
           checkScope();
           if (receipts.admissionClosed) break;
           row = completeRows.find(matchesIdentity);
@@ -5929,6 +5926,10 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
           symbol,
           plan,
           abortSignal,
+          (count, total) => setPlanStepStatus(localizedText(
+            `上限恢复：委托 ${count}/${total}`,
+            `Releasing capacity: orders ${count}/${total}`,
+          )),
         )
         : await waitForCurrentSymbolOpenOrderRows(
           openOrdersScope,
