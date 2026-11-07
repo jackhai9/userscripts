@@ -363,19 +363,22 @@ cumulative confirmed submissions. After cancellation, wait and reread the
 position before building the execution plan, including a normal finish when
 the position has become flat.
 
-After the native cancellation receipts confirm enough released quantity, check
-the cancelled IDs against the complete, committed Basic list for this symbol.
-The scroll window can still display the previous rows after the list data has
-removed them. Window alignment is required for selecting rows to cancel, but
-not for this post-cancellation ID check. If the data is loading, paginated,
-unverifiable, or still contains a cancelled ID, do not replan until the check
-passes; stop if it times out. Only this continuous-close check also rereads the
-data every 250 ms, because committed React props can change without a DOM
-mutation. DOM changes still wake the check immediately. Both wake paths share
-one timer and the original 6.5-second deadline; completion, Stop, or a thrown
-scope/read error disposes the timer and observer. Browser timer throttling can
-delay a recheck. Ordinary DOM waits and the three-second recovery cooldown
-retain their existing behavior.
+After matched HTTP cancellation responses and terminal account events confirm
+enough released quantity, continuous recovery proceeds to its existing cooldown
+and authoritative position read. It does not wait for the Basic list to remove
+the IDs: Binance consumes account events separately when updating that list,
+so even its source data can retain a terminal order. The removed 6.5-second
+list check could therefore stop a fully confirmed cancellation.
+
+The active continuous task remembers each confirmed cancelled identity across
+rounds. Exclude those identities before selecting replacement quantity or
+ranking capacity-recovery candidates. A remembered identity never contributes
+released quantity to a later batch. An order ID reappearing with a different
+symbol or client order ID ends the task, including during capacity recovery;
+it cannot enter the outer retry loop. The identity map ends with the task.
+Window alignment and all pre-click identity checks still apply when selecting
+new cancellation targets. Ordinary replacements keep their existing list
+synchronization check; ordinary DOM waits remain event driven.
 
 Recovery rebuilds use the smaller of the confirmed API position quantity and the
 latest valid DOM closeable quantity. Missing DOM quantity never falls back to the
@@ -555,9 +558,10 @@ cumulative fill (`q - z`), as in [Binance's account stream](https://developers.b
 and its [native order adapter](https://bin.bnbstatic.com/static/chunks/35455.143e05da.js).
 An HTTP success counts as one cancellation; missing, contradictory or insufficient quantity
 cannot authorize replacement orders. Never extend the preselected set to make up a shortfall.
-Once the entire target quantity is confirmed, wait once for the original IDs to disappear
-from the committed Basic list before rebuilding the ladder from the current trading context.
-This confirms list synchronization; it does not certify the freshness of the trading form balance.
+Once the entire target quantity is confirmed, ordinary replacements wait once for the original
+IDs to disappear from the Basic list. Continuous reduce-only recovery uses the terminal
+receipts, then waits and rereads the authoritative position before rebuilding the plan.
+Neither a cancelled order nor list synchronization certifies the trading form balance.
 On 2026-11-07, one manual AINUSDT Basic cancellation matched the clicked row, the native
 POST and a trusted private-stream event by symbol and both order IDs. Measured from the
 start of the request, the browser observed the terminal event at 128 ms and read the

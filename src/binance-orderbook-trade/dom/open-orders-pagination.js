@@ -35,11 +35,6 @@ function readCommittedList(root, symbol) {
   return found;
 }
 
-/** Sufficient for checking IDs after confirmed cancellations, never for selecting a row to click. */
-export function readCommittedOpenOrderData(root, symbol) {
-  return readCommittedList(root, symbol)?.list.data ?? null;
-}
-
 export function readNativeOpenOrderWindow(root, symbol) {
   const owner = readCommittedList(root, symbol);
   if (!owner) return null;
