@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CHART_CONTRACT_ALERT,
   PANEL_COPY,
+  formatChartContractAlertTooltip,
   formatPrecisionRefreshTooltip,
   formatUsdtRebalanceAllocatedStatus,
   formatUsdtRebalanceTargetSummary,
@@ -142,4 +144,27 @@ test("user sees that precision refresh tooltip is localized and validates its tr
   );
   assert.doesNotMatch(formatLocalizedText(tooltip, UI_LOCALE_ZH_CN), /最小值/);
   assert.throws(() => formatPrecisionRefreshTooltip(1), /价格精度成交样本数无效/);
+});
+
+test('user reads which chart dependencies changed and what the native fallback means in both locales', () => {
+  // Given two reported dependency breaks of the order-line save filter.
+  const entries = [
+    { reason: 'listener-shape', detail: 'study: a | drawing: b' },
+    { reason: 'removal-capture', detail: '3 order-line removals were emitted outside removeSource' },
+  ];
+
+  // When the panel formats its alert.
+  const tooltip = formatChartContractAlertTooltip(entries);
+
+  // Then the short alert and the tooltip name every changed dependency, the consequence and the raw details.
+  assert.deepEqual(CHART_CONTRACT_ALERT, { zhCN: '⚠ 图表保存保护失效，需更新脚本', en: '⚠ Chart save protection broken; update the script' });
+  assert.equal(tooltip.zhCN, '币安图表依赖已变化：保存监听函数结构、挂单线移除路径。已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压。细节：study: a | drawing: b; 3 order-line removals were emitted outside removeSource');
+  assert.equal(tooltip.en, "Binance chart dependency changed: save listener body, order-line removal path. Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again. Details: study: a | drawing: b; 3 order-line removals were emitted outside removeSource");
+});
+
+test('user never sees an alert for an unknown or empty chart dependency report', () => {
+  // Given reports that the filter can never produce.
+  // When they are formatted, then the programming error is thrown instead of displayed.
+  assert.throws(() => formatChartContractAlertTooltip([{ reason: 'renamed', detail: 'x' }]), /Unknown chart contract break: renamed/);
+  assert.throws(() => formatChartContractAlertTooltip([]), /at least one break/);
 });

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { observeOrderLineSaves } from '../../src/binance-orderbook-trade/chart-storage/order-line-saves.js';
+import { ORDER_LINE_CONTRACT_CHECK_MS, observeOrderLineSaves } from '../../src/binance-orderbook-trade/chart-storage/order-line-saves.js';
 import { coalesceChartOrderVisibilitySaves } from '../../src/binance-orderbook-trade/core/chart-save-coalescer.js';
 import { createManualTimers } from './binance-orderbook-trade/chart-save-test-host.js';
 
@@ -25,11 +25,42 @@ function renamedListeners(save) {
 function chartPage(t) {
   const { window } = new JSDOM('<div class="chart-widget-root"></div>', { url: 'https://www.binance.com/en/futures/BTCUSDT' });
   t.after(() => window.close());
-  observeOrderLineSaves(window.document);
-  return window.document;
+  const notified = [];
+  const checks = [];
+  let clock = 0;
+  const snapshot = observeOrderLineSaves(window.document, {
+    onContractBreak: entry => notified.push(entry),
+    setTimeout(callback, delay) { checks.push({ callback, delay }); },
+    now: () => clock,
+  });
+  const document = window.document;
+  // Each test page fails if a dependency break was reported but not asserted,
+  // and the deferred handler must have received exactly the recorded entries.
+  t.after(async () => {
+    await Promise.resolve();
+    assert.deepEqual(document.breaks.map(({ reason }) => reason), document.expectedBreaks);
+    assert.deepEqual(notified, document.breaks);
+  });
+  Object.defineProperty(document, 'breaks', { get: () => snapshot().breaks });
+  return Object.assign(document, {
+    notified, snapshot, expectedBreaks: [],
+    advance(ms) { clock += ms; },
+    /**
+     * Runs the frame checks due at the next tick, as the 30 s timer would. JSDOM also
+     * fires the frame's initial about:blank load, whose superseded check stops on its first tick.
+     */
+    runContractCheck() {
+      const due = checks.splice(0);
+      for (const { callback, delay } of due) {
+        assert.equal(delay, ORDER_LINE_CONTRACT_CHECK_MS);
+        callback();
+      }
+      return due.length;
+    },
+  });
 }
 
-async function mountWidget(document, { subscribeSave = true, createListeners = binanceListeners, rejectTopic } = {}) {
+async function mountWidget(document, { subscribeSave = true, createListeners = binanceListeners, rejectTopic, deferReady = false } = {}) {
   const subscriptions = new Map();
   const widgets = [];
   const saves = [];
@@ -88,7 +119,8 @@ async function mountWidget(document, { subscribeSave = true, createListeners = b
   win.widgetReady = callback => ready.push(callback);
   win.dispatchEvent(new win.Event('innerWindowLoad'));
   win.tradingViewApi = api;
-  for (const callback of ready) callback();
+  const becomeReady = () => { for (const callback of ready.splice(0)) callback(); };
+  if (!deferReady) becomeReady();
   const save = () => saves.push(drawing);
   const { drawing: saveListener, study } = createListeners(save);
   function registerHostPrelude(studyCallback = study) {
@@ -103,7 +135,7 @@ async function mountWidget(document, { subscribeSave = true, createListeners = b
     api.subscribe('drawing_event', callback);
   }
   if (subscribeSave) registerHost(saveListener);
-  return { api, chart, addChart, drawingEvent, emit, registerHost, registerHostPrelude, saveListener, saves };
+  return { api, chart, addChart, becomeReady, drawingEvent, emit, registerHost, registerHostPrelude, saveListener, saves };
 }
 
 test('user skips saves for transient order properties and removals while other subscribers see every event', async t => {
@@ -200,6 +232,28 @@ test('user keeps native drawing saves when chart discovery throws during subscri
   assert.deepEqual(host.saves, [['manual', 'properties_changed']]);
 });
 
+test('user is alerted when a chart keeps saving natively because its removal hook could not be installed', async t => {
+  // Given Binance subscribes its save listener while the chart models are being replaced.
+  const page = chartPage(t);
+  const host = await mountWidget(page, { subscribeSave: false });
+  const getAll = host.api._chartWidgetCollection.getAll;
+  host.api._chartWidgetCollection.getAll = () => { throw new Error('Chart layout is unavailable'); };
+  host.registerHost(host.saveListener);
+  host.api._chartWidgetCollection.getAll = getAll;
+
+  // When the frame check sees the same ready API, then waits one more tick for subscriptions.
+  page.runContractCheck();
+  page.runContractCheck();
+  assert.deepEqual(page.breaks, []);
+  assert.equal(page.runContractCheck(), 1);
+
+  // Then the unprotected chart is reported once and no further checks are scheduled.
+  page.expectedBreaks = ['removal-hook'];
+  assert.equal(page.runContractCheck(), 0);
+  await Promise.resolve();
+  assert.deepEqual(page.notified, page.breaks);
+});
+
 test('user can unsubscribe each duplicate registration of the Binance save listener exactly once', async t => {
   // Given the native delegate accepts the previously recognized callback a second time.
   const { api, chart, drawingEvent, saveListener, saves } = await mountWidget(chartPage(t));
@@ -277,14 +331,17 @@ test('user keeps native drawing delivery when the host callbacks no longer share
     const other = () => {};
     return { drawing: binanceListeners(save).drawing, study: ()=>{J.current&&other()} };
   };
-  const { chart, drawingEvent, registerHost, saves } = await mountWidget(chartPage(t), { createListeners });
+  const page = chartPage(t);
+  const { chart, drawingEvent, registerHost, saves } = await mountWidget(page, { createListeners });
   chart.add('order', 'LineToolOrder');
 
   // When a transient order changes while the host callbacks have different responsibilities.
   drawingEvent('order', 'properties_changed');
 
-  // Then the drawing callback still receives the change.
+  // Then the drawing callback still receives the change and the changed listener is reported with both bodies.
   assert.deepEqual(saves, [['order', 'properties_changed']]);
+  page.expectedBreaks = ['listener-shape'];
+  assert.match(page.breaks[0].detail, /^study: \(\)=>\{J\.current&&other\(\)\} \| drawing: \(e,t\)=>/);
 
   // When a later registration batch matches every topic and both callback bodies.
   const notifications = [];
@@ -378,4 +435,367 @@ test('user retains save coalescing after the gated Binance subscription is remov
 
   // Then both callbacks receive the same final drawing list from the restored coalescing workflow.
   assert.deepEqual(snapshots, [{ drawings: ['first', 'second'] }, { drawings: ['first', 'second'] }]);
+});
+
+test('user sees no alert and no further checks once the recognized chart is judged protected', async t => {
+  // Given Binance's current subscription batch was recognized.
+  const page = chartPage(t);
+  await mountWidget(page);
+
+  // When the frame check runs past the confirmation tick.
+  for (let tick = 0; tick < 3; tick++) page.runContractCheck();
+
+  // Then the chart is judged protected, nothing is reported and checking stops.
+  assert.equal(page.runContractCheck(), 0);
+  assert.deepEqual(page.snapshot(), { matched: 1, skipped: 0, breaks: [] });
+});
+
+test('user is alerted when Binance no longer registers its save listener in the recognized batch', async t => {
+  // Given the host subscribes drawing events without the preceding topic batch.
+  const page = chartPage(t);
+  const host = await mountWidget(page, { subscribeSave: false });
+  host.api.subscribe('drawing_event', host.saveListener);
+  host.chart.add('order', 'LineToolOrder');
+  host.drawingEvent('order', 'properties_changed');
+
+  // When frame checks see the same ready but unfiltered API for a full tick after readiness.
+  for (let tick = 0; tick < 3; tick++) page.runContractCheck();
+
+  // Then native saving continues and the missing batch is reported with the expected topics.
+  assert.deepEqual(host.saves, [['order', 'properties_changed']]);
+  page.expectedBreaks = ['subscription-batch'];
+  assert.match(page.breaks[0].detail, /onAutoSaveNeeded → .* → drawing_event/);
+  assert.deepEqual(page.snapshot().breaks, page.breaks);
+});
+
+test('user is alerted when TradingView chart widgets no longer expose the model lookup', async t => {
+  // Given a chart model renamed its line-tool lookup before Binance subscribes.
+  const page = chartPage(t);
+  const host = await mountWidget(page, { subscribeSave: false });
+  host.chart.getLineToolById = undefined;
+
+  // When Binance registers its recognized save batch.
+  host.registerHost(host.saveListener);
+  host.drawingEvent('manual', 'create');
+
+  // Then saves stay native and the model contract is reported once.
+  assert.deepEqual(host.saves, [['manual', 'create']]);
+  page.expectedBreaks = ['chart-model'];
+});
+
+test('user is alerted when order lines are removed outside the tracked removeSource path', async t => {
+  // Given three filtered order lines.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  for (const id of ['a', 'b', 'c']) {
+    host.chart.add(id, 'LineToolOrder');
+    host.drawingEvent(id, 'properties_changed');
+  }
+
+  // When TradingView detaches the first two without removeSource, in separate bursts.
+  for (const id of ['a', 'b']) {
+    host.chart.sources.delete(id);
+    host.drawingEvent(id, 'remove');
+    page.advance(1000);
+  }
+
+  // Then those removals reach native persistence without an alert yet.
+  assert.deepEqual(host.saves, [['a', 'remove'], ['b', 'remove']]);
+  assert.deepEqual(page.breaks, []);
+
+  // When the third known order line is detached the same way.
+  host.chart.sources.delete('c');
+  host.drawingEvent('c', 'remove');
+
+  // Then the removal path change is reported once.
+  page.expectedBreaks = ['removal-capture'];
+  assert.match(page.breaks[0].detail, /^3 separate order-line removal bursts/);
+});
+
+test('user gets no removal alert once removeSource has captured an order removal', async t => {
+  // Given one order removal went through removeSource and three other known orders did not.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  for (const id of ['tracked', 'a', 'b', 'c']) {
+    host.chart.add(id, 'LineToolOrder');
+    host.drawingEvent(id, 'properties_changed');
+  }
+  host.chart.removeSource(host.chart.getLineToolById('tracked'), false);
+
+  // When the other three are detached by chart teardown outside removeSource.
+  for (const id of ['a', 'b', 'c']) {
+    host.chart.sources.delete(id);
+    host.drawingEvent(id, 'remove');
+  }
+
+  // Then the working hook keeps those removals native without reporting a contract change.
+  assert.deepEqual(host.saves, ['a', 'b', 'c'].map(id => [id, 'remove']));
+  assert.deepEqual(page.breaks, []);
+});
+
+/** Mounts only the TradingView bootstrap, letting each test break one step. */
+async function mountBootstrap(document, { innerWindowLoad = true, widgetReady = true, readyApi = {} } = {}) {
+  const frame = document.createElement('iframe');
+  frame.id = 'tradingview_bootstrap';
+  document.querySelector('.chart-widget-root').replaceChildren(frame);
+  const win = frame.contentWindow;
+  frame.dispatchEvent(new document.defaultView.Event('load'));
+  await Promise.resolve();
+  const ready = [];
+  if (widgetReady) win.widgetReady = callback => ready.push(callback);
+  if (innerWindowLoad) win.dispatchEvent(new win.Event('innerWindowLoad'));
+  return {
+    win,
+    becomeReady() {
+      win.tradingViewApi = readyApi;
+      for (const callback of ready.splice(0)) callback();
+    },
+  };
+}
+
+test('user is alerted when the TradingView bootstrap no longer defines widgetReady', async t => {
+  // Given the bootstrap document finishes without the readiness hook.
+  const page = chartPage(t);
+  await mountBootstrap(page, { widgetReady: false });
+
+  // Then the bootstrap change is reported immediately.
+  page.expectedBreaks = ['bootstrap'];
+  assert.match(page.breaks[0].detail, /widgetReady/);
+});
+
+test('user is alerted when the chart API appears without the innerWindowLoad hook ever running', async t => {
+  // Given Binance stopped dispatching innerWindowLoad but still publishes the chart API.
+  const page = chartPage(t);
+  const host = await mountBootstrap(page, { innerWindowLoad: false });
+  host.win.tradingViewApi = {};
+
+  // When two frame checks see the same API.
+  page.runContractCheck();
+  assert.deepEqual(page.breaks, []);
+  page.runContractCheck();
+
+  // Then the missing hook is reported.
+  page.expectedBreaks = ['bootstrap'];
+  assert.match(page.breaks[0].detail, /innerWindowLoad → widgetReady/);
+});
+
+test('user sees no alert while a slow chart is still waiting for widgetReady', async t => {
+  // Given the readiness hook is armed but chart storage delays the widget for minutes.
+  const page = chartPage(t);
+  const host = await mountBootstrap(page);
+  host.win.tradingViewApi = {};
+
+  // When many frame checks pass before readiness.
+  page.runContractCheck();
+  for (let tick = 0; tick < 5; tick++) assert.equal(page.runContractCheck(), 1);
+
+  // Then nothing is reported and checks continue.
+  assert.deepEqual(page.breaks, []);
+  assert.equal(page.runContractCheck(), 1);
+});
+
+test('user is alerted when the ready chart API lacks the subscription surface', async t => {
+  // Given widgetReady delivers an API without subscribe and unsubscribe.
+  const page = chartPage(t);
+  const host = await mountBootstrap(page, { readyApi: { _chartWidgetCollection: { getAll: () => [] } } });
+
+  // When the chart becomes ready.
+  host.becomeReady();
+
+  // Then the API shape is reported once, and later checks do not add a second reason.
+  page.runContractCheck();
+  page.runContractCheck();
+  page.expectedBreaks = ['api-shape'];
+});
+
+test('user sees no bootstrap alert when the chart frame loads again while its first widgetReady is pending', async t => {
+  // Given the bootstrap armed widgetReady and the frame then fires its final load before readiness.
+  const page = chartPage(t);
+  const host = await mountBootstrap(page);
+  const frame = page.querySelector('iframe');
+  frame.dispatchEvent(new page.defaultView.Event('load'));
+  await Promise.resolve();
+  host.win.tradingViewApi = {};
+
+  // When chart storage delays readiness across many checks of the newer load.
+  page.runContractCheck();
+  for (let tick = 0; tick < 4; tick++) page.runContractCheck();
+
+  // Then the still-pending callback defers judgment instead of reporting a missing hook.
+  assert.deepEqual(page.breaks, []);
+});
+
+test('user gets a full tick for Binance to subscribe after a chart becomes ready between checks', async t => {
+  // Given a slow chart whose API is published before widgetReady.
+  const page = chartPage(t);
+  const host = await mountWidget(page, { subscribeSave: false, deferReady: true });
+  page.runContractCheck();
+  page.runContractCheck();
+
+  // When readiness lands just before a tick, and Binance subscribes after that tick.
+  host.becomeReady();
+  page.runContractCheck();
+  host.registerHost(host.saveListener);
+  page.runContractCheck();
+
+  // Then the widget is judged protected and checking stops without a report.
+  assert.deepEqual(page.breaks, []);
+  assert.equal(page.runContractCheck(), 0);
+});
+
+test('user gets no removal alert when a chart teardown removes many order lines in one burst', async t => {
+  // Given four filtered order lines and no captured removal yet.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  for (const id of ['a', 'b', 'c', 'd']) {
+    host.chart.add(id, 'LineToolOrder');
+    host.drawingEvent(id, 'properties_changed');
+  }
+
+  // When a teardown detaches all of them outside removeSource within one second.
+  for (const id of ['a', 'b', 'c', 'd']) {
+    host.chart.sources.delete(id);
+    host.drawingEvent(id, 'remove');
+    page.advance(100);
+  }
+
+  // Then the removals save natively as one burst without reporting the hook.
+  assert.equal(host.saves.length, 4);
+  assert.deepEqual(page.breaks, []);
+});
+
+test('user gets no removal alert for hand drawings removed while removeSource never captured an order', async t => {
+  // Given a protected chart whose drawings were never seen as order lines.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+
+  // When three manual drawings are removed in separate bursts.
+  for (const id of ['h1', 'h2', 'h3']) {
+    host.drawingEvent(id, 'remove');
+    page.advance(1000);
+  }
+
+  // Then they save natively and nothing is reported.
+  assert.deepEqual(host.saves, ['h1', 'h2', 'h3'].map(id => [id, 'remove']));
+  assert.deepEqual(page.breaks, []);
+});
+
+test('user sees no alert after Binance unsubscribes its recognized save listener', async t => {
+  // Given the recognized listener was removed by Binance.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  host.api.unsubscribe('drawing_event', host.saveListener);
+
+  // When the frame check judges the widget.
+  for (let tick = 0; tick < 3; tick++) page.runContractCheck();
+
+  // Then no dependency break is reported and checking stops.
+  assert.deepEqual(page.breaks, []);
+  assert.equal(page.runContractCheck(), 0);
+});
+
+test('user sees one alert per changed dependency even when it recurs', async t => {
+  // Given a recognized chart whose collection later stops returning a widget list.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  host.api._chartWidgetCollection.getAll = () => null;
+
+  // When two drawing changes need the model lookup, and the frame check later judges the widget.
+  host.drawingEvent('x', 'properties_changed');
+  host.drawingEvent('y', 'properties_changed');
+  for (let tick = 0; tick < 3; tick++) page.runContractCheck();
+
+  // Then both changes save natively and the model change is reported once.
+  assert.deepEqual(host.saves, [['x', 'properties_changed'], ['y', 'properties_changed']]);
+  page.expectedBreaks = ['chart-model'];
+});
+
+test('user sees no batch alert in addition to a reported listener-shape change', async t => {
+  // Given the host batch completed with a changed drawing callback.
+  const page = chartPage(t);
+  const createListeners = save => ({ study: binanceListeners(save).study, drawing: (id, type) => save(id, type) });
+  await mountWidget(page, { createListeners });
+
+  // When the frame check later finds the widget unfiltered.
+  for (let tick = 0; tick < 3; tick++) page.runContractCheck();
+
+  // Then only the specific listener-shape change is reported.
+  page.expectedBreaks = ['listener-shape'];
+});
+
+test('user is alerted when the model prototype no longer has a writable removeSource', async t => {
+  // Given TradingView moved removeSource off the model prototype.
+  const page = chartPage(t);
+  const host = await mountWidget(page, { subscribeSave: false });
+  const owner = Object.getPrototypeOf(host.chart);
+  const removeSource = owner.removeSource;
+  delete owner.removeSource;
+  t.after(() => { owner.removeSource = removeSource; });
+
+  // When Binance registers its save batch.
+  host.registerHost(host.saveListener);
+
+  // Then the removal hook change is reported immediately.
+  page.expectedBreaks = ['removal-hook'];
+});
+
+test('user is alerted when widgetReady runs without the chart API', async t => {
+  // Given the bootstrap hook fires but the API global was renamed.
+  const page = chartPage(t);
+  const host = await mountBootstrap(page, { readyApi: null });
+
+  // When the chart becomes ready.
+  host.becomeReady();
+
+  // Then the missing API is reported.
+  page.expectedBreaks = ['bootstrap'];
+  assert.match(page.breaks[0].detail, /missing when widgetReady runs/);
+});
+
+test('user is alerted when TradingView renames the order line tool', async t => {
+  // Given a protected chart whose order lines now use a different tool name.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  host.chart.add('renamed', 'LineToolOrderV2');
+  host.chart.add('trend', 'LineToolTrendLine');
+
+  // When the renamed order line and a hand drawing change.
+  host.drawingEvent('renamed', 'properties_changed');
+  host.drawingEvent('trend', 'properties_changed');
+
+  // Then both save natively and only the order-like rename is reported.
+  assert.equal(host.saves.length, 2);
+  page.expectedBreaks = ['order-tool-name'];
+  assert.match(page.breaks[0].detail, /LineToolOrderV2/);
+});
+
+test('user is alerted when drawing events use an undocumented type', async t => {
+  // Given a protected chart.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+
+  // When TradingView emits an event type outside its documented set.
+  host.drawingEvent('order', 'line_updated');
+
+  // Then the event still reaches Binance and the new type is reported.
+  assert.deepEqual(host.saves, [['order', 'line_updated']]);
+  page.expectedBreaks = ['event-type'];
+});
+
+test('user is alerted when the chart API moves to a frame outside the recognized selector', async t => {
+  // Given Binance renamed the chart frame so the bootstrap hook is never armed.
+  const page = chartPage(t);
+  const frame = page.createElement('iframe');
+  frame.id = 'tv_chart_container';
+  page.querySelector('.chart-widget-root').replaceChildren(frame);
+  frame.dispatchEvent(new page.defaultView.Event('load'));
+  frame.contentWindow.tradingViewApi = {};
+
+  // When two frame checks see the same chart API.
+  page.runContractCheck();
+  page.runContractCheck();
+
+  // Then the selector change is reported with the frame's new id.
+  page.expectedBreaks = ['bootstrap'];
+  assert.match(page.breaks[0].detail, /id: tv_chart_container/);
 });

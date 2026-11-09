@@ -63,6 +63,46 @@ Restoring a previously hidden order-line checkbox can complete without a save
 while its native drawing listener is filtered. On other widgets the recovery
 still coalesces and waits for the original save callbacks.
 
+### Dependency break alerts
+
+Falling back to Binance's native save keeps drawings safe but silently restores
+the save storm, so every dependency mismatch is reported instead of only being
+tolerated. `observeOrderLineSaves()` reports each reason once per page through
+`onContractBreak`, deferred to a microtask so a failing handler cannot drop the
+TradingView event being delivered. The orderbook script logs each report with
+`console.error` and shows a persistent red panel row whose tooltip names the
+dependency and its details. `__BINANCE_CHART_STORAGE__.orderLineSaves().breaks`
+lists the same entries.
+
+| Reason | Detected when |
+| --- | --- |
+| `bootstrap` | `innerWindowLoad` runs without `widgetReady`; `widgetReady` runs without `tradingViewApi`; a frame publishes `tradingViewApi` without the `innerWindowLoad → widgetReady` hook running; or a frame outside `iframe#tradingview_*` in `.chart-widget-root` publishes it |
+| `api-shape` | the ready API lacks `_chartWidgetCollection.getAll`, `subscribe` or `unsubscribe` |
+| `subscription-batch` | a ready widget was never filtered because the six-topic batch was not observed |
+| `listener-shape` | the batch completed but the study and drawing callbacks no longer match (both bodies are included) |
+| `removal-hook` | the model prototype has no writable `removeSource`, or the recognized listener stayed unfiltered because removal tracking could not be installed |
+| `removal-capture` | three removal bursts of filtered order lines, at least one second apart, bypassed `removeSource` before any removal was captured |
+| `chart-model` | a widget no longer exposes `hasModel`/`model().model().getLineToolById` |
+| `order-tool-name` | a drawing whose tool name contains `order` is not `LineToolOrder` |
+| `event-type` | `drawing_event` carries a type outside TradingView's documented set |
+
+Absence-type breaks are judged by a check of every same-origin frame, every 30
+seconds for at most 20 ticks after each load of that frame. A verdict needs the
+same API on two consecutive ticks; a pending `widgetReady` callback of the frame's
+window defers it, because chart storage has delayed TradingView startup by up to
+two and a half minutes; and a widget is judged one full tick after it becomes
+ready, so Binance's subscriptions can arrive. Removals within one second count as
+one burst, so a chart teardown that detaches every order line at once is not a
+break. A recognized listener that Binance later unsubscribes is not a break.
+Transient lookup errors while a chart is replaced stay unreported. The alert does
+not change any save behavior.
+
+Not detected: a chart whose API never appears within the 20 ticks, a
+`widgetReady` that never runs its callbacks (TradingView stays blank in both
+cases), and an order tool renamed without `order` in its name. A multi-chart
+frame that legitimately has no drawing-save listener would be reported as
+`subscription-batch`; no such frame has been observed.
+
 ## Design
 
 `installChartWriteFilter()` runs at document-start in the page world, before
