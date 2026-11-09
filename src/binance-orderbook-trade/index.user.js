@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.242
+// @version      2.7.243
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -43,7 +43,9 @@ import {
   matchesBinancePageText,
 } from './contracts/binance-page-text.js';
 import {
+  CHART_CONTRACT_ALERT,
   PANEL_COPY,
+  formatChartContractAlertTooltip,
   formatPrecisionRefreshTooltip,
   formatUsdtRebalanceAllocatedStatus,
   formatUsdtRebalanceTargetSummary,
@@ -270,7 +272,17 @@ import { installChartWriteFilter } from './chart-storage/install.js';
 import { installOrderSoundScope } from './order-sound/install.js';
 
 let activeCancelReceipts = null;
-installChartWriteFilter();
+/** Dependency mismatches of the order-line save filter; shown until the page reloads. */
+const chartContractBreaks = [];
+let renderChartContractAlert = null;
+installChartWriteFilter({
+  onOrderLineContractBreak(entry) {
+    chartContractBreaks.push(entry);
+    // Binance mutes console.log/warn/info; errors stay visible in DevTools.
+    console.error('[订单簿下单] Chart save protection dependency changed; native save is in effect', entry);
+    renderChartContractAlert?.();
+  },
+});
 const hasCancellationAccountStream = installOrderSoundScope(order => activeCancelReceipts?.observeOrderUpdate(order));
 
 (function initializeOrderbookTrade() {
@@ -342,6 +354,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
   const LADDER_STATUS_ID = 'jh-binance-ladder-status';
   const LADDER_STATUS_ROW_ID = 'jh-binance-ladder-status-row';
   const AUTOMATIC_USDT_REBALANCE_STATUS_ID = 'jh-binance-auto-rebalance-status';
+  const CHART_CONTRACT_ALERT_ID = 'jh-binance-chart-contract-alert';
   const USDT_REBALANCE_ACTION_ID = 'jh-binance-usdt-rebalance-action';
   const MULTIPLIER_PRESS_FEEDBACK_ATTR = 'data-jh-press-feedback';
   const ORDERBOOK_PRECISION_RECOMMENDATION_ID = 'jh-binance-orderbook-precision-recommendation';
@@ -1195,6 +1208,18 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     if (element.title !== title) element.title = title;
     if (element.hidden !== (text === '')) element.hidden = text === '';
   }
+
+  function renderChartContractAlertRow(element) {
+    if (!element) return;
+    const hidden = chartContractBreaks.length === 0;
+    if (element.hidden !== hidden) element.hidden = hidden;
+    if (hidden) return;
+    const text = ui(CHART_CONTRACT_ALERT);
+    const title = ui(formatChartContractAlertTooltip(chartContractBreaks));
+    if (element.textContent !== text) element.textContent = text;
+    if (element.title !== title) element.title = title;
+  }
+  renderChartContractAlert = () => renderChartContractAlertRow(document.getElementById(CHART_CONTRACT_ALERT_ID));
 
   /** Automatic background outcomes must never replace a retained trading result. */
   function setAutomaticUsdtRebalanceStatus(text, title = text, pending = false) {
@@ -7781,6 +7806,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
       if (status.title !== renderedTitle) status.title = renderedTitle;
     }
     renderAutomaticUsdtRebalanceStatus(panel.querySelector(`#${AUTOMATIC_USDT_REBALANCE_STATUS_ID}`));
+    renderChartContractAlertRow(panel.querySelector(`#${CHART_CONTRACT_ALERT_ID}`));
     if (rebalanceButton) {
       const shouldShow = usdtRebalanceEligible || Boolean(usdtRebalanceTask);
       const hidden = !shouldShow;
@@ -8164,6 +8190,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
       `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(USDT_REBALANCE_COPY.tooltip)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
       '</div>',
       `<div id="${AUTOMATIC_USDT_REBALANCE_STATUS_ID}" hidden style="height:18px;margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
+      `<div id="${CHART_CONTRACT_ALERT_ID}" role="alert" hidden style="height:18px;margin-top:6px;color:${INPUT_ERROR_COLOR};font-size:13px;font-weight:500;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;"></div>`,
     ].join('');
     panelPositionInvalidated = true;
     document.body.appendChild(panel);

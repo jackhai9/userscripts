@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.242
+// @version      2.7.243
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -316,6 +316,34 @@
     return localizedText(
       `优先根据最新 ${count} 条成交价；价格变化不足时自动扩大范围，重新计算推荐精度。`,
       `Use the latest ${count} trades first; expand the range when price movement is insufficient and recalculate the recommended precision.`
+    );
+  }
+  var CHART_CONTRACT_REASONS = Object.freeze({
+    bootstrap: localizedText("图表启动钩子", "chart bootstrap hook"),
+    "api-shape": localizedText("图表接口结构", "chart API shape"),
+    "subscription-batch": localizedText("保存监听注册顺序", "save listener registration order"),
+    "listener-shape": localizedText("保存监听函数结构", "save listener body"),
+    "removal-hook": localizedText("挂单线移除钩子", "order-line removal hook"),
+    "removal-capture": localizedText("挂单线移除路径", "order-line removal path"),
+    "chart-model": localizedText("图表模型接口", "chart model API"),
+    "order-tool-name": localizedText("挂单线类型名", "order-line tool name"),
+    "event-type": localizedText("画线事件类型", "drawing event type")
+  });
+  var CHART_CONTRACT_ALERT = localizedText(
+    "⚠ 图表保存保护失效，需更新脚本",
+    "⚠ Chart save protection broken; update the script"
+  );
+  function formatChartContractAlertTooltip(entries) {
+    if (!Array.isArray(entries) || !entries.length) throw new Error("Chart contract alert requires at least one break");
+    const reasons = entries.map(({ reason }) => {
+      const label = CHART_CONTRACT_REASONS[reason];
+      if (!label) throw new Error(`Unknown chart contract break: ${reason}`);
+      return label;
+    });
+    const details = entries.map(({ detail }) => detail).join("; ");
+    return localizedText(
+      `币安图表依赖已变化：${reasons.map((label) => label.zhCN).join("、")}。已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压。细节：${details}`,
+      `Binance chart dependency changed: ${reasons.map((label) => label.en).join(", ")}. Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again. Details: ${details}`
     );
   }
 
@@ -3282,15 +3310,36 @@
   ];
   var STUDY_SAVE = /^\(\)=>\{(?<ready>[$\w]+)\.current&&(?<save>[$\w]+)\(\)\}$/;
   var DRAWING_SAVE = /^\((?<id>[$\w]+),(?<type>[$\w]+)\)=>\{if\((?<ready>[$\w]+)\.current\)switch\(\k<type>\)\{case"click":case"move":return;default:(?<save>[$\w]+)\(\)\}\}$/;
+  var SOURCE_EXCERPT_LENGTH = 240;
+  var MISSED_REMOVAL_LIMIT = 3;
+  var MISSED_REMOVAL_BURST_MS = 1e3;
+  var ORDER_TOOL = "LineToolOrder";
+  var DRAWING_EVENT_TYPES = /* @__PURE__ */ new Set([
+    "click",
+    "move",
+    "remove",
+    "hide",
+    "show",
+    "create",
+    "properties_changed",
+    "points_changed"
+  ]);
+  var ORDER_LINE_CONTRACT_CHECK_MS = 3e4;
+  var ORDER_LINE_CONTRACT_CHECKS = 20;
   var filteredApis = /* @__PURE__ */ new WeakSet();
   function hasOrderLineSaveListener(api) {
     return filteredApis.has(api);
   }
-  function identifyHostSubscription() {
+  function sourceExcerpt(callback) {
+    if (typeof callback !== "function") return String(callback);
+    return Function.prototype.toString.call(callback).slice(0, SOURCE_EXCERPT_LENGTH);
+  }
+  function identifyHostSubscription(report) {
     let next = 0;
     let study;
+    let studyCallback;
     let inspected = false;
-    return (event, callback) => {
+    const identify = (event, callback) => {
       if (inspected) return false;
       if (event === HOST_TOPICS[0]) {
         next = 1;
@@ -3305,13 +3354,20 @@
       }
       next++;
       if (event === "study_properties_changed") {
+        studyCallback = callback;
         study = typeof callback === "function" && STUDY_SAVE.exec(Function.prototype.toString.call(callback))?.groups;
       }
       if (event !== "drawing_event") return false;
       inspected = true;
       const drawing = typeof callback === "function" && DRAWING_SAVE.exec(Function.prototype.toString.call(callback))?.groups;
-      return !!(study && drawing && study.ready === drawing.ready && study.save === drawing.save && new Set(Object.values(drawing)).size === 4);
+      const matched = !!(study && drawing && study.ready === drawing.ready && study.save === drawing.save && new Set(Object.values(drawing)).size === 4);
+      if (!matched) {
+        report("listener-shape", `study: ${sourceExcerpt(studyCallback)} | drawing: ${sourceExcerpt(callback)}`);
+      }
+      return matched;
     };
+    identify.inspected = () => inspected;
+    return identify;
   }
   function chartModels(collection) {
     const models = [];
@@ -3327,15 +3383,22 @@
     }
     return models;
   }
-  function isLiveOrderLine(collection, id) {
+  var CHART_MODEL_SHAPE = "Chart widgets no longer expose getAll() → hasModel/model().model().getLineToolById";
+  function isLiveOrderLine(collection, id, report) {
     try {
       const models = chartModels(collection);
-      if (!models) return false;
+      if (!models) {
+        report("chart-model", CHART_MODEL_SHAPE);
+        return false;
+      }
       let found = false;
       for (const model of models) {
         const source = model.getLineToolById(id);
         if (!source) continue;
-        if (source.toolname !== "LineToolOrder") return false;
+        if (source.toolname !== ORDER_TOOL) {
+          if (/order/i.test(source.toolname)) report("order-tool-name", `Order line tool is now named ${source.toolname}`);
+          return false;
+        }
         found = true;
       }
       return found;
@@ -3345,18 +3408,25 @@
   }
   function removingOrderId(source) {
     try {
-      return source?.toolname === "LineToolOrder" && typeof source.id === "function" ? source.id() : null;
+      return source?.toolname === ORDER_TOOL && typeof source.id === "function" ? source.id() : null;
     } catch {
       return null;
     }
   }
-  function trackRemovals(collection) {
+  function trackRemovals(collection, report) {
     const models = chartModels(collection);
-    if (!models?.length) return null;
+    if (!models) {
+      report("chart-model", CHART_MODEL_SHAPE);
+      return null;
+    }
+    if (!models.length) return null;
     let owner = Object.getPrototypeOf(models[0]);
     while (owner && !Object.hasOwn(owner, "removeSource")) owner = Object.getPrototypeOf(owner);
     const descriptor = owner && Object.getOwnPropertyDescriptor(owner, "removeSource");
-    if (!descriptor?.writable || typeof descriptor.value !== "function") return null;
+    if (!descriptor?.writable || typeof descriptor.value !== "function") {
+      report("removal-hook", "Chart model prototype no longer has a writable removeSource method");
+      return null;
+    }
     const removeSource = descriptor.value;
     let removing = null;
     Object.defineProperty(owner, "removeSource", {
@@ -3373,15 +3443,22 @@
     });
     return (id) => removing != null && removing === id;
   }
-  function observeSubscriptions(api, stats) {
+  function observeSubscriptions(api, stats, report, now) {
     const collection = api?._chartWidgetCollection;
-    if (typeof collection?.getAll !== "function" || typeof api.subscribe !== "function" || typeof api.unsubscribe !== "function") return;
+    if (typeof collection?.getAll !== "function" || typeof api.subscribe !== "function" || typeof api.unsubscribe !== "function") {
+      report("api-shape", "tradingViewApi no longer exposes _chartWidgetCollection.getAll, subscribe and unsubscribe");
+      return null;
+    }
     const { subscribe, unsubscribe } = api;
-    const identify = identifyHostSubscription();
+    const identify = identifyHostSubscription(report);
     let hostCallback;
     let listener;
     let registrations = 0;
     let isRemoving;
+    const liveOrders = /* @__PURE__ */ new Set();
+    let capturedRemovals = 0;
+    let missedRemovals = 0;
+    let lastMissedRemovalAt = -Infinity;
     api.subscribe = function(event, callback) {
       if (!hostCallback && (this !== api || event !== "drawing_event")) {
         let accepted = false;
@@ -3396,7 +3473,7 @@
       if (!hostCallback && identify(event, callback)) {
         hostCallback = callback;
         try {
-          isRemoving = trackRemovals(collection);
+          isRemoving = trackRemovals(collection, report);
         } catch {
           return Reflect.apply(subscribe, this, arguments);
         }
@@ -3406,9 +3483,26 @@
       }
       if (!listener) {
         listener = function(id, type) {
-          if (type === "remove" && isRemoving(id) || type === "properties_changed" && isLiveOrderLine(collection, id)) {
+          if (!DRAWING_EVENT_TYPES.has(type)) report("event-type", `Unknown drawing_event type: ${String(type)}`);
+          if (type === "properties_changed" && isLiveOrderLine(collection, id, report)) {
+            liveOrders.add(id);
             stats.skipped++;
             return;
+          }
+          if (type === "remove") {
+            if (isRemoving(id)) {
+              capturedRemovals++;
+              liveOrders.delete(id);
+              stats.skipped++;
+              return;
+            }
+            if (liveOrders.delete(id) && capturedRemovals === 0) {
+              const at = now();
+              if (at - lastMissedRemovalAt >= MISSED_REMOVAL_BURST_MS && ++missedRemovals === MISSED_REMOVAL_LIMIT) {
+                report("removal-capture", `${missedRemovals} separate order-line removal bursts were emitted outside removeSource`);
+              }
+              lastMissedRemovalAt = at;
+            }
           }
           return Reflect.apply(callback, this, arguments);
         };
@@ -3428,27 +3522,93 @@
       }
       return Reflect.apply(unsubscribe, this, arguments);
     };
+    return () => {
+      if (registrations > 0) return null;
+      if (hostCallback && isRemoving) return null;
+      if (hostCallback) return "removal-hook";
+      if (identify.inspected()) return null;
+      return "subscription-batch";
+    };
   }
-  function observeOrderLineSaves(document2) {
+  var UNFILTERED_DETAIL = {
+    "removal-hook": "Save listener recognized, but order removals could not be tracked on this chart",
+    "subscription-batch": `Host subscription batch ${HOST_TOPICS.join(" → ")} was not observed`
+  };
+  function observeOrderLineSaves(document2, { onContractBreak, setTimeout: setTimeout2, now }) {
+    if (typeof onContractBreak !== "function" || typeof setTimeout2 !== "function" || typeof now !== "function") {
+      throw new Error("Order-line saves require a contract break handler, setTimeout and now");
+    }
     const stats = { matched: 0, skipped: 0 };
-    const observed = /* @__PURE__ */ new WeakSet();
+    const breaks = [];
+    const reported = /* @__PURE__ */ new Set();
+    const unfilteredReaders = /* @__PURE__ */ new WeakMap();
+    const frameStates = /* @__PURE__ */ new WeakMap();
+    const pendingReady = /* @__PURE__ */ new WeakSet();
+    function report(reason, detail) {
+      if (reported.has(reason)) return;
+      reported.add(reason);
+      const entry = Object.freeze({ reason, detail });
+      breaks.push(entry);
+      queueMicrotask(() => onContractBreak(entry));
+    }
+    function checkFrame(frame, state) {
+      let previousApi = null;
+      let readyApi = null;
+      let remaining = ORDER_LINE_CONTRACT_CHECKS;
+      const tick = () => {
+        if (!frame.isConnected || frameStates.get(frame) !== state) return;
+        const api = frame.contentWindow?.tradingViewApi ?? null;
+        if (api && api === previousApi) {
+          if (!state.bootstrapFrame) {
+            report("bootstrap", `Chart API frame no longer matches iframe#tradingview_* inside .chart-widget-root (id: ${frame.id || "none"})`);
+            return;
+          }
+          const readUnfiltered = unfilteredReaders.get(api);
+          if (readUnfiltered !== void 0 && api === readyApi) {
+            const reason = readUnfiltered?.();
+            if (reason) report(reason, UNFILTERED_DETAIL[reason]);
+            return;
+          }
+          if (readUnfiltered !== void 0) readyApi = api;
+          else if (!pendingReady.has(frame.contentWindow)) {
+            report("bootstrap", "tradingViewApi exists but the innerWindowLoad → widgetReady hook never ran");
+            return;
+          }
+        }
+        previousApi = api;
+        if (--remaining > 0) setTimeout2(tick, ORDER_LINE_CONTRACT_CHECK_MS);
+      };
+      setTimeout2(tick, ORDER_LINE_CONTRACT_CHECK_MS);
+    }
     document2.addEventListener("load", ({ target: frame }) => {
-      if (frame.tagName !== "IFRAME" || !frame.id.startsWith("tradingview_") || !frame.closest(".chart-widget-root") || !frame.contentDocument) return;
+      if (frame.tagName !== "IFRAME" || !frame.contentDocument) return;
+      const state = { bootstrapFrame: frame.id.startsWith("tradingview_") && Boolean(frame.closest(".chart-widget-root")) };
+      frameStates.set(frame, state);
+      checkFrame(frame, state);
+      if (!state.bootstrapFrame) return;
       frame.addEventListener("load", () => queueMicrotask(() => {
         if (!frame.contentDocument) return;
         const win = frame.contentWindow;
         win.addEventListener("innerWindowLoad", () => {
-          if (typeof win.widgetReady !== "function") return;
+          if (typeof win.widgetReady !== "function") {
+            report("bootstrap", "TradingView bootstrap no longer defines widgetReady at innerWindowLoad");
+            return;
+          }
+          pendingReady.add(win);
           win.widgetReady(() => {
+            pendingReady.delete(win);
             const api = win.tradingViewApi;
-            if (!api || observed.has(api)) return;
-            observed.add(api);
-            observeSubscriptions(api, stats);
+            if (!api) {
+              report("bootstrap", "tradingViewApi is missing when widgetReady runs");
+              return;
+            }
+            if (unfilteredReaders.has(api)) return;
+            unfilteredReaders.set(api, observeSubscriptions(api, stats, report, now));
           });
         }, { capture: true, once: true });
       }), { once: true });
     }, true);
-    return () => ({ ...stats });
+    return () => ({ ...stats, breaks: [...breaks] });
   }
 
   // src/binance-orderbook-trade/core/chart-save-coalescer.js
@@ -6173,10 +6333,14 @@
   }
 
   // src/binance-orderbook-trade/chart-storage/install.js
-  function installChartWriteFilter() {
+  function installChartWriteFilter({ onOrderLineContractBreak }) {
     if (!isTopLevelTradingPage() || Object.hasOwn(self, "__BINANCE_CHART_STORAGE__")) return;
     const writeFilter = installUnchangedChartWriteFilter(self);
-    const orderLineSaves = observeOrderLineSaves(self.document);
+    const orderLineSaves = observeOrderLineSaves(self.document, {
+      onContractBreak: onOrderLineContractBreak,
+      setTimeout: self.setTimeout.bind(self),
+      now: () => self.performance.now()
+    });
     Object.defineProperty(self, "__BINANCE_CHART_STORAGE__", {
       value: Object.freeze({ ...writeFilter, orderLineSaves }),
       configurable: true
@@ -6290,7 +6454,15 @@
 
   // src/binance-orderbook-trade/index.user.js
   var activeCancelReceipts = null;
-  installChartWriteFilter();
+  var chartContractBreaks = [];
+  var renderChartContractAlert = null;
+  installChartWriteFilter({
+    onOrderLineContractBreak(entry) {
+      chartContractBreaks.push(entry);
+      console.error("[订单簿下单] Chart save protection dependency changed; native save is in effect", entry);
+      renderChartContractAlert?.();
+    }
+  });
   var hasCancellationAccountStream = installOrderSoundScope((order) => activeCancelReceipts?.observeOrderUpdate(order));
   (function initializeOrderbookTrade() {
     "use strict";
@@ -6353,6 +6525,7 @@
     const LADDER_STATUS_ID = "jh-binance-ladder-status";
     const LADDER_STATUS_ROW_ID = "jh-binance-ladder-status-row";
     const AUTOMATIC_USDT_REBALANCE_STATUS_ID = "jh-binance-auto-rebalance-status";
+    const CHART_CONTRACT_ALERT_ID = "jh-binance-chart-contract-alert";
     const USDT_REBALANCE_ACTION_ID = "jh-binance-usdt-rebalance-action";
     const MULTIPLIER_PRESS_FEEDBACK_ATTR = "data-jh-press-feedback";
     const ORDERBOOK_PRECISION_RECOMMENDATION_ID = "jh-binance-orderbook-precision-recommendation";
@@ -7095,6 +7268,17 @@
       if (element.title !== title) element.title = title;
       if (element.hidden !== (text === "")) element.hidden = text === "";
     }
+    function renderChartContractAlertRow(element) {
+      if (!element) return;
+      const hidden = chartContractBreaks.length === 0;
+      if (element.hidden !== hidden) element.hidden = hidden;
+      if (hidden) return;
+      const text = ui(CHART_CONTRACT_ALERT);
+      const title = ui(formatChartContractAlertTooltip(chartContractBreaks));
+      if (element.textContent !== text) element.textContent = text;
+      if (element.title !== title) element.title = title;
+    }
+    renderChartContractAlert = () => renderChartContractAlertRow(document.getElementById(CHART_CONTRACT_ALERT_ID));
     function setAutomaticUsdtRebalanceStatus(text, title = text, pending = false) {
       automaticUsdtRebalanceStatusPending = pending;
       automaticUsdtRebalanceStatusText = localizeKnownUiStatus(text);
@@ -12725,6 +12909,7 @@
         if (status.title !== renderedTitle) status.title = renderedTitle;
       }
       renderAutomaticUsdtRebalanceStatus(panel.querySelector(`#${AUTOMATIC_USDT_REBALANCE_STATUS_ID}`));
+      renderChartContractAlertRow(panel.querySelector(`#${CHART_CONTRACT_ALERT_ID}`));
       if (rebalanceButton) {
         const shouldShow = usdtRebalanceEligible || Boolean(usdtRebalanceTask);
         const hidden = !shouldShow;
@@ -13059,7 +13244,8 @@
         `<span id="${LADDER_STATUS_ID}" title="${initialStatus}" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;">${initialStatus}</span>`,
         `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(USDT_REBALANCE_COPY.tooltip)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
         "</div>",
-        `<div id="${AUTOMATIC_USDT_REBALANCE_STATUS_ID}" hidden style="height:18px;margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`
+        `<div id="${AUTOMATIC_USDT_REBALANCE_STATUS_ID}" hidden style="height:18px;margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
+        `<div id="${CHART_CONTRACT_ALERT_ID}" role="alert" hidden style="height:18px;margin-top:6px;color:${INPUT_ERROR_COLOR};font-size:13px;font-weight:500;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;"></div>`
       ].join("");
       panelPositionInvalidated = true;
       document.body.appendChild(panel);

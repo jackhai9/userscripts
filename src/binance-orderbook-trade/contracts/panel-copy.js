@@ -163,3 +163,38 @@ export function formatPrecisionRefreshTooltip(tradeCount) {
     `Use the latest ${count} trades first; expand the range when price movement is insufficient and recalculate the recommended precision.`,
   );
 }
+
+const CHART_CONTRACT_REASONS = Object.freeze({
+  bootstrap: localizedText('图表启动钩子', 'chart bootstrap hook'),
+  'api-shape': localizedText('图表接口结构', 'chart API shape'),
+  'subscription-batch': localizedText('保存监听注册顺序', 'save listener registration order'),
+  'listener-shape': localizedText('保存监听函数结构', 'save listener body'),
+  'removal-hook': localizedText('挂单线移除钩子', 'order-line removal hook'),
+  'removal-capture': localizedText('挂单线移除路径', 'order-line removal path'),
+  'chart-model': localizedText('图表模型接口', 'chart model API'),
+  'order-tool-name': localizedText('挂单线类型名', 'order-line tool name'),
+  'event-type': localizedText('画线事件类型', 'drawing event type'),
+});
+
+export const CHART_CONTRACT_ALERT = localizedText(
+  '⚠ 图表保存保护失效，需更新脚本',
+  '⚠ Chart save protection broken; update the script',
+);
+
+/**
+ * Explains which Binance/TradingView dependency of the order-line save filter no
+ * longer matches. Unknown reasons are a programming error, not a display fallback.
+ */
+export function formatChartContractAlertTooltip(entries) {
+  if (!Array.isArray(entries) || !entries.length) throw new Error('Chart contract alert requires at least one break');
+  const reasons = entries.map(({ reason }) => {
+    const label = CHART_CONTRACT_REASONS[reason];
+    if (!label) throw new Error(`Unknown chart contract break: ${reason}`);
+    return label;
+  });
+  const details = entries.map(({ detail }) => detail).join('; ');
+  return localizedText(
+    `币安图表依赖已变化：${reasons.map(label => label.zhCN).join('、')}。已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压。细节：${details}`,
+    `Binance chart dependency changed: ${reasons.map(label => label.en).join(', ')}. Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again. Details: ${details}`,
+  );
+}

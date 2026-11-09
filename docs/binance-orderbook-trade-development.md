@@ -52,6 +52,12 @@ it never touches Binance's module queue. It stays installed for the document
 lifetime, including after SPA navigation away from a trading route. See
 [the storage contract](binance-chart-storage-development.md).
 
+The order-line filter does depend on Binance's listener registration and
+TradingView's chart model. When either stops matching, Binance's native save
+stays in effect and the panel shows a persistent red alert naming the changed
+dependency; see
+[dependency break alerts](binance-chart-storage-development.md#dependency-break-alerts).
+
 ### Order sound scope
 
 Binance plays one trade sound, with no symbol, in every open futures tab whenever
