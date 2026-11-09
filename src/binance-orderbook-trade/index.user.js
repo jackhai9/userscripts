@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.241
+// @version      2.7.242
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -265,6 +265,7 @@ import {
   getBinanceChartOrdersTarget as getBinanceChartOrdersTargetDom,
 } from './dom/chart-orders.js';
 import { showUsdtRebalanceDialog } from './dom/usdt-rebalance-dialog.js';
+import { createPanelPlacementObserver } from './dom/panel-placement-observer.js';
 import { installChartWriteFilter } from './chart-storage/install.js';
 import { installOrderSoundScope } from './order-sound/install.js';
 
@@ -485,6 +486,8 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
   const TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS = 3;
   const TRADE_ACTION_BUTTON_READY_TIMEOUT_MS = TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS * 1000;
   const ROUTE_WATCHDOG_MS = 5000;
+  /** Native forms mount within seconds; longer waits mean the page cannot host the panel. */
+  const PANEL_PLACEMENT_WAIT_LIMIT_MS = 15000;
 
   let lastTs = 0;
   let isEditingMultiplier = false;
@@ -548,6 +551,18 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
   let panelPositionInvalidated = true;
   let panelObservedSize = '';
   let panelResizeObserver = null;
+  const panelPlacementObserver = createPanelPlacementObserver(document, {
+    panelId: PANEL_ID,
+    spacerId: SPACER_ID,
+    waitLimitMs: PANEL_PLACEMENT_WAIT_LIMIT_MS,
+    setTimeout: window.setTimeout.bind(window),
+    clearTimeout: window.clearTimeout.bind(window),
+    onReady() {
+      if (document.hidden || !isFuturesTradingPage()) return;
+      panelPositionInvalidated = true;
+      scheduleRenderPanel();
+    },
+  });
   let ladderSubmitCaptureSequence = 0;
   let activeLadderSubmitCapture = null;
   const multiplierPressFeedbackTimers = new WeakMap();
@@ -8047,7 +8062,10 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
     );
     const anchorRect = spacer?.getBoundingClientRect() || null;
     placePanelFloating(panel, anchorRect);
-    return Boolean(anchorRect?.width && anchorRect?.height);
+    const positioned = Boolean(anchorRect?.width && anchorRect?.height);
+    if (positioned) panelPlacementObserver.stop();
+    else if (!document.hidden && isFuturesTradingPage()) panelPlacementObserver.wait(insertionPoint, spacer);
+    return positioned;
   }
 
   function observePanelSize(panel) {
@@ -8518,6 +8536,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
   }
 
   function removePanel() {
+    panelPlacementObserver.stop();
     panelResizeObserver?.disconnect();
     panelResizeObserver = null;
     panelObservedSize = '';
@@ -9067,6 +9086,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
   }
 
   function stopTradingTimers({ preserveTradeUiMutationWait = false } = {}) {
+    panelPlacementObserver.stop();
     stopTradeModeTabObserver();
     stopAccountPositionObserver();
     stopOrderbookPrecisionObserver();
@@ -9102,7 +9122,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
       checkSymbolChangeForLeverage();
     }
 
-    const needsRender = uiLocaleChanged || !wasTrading || !document.getElementById(PANEL_ID);
+    const needsRender = panelPositionInvalidated || uiLocaleChanged || !wasTrading || !document.getElementById(PANEL_ID);
     startTradingTimers();
     scheduleChartOrdersRecovery();
     if (needsRender) scheduleRenderPanel();
@@ -9138,6 +9158,7 @@ const hasCancellationAccountStream = installOrderSoundScope(order => activeCance
 
   window.addEventListener('resize', scheduleDepthProfileSync);
   window.addEventListener('pagehide', () => {
+    panelPlacementObserver.stop();
     stopDepthProfileObserver();
     stopDepthProfileSession();
     removeDepthProfileRuntimeView();

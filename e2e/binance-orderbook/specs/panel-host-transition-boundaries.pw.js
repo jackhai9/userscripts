@@ -1,7 +1,8 @@
 import { test, expect } from '../test.js';
-import { createCancelScenario } from '../scenarios/cancel-current-symbol.js';
+import { POSITION_SETS, createCancelScenario } from '../scenarios/cancel-current-symbol.js';
 import { openUserscriptScenario, readFixtureState } from '../helpers/userscript-page.js';
 import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-clock.js';
+import { installSimulatedVisibility, setSimulatedVisibility } from '../helpers/simulated-visibility.js';
 import {
   DEPTH_LABEL_LEVELS,
   DEPTH_LABEL_SYMBOL,
@@ -16,9 +17,9 @@ const SPACER = '#jh-binance-close-qty-multiplier-spacer';
 const INPUT = '#jh-binance-close-qty-multiplier-input';
 const DEPTH_KEY = 'jh_binance_depth_profile_enabled_v1';
 
-async function openReadyPanel(page) {
+async function openReadyPanel(page, scenario = createCancelScenario()) {
   await installScenarioClock(page);
-  const host = await openUserscriptScenario(page, createCancelScenario());
+  const host = await openUserscriptScenario(page, scenario);
   await expect(page.locator('[data-orderbook-precision-value="0.01"]')).toBeEnabled();
   await pauseScenarioClock(page);
   return host;
@@ -30,6 +31,31 @@ async function expectNoFinancialActions(page) {
   ].includes(event.type))).toEqual([]);
 }
 
+/** Track native observer ownership without replacing mutation or layout delivery. */
+async function observePlacementResources(page) {
+  await page.evaluate(() => {
+    const structural = new Set();
+    const sizes = new Set();
+    const NativeMutationObserver = window.MutationObserver;
+    const NativeResizeObserver = window.ResizeObserver;
+    window.MutationObserver = class extends NativeMutationObserver {
+      observe(target, options) {
+        super.observe(target, options);
+        if (target === document.documentElement) structural.add(this);
+      }
+      disconnect() { super.disconnect(); structural.delete(this); }
+    };
+    window.ResizeObserver = class extends NativeResizeObserver {
+      observe(target, options) {
+        super.observe(target, options);
+        if (target.id === 'jh-binance-close-qty-multiplier-spacer') sizes.add(this);
+      }
+      disconnect() { super.disconnect(); sizes.delete(this); }
+    };
+    window.__PLACEMENT_RESOURCES__ = () => ({ structural: structural.size, sizes: sizes.size });
+  });
+}
+
 async function publishDepthPreference(page, value) {
   await page.evaluate(({ key, value }) => {
     const oldValue = localStorage.getItem(key);
@@ -37,6 +63,88 @@ async function publishDepthPreference(page, value) {
     window.dispatchEvent(new StorageEvent('storage', { key, oldValue, newValue: value }));
   }, { key: DEPTH_KEY, value });
 }
+
+test('user sees the panel when the native form first mounts without waiting for the route watchdog', async ({ page }) => {
+  // Given the native form finishes initialization but has not committed its page placement.
+  await installScenarioClock(page);
+  const scenario = createCancelScenario({ positions: POSITION_SETS.current, ui: { tradeMode: 'CLOSE' } });
+
+  // When the generated installer observes the delayed native mount through its real startup lifecycle.
+  const host = await openUserscriptScenario(page, scenario, {
+    beforeOrderbook: `document.addEventListener('DOMContentLoaded', () => {
+      const node = document.querySelector('#trade-form');
+      window.__PENDING_NATIVE_FORM__ = { node, parent: node.parentElement, next: node.nextSibling };
+      node.remove();
+    }, { once: true });`,
+    async afterNavigation() {
+      await pauseScenarioClock(page);
+      await page.clock.runFor(1000);
+      await expect(page.locator(PANEL)).toHaveCSS('visibility', 'hidden');
+      await expect(page.locator(SPACER)).toHaveCount(0);
+
+      // When native rendering commits the form without a synthetic resize or route event.
+      await page.evaluate(() => {
+        const { node, parent, next } = window.__PENDING_NATIVE_FORM__;
+        parent.insertBefore(node, next);
+        delete window.__PENDING_NATIVE_FORM__;
+      });
+      await page.clock.runFor(100);
+
+      // Then the real installer displays one usable panel before the five-second watchdog.
+      await expect(page.locator(PANEL)).toHaveCSS('visibility', 'visible');
+      await expect(page.locator(SPACER)).toHaveCount(1);
+      await expect(page.locator(INPUT)).toHaveValue('1');
+      await expectNoFinancialActions(page);
+      await page.clock.resume();
+    },
+  });
+
+  // Then the complete startup also finishes without an uncaught userscript error.
+  expect(host.errors).toEqual([]);
+});
+
+test('user immediately regains an existing hidden panel when returning to the foreground', async ({ page }) => {
+  // Given a background startup creates a hidden panel before the form and account widgets mount.
+  await installScenarioClock(page);
+
+  // When the real generated installer transitions from background startup to the foreground.
+  const host = await openUserscriptScenario(page, createCancelScenario({
+    positions: POSITION_SETS.current, ui: { tradeMode: 'CLOSE' },
+  }), {
+    beforeOrderbook: `window.__STARTUP_HIDDEN__ = true;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.__STARTUP_HIDDEN__ });
+      document.addEventListener('DOMContentLoaded', () => {
+        const node = document.querySelector('#trade-form');
+        window.__PENDING_NATIVE_FORM__ = { node, parent: node.parentElement, next: node.nextSibling };
+        node.remove();
+        document.querySelector('#account-widget').remove();
+      }, { once: true });`,
+    async afterNavigation() {
+      await pauseScenarioClock(page);
+      await page.clock.runFor(1000);
+      await expect(page.locator(PANEL)).toHaveCSS('visibility', 'hidden');
+
+      // When the native form commits in the background and the user returns to the foreground.
+      await page.evaluate(() => {
+        const { node, parent, next } = window.__PENDING_NATIVE_FORM__;
+        parent.insertBefore(node, next);
+        delete window.__PENDING_NATIVE_FORM__;
+        window.__STARTUP_HIDDEN__ = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.clock.runFor(100);
+
+      // Then the existing panel is usable without another five-second watchdog cycle.
+      await expect(page.locator(PANEL)).toHaveCSS('visibility', 'visible');
+      await expect(page.locator(SPACER)).toHaveCount(1);
+      await expectNoFinancialActions(page);
+      await page.clock.resume();
+    },
+  });
+
+  // Then the foreground lifecycle completes without an uncaught userscript error.
+  expect(host.errors).toEqual([]);
+});
 
 test('user keeps the panel hidden until the native form restores its missing placement anchor', async ({ page }) => {
   // Given the rendered panel retains a user multiplier beside the native trade tabs.
@@ -62,12 +170,11 @@ test('user keeps the panel hidden until the native form restores its missing pla
   await expect(page.locator(PANEL)).toHaveCSS('pointer-events', 'none');
   expect(await panel.evaluate(node => node === document.querySelector('#jh-binance-close-qty-multiplier-panel'))).toBe(true);
 
-  // When the same native tabs mount again and layout is observed.
+  // When the same native tabs mount again without a window resize.
   await page.evaluate(() => {
     const { node, parent, next } = window.__DETACHED_TRADE_ANCHOR__;
     parent.insertBefore(node, next);
     delete window.__DETACHED_TRADE_ANCHOR__;
-    window.dispatchEvent(new Event('resize'));
   });
   await page.clock.runFor(100);
 
@@ -85,6 +192,7 @@ test('user keeps the panel hidden until the native form restores its missing pla
 test('user cannot interact with the floating panel while its native form has no visible layout area', async ({ page }) => {
   // Given the native order form provides the panel's measured placement rectangle.
   const host = await openReadyPanel(page);
+  await observePlacementResources(page);
 
   // When the native page hides its form column during a layout transition.
   await page.locator('#trade-form').evaluate(node => { node.style.display = 'none'; });
@@ -98,19 +206,83 @@ test('user cannot interact with the floating panel while its native form has no 
     const { width, height } = node.getBoundingClientRect();
     return { width, height };
   })).toEqual({ width: 0, height: 0 });
+  expect(await page.evaluate(() => window.__PLACEMENT_RESOURCES__())).toEqual({ structural: 1, sizes: 1 });
 
-  // When the native form becomes visible again and the browser publishes its resize.
+  // When several frames pass with the same zero-area native layout.
+  await page.evaluate(() => {
+    const records = [];
+    const observer = new MutationObserver(batch => records.push(...batch));
+    for (const selector of ['#jh-binance-close-qty-multiplier-panel', '#jh-binance-close-qty-multiplier-spacer']) {
+      observer.observe(document.querySelector(selector), { subtree: true, childList: true, characterData: true, attributes: true });
+    }
+    window.__ZERO_AREA_MUTATIONS__ = { observer, records };
+  });
+  await page.clock.runFor(200);
+
+  // Then script-owned rendering has settled instead of feeding its own observer indefinitely.
+  expect(await page.evaluate(() => {
+    const { observer, records } = window.__ZERO_AREA_MUTATIONS__;
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+    delete window.__ZERO_AREA_MUTATIONS__;
+    return records.map(record => ({ type: record.type, attribute: record.attributeName }));
+  })).toEqual([]);
+
+  // When the native form becomes visible again without a window resize.
   await page.locator('#trade-form').evaluate(node => node.style.removeProperty('display'));
-  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  // Size notifications follow real rendering, not the paused clock; the userscript's earlier
+  // observer is notified no later than this one, so its frame request exists before time advances.
+  await page.locator(SPACER).evaluate(spacer => new Promise(resolve => {
+    const observer = new ResizeObserver(entries => {
+      if (!entries.some(({ contentRect }) => contentRect.width > 0 && contentRect.height > 0)) return;
+      observer.disconnect();
+      resolve();
+    });
+    observer.observe(spacer);
+  }));
   await page.clock.runFor(100);
 
   // Then the panel becomes available at the restored native anchor without a new action.
   await expect(page.locator(PANEL)).toBeVisible();
   await expect(page.locator(PANEL)).toHaveCSS('pointer-events', 'auto');
   await expect(page.locator(INPUT)).toHaveValue('1');
+  expect(await page.evaluate(() => window.__PLACEMENT_RESOURCES__())).toEqual({ structural: 0, sizes: 0 });
   await expectNoFinancialActions(page);
   expect(host.errors).toEqual([]);
 });
+
+for (const transition of ['hidden', 'route exit', 'pagehide']) {
+  test(`user releases pending placement observers on ${transition}`, async ({ page }) => {
+    // Given the panel is waiting for a native form with no layout area.
+    const host = await openReadyPanel(page, createCancelScenario({
+      positions: POSITION_SETS.current, ui: { tradeMode: 'CLOSE' },
+    }));
+    await installSimulatedVisibility(page);
+    await observePlacementResources(page);
+    await page.locator('#trade-form').evaluate(node => { node.style.display = 'none'; });
+    await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+    await page.clock.runFor(100);
+    await expect(page.locator(PANEL)).toHaveCSS('visibility', 'hidden');
+    expect(await page.evaluate(() => window.__PLACEMENT_RESOURCES__())).toEqual({ structural: 1, sizes: 1 });
+
+    // When the page lifecycle no longer permits placement observation.
+    if (transition === 'hidden') await setSimulatedVisibility(page, true);
+    else if (transition === 'route exit') await page.evaluate(() => history.pushState({}, '', '/zh-CN/markets'));
+    else await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+
+    // Then both temporary observers disconnect before any later host publication.
+    expect(await page.evaluate(() => window.__PLACEMENT_RESOURCES__())).toEqual({ structural: 0, sizes: 0 });
+
+    // When the inactive native form later regains layout area.
+    await page.locator('#trade-form').evaluate(node => node.style.removeProperty('display'));
+    await page.clock.runFor(100);
+
+    // Then inactive observation stays released and never performs a financial action.
+    expect(await page.evaluate(() => window.__PLACEMENT_RESOURCES__())).toEqual({ structural: 0, sizes: 0 });
+    await expectNoFinancialActions(page);
+    expect(host.errors).toEqual([]);
+  });
+}
 
 test('user keeps one correctly owned floating panel after the host reparents its DOM during layout', async ({ page }) => {
   // Given a ready floating panel has an established native form anchor.
