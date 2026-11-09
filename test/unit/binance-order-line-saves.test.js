@@ -554,8 +554,10 @@ async function mountBootstrap(document, { innerWindowLoad = true, widgetReady = 
 }
 
 test('user is alerted when the TradingView bootstrap no longer defines widgetReady', async t => {
-  // Given the bootstrap document finishes without the readiness hook.
+  // Given a chart page observing TradingView frames.
   const page = chartPage(t);
+
+  // When the bootstrap document finishes without the readiness hook.
   await mountBootstrap(page, { widgetReady: false });
 
   // Then the bootstrap change is reported immediately.

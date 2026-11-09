@@ -164,7 +164,14 @@ test('user reads which chart dependencies changed and what the native fallback m
 
 test('user never sees an alert for an unknown or empty chart dependency report', () => {
   // Given reports that the filter can never produce.
-  // When they are formatted, then the programming error is thrown instead of displayed.
-  assert.throws(() => formatChartContractAlertTooltip([{ reason: 'renamed', detail: 'x' }]), /Unknown chart contract break: renamed/);
-  assert.throws(() => formatChartContractAlertTooltip([]), /at least one break/);
+  const unknown = [{ reason: 'renamed', detail: 'x' }];
+  const empty = [];
+
+  // When they are formatted.
+  const formatUnknown = () => formatChartContractAlertTooltip(unknown);
+  const formatEmpty = () => formatChartContractAlertTooltip(empty);
+
+  // Then the programming error is thrown instead of displayed.
+  assert.throws(formatUnknown, /Unknown chart contract break: renamed/);
+  assert.throws(formatEmpty, /at least one break/);
 });
