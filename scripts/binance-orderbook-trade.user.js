@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.241
+// @version      2.7.242
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -5971,6 +5971,114 @@
     });
   }
 
+  // src/binance-orderbook-trade/dom/panel-placement-observer.js
+  function createPanelPlacementObserver(document2, {
+    panelId,
+    spacerId,
+    onReady,
+    waitLimitMs,
+    setTimeout: setTimeout2,
+    clearTimeout: clearTimeout2
+  }) {
+    if (!(waitLimitMs > 0) || typeof setTimeout2 !== "function" || typeof clearTimeout2 !== "function") {
+      throw new Error("Panel placement observer requires a positive wait limit and timer functions");
+    }
+    const view = document2.defaultView;
+    const ownedSelector = `#${panelId}, #${spacerId}`;
+    let mutationObserver = null;
+    let resizeObserver = null;
+    let insertionPoint = null;
+    let spacer = null;
+    let expiryTimer = null;
+    let expired = false;
+    function isOwned(node) {
+      const element = node.nodeType === view.Node.ELEMENT_NODE ? node : node.parentElement;
+      return Boolean(element?.closest(ownedSelector));
+    }
+    function containsModeTabs(node) {
+      return node.nodeType === view.Node.ELEMENT_NODE && (node.id === "position-direction" || Boolean(node.querySelector("#position-direction")));
+    }
+    function isNativeModeTabsChange(nodes) {
+      for (const node of nodes) {
+        if (!isOwned(node) && containsModeTabs(node)) return true;
+      }
+      return false;
+    }
+    function hasNativeNode(nodes) {
+      for (const node of nodes) {
+        if (!isOwned(node)) return true;
+      }
+      return false;
+    }
+    function touchesNativePlacement(mutation) {
+      const tabs = document2.getElementById("position-direction");
+      if (mutation.type === "characterData") return Boolean(tabs?.contains(mutation.target));
+      if (isOwned(mutation.target)) return false;
+      if (isNativeModeTabsChange(mutation.addedNodes) || isNativeModeTabsChange(mutation.removedNodes)) return true;
+      if (!tabs || !hasNativeNode(mutation.addedNodes) && !hasNativeNode(mutation.removedNodes)) return false;
+      if (tabs.contains(mutation.target)) return true;
+      let owner = tabs;
+      for (let level = 0; owner && level < 4; level += 1, owner = owner.parentElement) {
+        if (owner === mutation.target) return true;
+      }
+      return false;
+    }
+    function stopSizeObservation() {
+      resizeObserver?.disconnect();
+      resizeObserver = null;
+      spacer = null;
+    }
+    function release() {
+      mutationObserver?.disconnect();
+      mutationObserver = null;
+      stopSizeObservation();
+      insertionPoint = null;
+      if (expiryTimer !== null) clearTimeout2(expiryTimer);
+      expiryTimer = null;
+    }
+    function stop() {
+      release();
+      expired = false;
+    }
+    function wait(nextInsertionPoint, nextSpacer) {
+      if (expired) return;
+      insertionPoint = nextInsertionPoint;
+      if (!mutationObserver) {
+        expiryTimer = setTimeout2(() => {
+          expiryTimer = null;
+          release();
+          expired = true;
+        }, waitLimitMs);
+        mutationObserver = new view.MutationObserver((mutations) => {
+          if (!mutations.some(touchesNativePlacement)) return;
+          const current = findTradePanelInsertionPoint(document2);
+          if (!current) {
+            insertionPoint = null;
+            stopSizeObservation();
+            return;
+          }
+          if (current.parent === insertionPoint?.parent && current.before === insertionPoint?.before && spacer?.isConnected) return;
+          onReady();
+        });
+        mutationObserver.observe(document2.documentElement, {
+          childList: true,
+          subtree: true,
+          characterData: true
+        });
+      }
+      if (spacer === nextSpacer) return;
+      stopSizeObservation();
+      if (!nextSpacer) return;
+      spacer = nextSpacer;
+      resizeObserver = new view.ResizeObserver((entries) => {
+        const entry = entries.find((candidate) => candidate.target === spacer);
+        if (entry && entry.contentRect.width > 0 && entry.contentRect.height > 0) onReady();
+      });
+      resizeObserver.observe(spacer);
+    }
+    return { wait, stop };
+  }
+
   // src/binance-orderbook-trade/chart-storage/json.js
   var nativeObjectSource = Function.prototype.toString.call(Object);
   var nativeObjectConstructors = /* @__PURE__ */ new WeakSet();
@@ -6383,6 +6491,7 @@
     const TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS = 3;
     const TRADE_ACTION_BUTTON_READY_TIMEOUT_MS = TRADE_ACTION_BUTTON_READY_TIMEOUT_SECONDS * 1e3;
     const ROUTE_WATCHDOG_MS = 5e3;
+    const PANEL_PLACEMENT_WAIT_LIMIT_MS = 15e3;
     let lastTs = 0;
     let isEditingMultiplier = false;
     let multiplierEditContext = null;
@@ -6444,6 +6553,18 @@
     let panelPositionInvalidated = true;
     let panelObservedSize = "";
     let panelResizeObserver = null;
+    const panelPlacementObserver = createPanelPlacementObserver(document, {
+      panelId: PANEL_ID,
+      spacerId: SPACER_ID,
+      waitLimitMs: PANEL_PLACEMENT_WAIT_LIMIT_MS,
+      setTimeout: window.setTimeout.bind(window),
+      clearTimeout: window.clearTimeout.bind(window),
+      onReady() {
+        if (document.hidden || !isFuturesTradingPage()) return;
+        panelPositionInvalidated = true;
+        scheduleRenderPanel();
+      }
+    });
     let ladderSubmitCaptureSequence = 0;
     let activeLadderSubmitCapture = null;
     const multiplierPressFeedbackTimers = /* @__PURE__ */ new WeakMap();
@@ -12850,7 +12971,10 @@
       );
       const anchorRect = spacer?.getBoundingClientRect() || null;
       placePanelFloating(panel, anchorRect);
-      return Boolean(anchorRect?.width && anchorRect?.height);
+      const positioned = Boolean(anchorRect?.width && anchorRect?.height);
+      if (positioned) panelPlacementObserver.stop();
+      else if (!document.hidden && isFuturesTradingPage()) panelPlacementObserver.wait(insertionPoint, spacer);
+      return positioned;
     }
     function observePanelSize(panel) {
       panelResizeObserver?.disconnect();
@@ -13280,6 +13404,7 @@
       }
     }
     function removePanel() {
+      panelPlacementObserver.stop();
       panelResizeObserver?.disconnect();
       panelResizeObserver = null;
       panelObservedSize = "";
@@ -13759,6 +13884,7 @@
       scheduleDepthProfileSync();
     }
     function stopTradingTimers({ preserveTradeUiMutationWait = false } = {}) {
+      panelPlacementObserver.stop();
       stopTradeModeTabObserver();
       stopAccountPositionObserver();
       stopOrderbookPrecisionObserver();
@@ -13791,7 +13917,7 @@
       } else {
         checkSymbolChangeForLeverage();
       }
-      const needsRender = uiLocaleChanged || !wasTrading || !document.getElementById(PANEL_ID);
+      const needsRender = panelPositionInvalidated || uiLocaleChanged || !wasTrading || !document.getElementById(PANEL_ID);
       startTradingTimers();
       scheduleChartOrdersRecovery();
       if (needsRender) scheduleRenderPanel();
@@ -13823,6 +13949,7 @@
     scheduleChartOrdersRecovery();
     window.addEventListener("resize", scheduleDepthProfileSync);
     window.addEventListener("pagehide", () => {
+      panelPlacementObserver.stop();
       stopDepthProfileObserver();
       stopDepthProfileSession();
       removeDepthProfileRuntimeView();

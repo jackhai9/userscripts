@@ -20,6 +20,22 @@ scripts/binance-orderbook-trade.user.js
 
 ## Runtime
 
+### Initial panel placement
+
+The floating trade panel stays hidden until the native header satisfies its
+insertion contract and its spacer has nonzero layout area. While a visible
+trading page is waiting, a temporary structural observer detects native header
+mounts without measuring layout or reacting to script-owned and market-data
+mutations. A temporary spacer ResizeObserver handles zero-area layout recovery.
+Both observers disconnect after successful placement, on page hiding, when
+leaving the trading route, and on pagehide. Each waiting episode also expires
+after 15 seconds: pages that never satisfy the contract (one-way mode, signed
+out, collapsed form) fall back to the 5-second route watchdog instead of keeping
+a document-wide observer, and failed renders cannot re-arm an expired episode
+until one of the events above starts a new one. Returning to the foreground schedules
+an invalidated panel immediately; first placement does not depend on the route
+watchdog. These observers do not change trading tasks or chart initialization.
+
 ### Chart saves and write filter
 
 `chart-storage/install.js` runs at document-start, before Binance code, on
