@@ -457,6 +457,27 @@ terminal) stopped a JCTUSDT continuous close at round 624/628 with
 `无法确认待替换订单`. The step status reads `待替换挂单已成交或消失，重新核对持仓`.
 Ordinary replacements keep stopping on a missing target.
 
+The order can also fill after its click, so its cancellation is rejected and no
+matching success receipt exists. During reduce-only recovery an unconfirmed
+cancellation then waits up to 3 seconds for the account stream to report that
+exact order (symbol, order ID and client order ID) `FILLED` for its whole
+preflight quantity. `FILLED` is terminal, so the page keeps the latest 200 trusted
+whole-order fill frames and each batch starts from them; a fill that arrives
+before the batch, or before the rejection, also counts. With that evidence the
+batch ends like a vanished target: nothing is counted as released, a timed-out
+request still in flight is no longer awaited (the filled order has nothing left
+to cancel), and the runner rereads the position with the same status
+`待替换挂单已成交或消失，重新核对持仓`. A partial fill, a foreign
+identity, or no frame keeps the existing stop `未收到匹配的成功撤单回执，已停止重新挂单`.
+On 2026-11-10 a JCTUSDT continuous close stopped that way at round 202/204 while
+its last four close orders filled in the same second and the position reached
+zero. Every unconfirmed cancellation logs `Cancellation not confirmed` with the
+order ID, the first observed reason (`request not dispatched`, `HTTP <status>`,
+`response code <code> status <status>`, `response for another order`, `no
+response <error>`, `unreadable response <error>`, `multiple requests`, `response
+timeout`, `account event timeout`) and whether the fill evidence arrived.
+Ordinary replacements stop on an unconfirmed cancellation even with a fill frame.
+
 Recovery rebuilds use the smaller of the confirmed API position quantity and the
 latest valid DOM closeable quantity. Missing DOM quantity never falls back to the
 API amount. Symbol, direction, precision, and option context stay pinned to the

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.246
+// @version      2.7.247
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -1932,8 +1932,13 @@
     const id = exactOrderId(target.orderId);
     return typeof target.symbol === "string" && target.symbol.length > 0 && id !== null && id === exactOrderId(order?.orderId) && typeof target.clientOrderId === "string" && target.clientOrderId.length > 0 && target.clientOrderId === order.clientOrderId && target.symbol === order.symbol;
   }
-  function createNativeCancelReceipts(timeoutMs) {
+  function isDecimalString(value) {
+    return typeof value === "string" && /^\d+(?:\.\d+)?$/.test(value);
+  }
+  function createNativeCancelReceipts(timeoutMs, priorFills = []) {
     const tickets = /* @__PURE__ */ new Map();
+    const fills = [...priorFills];
+    const fillWaiters = /* @__PURE__ */ new Set();
     let admissionClosed = false;
     function expect(target, quantity = null) {
       const key = exactOrderId(target.orderId);
@@ -1952,6 +1957,11 @@
         result: result.promise,
         released: released?.promise,
         hasStarted: false,
+        /** Why the result is unconfirmed, for diagnostics only; the first observed reason wins. */
+        failure: null,
+        noteFailure(reason) {
+          ticket.failure ?? (ticket.failure = reason);
+        },
         recordTerminal(order) {
           if (!quantity || !ticket.hasStarted || order.x !== "CANCELED" || order.X !== "CANCELED") return;
           if (!sameNativeOrder(target, { symbol: order.s, orderId: order.i, clientOrderId: order.c })) return;
@@ -1977,12 +1987,16 @@
         start() {
           outstanding += 1;
           if (ticket.hasStarted) {
+            ticket.noteFailure("multiple requests");
             ambiguous = true;
             admissionClosed = true;
             return;
           }
           ticket.hasStarted = true;
-          timer = setTimeout(() => ticket.finish(false), timeoutMs);
+          timer = setTimeout(() => {
+            ticket.noteFailure(httpConfirmed ? "account event timeout" : "response timeout");
+            ticket.finish(false);
+          }, timeoutMs);
           started.resolve();
         },
         receive(confirmed) {
@@ -2006,17 +2020,48 @@
       if (!ticket || !sameNativeOrder(ticket.target, request)) return;
       ticket.start();
       promise.then(async (response) => {
-        if (response.status !== 200) return false;
+        if (response.status !== 200) {
+          ticket.noteFailure(`HTTP ${response.status}`);
+          return false;
+        }
         const payload = await response.clone().json();
         const data = payload?.data;
-        return payload?.success === true && payload.code === "000000" && data?.status === "CANCELED" && (data.symbol === void 0 || data.symbol === request.symbol) && exactOrderId(data.orderId) === exactOrderId(request.orderId) && data.clientOrderId === request.clientOrderId;
-      }).then(ticket.receive, () => ticket.receive(false));
+        const cancelled = payload?.success === true && payload.code === "000000" && data?.status === "CANCELED";
+        if (!cancelled) {
+          ticket.noteFailure(`response code ${payload?.code} status ${data?.status}`);
+          return false;
+        }
+        const sameIdentity = (data.symbol === void 0 || data.symbol === request.symbol) && exactOrderId(data.orderId) === exactOrderId(request.orderId) && data.clientOrderId === request.clientOrderId;
+        if (!sameIdentity) ticket.noteFailure("response for another order");
+        return sameIdentity;
+      }, (error) => {
+        ticket.noteFailure(`no response ${error?.name}`);
+        return false;
+      }).then(ticket.receive, (error) => {
+        ticket.noteFailure(`unreadable response ${error?.name}`);
+        ticket.receive(false);
+      });
     }
     function observeOrderUpdate(order) {
       const ticket = tickets.get(exactOrderId(order?.i));
       ticket?.recordTerminal(order);
+      if (order?.x !== "TRADE" || order.X !== "FILLED") return;
+      fills.push(order);
+      for (const waiter of fillWaiters) waiter(order);
     }
-    return { expect, observe, observeOrderUpdate, get admissionClosed() {
+    function filled(target, quantity) {
+      const matches = (order) => sameNativeOrder(target, { symbol: order.s, orderId: order.i, clientOrderId: order.c }) && isDecimalString(order.q) && isDecimalString(order.z) && compareDecimalStrings(order.q, quantity.origQty) === 0 && compareDecimalStrings(order.z, order.q) === 0;
+      if (fills.some(matches)) return Promise.resolve(true);
+      return new Promise((resolve) => {
+        const waiter = (order) => {
+          if (!matches(order)) return;
+          fillWaiters.delete(waiter);
+          resolve(true);
+        };
+        fillWaiters.add(waiter);
+      });
+    }
+    return { expect, observe, observeOrderUpdate, filled, get admissionClosed() {
       return admissionClosed;
     } };
   }
@@ -6654,6 +6699,15 @@
 
   // src/binance-orderbook-trade/index.user.js
   var activeCancelReceipts = null;
+  var recentOrderFills = [];
+  var RECENT_ORDER_FILL_LIMIT = 200;
+  function observeAccountOrderUpdate(order) {
+    if (order?.x === "TRADE" && order.X === "FILLED") {
+      recentOrderFills.push(order);
+      if (recentOrderFills.length > RECENT_ORDER_FILL_LIMIT) recentOrderFills.shift();
+    }
+    activeCancelReceipts?.observeOrderUpdate(order);
+  }
   var dependencyBreaks = [];
   var renderDependencyAlert = null;
   function reportDependencyBreak(area) {
@@ -6670,7 +6724,7 @@
     onWriteFilterContractBreak: reportDependencyBreak("chart-write")
   });
   var hasCancellationAccountStream = installOrderSoundScope(
-    (order) => activeCancelReceipts?.observeOrderUpdate(order),
+    observeAccountOrderUpdate,
     { onContractBreak: reportDependencyBreak("trade-sound") }
   );
   (function initializeOrderbookTrade() {
@@ -6778,6 +6832,7 @@
     ];
     const LADDER_SUBMIT_START_TIMEOUT_MS = 3500;
     const LADDER_SUBMIT_RESPONSE_TIMEOUT_MS = 12e3;
+    const CANCEL_FILL_EVIDENCE_TIMEOUT_MS = 3e3;
     const LADDER_ACTION_FEEDBACK_MIN_MS = 240;
     const CONTINUOUS_CLOSE_POSITION_CHECK_MS = 1e3;
     const MULTIPLIER_PRESS_FEEDBACK_MS = 140;
@@ -10557,7 +10612,7 @@
     }
     async function cancelOpenOrderRowsForPlan(targets, plan, progress, setExecutionStatus, abortSignal, options) {
       if (activeCancelReceipts) throw new Error("已有撤单任务正在执行");
-      const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS);
+      const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS, recentOrderFills);
       const cancelledIds = /* @__PURE__ */ new Set();
       const reduceOnlyRecovery = options?.strategy === "confirmed_reduce_only_conflict";
       let targetLeftList = false;
@@ -10605,8 +10660,21 @@
               const detail = localizedText("单行撤单确认弹窗已打开", "Single-order cancellation dialog opened");
               setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], "："), detail);
             }, abortSignal);
-            if (!ticket.hasStarted) ticket.finish(false);
-            if (!await confirmed) throw new Error("未收到匹配的成功撤单回执，已停止重新挂单");
+            if (!ticket.hasStarted) {
+              ticket.noteFailure("request not dispatched");
+              ticket.finish(false);
+            }
+            if (!await confirmed) {
+              const filled = reduceOnlyRecovery && await waitForCancelledTargetFill(receipts, target, current, abortSignal);
+              console.error("[订单簿下单] Cancellation not confirmed", {
+                orderId: target.orderId,
+                reason: ticket.failure,
+                filled
+              });
+              if (!filled) throw new Error("未收到匹配的成功撤单回执，已停止重新挂单");
+              targetLeftList = true;
+              break;
+            }
             checkScope();
             const releasedQty = await waitForPromiseOrAbort(ticket.released, abortSignal);
             checkScope();
@@ -10652,6 +10720,19 @@
       const root = getActiveOpenOrdersScope2();
       const basic = root && findOpenOrdersBasicSubTab2(root);
       return Boolean(basic && basic === findSelectedOpenOrdersSubTab2(root) && getCheckboxCheckedState(findHideOtherSymbolCheckbox(root)) === true);
+    }
+    async function waitForCancelledTargetFill(receipts, target, quantity, abortSignal) {
+      let timer;
+      try {
+        return await waitForPromiseOrAbort(Promise.race([
+          receipts.filled(target, quantity),
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve(false), CANCEL_FILL_EVIDENCE_TIMEOUT_MS);
+          })
+        ]), abortSignal);
+      } finally {
+        clearTimeout(timer);
+      }
     }
     async function waitForNativeCancelDispatch(ticket, showDialogStatus, abortSignal) {
       if (ticket.hasStarted) return;

@@ -13,9 +13,20 @@ export function sameNativeOrder(target, order) {
     && target.clientOrderId === order.clientOrderId && target.symbol === order.symbol;
 }
 
-/** Only requests for armed native row clicks participate. Each response belongs to its own fetch promise. */
-export function createNativeCancelReceipts(timeoutMs) {
+function isDecimalString(value) {
+  return typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value);
+}
+
+/**
+ * Only requests for armed native row clicks participate. Each response belongs to its own fetch promise.
+ * Full-fill account events are evidence for the batch: a cancellation that loses the race to a fill
+ * cannot be confirmed, yet the exact FILLED frame proves the order left without being cancelled.
+ * FILLED is terminal, so frames observed before the batch (priorFills) remain valid evidence.
+ */
+export function createNativeCancelReceipts(timeoutMs, priorFills = []) {
   const tickets = new Map();
+  const fills = [...priorFills];
+  const fillWaiters = new Set();
   let admissionClosed = false;
 
   function expect(target, quantity = null) {
@@ -31,6 +42,11 @@ export function createNativeCancelReceipts(timeoutMs) {
     let ambiguous = false;
     const ticket = {
       target, started: started.promise, result: result.promise, released: released?.promise, hasStarted: false,
+      /** Why the result is unconfirmed, for diagnostics only; the first observed reason wins. */
+      failure: null,
+      noteFailure(reason) {
+        ticket.failure ??= reason;
+      },
       recordTerminal(order) {
         if (!quantity || !ticket.hasStarted || order.x !== 'CANCELED' || order.X !== 'CANCELED') return;
         if (!sameNativeOrder(target, { symbol: order.s, orderId: order.i, clientOrderId: order.c })) return;
@@ -60,12 +76,16 @@ export function createNativeCancelReceipts(timeoutMs) {
         outstanding += 1;
         if (ticket.hasStarted) {
           // Multiple requests for one armed identity cannot be attributed to one click.
+          ticket.noteFailure('multiple requests');
           ambiguous = true;
           admissionClosed = true;
           return;
         }
         ticket.hasStarted = true;
-        timer = setTimeout(() => ticket.finish(false), timeoutMs);
+        timer = setTimeout(() => {
+          ticket.noteFailure(httpConfirmed ? 'account event timeout' : 'response timeout');
+          ticket.finish(false);
+        }, timeoutMs);
         started.resolve();
       },
       receive(confirmed) {
@@ -89,18 +109,54 @@ export function createNativeCancelReceipts(timeoutMs) {
     ticket.start();
     // A transport or unreadable body has an unknown financial outcome. Never retry that click.
     promise.then(async response => {
-      if (response.status !== 200) return false;
+      if (response.status !== 200) {
+        ticket.noteFailure(`HTTP ${response.status}`);
+        return false;
+      }
       const payload = await response.clone().json();
       const data = payload?.data;
-      return payload?.success === true && payload.code === '000000' && data?.status === 'CANCELED'
-        && (data.symbol === undefined || data.symbol === request.symbol)
+      const cancelled = payload?.success === true && payload.code === '000000' && data?.status === 'CANCELED';
+      if (!cancelled) {
+        ticket.noteFailure(`response code ${payload?.code} status ${data?.status}`);
+        return false;
+      }
+      const sameIdentity = (data.symbol === undefined || data.symbol === request.symbol)
         && exactOrderId(data.orderId) === exactOrderId(request.orderId)
         && data.clientOrderId === request.clientOrderId;
-    }).then(ticket.receive, () => ticket.receive(false));
+      if (!sameIdentity) ticket.noteFailure('response for another order');
+      return sameIdentity;
+    }, error => {
+      ticket.noteFailure(`no response ${error?.name}`);
+      return false;
+    }).then(ticket.receive, error => {
+      ticket.noteFailure(`unreadable response ${error?.name}`);
+      ticket.receive(false);
+    });
   }
   function observeOrderUpdate(order) {
     const ticket = tickets.get(exactOrderId(order?.i));
     ticket?.recordTerminal(order);
+    if (order?.x !== 'TRADE' || order.X !== 'FILLED') return;
+    fills.push(order);
+    for (const waiter of fillWaiters) waiter(order);
   }
-  return { expect, observe, observeOrderUpdate, get admissionClosed() { return admissionClosed; } };
+  /**
+   * Resolves once this batch observed the exact order filling its whole preflight quantity.
+   * A partial fill, an amended quantity, or a foreign identity never resolves it.
+   */
+  function filled(target, quantity) {
+    const matches = order => sameNativeOrder(target, { symbol: order.s, orderId: order.i, clientOrderId: order.c })
+      && isDecimalString(order.q) && isDecimalString(order.z)
+      && compareDecimalStrings(order.q, quantity.origQty) === 0 && compareDecimalStrings(order.z, order.q) === 0;
+    if (fills.some(matches)) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const waiter = order => {
+        if (!matches(order)) return;
+        fillWaiters.delete(waiter);
+        resolve(true);
+      };
+      fillWaiters.add(waiter);
+    });
+  }
+  return { expect, observe, observeOrderUpdate, filled, get admissionClosed() { return admissionClosed; } };
 }
