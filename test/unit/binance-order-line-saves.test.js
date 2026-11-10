@@ -27,11 +27,13 @@ function chartPage(t) {
   t.after(() => window.close());
   const notified = [];
   const checks = [];
+  const nativeSaves = [];
   let clock = 0;
   const snapshot = observeOrderLineSaves(window.document, {
     onContractBreak: entry => notified.push(entry),
     setTimeout(callback, delay) { checks.push({ callback, delay }); },
     now: () => clock,
+    onNativeSave: () => nativeSaves.push(clock),
   });
   const document = window.document;
   // Each test page fails if a dependency break was reported but not asserted,
@@ -43,7 +45,7 @@ function chartPage(t) {
   });
   Object.defineProperty(document, 'breaks', { get: () => snapshot().breaks });
   return Object.assign(document, {
-    notified, snapshot, expectedBreaks: [],
+    notified, nativeSaves, snapshot, expectedBreaks: [],
     advance(ms) { clock += ms; },
     /**
      * Runs the frame checks due at the next tick, as the 30 s timer would. JSDOM also
@@ -800,4 +802,112 @@ test('user is alerted when the chart API moves to a frame outside the recognized
   // Then the selector change is reported with the frame's new id.
   page.expectedBreaks = ['bootstrap'];
   assert.match(page.breaks[0].detail, /id: tv_chart_container/);
+});
+
+test('user is alerted when chart lookups keep failing in separate bursts', async t => {
+  // Given a protected chart whose model lookup starts throwing.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  host.chart.getLineToolById = () => { throw new TypeError('getLineToolById is broken'); };
+
+  // When two bursts of failing changes arrive, each with several events.
+  for (let burst = 0; burst < 2; burst++) {
+    for (const id of ['a', 'b', 'c']) host.drawingEvent(id, 'properties_changed');
+    page.advance(5000);
+  }
+
+  // Then a chart replacement's bursts alone are not reported, and changes keep saving natively.
+  assert.deepEqual(page.breaks, []);
+  assert.equal(host.saves.length, 6);
+
+  // When a third separate burst fails.
+  host.drawingEvent('d', 'properties_changed');
+
+  // Then the persistent lookup failure is reported with the error.
+  page.expectedBreaks = ['lookup-error'];
+  assert.match(page.breaks[0].detail, /TypeError: getLineToolById is broken/);
+});
+
+test('user is alerted when order lines start emitting point changes', async t => {
+  // Given a protected chart with a live order line and a hand drawing.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  host.chart.add('order', 'LineToolOrder');
+  host.chart.add('trend', 'LineToolTrendLine');
+
+  // When the hand drawing and then the order line emit point changes.
+  host.drawingEvent('trend', 'points_changed');
+  assert.deepEqual(page.breaks, []);
+  host.drawingEvent('order', 'points_changed');
+
+  // Then both still save natively and only the order-line change is reported.
+  assert.deepEqual(host.saves, [['trend', 'points_changed'], ['order', 'points_changed']]);
+  page.expectedBreaks = ['order-event-type'];
+});
+
+test('user is alerted when TradingView draws the chart but never publishes its API', async t => {
+  // Given a recognized chart frame without the API global.
+  const page = chartPage(t);
+  const host = await mountBootstrap(page);
+  page.runContractCheck();
+
+  // When the frame draws its chart and keeps it drawn across two checks.
+  host.win.document.body.append(host.win.document.createElement('canvas'));
+  page.runContractCheck();
+  assert.deepEqual(page.breaks, []);
+  page.runContractCheck();
+
+  // Then the missing API is reported.
+  page.expectedBreaks = ['bootstrap'];
+  assert.match(page.breaks[0].detail, /never published tradingViewApi/);
+});
+
+test('user is alerted when a drawn chart never calls back widgetReady', async t => {
+  // Given the hook is armed and the API is published, but readiness never arrives.
+  const page = chartPage(t);
+  const host = await mountBootstrap(page);
+  host.win.tradingViewApi = {};
+  page.runContractCheck();
+
+  // When the chart is drawn for two consecutive checks.
+  host.win.document.body.append(host.win.document.createElement('canvas'));
+  page.runContractCheck();
+  assert.deepEqual(page.breaks, []);
+  page.runContractCheck();
+
+  // Then the stuck readiness callback is reported.
+  page.expectedBreaks = ['bootstrap'];
+  assert.match(page.breaks[0].detail, /widgetReady never called back/);
+});
+
+test('user is alerted when the TradingView frame becomes cross-origin', async t => {
+  // Given a chart frame whose document the page cannot read.
+  const page = chartPage(t);
+  const frame = page.createElement('iframe');
+  frame.id = 'tradingview_cross';
+  page.querySelector('.chart-widget-root').replaceChildren(frame);
+  Object.defineProperty(frame, 'contentDocument', { get: () => null });
+
+  // When it finishes loading.
+  frame.dispatchEvent(new page.defaultView.Event('load'));
+
+  // Then the bootstrap change is reported.
+  page.expectedBreaks = ['bootstrap'];
+  assert.match(page.breaks[0].detail, /tradingview_cross is no longer same-origin/);
+});
+
+test('user write filter learns of every native save request except clicks, moves and filtered order changes', async t => {
+  // Given a protected chart with a live order line.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  host.chart.add('order', 'LineToolOrder');
+
+  // When clicks, moves, a filtered order change and two saving events arrive.
+  for (const type of ['click', 'move', 'properties_changed']) host.drawingEvent('order', type);
+  host.drawingEvent('manual', 'create');
+  page.advance(10);
+  host.drawingEvent('manual', 'properties_changed');
+
+  // Then only the two events that reach Binance's save are announced.
+  assert.deepEqual(page.nativeSaves, [0, 10]);
 });

@@ -1,7 +1,7 @@
 import { isBinanceSymbol } from '../../shared/binance-symbol.js';
 
 /** Order statuses for which Binance plays its trade sound. */
-const SOUND_STATUSES = new Set(['FILLED', 'PARTIALLY_FILLED', 'EXPIRED']);
+export const SOUND_STATUSES = new Set(['FILLED', 'PARTIALLY_FILLED', 'EXPIRED']);
 const ORDINARY_TYPES = new Set([
   'LIMIT', 'MARKET', 'STOP', 'STOP_MARKET', 'TAKE_PROFIT',
   'TAKE_PROFIT_MARKET', 'TRAILING_STOP_MARKET',

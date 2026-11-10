@@ -70,19 +70,21 @@ the save storm, so every dependency mismatch is reported instead of only being
 tolerated. `observeOrderLineSaves()` reports each reason once per page through
 `onContractBreak`, deferred to a microtask so a failing handler cannot drop the
 TradingView event being delivered. The orderbook script logs each report with
-`console.error` and shows a persistent red panel row whose tooltip names the
-dependency and its details. `__BINANCE_CHART_STORAGE__.orderLineSaves().breaks`
-lists the same entries.
+`console.error` and shows a persistent red panel row ("币安依赖已变化，需更新脚本")
+whose tooltip groups the changed dependencies by hook, with their consequence and
+details. `__BINANCE_CHART_STORAGE__.orderLineSaves().breaks` lists the same entries.
 
 | Reason | Detected when |
 | --- | --- |
-| `bootstrap` | `innerWindowLoad` runs without `widgetReady`; `widgetReady` runs without `tradingViewApi`; a frame publishes `tradingViewApi` without the `innerWindowLoad → widgetReady` hook running; or a frame outside `iframe#tradingview_*` in `.chart-widget-root` publishes it |
+| `bootstrap` | `innerWindowLoad` runs without `widgetReady`; `widgetReady` runs without `tradingViewApi`; a frame publishes `tradingViewApi` without the `innerWindowLoad → widgetReady` hook running; a frame outside `iframe#tradingview_*` in `.chart-widget-root` publishes it; the chart frame is cross-origin; or the frame has drawn its chart (a canvas on two checks) while the API is missing or `widgetReady` has not called back |
 | `api-shape` | the ready API lacks `_chartWidgetCollection.getAll`, `subscribe` or `unsubscribe` |
 | `subscription-batch` | a ready widget was never filtered because the six-topic batch was not observed |
 | `listener-shape` | the batch completed but the study and drawing callbacks no longer match (both bodies are included) |
 | `removal-hook` | the model prototype has no writable `removeSource`, or the recognized listener stayed unfiltered because removal tracking could not be installed |
 | `removal-capture` | three removal bursts of filtered order lines, at least one second apart, bypassed `removeSource` before any removal was captured |
 | `chart-model` | a widget no longer exposes `hasModel`/`model().model().getLineToolById` |
+| `lookup-error` | model lookups or order-line ID reads threw in three bursts at least five seconds apart (one burst is a chart being replaced) |
+| `order-event-type` | a live order line emits `points_changed`, which the filter does not skip |
 | `order-tool-name` | a drawing whose tool name contains `order` is not `LineToolOrder` |
 | `event-type` | `drawing_event` carries a type outside TradingView's documented set |
 
@@ -97,11 +99,20 @@ break. A recognized listener that Binance later unsubscribes is not a break.
 Transient lookup errors while a chart is replaced stay unreported. The alert does
 not change any save behavior.
 
-Not detected: a chart whose API never appears within the 20 ticks, a
-`widgetReady` that never runs its callbacks (TradingView stays blank in both
-cases), and an order tool renamed without `order` in its name. A multi-chart
-frame that legitimately has no drawing-save listener would be reported as
-`subscription-batch`; no such frame has been observed.
+Not detected: a chart that never draws within the 20 ticks (TradingView stays
+blank, which the user sees), and an order tool renamed without `order` in its
+name. A multi-chart frame that legitimately has no drawing-save listener would be
+reported as `subscription-batch`; no such frame has been observed.
+
+The unchanged-write filter reports `write-layout` through its own handler. Every
+event the order-line listener passes to Binance's save, except click and move,
+opens a 30-second window. A window that saw only puts to chart-like targets the
+filter does not recognize (a database, store or string key matching
+`chart|tradingview|tv_symbol|drawing`), and no recognized write, counts as a miss;
+a recognized write resets the count, and a window with no chart-like put proves
+nothing. Three misses report the observed targets.
+`__BINANCE_CHART_STORAGE__.writeFilterBreaks()` lists the report. A layout moved
+to names matching none of those words is not detected.
 
 ## Design
 

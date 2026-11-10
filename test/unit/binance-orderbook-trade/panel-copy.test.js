@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  CHART_CONTRACT_ALERT,
+  DEPENDENCY_ALERT,
   PANEL_COPY,
-  formatChartContractAlertTooltip,
+  formatDependencyAlertTooltip,
   formatPrecisionRefreshTooltip,
   formatUsdtRebalanceAllocatedStatus,
   formatUsdtRebalanceTargetSummary,
@@ -146,32 +146,39 @@ test("user sees that precision refresh tooltip is localized and validates its tr
   assert.throws(() => formatPrecisionRefreshTooltip(1), /价格精度成交样本数无效/);
 });
 
-test('user reads which chart dependencies changed and what the native fallback means in both locales', () => {
-  // Given two reported dependency breaks of the order-line save filter.
+test('user reads which Binance dependencies changed and what each fallback means in both locales', () => {
+  // Given breaks in the order-line filter and the trade sound scope.
   const entries = [
-    { reason: 'listener-shape', detail: 'study: a | drawing: b' },
-    { reason: 'removal-capture', detail: '3 order-line removals were emitted outside removeSource' },
+    { area: 'chart-save', reason: 'listener-shape', detail: 'study: a | drawing: b' },
+    { area: 'trade-sound', reason: 'sound-asset', detail: '/x.mp3 played after 3 fills' },
+    { area: 'chart-save', reason: 'removal-capture', detail: '3 bursts' },
   ];
 
   // When the panel formats its alert.
-  const tooltip = formatChartContractAlertTooltip(entries);
+  const tooltip = formatDependencyAlertTooltip(entries);
 
-  // Then the short alert and the tooltip name every changed dependency, the consequence and the raw details.
-  assert.deepEqual(CHART_CONTRACT_ALERT, { zhCN: '⚠ 图表保存保护失效，需更新脚本', en: '⚠ Chart save protection broken; update the script' });
-  assert.equal(tooltip.zhCN, '币安图表依赖已变化：保存监听函数结构、挂单线移除路径。已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压。细节：study: a | drawing: b; 3 order-line removals were emitted outside removeSource');
-  assert.equal(tooltip.en, "Binance chart dependency changed: save listener body, order-line removal path. Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again. Details: study: a | drawing: b; 3 order-line removals were emitted outside removeSource");
+  // Then each area is one line naming its changed dependencies, consequence and details.
+  assert.deepEqual(DEPENDENCY_ALERT, { zhCN: '⚠ 币安依赖已变化，需更新脚本', en: '⚠ Binance dependency changed; update the script' });
+  assert.equal(tooltip.zhCN, [
+    '挂单线保存过滤失效（保存监听函数结构、挂单线移除路径）：已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压。细节：study: a | drawing: b; 3 bursts',
+    '成交提示音分币种失效（提示音文件）：其他币种成交时，所有标签页都会响提示音。细节：/x.mp3 played after 3 fills',
+  ].join('\n'));
+  assert.equal(tooltip.en, [
+    "Order-line save filter broken (save listener body, order-line removal path): Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again. Details: study: a | drawing: b; 3 bursts",
+    'Per-symbol trade sound broken (trade sound file): every tab plays the trade sound when any symbol fills. Details: /x.mp3 played after 3 fills',
+  ].join('\n'));
 });
 
-test('user never sees an alert for an unknown or empty chart dependency report', () => {
-  // Given reports that the filter can never produce.
-  const unknown = [{ reason: 'renamed', detail: 'x' }];
-  const empty = [];
+test('user never sees an alert for an unknown or empty dependency report', () => {
+  // Given reports that no hook can produce.
+  const unknownArea = [{ area: 'renamed', reason: 'bootstrap', detail: 'x' }];
+  const unknownReason = [{ area: 'chart-write', reason: 'bootstrap', detail: 'x' }];
 
   // When they are formatted.
-  const formatUnknown = () => formatChartContractAlertTooltip(unknown);
-  const formatEmpty = () => formatChartContractAlertTooltip(empty);
+  const formats = [unknownArea, unknownReason, []].map(entries => () => formatDependencyAlertTooltip(entries));
 
   // Then the programming error is thrown instead of displayed.
-  assert.throws(formatUnknown, /Unknown chart contract break: renamed/);
-  assert.throws(formatEmpty, /at least one break/);
+  assert.throws(formats[0], /Unknown dependency area: renamed/);
+  assert.throws(formats[1], /Unknown chart-write dependency break: bootstrap/);
+  assert.throws(formats[2], /at least one break/);
 });

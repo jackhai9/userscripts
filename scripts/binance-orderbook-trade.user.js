@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.243
+// @version      2.7.244
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -318,33 +318,68 @@
       `Use the latest ${count} trades first; expand the range when price movement is insufficient and recalculate the recommended precision.`
     );
   }
-  var CHART_CONTRACT_REASONS = Object.freeze({
-    bootstrap: localizedText("图表启动钩子", "chart bootstrap hook"),
-    "api-shape": localizedText("图表接口结构", "chart API shape"),
-    "subscription-batch": localizedText("保存监听注册顺序", "save listener registration order"),
-    "listener-shape": localizedText("保存监听函数结构", "save listener body"),
-    "removal-hook": localizedText("挂单线移除钩子", "order-line removal hook"),
-    "removal-capture": localizedText("挂单线移除路径", "order-line removal path"),
-    "chart-model": localizedText("图表模型接口", "chart model API"),
-    "order-tool-name": localizedText("挂单线类型名", "order-line tool name"),
-    "event-type": localizedText("画线事件类型", "drawing event type")
+  var DEPENDENCY_AREAS = Object.freeze({
+    "chart-save": Object.freeze({
+      label: localizedText("挂单线保存过滤", "Order-line save filter"),
+      consequence: localizedText(
+        "已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压",
+        "Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again"
+      ),
+      reasons: Object.freeze({
+        bootstrap: localizedText("图表启动钩子", "chart bootstrap hook"),
+        "api-shape": localizedText("图表接口结构", "chart API shape"),
+        "subscription-batch": localizedText("保存监听注册顺序", "save listener registration order"),
+        "listener-shape": localizedText("保存监听函数结构", "save listener body"),
+        "removal-hook": localizedText("挂单线移除钩子", "order-line removal hook"),
+        "removal-capture": localizedText("挂单线移除路径", "order-line removal path"),
+        "chart-model": localizedText("图表模型接口", "chart model API"),
+        "lookup-error": localizedText("图表查询接口", "chart lookup API"),
+        "order-tool-name": localizedText("挂单线类型名", "order-line tool name"),
+        "order-event-type": localizedText("挂单线事件类型", "order-line event type"),
+        "event-type": localizedText("画线事件类型", "drawing event type")
+      })
+    }),
+    "chart-write": Object.freeze({
+      label: localizedText("图表重复写入过滤", "Unchanged chart write filter"),
+      consequence: localizedText(
+        "每次图表保存都会重写全部币种的画线记录，磁盘写入和 IndexedDB 压力回升",
+        "every chart save rewrites the drawings of every symbol again, raising disk writes and IndexedDB load"
+      ),
+      reasons: Object.freeze({
+        "write-layout": localizedText("图表存储布局", "chart storage layout")
+      })
+    }),
+    "trade-sound": Object.freeze({
+      label: localizedText("成交提示音分币种", "Per-symbol trade sound"),
+      consequence: localizedText(
+        "其他币种成交时，所有标签页都会响提示音",
+        "every tab plays the trade sound when any symbol fills"
+      ),
+      reasons: Object.freeze({
+        "sound-stream": localizedText("账户订单推送", "account order stream"),
+        "sound-asset": localizedText("提示音文件", "trade sound file")
+      })
+    })
   });
-  var CHART_CONTRACT_ALERT = localizedText(
-    "⚠ 图表保存保护失效，需更新脚本",
-    "⚠ Chart save protection broken; update the script"
+  var DEPENDENCY_ALERT = localizedText(
+    "⚠ 币安依赖已变化，需更新脚本",
+    "⚠ Binance dependency changed; update the script"
   );
-  function formatChartContractAlertTooltip(entries) {
-    if (!Array.isArray(entries) || !entries.length) throw new Error("Chart contract alert requires at least one break");
-    const reasons = entries.map(({ reason }) => {
-      const label = CHART_CONTRACT_REASONS[reason];
-      if (!label) throw new Error(`Unknown chart contract break: ${reason}`);
-      return label;
-    });
-    const details = entries.map(({ detail }) => detail).join("; ");
-    return localizedText(
-      `币安图表依赖已变化：${reasons.map((label) => label.zhCN).join("、")}。已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压。细节：${details}`,
-      `Binance chart dependency changed: ${reasons.map((label) => label.en).join(", ")}. Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again. Details: ${details}`
-    );
+  function formatDependencyAlertTooltip(entries) {
+    if (!Array.isArray(entries) || !entries.length) throw new Error("Dependency alert requires at least one break");
+    const groups = /* @__PURE__ */ new Map();
+    for (const { area, reason, detail } of entries) {
+      const definition = DEPENDENCY_AREAS[area];
+      if (!definition) throw new Error(`Unknown dependency area: ${area}`);
+      const label = definition.reasons[reason];
+      if (!label) throw new Error(`Unknown ${area} dependency break: ${reason}`);
+      if (!groups.has(area)) groups.set(area, { definition, labels: [], details: [] });
+      const group = groups.get(area);
+      group.labels.push(label);
+      group.details.push(detail);
+    }
+    const lines = (locale) => [...groups.values()].map(({ definition, labels, details }) => locale === "zhCN" ? `${definition.label.zhCN}失效（${labels.map((label) => label.zhCN).join("、")}）：${definition.consequence.zhCN}。细节：${details.join("; ")}` : `${definition.label.en} broken (${labels.map((label) => label.en).join(", ")}): ${definition.consequence.en}. Details: ${details.join("; ")}`);
+    return localizedText(lines("zhCN").join("\n"), lines("en").join("\n"));
   }
 
   // src/shared/binance-symbol.js
@@ -3314,6 +3349,8 @@
   var MISSED_REMOVAL_LIMIT = 3;
   var MISSED_REMOVAL_BURST_MS = 1e3;
   var ORDER_TOOL = "LineToolOrder";
+  var LOOKUP_ERROR_LIMIT = 3;
+  var LOOKUP_ERROR_BURST_MS = 5e3;
   var DRAWING_EVENT_TYPES = /* @__PURE__ */ new Set([
     "click",
     "move",
@@ -3384,7 +3421,7 @@
     return models;
   }
   var CHART_MODEL_SHAPE = "Chart widgets no longer expose getAll() → hasModel/model().model().getLineToolById";
-  function isLiveOrderLine(collection, id, report) {
+  function isLiveOrderLine(collection, id, report, noteLookupError) {
     try {
       const models = chartModels(collection);
       if (!models) {
@@ -3402,18 +3439,20 @@
         found = true;
       }
       return found;
-    } catch {
+    } catch (error) {
+      noteLookupError(error);
       return false;
     }
   }
-  function removingOrderId(source) {
+  function removingOrderId(source, noteLookupError) {
     try {
       return source?.toolname === ORDER_TOOL && typeof source.id === "function" ? source.id() : null;
-    } catch {
+    } catch (error) {
+      noteLookupError(error);
       return null;
     }
   }
-  function trackRemovals(collection, report) {
+  function trackRemovals(collection, report, noteLookupError) {
     const models = chartModels(collection);
     if (!models) {
       report("chart-model", CHART_MODEL_SHAPE);
@@ -3433,7 +3472,7 @@
       ...descriptor,
       value: function(source) {
         const previous = removing;
-        removing = removingOrderId(source);
+        removing = removingOrderId(source, noteLookupError);
         try {
           return Reflect.apply(removeSource, this, arguments);
         } finally {
@@ -3443,7 +3482,7 @@
     });
     return (id) => removing != null && removing === id;
   }
-  function observeSubscriptions(api, stats, report, now) {
+  function observeSubscriptions(api, stats, report, now, noteLookupError, onNativeSave) {
     const collection = api?._chartWidgetCollection;
     if (typeof collection?.getAll !== "function" || typeof api.subscribe !== "function" || typeof api.unsubscribe !== "function") {
       report("api-shape", "tradingViewApi no longer exposes _chartWidgetCollection.getAll, subscribe and unsubscribe");
@@ -3473,7 +3512,7 @@
       if (!hostCallback && identify(event, callback)) {
         hostCallback = callback;
         try {
-          isRemoving = trackRemovals(collection, report);
+          isRemoving = trackRemovals(collection, report, noteLookupError);
         } catch {
           return Reflect.apply(subscribe, this, arguments);
         }
@@ -3484,7 +3523,10 @@
       if (!listener) {
         listener = function(id, type) {
           if (!DRAWING_EVENT_TYPES.has(type)) report("event-type", `Unknown drawing_event type: ${String(type)}`);
-          if (type === "properties_changed" && isLiveOrderLine(collection, id, report)) {
+          if (type === "points_changed" && isLiveOrderLine(collection, id, report, noteLookupError)) {
+            report("order-event-type", "Order lines now emit points_changed, which still saves the whole chart");
+          }
+          if (type === "properties_changed" && isLiveOrderLine(collection, id, report, noteLookupError)) {
             liveOrders.add(id);
             stats.skipped++;
             return;
@@ -3504,6 +3546,7 @@
               lastMissedRemovalAt = at;
             }
           }
+          if (type !== "click" && type !== "move") onNativeSave();
           return Reflect.apply(callback, this, arguments);
         };
       }
@@ -3534,13 +3577,15 @@
     "removal-hook": "Save listener recognized, but order removals could not be tracked on this chart",
     "subscription-batch": `Host subscription batch ${HOST_TOPICS.join(" → ")} was not observed`
   };
-  function observeOrderLineSaves(document2, { onContractBreak, setTimeout: setTimeout2, now }) {
-    if (typeof onContractBreak !== "function" || typeof setTimeout2 !== "function" || typeof now !== "function") {
-      throw new Error("Order-line saves require a contract break handler, setTimeout and now");
+  function observeOrderLineSaves(document2, { onContractBreak, setTimeout: setTimeout2, now, onNativeSave }) {
+    if ([onContractBreak, setTimeout2, now, onNativeSave].some((value) => typeof value !== "function")) {
+      throw new Error("Order-line saves require a contract break handler, setTimeout, now and onNativeSave");
     }
     const stats = { matched: 0, skipped: 0 };
     const breaks = [];
     const reported = /* @__PURE__ */ new Set();
+    let lookupErrorBursts = 0;
+    let lastLookupErrorAt = -Infinity;
     const unfilteredReaders = /* @__PURE__ */ new WeakMap();
     const frameStates = /* @__PURE__ */ new WeakMap();
     const pendingReady = /* @__PURE__ */ new WeakSet();
@@ -3551,13 +3596,28 @@
       breaks.push(entry);
       queueMicrotask(() => onContractBreak(entry));
     }
+    function noteLookupError(error) {
+      const at = now();
+      if (at - lastLookupErrorAt >= LOOKUP_ERROR_BURST_MS && ++lookupErrorBursts === LOOKUP_ERROR_LIMIT) {
+        report("lookup-error", `${LOOKUP_ERROR_LIMIT} separate bursts of chart lookup failures, last: ${error?.name}: ${String(error?.message).slice(0, 160)}`);
+      }
+      lastLookupErrorAt = at;
+    }
     function checkFrame(frame, state) {
       let previousApi = null;
       let readyApi = null;
+      let renderedBefore = false;
       let remaining = ORDER_LINE_CONTRACT_CHECKS;
       const tick = () => {
         if (!frame.isConnected || frameStates.get(frame) !== state) return;
         const api = frame.contentWindow?.tradingViewApi ?? null;
+        const rendered = state.bootstrapFrame && Boolean(frame.contentDocument?.querySelector("canvas"));
+        const renderedTwice = rendered && renderedBefore;
+        renderedBefore = rendered;
+        if (!api && renderedTwice) {
+          report("bootstrap", "TradingView drew the chart, but the frame never published tradingViewApi");
+          return;
+        }
         if (api && api === previousApi) {
           if (!state.bootstrapFrame) {
             report("bootstrap", `Chart API frame no longer matches iframe#tradingview_* inside .chart-widget-root (id: ${frame.id || "none"})`);
@@ -3573,6 +3633,9 @@
           else if (!pendingReady.has(frame.contentWindow)) {
             report("bootstrap", "tradingViewApi exists but the innerWindowLoad → widgetReady hook never ran");
             return;
+          } else if (renderedTwice) {
+            report("bootstrap", "TradingView drew the chart, but widgetReady never called back");
+            return;
           }
         }
         previousApi = api;
@@ -3580,14 +3643,23 @@
       };
       setTimeout2(tick, ORDER_LINE_CONTRACT_CHECK_MS);
     }
+    const isChartFrame = (frame) => frame.id.startsWith("tradingview_") && Boolean(frame.closest(".chart-widget-root"));
+    const crossOrigin = (frame) => report("bootstrap", `TradingView frame ${frame.id} is no longer same-origin`);
     document2.addEventListener("load", ({ target: frame }) => {
-      if (frame.tagName !== "IFRAME" || !frame.contentDocument) return;
-      const state = { bootstrapFrame: frame.id.startsWith("tradingview_") && Boolean(frame.closest(".chart-widget-root")) };
+      if (frame.tagName !== "IFRAME") return;
+      if (!frame.contentDocument) {
+        if (isChartFrame(frame)) crossOrigin(frame);
+        return;
+      }
+      const state = { bootstrapFrame: isChartFrame(frame) };
       frameStates.set(frame, state);
       checkFrame(frame, state);
       if (!state.bootstrapFrame) return;
       frame.addEventListener("load", () => queueMicrotask(() => {
-        if (!frame.contentDocument) return;
+        if (!frame.contentDocument) {
+          crossOrigin(frame);
+          return;
+        }
         const win = frame.contentWindow;
         win.addEventListener("innerWindowLoad", () => {
           if (typeof win.widgetReady !== "function") {
@@ -3603,7 +3675,7 @@
               return;
             }
             if (unfilteredReaders.has(api)) return;
-            unfilteredReaders.set(api, observeSubscriptions(api, stats, report, now));
+            unfilteredReaders.set(api, observeSubscriptions(api, stats, report, now, noteLookupError, onNativeSave));
           });
         }, { capture: true, once: true });
       }), { once: true });
@@ -6278,7 +6350,12 @@
   var CHART_DATABASE = /^chart_/;
   var CHART_STORE = "keyvaluepairs";
   var CHART_KEY = /^(?:#TV_SYMBOL-|myTradingView)/;
-  function installUnchangedChartWriteFilter(view) {
+  var CHART_LIKE = /chart|tradingview|tv_symbol|drawing/i;
+  var NATIVE_SAVE_WINDOW_MS = 3e4;
+  var LAYOUT_MISS_LIMIT = 3;
+  var LAYOUT_SAMPLE_LIMIT = 5;
+  function installUnchangedChartWriteFilter(view, { onContractBreak }) {
+    if (typeof onContractBreak !== "function") throw new Error("Chart write filter requires a contract break handler");
     const prototype = view.IDBObjectStore.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(prototype, "put");
     const nativePut = descriptor.value;
@@ -6289,11 +6366,45 @@
       throw new Error("Chart write filter requires native IndexedDB store methods and structuredClone");
     }
     const stats = { compared: 0, skipped: 0, written: 0, unreadable: 0 };
+    const breaks = [];
+    let saveWindow = null;
+    let layoutMisses = 0;
+    function noteNativeSave() {
+      if (saveWindow) return;
+      saveWindow = { matched: 0, samples: /* @__PURE__ */ new Set() };
+      view.setTimeout(() => {
+        const { matched, samples } = saveWindow;
+        saveWindow = null;
+        if (matched > 0) {
+          layoutMisses = 0;
+          return;
+        }
+        if (!samples.size || ++layoutMisses !== LAYOUT_MISS_LIMIT) return;
+        const entry = Object.freeze({
+          reason: "write-layout",
+          detail: `Chart saves wrote only unrecognized targets: ${[...samples].join(", ")}`
+        });
+        breaks.push(entry);
+        onContractBreak(entry);
+      }, NATIVE_SAVE_WINDOW_MS);
+    }
+    function noteUnmatchedWrite(store, key) {
+      if (!saveWindow || saveWindow.samples.size >= LAYOUT_SAMPLE_LIMIT) return;
+      const database = store.transaction.db.name;
+      const keyText = typeof key === "string" ? key.slice(0, 24) : typeof key;
+      if (CHART_LIKE.test(database) || CHART_LIKE.test(store.name) || typeof key === "string" && CHART_LIKE.test(key)) {
+        saveWindow.samples.add(`${database}/${store.name}/${keyText}`);
+      }
+    }
     function isChartRecordWrite(store, key, argumentCount) {
       return argumentCount === 2 && typeof key === "string" && CHART_KEY.test(key) && store.keyPath === null && store.name === CHART_STORE && store.transaction.mode === "readwrite" && CHART_DATABASE.test(store.transaction.db.name);
     }
     function put(value, key) {
-      if (!isChartRecordWrite(this, key, arguments.length)) return Reflect.apply(nativePut, this, arguments);
+      if (!isChartRecordWrite(this, key, arguments.length)) {
+        if (saveWindow) noteUnmatchedWrite(this, arguments.length >= 2 ? key : void 0);
+        return Reflect.apply(nativePut, this, arguments);
+      }
+      if (saveWindow) saveWindow.matched += 1;
       const copy = Reflect.apply(clone, view, [value]);
       stats.compared += 1;
       const store = this;
@@ -6324,7 +6435,7 @@
       return read;
     }
     Object.defineProperty(prototype, "put", { ...descriptor, value: put });
-    return Object.freeze({ snapshot: () => ({ ...stats }) });
+    return Object.freeze({ snapshot: () => ({ ...stats }), breaks: () => [...breaks], noteNativeSave });
   }
 
   // src/binance-orderbook-trade/top-trading-page.js
@@ -6333,16 +6444,17 @@
   }
 
   // src/binance-orderbook-trade/chart-storage/install.js
-  function installChartWriteFilter({ onOrderLineContractBreak }) {
+  function installChartWriteFilter({ onOrderLineContractBreak, onWriteFilterContractBreak }) {
     if (!isTopLevelTradingPage() || Object.hasOwn(self, "__BINANCE_CHART_STORAGE__")) return;
-    const writeFilter = installUnchangedChartWriteFilter(self);
+    const { snapshot, breaks: writeFilterBreaks, noteNativeSave } = installUnchangedChartWriteFilter(self, { onContractBreak: onWriteFilterContractBreak });
     const orderLineSaves = observeOrderLineSaves(self.document, {
       onContractBreak: onOrderLineContractBreak,
       setTimeout: self.setTimeout.bind(self),
-      now: () => self.performance.now()
+      now: () => self.performance.now(),
+      onNativeSave: noteNativeSave
     });
     Object.defineProperty(self, "__BINANCE_CHART_STORAGE__", {
-      value: Object.freeze({ ...writeFilter, orderLineSaves }),
+      value: Object.freeze({ snapshot, writeFilterBreaks, orderLineSaves }),
       configurable: true
     });
   }
@@ -6406,10 +6518,14 @@
   // src/binance-orderbook-trade/order-sound/install.js
   var ORDER_UPDATE_MARKER = '"ORDER_TRADE_UPDATE"';
   var TRADE_SOUND_PATH = /\/trade-sound\.mp3$/;
+  var UNATTRIBUTED_PLAY_LIMIT = 3;
+  var SOUND_AFTER_FILL_MS = 3e3;
+  var RENAMED_SOUND_LIMIT = 3;
   function isTradeSound(element, view) {
     return element instanceof view.HTMLAudioElement && TRADE_SOUND_PATH.test(new URL(element.src, view.location.href).pathname);
   }
-  function installFillSoundScope(view, observeCancellation = null) {
+  function installFillSoundScope(view, observeCancellation, onContractBreak) {
+    if (typeof onContractBreak !== "function") throw new Error("Fill sound scope requires a contract break handler");
     const scope = createFillSoundScope({
       now: () => view.Date.now(),
       readCurrentSymbol: () => parseFuturesTradingSymbolFromPathname(view.location.pathname)
@@ -6419,10 +6535,34 @@
     const playDescriptor = Object.getOwnPropertyDescriptor(view.HTMLMediaElement.prototype, "play");
     const nativePlay = playDescriptor.value;
     const accountSockets = /* @__PURE__ */ new Set();
+    const breaks = [];
+    const reported = /* @__PURE__ */ new Set();
+    let orderUpdates = 0;
+    let tradeSoundPlays = 0;
+    let lastSoundingFillAt = -Infinity;
+    const soundsAfterFills = /* @__PURE__ */ new Map();
+    function report(reason, detail) {
+      if (reported.has(reason)) return;
+      reported.add(reason);
+      const entry = Object.freeze({ reason, detail });
+      breaks.push(entry);
+      queueMicrotask(() => onContractBreak(entry));
+    }
+    function noteOtherAudio(element) {
+      if (tradeSoundPlays > 0 || view.Date.now() - lastSoundingFillAt > SOUND_AFTER_FILL_MS) return;
+      const { pathname } = new URL(element.currentSrc || element.src, view.location.href);
+      const count = (soundsAfterFills.get(pathname) ?? 0) + 1;
+      soundsAfterFills.set(pathname, count);
+      if (count === RENAMED_SOUND_LIMIT) {
+        report("sound-asset", `${pathname} played after ${count} fills while ${TRADE_SOUND_PATH.source} never played`);
+      }
+    }
     function observeFrame(event) {
       if (typeof event.data !== "string" || !event.data.includes(ORDER_UPDATE_MARKER)) return;
       const update = JSON.parse(event.data).data;
       if (update?.e !== "ORDER_TRADE_UPDATE") return;
+      orderUpdates += 1;
+      if (SOUND_STATUSES.has(update.o?.X)) lastSoundingFillAt = view.Date.now();
       scope.recordOrderUpdate(update.o);
       if (event.isTrusted && accountSockets.has(this)) observeCancellation?.(update.o);
     }
@@ -6439,31 +6579,51 @@
       }
     });
     function play() {
-      if (isTradeSound(this, view) && !scope.allowSound()) return view.Promise.resolve();
+      if (isTradeSound(this, view)) {
+        tradeSoundPlays += 1;
+        if (orderUpdates === 0 && tradeSoundPlays === UNATTRIBUTED_PLAY_LIMIT) {
+          report("sound-stream", `Trade sound played ${tradeSoundPlays} times, but no page WebSocket carried ${ORDER_UPDATE_MARKER}`);
+        }
+        if (!scope.allowSound()) return view.Promise.resolve();
+      } else if (this instanceof view.HTMLAudioElement) {
+        noteOtherAudio(this);
+      }
       return Reflect.apply(nativePlay, this, arguments);
     }
     Object.defineProperty(view.HTMLMediaElement.prototype, "play", { ...playDescriptor, value: play });
-    return Object.freeze({ snapshot: scope.snapshot, hasAccountStream: () => [...accountSockets].some((socket) => socket.readyState === NativeWebSocket.OPEN) });
+    return Object.freeze({
+      snapshot: scope.snapshot,
+      breaks: () => [...breaks],
+      hasAccountStream: () => [...accountSockets].some((socket) => socket.readyState === NativeWebSocket.OPEN)
+    });
   }
-  function installOrderSoundScope(observeCancellation) {
+  function installOrderSoundScope(observeCancellation, { onContractBreak }) {
     if (!isTopLevelTradingPage() || Object.hasOwn(self, "__BINANCE_ORDER_SOUND__")) return;
-    const { snapshot, hasAccountStream } = installFillSoundScope(self, observeCancellation);
-    Object.defineProperty(self, "__BINANCE_ORDER_SOUND__", { value: Object.freeze({ snapshot }), configurable: true });
+    const { snapshot, breaks, hasAccountStream } = installFillSoundScope(self, observeCancellation, onContractBreak);
+    Object.defineProperty(self, "__BINANCE_ORDER_SOUND__", { value: Object.freeze({ snapshot, breaks }), configurable: true });
     return hasAccountStream;
   }
 
   // src/binance-orderbook-trade/index.user.js
   var activeCancelReceipts = null;
-  var chartContractBreaks = [];
-  var renderChartContractAlert = null;
+  var dependencyBreaks = [];
+  var renderDependencyAlert = null;
+  function reportDependencyBreak(area) {
+    return ({ reason, detail }) => {
+      const entry = Object.freeze({ area, reason, detail });
+      dependencyBreaks.push(entry);
+      console.error("[订单簿下单] Binance dependency changed; native behavior is in effect", entry);
+      renderDependencyAlert?.();
+    };
+  }
   installChartWriteFilter({
-    onOrderLineContractBreak(entry) {
-      chartContractBreaks.push(entry);
-      console.error("[订单簿下单] Chart save protection dependency changed; native save is in effect", entry);
-      renderChartContractAlert?.();
-    }
+    onOrderLineContractBreak: reportDependencyBreak("chart-save"),
+    onWriteFilterContractBreak: reportDependencyBreak("chart-write")
   });
-  var hasCancellationAccountStream = installOrderSoundScope((order) => activeCancelReceipts?.observeOrderUpdate(order));
+  var hasCancellationAccountStream = installOrderSoundScope(
+    (order) => activeCancelReceipts?.observeOrderUpdate(order),
+    { onContractBreak: reportDependencyBreak("trade-sound") }
+  );
   (function initializeOrderbookTrade() {
     "use strict";
     if (!document.documentElement) {
@@ -6525,7 +6685,7 @@
     const LADDER_STATUS_ID = "jh-binance-ladder-status";
     const LADDER_STATUS_ROW_ID = "jh-binance-ladder-status-row";
     const AUTOMATIC_USDT_REBALANCE_STATUS_ID = "jh-binance-auto-rebalance-status";
-    const CHART_CONTRACT_ALERT_ID = "jh-binance-chart-contract-alert";
+    const DEPENDENCY_ALERT_ID = "jh-binance-dependency-alert";
     const USDT_REBALANCE_ACTION_ID = "jh-binance-usdt-rebalance-action";
     const MULTIPLIER_PRESS_FEEDBACK_ATTR = "data-jh-press-feedback";
     const ORDERBOOK_PRECISION_RECOMMENDATION_ID = "jh-binance-orderbook-precision-recommendation";
@@ -7268,17 +7428,17 @@
       if (element.title !== title) element.title = title;
       if (element.hidden !== (text === "")) element.hidden = text === "";
     }
-    function renderChartContractAlertRow(element) {
+    function renderDependencyAlertRow(element) {
       if (!element) return;
-      const hidden = chartContractBreaks.length === 0;
+      const hidden = dependencyBreaks.length === 0;
       if (element.hidden !== hidden) element.hidden = hidden;
       if (hidden) return;
-      const text = ui(CHART_CONTRACT_ALERT);
-      const title = ui(formatChartContractAlertTooltip(chartContractBreaks));
+      const text = ui(DEPENDENCY_ALERT);
+      const title = ui(formatDependencyAlertTooltip(dependencyBreaks));
       if (element.textContent !== text) element.textContent = text;
       if (element.title !== title) element.title = title;
     }
-    renderChartContractAlert = () => renderChartContractAlertRow(document.getElementById(CHART_CONTRACT_ALERT_ID));
+    renderDependencyAlert = () => renderDependencyAlertRow(document.getElementById(DEPENDENCY_ALERT_ID));
     function setAutomaticUsdtRebalanceStatus(text, title = text, pending = false) {
       automaticUsdtRebalanceStatusPending = pending;
       automaticUsdtRebalanceStatusText = localizeKnownUiStatus(text);
@@ -12909,7 +13069,7 @@
         if (status.title !== renderedTitle) status.title = renderedTitle;
       }
       renderAutomaticUsdtRebalanceStatus(panel.querySelector(`#${AUTOMATIC_USDT_REBALANCE_STATUS_ID}`));
-      renderChartContractAlertRow(panel.querySelector(`#${CHART_CONTRACT_ALERT_ID}`));
+      renderDependencyAlertRow(panel.querySelector(`#${DEPENDENCY_ALERT_ID}`));
       if (rebalanceButton) {
         const shouldShow = usdtRebalanceEligible || Boolean(usdtRebalanceTask);
         const hidden = !shouldShow;
@@ -13245,7 +13405,7 @@
         `<button id="${USDT_REBALANCE_ACTION_ID}" type="button" data-usdt-rebalance="true" hidden title="${ui(USDT_REBALANCE_COPY.tooltip)}" style="flex:0 0 auto;height:18px;margin-left:8px;padding:0;border:0;background:transparent;color:var(--color-PrimaryYellow);font-size:13px;font-weight:500;line-height:18px;cursor:pointer;">${ui(PANEL_COPY.action.accountRebalance)}</button>`,
         "</div>",
         `<div id="${AUTOMATIC_USDT_REBALANCE_STATUS_ID}" hidden style="height:18px;margin-top:6px;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>`,
-        `<div id="${CHART_CONTRACT_ALERT_ID}" role="alert" hidden style="height:18px;margin-top:6px;color:${INPUT_ERROR_COLOR};font-size:13px;font-weight:500;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;"></div>`
+        `<div id="${DEPENDENCY_ALERT_ID}" role="alert" hidden style="height:18px;margin-top:6px;color:${INPUT_ERROR_COLOR};font-size:13px;font-weight:500;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;"></div>`
       ].join("");
       panelPositionInvalidated = true;
       document.body.appendChild(panel);
