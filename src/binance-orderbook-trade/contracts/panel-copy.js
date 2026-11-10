@@ -195,6 +195,17 @@ const DEPENDENCY_AREAS = Object.freeze({
       'write-layout': localizedText('图表存储布局', 'chart storage layout'),
     }),
   }),
+  'i18n-usage': Object.freeze({
+    label: localizedText('翻译统计拦截', 'Translation usage block'),
+    consequence: localizedText(
+      '币安的翻译使用统计又会写入 IndexedDB，长时间交易后刷新页面可能一次排队上万个事务',
+      "Binance's translation usage telemetry writes to IndexedDB again; after long trading sessions a reload may queue thousands of transactions at once",
+    ),
+    reasons: Object.freeze({
+      'usage-db-name': localizedText('统计数据库名称', 'usage database name'),
+      'usage-db-missing': localizedText('统计数据库未出现', 'usage database not opened'),
+    }),
+  }),
   'trade-sound': Object.freeze({
     label: localizedText('成交提示音分币种', 'Per-symbol trade sound'),
     consequence: localizedText(

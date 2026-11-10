@@ -58,6 +58,34 @@ stays in effect and the panel shows a persistent red alert naming the changed
 dependency; see
 [dependency break alerts](binance-chart-storage-development.md#dependency-break-alerts).
 
+### Translation usage telemetry block
+
+Binance's i18next post-processor (`i18n-clean-processor`) records every translation
+key the page uses into the `pika-i18n-usage` IndexedDB database, only to report key
+usage back to Binance. Unreported records from every tab and session accumulate
+(about 1,400 records in 15 minutes across four tabs, observed on 2026-11-10), and
+each page load marks them reported with one readwrite transaction per record. After
+a long trading session that queued 10,000 to 81,000 transactions on that database,
+delaying every other request on it; a 164-record read waited 14 seconds.
+
+`i18n-usage/install.js` runs at document-start on top-level trading routes and wraps
+the standard `IDBFactory.prototype.open`: opening exactly `pika-i18n-usage` throws a
+`NotAllowedError` with no message, so Binance's error reporting does not name the
+userscript, and every other open is native. Binance opens it inside a Promise
+executor, caches the rejected connection, and catches its insert errors, so the page
+logs `Error setting i18n-usage` (about one per few seconds while the UI renders new
+keys) and one unhandled rejection from its delayed reporter per i18n instance. Translations
+are returned unchanged by the post-processor and load from separate databases
+(`i18n-data-*`, `pika-i18n-<locale>`); Chinese, English and the chart were verified
+on a live anonymous page. The dependency alert reports a usage-like database opened
+under another name (`usage-db-name`), and no blocked open within 120 seconds of
+installation (`usage-db-missing`): a renamed database, another storage mechanism,
+or removed telemetry. The detail says whether Binance's `__getActiveI18nKeys` debug
+hook still exists. Other routes of the same origin are not covered and may still
+flush records already on disk.
+`self.__BINANCE_I18N_USAGE__.snapshot()` returns `{ blocked }`. Existing usage
+records on disk are left in place.
+
 ### Order sound scope
 
 Binance plays one trade sound, with no symbol, in every open futures tab whenever
