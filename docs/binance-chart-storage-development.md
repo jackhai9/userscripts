@@ -76,15 +76,14 @@ details. `__BINANCE_CHART_STORAGE__.orderLineSaves().breaks` lists the same entr
 
 | Reason | Detected when |
 | --- | --- |
-| `bootstrap` | `innerWindowLoad` runs without `widgetReady`; `widgetReady` runs without `tradingViewApi`; a frame publishes `tradingViewApi` without the `innerWindowLoad → widgetReady` hook running; a frame outside `iframe#tradingview_*` in `.chart-widget-root` publishes it; the chart frame is cross-origin; or the frame has drawn its chart (a canvas on two checks) while the API is missing or `widgetReady` has not called back |
+| `bootstrap` | `innerWindowLoad` runs without `widgetReady`; `widgetReady` runs without `tradingViewApi`; a frame publishes `tradingViewApi` without the `innerWindowLoad → widgetReady` hook running; a frame outside `iframe#tradingview_*` in `.chart-widget-root` publishes it; or a connected chart frame is not same-origin (another origin, or a network error page) |
 | `api-shape` | the ready API lacks `_chartWidgetCollection.getAll`, `subscribe` or `unsubscribe` |
 | `subscription-batch` | a ready widget was never filtered because the six-topic batch was not observed |
 | `listener-shape` | the batch completed but the study and drawing callbacks no longer match (both bodies are included) |
 | `removal-hook` | the model prototype has no writable `removeSource`, or the recognized listener stayed unfiltered because removal tracking could not be installed |
 | `removal-capture` | three removal bursts of filtered order lines, at least one second apart, bypassed `removeSource` before any removal was captured |
 | `chart-model` | a widget no longer exposes `hasModel`/`model().model().getLineToolById` |
-| `lookup-error` | model lookups or order-line ID reads threw in three bursts at least five seconds apart (one burst is a chart being replaced) |
-| `order-event-type` | a live order line emits `points_changed`, which the filter does not skip |
+| `lookup-error` | model lookups or order-line ID reads threw in three bursts at least five seconds apart with no successful lookup between them (a chart being replaced fails briefly, then succeeds) |
 | `order-tool-name` | a drawing whose tool name contains `order` is not `LineToolOrder` |
 | `event-type` | `drawing_event` carries a type outside TradingView's documented set |
 
@@ -99,9 +98,12 @@ break. A recognized listener that Binance later unsubscribes is not a break.
 Transient lookup errors while a chart is replaced stay unreported. The alert does
 not change any save behavior.
 
-Not detected: a chart that never draws within the 20 ticks (TradingView stays
-blank, which the user sees), and an order tool renamed without `order` in its
-name. A multi-chart frame that legitimately has no drawing-save listener would be
+Not detected: a chart API that never appears or a `widgetReady` that never calls
+back within the 20 ticks. TradingView publishes the API at `widgetReady` and may
+draw before that, so a drawn chart cannot distinguish a broken hook from slow
+chart storage; the chart then stays without drawings, which the user sees. Also
+not detected: an order tool renamed without `order` in its name, and order lines
+emitting `points_changed` (dragging an order line may legitimately do so). A multi-chart frame that legitimately has no drawing-save listener would be
 reported as `subscription-batch`; no such frame has been observed.
 
 The unchanged-write filter reports `write-layout` through its own handler. Every

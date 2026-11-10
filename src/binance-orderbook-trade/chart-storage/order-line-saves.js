@@ -10,7 +10,7 @@ const MISSED_REMOVAL_LIMIT = 3;
 /** Removals this close together count once, so one chart teardown cannot look like a broken hook. */
 const MISSED_REMOVAL_BURST_MS = 1000;
 const ORDER_TOOL = 'LineToolOrder';
-/** Lookup failures are expected while a chart is replaced; repeated bursts mean the model API changed. */
+/** Lookup failures are expected while a chart is replaced; bursts with no successful lookup between them mean the model API changed. */
 const LOOKUP_ERROR_LIMIT = 3;
 const LOOKUP_ERROR_BURST_MS = 5000;
 /** TradingView's documented drawing_event types; a new one may carry order-line changes. */
@@ -91,7 +91,7 @@ function chartModels(collection) {
 const CHART_MODEL_SHAPE = 'Chart widgets no longer expose getAll() → hasModel/model().model().getLineToolById';
 
 /** A drawing ID alone does not identify its chart in a multi-chart layout. */
-function isLiveOrderLine(collection, id, report, noteLookupError) {
+function isLiveOrderLine(collection, id, report, noteLookupError, noteLookupSuccess) {
   try {
     const models = chartModels(collection);
     if (!models) {
@@ -109,6 +109,7 @@ function isLiveOrderLine(collection, id, report, noteLookupError) {
       }
       found = true;
     }
+    noteLookupSuccess();
     return found;
   } catch (error) {
     // A chart being replaced may no longer answer lookups. Keep its native save;
@@ -163,7 +164,8 @@ function trackRemovals(collection, report, noteLookupError) {
 }
 
 /** Returns a reader of whether Binance's save listener is currently filtered on this widget. */
-function observeSubscriptions(api, stats, report, now, noteLookupError, onNativeSave) {
+function observeSubscriptions(api, stats, report, now, lookups, onNativeSave) {
+  const { noteLookupError, noteLookupSuccess } = lookups;
   const collection = api?._chartWidgetCollection;
   if (typeof collection?.getAll !== 'function' || typeof api.subscribe !== 'function'
     || typeof api.unsubscribe !== 'function') {
@@ -208,11 +210,7 @@ function observeSubscriptions(api, stats, report, now, noteLookupError, onNative
     if (!listener) {
       listener = function (id, type) {
         if (!DRAWING_EVENT_TYPES.has(type)) report('event-type', `Unknown drawing_event type: ${String(type)}`);
-        // Order lines are only known to emit property changes; point changes would bypass the filter.
-        if (type === 'points_changed' && isLiveOrderLine(collection, id, report, noteLookupError)) {
-          report('order-event-type', 'Order lines now emit points_changed, which still saves the whole chart');
-        }
-        if (type === 'properties_changed' && isLiveOrderLine(collection, id, report, noteLookupError)) {
+        if (type === 'properties_changed' && isLiveOrderLine(collection, id, report, noteLookupError, noteLookupSuccess)) {
           liveOrders.add(id);
           stats.skipped++;
           return;
@@ -308,6 +306,10 @@ export function observeOrderLineSaves(document, { onContractBreak, setTimeout, n
     queueMicrotask(() => onContractBreak(entry));
   }
 
+  function noteLookupSuccess() {
+    lookupErrorBursts = 0;
+  }
+
   function noteLookupError(error) {
     const at = now();
     if (at - lastLookupErrorAt >= LOOKUP_ERROR_BURST_MS && ++lookupErrorBursts === LOOKUP_ERROR_LIMIT) {
@@ -326,19 +328,10 @@ export function observeOrderLineSaves(document, { onContractBreak, setTimeout, n
   function checkFrame(frame, state) {
     let previousApi = null;
     let readyApi = null;
-    let renderedBefore = false;
     let remaining = ORDER_LINE_CONTRACT_CHECKS;
     const tick = () => {
       if (!frame.isConnected || frameStates.get(frame) !== state) return;
       const api = frame.contentWindow?.tradingViewApi ?? null;
-      // A drawn chart means TradingView is ready, so a missing API or callback is no longer a slow start.
-      const rendered = state.bootstrapFrame && Boolean(frame.contentDocument?.querySelector('canvas'));
-      const renderedTwice = rendered && renderedBefore;
-      renderedBefore = rendered;
-      if (!api && renderedTwice) {
-        report('bootstrap', 'TradingView drew the chart, but the frame never published tradingViewApi');
-        return;
-      }
       if (api && api === previousApi) {
         if (!state.bootstrapFrame) {
           report('bootstrap', `Chart API frame no longer matches iframe#tradingview_* inside .chart-widget-root (id: ${frame.id || 'none'})`);
@@ -355,9 +348,6 @@ export function observeOrderLineSaves(document, { onContractBreak, setTimeout, n
         else if (!pendingReady.has(frame.contentWindow)) {
           report('bootstrap', 'tradingViewApi exists but the innerWindowLoad → widgetReady hook never ran');
           return;
-        } else if (renderedTwice) {
-          report('bootstrap', 'TradingView drew the chart, but widgetReady never called back');
-          return;
         }
       }
       previousApi = api;
@@ -367,7 +357,7 @@ export function observeOrderLineSaves(document, { onContractBreak, setTimeout, n
   }
 
   const isChartFrame = frame => frame.id.startsWith('tradingview_') && Boolean(frame.closest('.chart-widget-root'));
-  const crossOrigin = frame => report('bootstrap', `TradingView frame ${frame.id} is no longer same-origin`);
+  const crossOrigin = frame => report('bootstrap', `TradingView frame ${frame.id} is not same-origin (moved to another origin, or a network error page)`);
 
   document.addEventListener('load', ({ target: frame }) => {
     if (frame.tagName !== 'IFRAME') return;
@@ -381,6 +371,8 @@ export function observeOrderLineSaves(document, { onContractBreak, setTimeout, n
     checkFrame(frame, state);
     if (!state.bootstrapFrame) return;
     frame.addEventListener('load', () => queueMicrotask(() => {
+      // A frame removed during a symbol switch is not a contract change.
+      if (!frame.isConnected) return;
       if (!frame.contentDocument) {
         crossOrigin(frame);
         return;
@@ -400,7 +392,7 @@ export function observeOrderLineSaves(document, { onContractBreak, setTimeout, n
             return;
           }
           if (unfilteredReaders.has(api)) return;
-          unfilteredReaders.set(api, observeSubscriptions(api, stats, report, now, noteLookupError, onNativeSave));
+          unfilteredReaders.set(api, observeSubscriptions(api, stats, report, now, { noteLookupError, noteLookupSuccess }, onNativeSave));
         });
       }, { capture: true, once: true });
     }), { once: true });

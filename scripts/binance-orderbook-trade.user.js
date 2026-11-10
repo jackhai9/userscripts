@@ -335,7 +335,6 @@
         "chart-model": localizedText("图表模型接口", "chart model API"),
         "lookup-error": localizedText("图表查询接口", "chart lookup API"),
         "order-tool-name": localizedText("挂单线类型名", "order-line tool name"),
-        "order-event-type": localizedText("挂单线事件类型", "order-line event type"),
         "event-type": localizedText("画线事件类型", "drawing event type")
       })
     }),
@@ -3421,7 +3420,7 @@
     return models;
   }
   var CHART_MODEL_SHAPE = "Chart widgets no longer expose getAll() → hasModel/model().model().getLineToolById";
-  function isLiveOrderLine(collection, id, report, noteLookupError) {
+  function isLiveOrderLine(collection, id, report, noteLookupError, noteLookupSuccess) {
     try {
       const models = chartModels(collection);
       if (!models) {
@@ -3438,6 +3437,7 @@
         }
         found = true;
       }
+      noteLookupSuccess();
       return found;
     } catch (error) {
       noteLookupError(error);
@@ -3482,7 +3482,8 @@
     });
     return (id) => removing != null && removing === id;
   }
-  function observeSubscriptions(api, stats, report, now, noteLookupError, onNativeSave) {
+  function observeSubscriptions(api, stats, report, now, lookups, onNativeSave) {
+    const { noteLookupError, noteLookupSuccess } = lookups;
     const collection = api?._chartWidgetCollection;
     if (typeof collection?.getAll !== "function" || typeof api.subscribe !== "function" || typeof api.unsubscribe !== "function") {
       report("api-shape", "tradingViewApi no longer exposes _chartWidgetCollection.getAll, subscribe and unsubscribe");
@@ -3523,10 +3524,7 @@
       if (!listener) {
         listener = function(id, type) {
           if (!DRAWING_EVENT_TYPES.has(type)) report("event-type", `Unknown drawing_event type: ${String(type)}`);
-          if (type === "points_changed" && isLiveOrderLine(collection, id, report, noteLookupError)) {
-            report("order-event-type", "Order lines now emit points_changed, which still saves the whole chart");
-          }
-          if (type === "properties_changed" && isLiveOrderLine(collection, id, report, noteLookupError)) {
+          if (type === "properties_changed" && isLiveOrderLine(collection, id, report, noteLookupError, noteLookupSuccess)) {
             liveOrders.add(id);
             stats.skipped++;
             return;
@@ -3596,6 +3594,9 @@
       breaks.push(entry);
       queueMicrotask(() => onContractBreak(entry));
     }
+    function noteLookupSuccess() {
+      lookupErrorBursts = 0;
+    }
     function noteLookupError(error) {
       const at = now();
       if (at - lastLookupErrorAt >= LOOKUP_ERROR_BURST_MS && ++lookupErrorBursts === LOOKUP_ERROR_LIMIT) {
@@ -3606,18 +3607,10 @@
     function checkFrame(frame, state) {
       let previousApi = null;
       let readyApi = null;
-      let renderedBefore = false;
       let remaining = ORDER_LINE_CONTRACT_CHECKS;
       const tick = () => {
         if (!frame.isConnected || frameStates.get(frame) !== state) return;
         const api = frame.contentWindow?.tradingViewApi ?? null;
-        const rendered = state.bootstrapFrame && Boolean(frame.contentDocument?.querySelector("canvas"));
-        const renderedTwice = rendered && renderedBefore;
-        renderedBefore = rendered;
-        if (!api && renderedTwice) {
-          report("bootstrap", "TradingView drew the chart, but the frame never published tradingViewApi");
-          return;
-        }
         if (api && api === previousApi) {
           if (!state.bootstrapFrame) {
             report("bootstrap", `Chart API frame no longer matches iframe#tradingview_* inside .chart-widget-root (id: ${frame.id || "none"})`);
@@ -3633,9 +3626,6 @@
           else if (!pendingReady.has(frame.contentWindow)) {
             report("bootstrap", "tradingViewApi exists but the innerWindowLoad → widgetReady hook never ran");
             return;
-          } else if (renderedTwice) {
-            report("bootstrap", "TradingView drew the chart, but widgetReady never called back");
-            return;
           }
         }
         previousApi = api;
@@ -3644,7 +3634,7 @@
       setTimeout2(tick, ORDER_LINE_CONTRACT_CHECK_MS);
     }
     const isChartFrame = (frame) => frame.id.startsWith("tradingview_") && Boolean(frame.closest(".chart-widget-root"));
-    const crossOrigin = (frame) => report("bootstrap", `TradingView frame ${frame.id} is no longer same-origin`);
+    const crossOrigin = (frame) => report("bootstrap", `TradingView frame ${frame.id} is not same-origin (moved to another origin, or a network error page)`);
     document2.addEventListener("load", ({ target: frame }) => {
       if (frame.tagName !== "IFRAME") return;
       if (!frame.contentDocument) {
@@ -3656,6 +3646,7 @@
       checkFrame(frame, state);
       if (!state.bootstrapFrame) return;
       frame.addEventListener("load", () => queueMicrotask(() => {
+        if (!frame.isConnected) return;
         if (!frame.contentDocument) {
           crossOrigin(frame);
           return;
@@ -3675,7 +3666,7 @@
               return;
             }
             if (unfilteredReaders.has(api)) return;
-            unfilteredReaders.set(api, observeSubscriptions(api, stats, report, now, noteLookupError, onNativeSave));
+            unfilteredReaders.set(api, observeSubscriptions(api, stats, report, now, { noteLookupError, noteLookupSuccess }, onNativeSave));
           });
         }, { capture: true, once: true });
       }), { once: true });

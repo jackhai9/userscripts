@@ -182,7 +182,6 @@ const DEPENDENCY_AREAS = Object.freeze({
       'chart-model': localizedText('图表模型接口', 'chart model API'),
       'lookup-error': localizedText('图表查询接口', 'chart lookup API'),
       'order-tool-name': localizedText('挂单线类型名', 'order-line tool name'),
-      'order-event-type': localizedText('挂单线事件类型', 'order-line event type'),
       'event-type': localizedText('画线事件类型', 'drawing event type'),
     }),
   }),

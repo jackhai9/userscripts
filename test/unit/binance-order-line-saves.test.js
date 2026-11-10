@@ -828,58 +828,6 @@ test('user is alerted when chart lookups keep failing in separate bursts', async
   assert.match(page.breaks[0].detail, /TypeError: getLineToolById is broken/);
 });
 
-test('user is alerted when order lines start emitting point changes', async t => {
-  // Given a protected chart with a live order line and a hand drawing.
-  const page = chartPage(t);
-  const host = await mountWidget(page);
-  host.chart.add('order', 'LineToolOrder');
-  host.chart.add('trend', 'LineToolTrendLine');
-
-  // When the hand drawing and then the order line emit point changes.
-  host.drawingEvent('trend', 'points_changed');
-  assert.deepEqual(page.breaks, []);
-  host.drawingEvent('order', 'points_changed');
-
-  // Then both still save natively and only the order-line change is reported.
-  assert.deepEqual(host.saves, [['trend', 'points_changed'], ['order', 'points_changed']]);
-  page.expectedBreaks = ['order-event-type'];
-});
-
-test('user is alerted when TradingView draws the chart but never publishes its API', async t => {
-  // Given a recognized chart frame without the API global.
-  const page = chartPage(t);
-  const host = await mountBootstrap(page);
-  page.runContractCheck();
-
-  // When the frame draws its chart and keeps it drawn across two checks.
-  host.win.document.body.append(host.win.document.createElement('canvas'));
-  page.runContractCheck();
-  assert.deepEqual(page.breaks, []);
-  page.runContractCheck();
-
-  // Then the missing API is reported.
-  page.expectedBreaks = ['bootstrap'];
-  assert.match(page.breaks[0].detail, /never published tradingViewApi/);
-});
-
-test('user is alerted when a drawn chart never calls back widgetReady', async t => {
-  // Given the hook is armed and the API is published, but readiness never arrives.
-  const page = chartPage(t);
-  const host = await mountBootstrap(page);
-  host.win.tradingViewApi = {};
-  page.runContractCheck();
-
-  // When the chart is drawn for two consecutive checks.
-  host.win.document.body.append(host.win.document.createElement('canvas'));
-  page.runContractCheck();
-  assert.deepEqual(page.breaks, []);
-  page.runContractCheck();
-
-  // Then the stuck readiness callback is reported.
-  page.expectedBreaks = ['bootstrap'];
-  assert.match(page.breaks[0].detail, /widgetReady never called back/);
-});
-
 test('user is alerted when the TradingView frame becomes cross-origin', async t => {
   // Given a chart frame whose document the page cannot read.
   const page = chartPage(t);
@@ -893,7 +841,7 @@ test('user is alerted when the TradingView frame becomes cross-origin', async t 
 
   // Then the bootstrap change is reported.
   page.expectedBreaks = ['bootstrap'];
-  assert.match(page.breaks[0].detail, /tradingview_cross is no longer same-origin/);
+  assert.match(page.breaks[0].detail, /tradingview_cross is not same-origin/);
 });
 
 test('user write filter learns of every native save request except clicks, moves and filtered order changes', async t => {
@@ -910,4 +858,61 @@ test('user write filter learns of every native save request except clicks, moves
 
   // Then only the two events that reach Binance's save are announced.
   assert.deepEqual(page.nativeSaves, [0, 10]);
+});
+
+test('user sees no lookup alert when chart replacements fail briefly between successful lookups', async t => {
+  // Given a protected chart whose model is replaced several times during a long session.
+  const page = chartPage(t);
+  const host = await mountWidget(page);
+  host.chart.add('order', 'LineToolOrder');
+  const lookup = host.chart.getLineToolById.bind(host.chart);
+
+  // When each replacement throws once and the next change succeeds again.
+  for (let replacement = 0; replacement < 5; replacement++) {
+    host.chart.getLineToolById = () => { throw new Error('Chart model has been destroyed'); };
+    host.drawingEvent('order', 'properties_changed');
+    host.chart.getLineToolById = lookup;
+    page.advance(5000);
+    host.drawingEvent('order', 'properties_changed');
+  }
+
+  // Then transient failures are not reported and order changes stay filtered after each recovery.
+  assert.deepEqual(page.breaks, []);
+  assert.equal(page.snapshot().skipped, 5);
+});
+
+test('user sees no alert when a chart frame is removed before its bootstrap load is handled', async t => {
+  // Given a recognized chart frame whose load has just fired.
+  const page = chartPage(t);
+  const frame = page.createElement('iframe');
+  frame.id = 'tradingview_removed';
+  page.querySelector('.chart-widget-root').replaceChildren(frame);
+  frame.dispatchEvent(new page.defaultView.Event('load'));
+
+  // When a symbol switch removes it before the deferred load handling runs.
+  frame.remove();
+  // Chrome detaches a removed frame's document; JSDOM keeps it.
+  Object.defineProperty(frame, 'contentDocument', { get: () => null });
+  await Promise.resolve();
+
+  // Then nothing is reported.
+  assert.deepEqual(page.breaks, []);
+});
+
+test('user is alerted when the chart frame turns cross-origin after its bootstrap', async t => {
+  // Given a recognized chart frame that loaded same-origin.
+  const page = chartPage(t);
+  const frame = page.createElement('iframe');
+  frame.id = 'tradingview_moved';
+  page.querySelector('.chart-widget-root').replaceChildren(frame);
+  frame.dispatchEvent(new page.defaultView.Event('load'));
+
+  // When its final load is on another origin.
+  Object.defineProperty(frame, 'contentDocument', { get: () => null });
+  frame.dispatchEvent(new page.defaultView.Event('load'));
+  await Promise.resolve();
+
+  // Then the change is reported with both possible causes.
+  page.expectedBreaks = ['bootstrap'];
+  assert.match(page.breaks[0].detail, /tradingview_moved is not same-origin \(moved to another origin, or a network error page\)/);
 });
