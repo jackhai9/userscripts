@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.245
+// @version      2.7.246
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -4882,11 +4882,18 @@ const hasCancellationAccountStream = installOrderSoundScope(
     return '';
   }
 
-  /** Only the admitted IDs may release quantity. Each click owns its HTTP receipt and terminal account event. */
+  /**
+   * Only the admitted IDs may release quantity. Each click owns its HTTP receipt and terminal account event.
+   * During reduce-only conflict recovery a selected order that left the list (usually a fill near the
+   * tail of a close) ends the batch without being counted as released: absence alone cannot prove the
+   * quantity was freed, so the recovery runner rereads the authoritative position before trying again.
+   */
   async function cancelOpenOrderRowsForPlan(targets, plan, progress, setExecutionStatus, abortSignal, options) {
     if (activeCancelReceipts) throw new Error('已有撤单任务正在执行');
     const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS);
     const cancelledIds = new Set();
+    const reduceOnlyRecovery = options?.strategy === 'confirmed_reduce_only_conflict';
+    let targetLeftList = false;
     let cancelQty = '0';
     let unclickedQty = targets.reduce((total, target) => addDecimalStrings(total, target.remainingQty), '0');
     const checkScope = () => {
@@ -4902,6 +4909,20 @@ const hasCancellationAccountStream = installOrderSoundScope(
         checkScope();
         const rows = readCurrentSymbolOpenOrderRows(getActiveOpenOrdersScope(), plan.symbol, plan);
         const matches = rows.filter(row => sameNativeOrder(target, readNativeOrderIdentity(row.row, plan.symbol)));
+        // Only an order absent from Binance's complete committed list has left it; a merely
+        // unrendered row stays an unconfirmable target.
+        const committed = !matches.length && reduceOnlyRecovery
+          ? readNativeOpenOrderWindow(getActiveOpenOrdersScope(), plan.symbol)
+          : null;
+        if (committed && !committed.data.some(order => sameNativeOrder(target, order))) {
+          targetLeftList = true;
+          const detail = localizedText(
+            '待替换挂单已成交或消失，重新核对持仓',
+            'A selected order filled or left the list; rechecking the position',
+          );
+          setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], '：'), detail);
+          break;
+        }
         if (matches.length !== 1) throw new Error('无法确认待替换订单，已停止重新挂单');
         const row = matches[0];
         const current = readNativeReplacementOrder(row.row, plan.symbol);
@@ -4945,6 +4966,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
           await ticket.released;
         }
       }
+      if (targetLeftList) return { targetLeftList: true };
       if (compareDecimalStrings(cancelQty, plan.totalQty) < 0) throw new Error('同向可撤挂单数量不足，已停止重新挂单');
       // Matched HTTP and terminal account receipts prove cancellation; the native UI consumes
       // those events separately. Continuous recovery next rereads the authoritative position.
@@ -6062,7 +6084,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
 
       setPlanStepStatus(`撤销 ${rowsToCancel.length} 笔同向挂单`);
       replacementDispatchEntered = true;
-      await cancelOpenOrderRowsForPlan(
+      const cancellation = await cancelOpenOrderRowsForPlan(
         rowsToCancel,
         plan,
         progress,
@@ -6071,6 +6093,10 @@ const hasCancellationAccountStream = installOrderSoundScope(
         options,
       );
       throwIfAborted(abortSignal);
+      if (cancellation?.targetLeftList) {
+        setPlanStepStatus('待替换挂单已成交或消失，重新核对持仓');
+        return { ok: true, status: 'target_left_list' };
+      }
       setPlanStepStatus('原挂单已撤，继续阶梯挂单');
       return { ok: true, status: 'rows_cleared' };
     } catch (e) {
