@@ -64,3 +64,27 @@ test('user sees the retained timestamp label advance and elapsed seconds reset w
   assert.equal(label.textContent, '更新于 12:39:56');
   assert.equal(h.footer.firstElementChild.children[1].textContent, '0秒前');
 });
+
+test('user sees the elapsed seconds and funding countdown advance by text updates alone, without replacing panel nodes', { timeout: 5_000 }, async t => {
+  // Given the whole rendered panel, including its current funding countdown, is observed
+  const h = await harness(t);
+  const panel = h.footer.closest('#jh-binance-trading-data-panel');
+  const countdown = panel.querySelector('[data-role="funding-countdown"]');
+  const before = countdown.textContent;
+  const records = [];
+  const observer = new h.window.MutationObserver(mutations => records.push(...mutations));
+  observer.observe(panel, { childList: true, subtree: true, characterData: true });
+  t.after(() => observer.disconnect());
+
+  // When the one-second business timer runs three times
+  for (let second = 1; second <= 3; second += 1) h.clock.tick(1_000);
+  records.push(...observer.takeRecords());
+
+  // Then the age and the countdown changed through character data only, three times each
+  assert.equal(h.footer.firstElementChild.children[1].textContent, '3秒前');
+  assert.notEqual(countdown.textContent, before);
+  assert.deepEqual([...new Set(records.map(record => record.type))], ['characterData']);
+  const changed = records.map(record => record.target.parentElement.dataset.role);
+  assert.deepEqual(changed.filter(role => role === 'elapsed').length, 3);
+  assert.deepEqual(changed.filter(role => role === 'funding-countdown').length, 3);
+});

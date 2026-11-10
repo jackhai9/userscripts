@@ -3,7 +3,7 @@
 // @namespace    binance.trading.data
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      1.2.7
+// @version      1.2.8
 // @author       jackhai9
 // @description  Bilingual futures metrics with historical trends, current funding, settlement countdown, and indicator signals.
 // @match        https://www.binance.com/*/futures/*
@@ -115,6 +115,16 @@
   function resolveUiLocaleFromPathname(pathname) {
     const firstSegment = String(pathname || "").split(/[?#]/, 1)[0].split("/").filter(Boolean)[0];
     return firstSegment?.toLowerCase() === "zh-cn" ? UI_LOCALE_ZH_CN : UI_LOCALE_EN;
+  }
+
+  // src/shared/dom-text.js
+  function setElementText(element, text) {
+    const node = element.firstChild;
+    if (node !== null && node === element.lastChild && node.nodeType === node.TEXT_NODE) {
+      if (node.data !== text) node.data = text;
+      return;
+    }
+    if (element.textContent !== text) element.textContent = text;
   }
 
   // src/binance-trading-data/market-data.js
@@ -767,9 +777,7 @@ ${item.value}`;
       element.textContent = text;
       return element;
     };
-    const setText = (element, value) => {
-      if (element.textContent !== value) element.textContent = value;
-    };
+    const setText = setElementText;
     const identify = (element, suffix) => {
       element.id = `${PANEL_ID}-${suffix}`;
       return element;
@@ -1371,8 +1379,8 @@ ${formatHistoryTime(time, locale)}` };
       }
       const updated = el.querySelector('[data-role="updated-at"]');
       const elapsed = el.querySelector('[data-role="elapsed"]');
-      if (updated.textContent !== updatedText) updated.textContent = updatedText;
-      if (elapsed.textContent !== elapsedText) elapsed.textContent = elapsedText;
+      setElementText(updated, updatedText);
+      setElementText(elapsed, elapsedText);
     }
     let currentFundingTimer = null;
     let currentFundingRequest = null;

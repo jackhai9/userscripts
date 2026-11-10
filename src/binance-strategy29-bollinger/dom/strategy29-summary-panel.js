@@ -2,6 +2,7 @@ import { STRATEGY29_REFERENCE_SHA256, STRATEGY29_API_SPEC_VERSION, STRATEGY29_RE
 
 import { SUMMARY_COPY as COPY, SELECTION_REASONS, STATUS_LABELS, SIGNAL_LABELS, processingReason, formatLocalizedText, resolveUiLocaleFromPathname } from '../ui-copy.js';
 import { installPanelPosition } from '../../shared/panel-position.js';
+import { setElementText } from '../../shared/dom-text.js';
 
 const PANEL_ID = 'jh-strategy29-summary-panel';
 
@@ -128,7 +129,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
   body.append(overview, eventsTitle, eventsHint, events, missingSignals, diagnostics);
   function renderCollapsed() {
     body.style.display = collapsed ? 'none' : 'block';
-    collapse.textContent = text(collapsed ? COPY.expand : COPY.collapse);
+    setElementText(collapse, text(collapsed ? COPY.expand : COPY.collapse));
     collapse.setAttribute('aria-expanded', String(!collapsed));
   }
   /** The saved position must be clamped against the restored height on its first layout. */
@@ -146,17 +147,17 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
     lastStatus = null;
     spec.dataset.state = 'unavailable';
     spec.style.color = '#848E9C';
-    spec.textContent = text(COPY.observerSpec(STRATEGY29_API_SPEC_VERSION));
-    statusFreshness.textContent = text(COPY.noStatus);
+    setElementText(spec, text(COPY.observerSpec(STRATEGY29_API_SPEC_VERSION)));
+    setElementText(statusFreshness, text(COPY.noStatus));
     selection.dataset.state = 'unavailable';
     selection.style.color = '#848E9C';
-    selection.textContent = text(COPY.noLiveStatus);
-    selectionDetails.textContent = '';
-    selectionRefresh.textContent = '';
+    setElementText(selection, text(COPY.noLiveStatus));
+    setElementText(selectionDetails, '');
+    setElementText(selectionRefresh, '');
     statusMessages = [];
     statusUnreliable = true;
-    units.replaceChildren();
-    delivery.textContent = text(COPY.waitingDelivery);
+    replaceList(units, NO_UNITS, () => []);
+    setElementText(delivery, text(COPY.waitingDelivery));
     renderNotices();
   }
   let lastEventsAt = null;
@@ -165,39 +166,57 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
   function assertLive() {
     if (destroyed) throw new Error('Strategy 29 summary panel is destroyed');
   }
+  /** Rendered list content per container; an identical rebuild would still replace every child. */
+  const renderedLists = new WeakMap();
+  function replaceList(container, content, build) {
+    const key = JSON.stringify(content);
+    if (renderedLists.get(container) === key) return;
+    container.replaceChildren(...build());
+    renderedLists.set(container, key);
+  }
+  const NO_UNITS = Object.freeze({ rows: [], placeholder: null });
   function renderNotices() {
     const messages = [...statusMessages];
     if (eventRecords.size > 0 && (statusUnreliable || ['disabled', 'module_disabled', 'gateway_unavailable', 'unavailable', 'disconnected', 'stopped', 'incompatible'].includes(connectionState))) {
       messages.unshift(text(COPY.historicalOnly));
     }
     const message = messages.join('\n');
-    if (notices.textContent !== message) notices.textContent = message;
+    setElementText(notices, message);
     notices.hidden = messages.length === 0;
   }
   function renderMissingSignals() {
     const present = new Set([...eventRecords.values()].map(event => event.timeframe));
     const missing = lastEventsAt === null || configuredTimeframes === null ? [] : configuredTimeframes.filter(timeframe => !present.has(timeframe));
     const message = missing.length === 0 ? '' : text(COPY.missingSignals(missing.join(', ')));
-    if (missingSignals.textContent !== message) missingSignals.textContent = message;
+    setElementText(missingSignals, message);
     missingSignals.hidden = missing.length === 0;
   }
   function renderEvents(ordered) {
-    events.replaceChildren();
-    for (const event of ordered) {
-      const row = element(document, 'div', {
-        role: 'remote-event',
-        styles: { display: 'grid', gridTemplateColumns: '36px minmax(0,1fr) 116px', gap: '6px', alignItems: 'center', padding: '5px 6px', borderRadius: '5px', background: 'rgba(132,142,156,.08)' },
+    const rows = ordered.map(event => ({
+      id: event.event_id, timeframe: event.timeframe,
+      label: text(SIGNAL_LABELS[`${event.setup_direction}:${event.signal_type}`]),
+      color: event.signal_side === 'long' ? '#0ECB81' : '#F6465D',
+      close: text(COPY.close(formatClock(event.bar_close_ms))),
+    }));
+    const placeholder = rows.length === 0 ? text(lastEventsAt === null ? COPY.waitingSignals : COPY.noEvents) : null;
+    replaceList(events, { rows, placeholder }, () => {
+      const nodes = rows.map(item => {
+        const row = element(document, 'div', {
+          role: 'remote-event',
+          styles: { display: 'grid', gridTemplateColumns: '36px minmax(0,1fr) 116px', gap: '6px', alignItems: 'center', padding: '5px 6px', borderRadius: '5px', background: 'rgba(132,142,156,.08)' },
+        });
+        row.dataset.eventId = item.id;
+        row.appendChild(element(document, 'strong', { text: item.timeframe, styles: { color: '#F0B90B' } }));
+        row.appendChild(element(document, 'span', {
+          text: item.label,
+          styles: { color: item.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+        }));
+        row.appendChild(element(document, 'span', { text: item.close, styles: { color: '#848E9C', fontSize: '10px', textAlign: 'right' } }));
+        return row;
       });
-      row.dataset.eventId = event.event_id;
-      row.appendChild(element(document, 'strong', { text: event.timeframe, styles: { color: '#F0B90B' } }));
-      row.appendChild(element(document, 'span', {
-        text: text(SIGNAL_LABELS[`${event.setup_direction}:${event.signal_type}`]),
-        styles: { color: event.signal_side === 'long' ? '#0ECB81' : '#F6465D', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-      }));
-      row.appendChild(element(document, 'span', { text: text(COPY.close(formatClock(event.bar_close_ms))), styles: { color: '#848E9C', fontSize: '10px', textAlign: 'right' } }));
-      events.appendChild(row);
-    }
-    if (ordered.length === 0) events.appendChild(element(document, 'span', { text: text(lastEventsAt === null ? COPY.waitingSignals : COPY.noEvents), styles: { color: '#848E9C', padding: '4px' } }));
+      if (placeholder !== null) nodes.push(element(document, 'span', { text: placeholder, styles: { color: '#848E9C', padding: '4px' } }));
+      return nodes;
+    });
     renderMissingSignals();
     renderNotices();
   }
@@ -226,18 +245,18 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       formatLocalizedText(COPY.waiting, nextLocale);
       if (locale === nextLocale) return;
       locale = nextLocale;
-      heading.textContent = text(COPY.title);
+      setElementText(heading, text(COPY.title));
       header.title = text(COPY.drag);
       renderCollapsed();
-      connection.textContent = text(connectionCopy);
-      reference.textContent = text(COPY.reference(STRATEGY29_REFERENCE_SHA256));
-      diagnosticsTitle.textContent = text(COPY.diagnostics);
+      setElementText(connection, text(connectionCopy));
+      setElementText(reference, text(COPY.reference(STRATEGY29_REFERENCE_SHA256)));
+      setElementText(diagnosticsTitle, text(COPY.diagnostics));
       unitsTitle.firstChild.textContent = text(COPY.processing);
-      processingHint.textContent = text(COPY.processingHint);
-      eventsTitle.textContent = text(COPY.recent);
-      eventsHint.textContent = text(COPY.perTimeframe(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME));
-      timeframeSummary.textContent = configuredTimeframes === null ? '' : text(COPY.intervals(configuredTimeframes.join(', ')));
-      eventsFreshness.textContent = text(lastEventsAt === null ? COPY.noEventsCheck : COPY.eventsAt(formatClock(lastEventsAt)));
+      setElementText(processingHint, text(COPY.processingHint));
+      setElementText(eventsTitle, text(COPY.recent));
+      setElementText(eventsHint, text(COPY.perTimeframe(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME)));
+      setElementText(timeframeSummary, configuredTimeframes === null ? '' : text(COPY.intervals(configuredTimeframes.join(', '))));
+      setElementText(eventsFreshness, text(lastEventsAt === null ? COPY.noEventsCheck : COPY.eventsAt(formatClock(lastEventsAt))));
       if (lastStatus !== null) api.renderStatus(lastStatus);
       else clearCurrentStatus();
       renderEvents([...eventRecords.values()].sort(newestSignalFirst));
@@ -249,7 +268,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       connection.dataset.state = state;
       connection.style.color = STATE_COLORS[state];
       connectionCopy = message;
-      connection.textContent = text(message);
+      setElementText(connection, text(message));
       if (['disabled', 'module_disabled', 'gateway_unavailable', 'unavailable'].includes(state)) clearCurrentStatus();
       renderNotices();
     },
@@ -259,20 +278,20 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       const matched = snapshot.spec_version === STRATEGY29_API_SPEC_VERSION;
       spec.dataset.state = matched ? 'matched' : 'error';
       spec.style.color = matched ? '#0ECB81' : '#F6465D';
-      spec.textContent = matched
+      setElementText(spec, matched
         ? text(COPY.matched(STRATEGY29_API_SPEC_VERSION))
-        : text(COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version));
-      statusFreshness.textContent = text(COPY.statusAt(formatClock(snapshot.observed_at_ms)));
+        : text(COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version)));
+      setElementText(statusFreshness, text(COPY.statusAt(formatClock(snapshot.observed_at_ms))));
       if (!matched) {
         statusUnreliable = true;
         statusMessages = [text(COPY.updateRequired)];
         selection.dataset.state = 'incompatible';
         selection.style.color = '#F6465D';
-        selection.textContent = text(COPY.incompatibleSelection);
-        selectionDetails.textContent = '';
-        selectionRefresh.textContent = '';
-        units.replaceChildren();
-        delivery.textContent = text(COPY.incompatibleDelivery);
+        setElementText(selection, text(COPY.incompatibleSelection));
+        setElementText(selectionDetails, '');
+        setElementText(selectionRefresh, '');
+        replaceList(units, NO_UNITS, () => []);
+        setElementText(delivery, text(COPY.incompatibleDelivery));
         renderNotices();
         return;
       }
@@ -293,15 +312,14 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
           if (removed) renderEvents([...eventRecords.values()].sort(newestSignalFirst));
         }
       }
-      timeframeSummary.textContent = configuredTimeframes === null ? '' : text(COPY.intervals(configuredTimeframes.join(', ')));
+      setElementText(timeframeSummary, configuredTimeframes === null ? '' : text(COPY.intervals(configuredTimeframes.join(', '))));
       selection.dataset.state = universe.refresh_status;
       selection.style.color = unavailable ? '#F6465D' : universe.refresh_status === 'fresh' ? '#0ECB81' : '#F0B90B';
-      selection.textContent = text(unavailable ? SELECTION_REASONS[universe.reason] : selected ? COPY.selected : COPY.notSelected);
-      selectionDetails.textContent = [text(SELECTION_REASONS[universe.reason]), text(COPY.generation(universe.generation ?? text(COPY.pending))), text(COPY.markets(universe.selected_markets.length)), text(COPY.ready(universe.ready_unit_count, universe.selected_unit_count))].join(' · ');
-      selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null
+      setElementText(selection, text(unavailable ? SELECTION_REASONS[universe.reason] : selected ? COPY.selected : COPY.notSelected));
+      setElementText(selectionDetails, [text(SELECTION_REASONS[universe.reason]), text(COPY.generation(universe.generation ?? text(COPY.pending))), text(COPY.markets(universe.selected_markets.length)), text(COPY.ready(universe.ready_unit_count, universe.selected_unit_count))].join(' · '));
+      setElementText(selectionRefresh, universe.last_successful_refreshed_at_ms === null
         ? text(COPY.noSuccess)
-        : text(COPY.lastSuccess(formatClock(universe.last_successful_refreshed_at_ms), universe.last_success_age_seconds.toFixed(1)));
-      units.replaceChildren();
+        : text(COPY.lastSuccess(formatClock(universe.last_successful_refreshed_at_ms), universe.last_success_age_seconds.toFixed(1))));
       const matching = unavailable || !selected ? [] : snapshot.units.filter(unit => (
         unit.symbol === canonicalSymbol && universe.configured_timeframes.includes(unit.timeframe)
       )).sort((left, right) => compareStrategy29Timeframes(left.timeframe, right.timeframe));
@@ -309,23 +327,32 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       if (!unavailable && universe.pending_unit_count > 0) statusMessages.push(text(COPY.globalPending(universe.pending_unit_count)));
       for (const unit of matching) {
         if (unit.status !== 'ready') statusMessages.push(`${unit.timeframe} · ${text(STATUS_LABELS[unit.status])}`);
-        const row = element(document, 'div', {
-          role: 'unit',
-          styles: { display: 'grid', gridTemplateColumns: '36px 78px minmax(0,1fr)', gap: '6px', padding: '4px 6px', borderRadius: '5px', background: 'rgba(132,142,156,.08)' },
-        });
-        row.appendChild(element(document, 'strong', { text: unit.timeframe, styles: { color: '#EAECEF' } }));
-        // Stored processing can succeed before the current live admission is ready.
-        row.appendChild(element(document, 'span', { text: text(STATUS_LABELS[unit.status]), styles: { color: STATUS_COLORS[unit.status] } }));
-        row.appendChild(element(document, 'span', { text: processingReason(unit.reason, locale), styles: { color: '#848E9C', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }));
-        units.appendChild(row);
       }
-      if (matching.length === 0) units.appendChild(element(document, 'span', {
-        text: text(unavailable ? COPY.unavailableSelection : selected ? COPY.awaitingUnits : COPY.notSelected),
-        styles: { color: '#F0B90B', padding: '4px' },
+      // Stored processing can succeed before the current live admission is ready.
+      const unitRows = matching.map(unit => ({
+        timeframe: unit.timeframe, label: text(STATUS_LABELS[unit.status]), color: STATUS_COLORS[unit.status],
+        reason: processingReason(unit.reason, locale),
       }));
+      const unitPlaceholder = unitRows.length === 0
+        ? text(unavailable ? COPY.unavailableSelection : selected ? COPY.awaitingUnits : COPY.notSelected)
+        : null;
+      replaceList(units, { rows: unitRows, placeholder: unitPlaceholder }, () => {
+        const nodes = unitRows.map(item => {
+          const row = element(document, 'div', {
+            role: 'unit',
+            styles: { display: 'grid', gridTemplateColumns: '36px 78px minmax(0,1fr)', gap: '6px', padding: '4px 6px', borderRadius: '5px', background: 'rgba(132,142,156,.08)' },
+          });
+          row.appendChild(element(document, 'strong', { text: item.timeframe, styles: { color: '#EAECEF' } }));
+          row.appendChild(element(document, 'span', { text: item.label, styles: { color: item.color } }));
+          row.appendChild(element(document, 'span', { text: item.reason, styles: { color: '#848E9C', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }));
+          return row;
+        });
+        if (unitPlaceholder !== null) nodes.push(element(document, 'span', { text: unitPlaceholder, styles: { color: '#F0B90B', padding: '4px' } }));
+        return nodes;
+      });
       if (!unavailable && selected && matching.length === 0) statusMessages.push(text(COPY.awaitingUnits));
       const counts = snapshot.delivery_counts;
-      delivery.textContent = text(COPY.delivery(counts));
+      setElementText(delivery, text(COPY.delivery(counts)));
       renderMissingSignals();
       renderNotices();
     },
@@ -352,7 +379,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       }
       // Empty increments still advance freshness, but contain no changes to retained rows.
       if (observedAtMs !== null) {
-        eventsFreshness.textContent = text(COPY.eventsAt(formatClock(observedAtMs)));
+        setElementText(eventsFreshness, text(COPY.eventsAt(formatClock(observedAtMs))));
       }
       renderMissingSignals();
     },
@@ -360,7 +387,7 @@ export function createStrategy29SummaryPanel(document, canonicalSymbol, {
       assertLive();
       eventRecords.clear();
       lastEventsAt = null;
-      eventsFreshness.textContent = text(COPY.noEventsCheck);
+      setElementText(eventsFreshness, text(COPY.noEventsCheck));
       renderEvents([]);
     },
     destroy() {
