@@ -6401,7 +6401,7 @@
     }
     function put(value, key) {
       if (!isChartRecordWrite(this, key, arguments.length)) {
-        if (saveWindow) noteUnmatchedWrite(this, arguments.length >= 2 ? key : void 0);
+        if (saveWindow && this instanceof view.IDBObjectStore) noteUnmatchedWrite(this, arguments.length >= 2 ? key : void 0);
         return Reflect.apply(nativePut, this, arguments);
       }
       if (saveWindow) saveWindow.matched += 1;

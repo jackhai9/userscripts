@@ -208,3 +208,16 @@ test('user is alerted when Binance renames its chart keys inside the same databa
   assert.deepEqual(breaks.map(({ reason }) => reason), ['write-layout']);
   assert.match(breaks[0].detail, /chart_futures\/keyvaluepairs\/v2:BTCUSDT/);
 });
+
+test('user gets the native error when put is called on a non-store while a save window is open', t => {
+  // Given a native save window is open.
+  const { filter, view, breaks } = installWriteFilter(t);
+  filter.noteNativeSave();
+
+  // When put is invoked with a receiver that is not an object store.
+  const call = () => view.IDBObjectStore.prototype.put.call({}, { value: 1 }, 'key');
+
+  // Then the native method handles the receiver and the filter adds no error of its own.
+  assert.doesNotThrow(call);
+  assert.deepEqual(breaks, []);
+});

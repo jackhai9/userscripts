@@ -90,7 +90,8 @@ export function installUnchangedChartWriteFilter(view, { onContractBreak }) {
   function put(value, key) {
     if (!isChartRecordWrite(this, key, arguments.length)) {
       // An inline-key store passes no key argument; its key stays unknown here.
-      if (saveWindow) noteUnmatchedWrite(this, arguments.length >= 2 ? key : undefined);
+      // Only real stores are sampled, so an invalid receiver still gets the native error.
+      if (saveWindow && this instanceof view.IDBObjectStore) noteUnmatchedWrite(this, arguments.length >= 2 ? key : undefined);
       return Reflect.apply(nativePut, this, arguments);
     }
     if (saveWindow) saveWindow.matched += 1;
