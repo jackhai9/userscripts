@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.244
+// @version      2.7.245
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -346,6 +346,17 @@
       ),
       reasons: Object.freeze({
         "write-layout": localizedText("图表存储布局", "chart storage layout")
+      })
+    }),
+    "i18n-usage": Object.freeze({
+      label: localizedText("翻译统计拦截", "Translation usage block"),
+      consequence: localizedText(
+        "币安的翻译使用统计又会写入 IndexedDB，长时间交易后刷新页面可能一次排队上万个事务",
+        "Binance's translation usage telemetry writes to IndexedDB again; after long trading sessions a reload may queue thousands of transactions at once"
+      ),
+      reasons: Object.freeze({
+        "usage-db-name": localizedText("统计数据库名称", "usage database name"),
+        "usage-db-missing": localizedText("统计数据库未出现", "usage database not opened")
       })
     }),
     "trade-sound": Object.freeze({
@@ -6595,6 +6606,52 @@
     return hasAccountStream;
   }
 
+  // src/binance-orderbook-trade/i18n-usage/install.js
+  var USAGE_DATABASE = "pika-i18n-usage";
+  var USAGE_LIKE = /i18n[-_]?usage/i;
+  var USAGE_OPEN_EXPECTED_MS = 12e4;
+  function installI18nUsageBlock(view, { onContractBreak, setTimeout: setTimeout2 }) {
+    if (typeof onContractBreak !== "function" || typeof setTimeout2 !== "function") {
+      throw new Error("I18n usage block requires a contract break handler and setTimeout");
+    }
+    const prototype = view.IDBFactory.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "open");
+    const nativeOpen = descriptor.value;
+    if (typeof nativeOpen !== "function") throw new Error("I18n usage block requires the native IndexedDB open method");
+    const stats = { blocked: 0 };
+    const breaks = [];
+    const reported = /* @__PURE__ */ new Set();
+    function report(key, reason, detail) {
+      if (reported.has(key)) return;
+      reported.add(key);
+      const entry = Object.freeze({ reason, detail });
+      breaks.push(entry);
+      queueMicrotask(() => onContractBreak(entry));
+    }
+    function open(name) {
+      if (name === USAGE_DATABASE) {
+        stats.blocked += 1;
+        throw new view.DOMException("", "NotAllowedError");
+      }
+      if (typeof name === "string" && USAGE_LIKE.test(name)) {
+        report(name, "usage-db-name", `Usage-like database opened under a new name: ${name}`);
+      }
+      return Reflect.apply(nativeOpen, this, arguments);
+    }
+    setTimeout2(() => {
+      if (stats.blocked > 0) return;
+      const module = typeof view.__getActiveI18nKeys === "function" ? "present" : "absent";
+      report("missing", "usage-db-missing", `No ${USAGE_DATABASE} open within ${USAGE_OPEN_EXPECTED_MS / 1e3} s (Binance usage debug hook ${module})`);
+    }, USAGE_OPEN_EXPECTED_MS);
+    Object.defineProperty(prototype, "open", { ...descriptor, value: open });
+    return Object.freeze({ snapshot: () => ({ ...stats }), breaks: () => [...breaks] });
+  }
+  function installBinanceI18nUsageBlock({ onContractBreak }) {
+    if (!isTopLevelTradingPage() || Object.hasOwn(self, "__BINANCE_I18N_USAGE__")) return;
+    const block = installI18nUsageBlock(self, { onContractBreak, setTimeout: self.setTimeout.bind(self) });
+    Object.defineProperty(self, "__BINANCE_I18N_USAGE__", { value: block, configurable: true });
+  }
+
   // src/binance-orderbook-trade/index.user.js
   var activeCancelReceipts = null;
   var dependencyBreaks = [];
@@ -6607,6 +6664,7 @@
       renderDependencyAlert?.();
     };
   }
+  installBinanceI18nUsageBlock({ onContractBreak: reportDependencyBreak("i18n-usage") });
   installChartWriteFilter({
     onOrderLineContractBreak: reportDependencyBreak("chart-save"),
     onWriteFilterContractBreak: reportDependencyBreak("chart-write")
