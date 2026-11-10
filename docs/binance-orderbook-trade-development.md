@@ -444,6 +444,19 @@ Window alignment and all pre-click identity checks still apply when selecting
 new cancellation targets. Ordinary replacements keep their existing list
 synchronization check; ordinary DOM waits remain event driven.
 
+Near the tail of a close, a selected order often fills between selection and its
+click. If a selected order is neither among the current Basic rows nor in the
+native list's complete committed data during reduce-only recovery, the batch ends
+without clicking further targets and without counting that order as released
+quantity (an order that is committed but not rendered still stops the task): absence alone cannot prove the quantity
+was freed, because an external order may have replaced it. The runner then waits,
+rereads the authoritative position and rebuilds, so a fill continues the task,
+while an unchanged position followed by another rejection stops with the existing
+no-progress explanation. On 2026-11-10 the previous rule (any missing target is
+terminal) stopped a JCTUSDT continuous close at round 624/628 with
+`无法确认待替换订单`. The step status reads `待替换挂单已成交或消失，重新核对持仓`.
+Ordinary replacements keep stopping on a missing target.
+
 Recovery rebuilds use the smaller of the confirmed API position quantity and the
 latest valid DOM closeable quantity. Missing DOM quantity never falls back to the
 API amount. Symbol, direction, precision, and option context stay pinned to the

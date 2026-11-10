@@ -336,6 +336,111 @@ test('user preserves a new order that remounts with the next selected row’s di
   expect(host.errors).toEqual([]);
 });
 
+test('user continues reduce-only close recovery when a selected order fills before its cancellation', async ({ page }) => {
+  // Given continuous close hits a reduce-only rejection while the authoritative position is unchanged.
+  test.setTimeout(40_000);
+  const direction = ACTIONS[2];
+  const rejected = { outcome: 'rejected', delivery: 'immediate', code: '90802022', message: 'Reduce only order rejected' };
+  const accepted = Array.from({ length: 15 }, () => ({ outcome: 'success', delivery: 'immediate' }));
+  const scenario = scenarioFor(direction, { host: { submitApiResponses: [rejected, ...accepted] } });
+  const host = await openUserscriptScenario(page, scenario, { replacementStream: true, holdRowCancelResponses: true });
+  const unchanged = ['100', '100'];
+  const reads = [];
+  let filled = false;
+  await page.route('**/bapi/futures/v6/private/future/user-data/user-position', async route => {
+    const quantity = unchanged.length ? unchanged.shift() : filled ? '99.8' : '100';
+    reads.push(quantity);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      success: true, data: [{ symbol: CURRENT_SYMBOL, positionSide: direction.side, positionAmount: quantity }],
+    }) });
+  });
+  await page.locator('[data-ladder-action="' + direction.action + '"]').click({ modifiers: ['Alt'] });
+  const [first, second] = scenario.orders;
+  await expect.poll(host.pendingCancelOrderIds, { timeout: 15_000 }).toEqual([first.orderId]);
+
+  // When the second selected order fills and leaves the native list before the first cancellation completes.
+  await page.evaluate(rows => window.__BINANCE_FIXTURE__.setOrders(rows), scenario.orders.filter(order => order !== second));
+  filled = true;
+  host.releaseCancelResponse(first.orderId);
+
+  // Then the runner rereads the decreased position and submits the rebuilt plan instead of failing the task.
+  const status = page.locator('#jh-binance-ladder-status');
+  await expect(status).toContainText('待替换挂单已成交或消失', { timeout: 10_000 });
+  await expect.poll(async () => (await readFixtureState(page)).events
+    .filter(({ type }) => type === 'order-submit-api-success').length, { timeout: 15_000 }).toBeGreaterThanOrEqual(5);
+  expect(reads).toContain('99.8');
+  await expect(status).not.toContainText('失败');
+
+  // When the user stops the task.
+  await page.locator('[data-ladder-stop]').click();
+
+  // Then only the first selected order was ever cancelled and the filled order was never clicked.
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+  await expect(status).not.toContainText('失败');
+  const state = await readFixtureState(page);
+  expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
+    .toEqual([first.id]);
+  expect(host.errors).toEqual([]);
+});
+
+test('user stops reduce-only close recovery when a selected order disappears but the position never decreases', async ({ page }) => {
+  // Given every close submission is rejected as reduce-only while the authoritative position stays unchanged.
+  test.setTimeout(40_000);
+  const direction = ACTIONS[2];
+  const rejected = { outcome: 'rejected', delivery: 'immediate', code: '90802022', message: 'Reduce only order rejected' };
+  const scenario = scenarioFor(direction, { host: { submitApiResponses: Array.from({ length: 6 }, () => rejected) } });
+  const host = await openUserscriptScenario(page, scenario, { replacementStream: true, holdRowCancelResponses: true });
+  await page.route('**/bapi/futures/v6/private/future/user-data/user-position', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: [{ symbol: CURRENT_SYMBOL, positionSide: direction.side, positionAmount: '100' }] }),
+  }));
+  await page.locator('[data-ladder-action="' + direction.action + '"]').click({ modifiers: ['Alt'] });
+  const [first, second] = scenario.orders;
+  await expect.poll(host.pendingCancelOrderIds, { timeout: 15_000 }).toEqual([first.orderId]);
+
+  // When the second selected order leaves the list without any position decrease.
+  await page.evaluate(rows => window.__BINANCE_FIXTURE__.setOrders(rows), scenario.orders.filter(order => order !== second));
+  host.releaseCancelResponse(first.orderId);
+
+  // Then the runner stops on the persisting conflict without cancelling the spare order.
+  const status = page.locator('#jh-binance-ladder-status');
+  await expect(status).toContainText('替换后仍有只减仓冲突', { timeout: 25_000 });
+  const state = await readFixtureState(page);
+  expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
+    .toEqual([first.id]);
+  expect(state.orders).toContainEqual(expect.objectContaining({ id: 'same-direction-extra' }));
+  expect(host.errors).toEqual([]);
+});
+
+test('user stops reduce-only close recovery when a selected order is committed but not rendered', async ({ page }) => {
+  // Given the native list renders two rows at a time and a reduce-only replacement awaits its first cancellation.
+  test.setTimeout(40_000);
+  const direction = ACTIONS[2];
+  const scenario = scenarioFor(direction, { host: { orderRowsPageSize: 2 } });
+  const host = await openUserscriptScenario(page, scenario, { replacementStream: true, holdRowCancelResponses: true });
+  await page.route('**/bapi/futures/v6/private/future/user-data/user-position', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: [{ symbol: CURRENT_SYMBOL, positionSide: direction.side, positionAmount: '100' }] }),
+  }));
+  await page.locator('[data-ladder-action="' + direction.action + '"]').click({ modifiers: ['Alt'] });
+  const [first, second, ...rest] = scenario.orders;
+  await expect.poll(host.pendingCancelOrderIds, { timeout: 15_000 }).toEqual([first.orderId]);
+
+  // When an external order is listed ahead of the second target, pushing it out of the rendered rows only.
+  const external = { ...second, id: 'external', orderId: 2345, clientOrderId: 'external', price: '86' };
+  await page.evaluate(rows => window.__BINANCE_FIXTURE__.setOrders(rows), [first, external, second, ...rest]);
+  host.releaseCancelResponse(first.orderId);
+
+  // Then the still-committed target stays unconfirmable and the task stops without clicking it or the external order.
+  const status = page.locator('#jh-binance-ladder-status');
+  await expect(status).toContainText('无法确认待替换订单', { timeout: 15_000 });
+  const state = await readFixtureState(page);
+  expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
+    .toEqual([first.id]);
+  expect(state.orders).toContainEqual(external);
+  expect(host.errors).toEqual([]);
+});
+
 test('user retains a newly selected Conditional tab while the cancelled batch is clearing', async ({ page }) => {
   // Given both native cancellations are accepted but their rows remain on the current Basic tab.
   const scenario = scenarioFor(ACTIONS[0], { host: { rowCancelDelayMs: 5000 } });
