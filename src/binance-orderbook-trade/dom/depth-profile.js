@@ -1,3 +1,5 @@
+import { setElementText } from '../../shared/dom-text.js';
+
 export const DEPTH_PROFILE_ID = 'jh-binance-depth-profile';
 
 const STYLE_ID = 'jh-binance-depth-profile-style';
@@ -266,7 +268,7 @@ export function setDepthProfileViewState(root, {
   const toggleText = expanded ? '−' : collapsedLabel;
   const toggleTitle = expanded ? expandedLabel : collapsedLabel;
   if (root.dataset.expanded !== expandedValue) root.dataset.expanded = expandedValue;
-  if (toggle.textContent !== toggleText) toggle.textContent = toggleText;
+  setElementText(toggle, toggleText);
   if (toggle.title !== toggleTitle) toggle.title = toggleTitle;
   if (toggle.getAttribute('aria-label') !== toggleTitle) {
     toggle.setAttribute('aria-label', toggleTitle);
@@ -274,7 +276,7 @@ export function setDepthProfileViewState(root, {
   if (toggle.getAttribute('aria-pressed') !== expandedValue) {
     toggle.setAttribute('aria-pressed', expandedValue);
   }
-  if (statusElement.textContent !== status) statusElement.textContent = status;
+  setElementText(statusElement, status);
   if (statusElement.title !== statusTitle) statusElement.title = statusTitle;
 }
 

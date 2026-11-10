@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.247
+// @version      2.7.248
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -4400,6 +4400,16 @@
     return { chartRoot, tradingViewApi: tradingViewApis[0] };
   }
 
+  // src/shared/dom-text.js
+  function setElementText(element, text) {
+    const node = element.firstChild;
+    if (node !== null && node === element.lastChild && node.nodeType === node.TEXT_NODE) {
+      if (node.data !== text) node.data = text;
+      return;
+    }
+    if (element.textContent !== text) element.textContent = text;
+  }
+
   // src/shared/chart-mutation-owners.js
   var OWNER_SLOT = Symbol.for("jh-userscripts.chart-mutation-owners");
   var VERSION = 1;
@@ -5240,7 +5250,7 @@
     const toggleText = expanded ? "−" : collapsedLabel;
     const toggleTitle = expanded ? expandedLabel : collapsedLabel;
     if (root.dataset.expanded !== expandedValue) root.dataset.expanded = expandedValue;
-    if (toggle.textContent !== toggleText) toggle.textContent = toggleText;
+    setElementText(toggle, toggleText);
     if (toggle.title !== toggleTitle) toggle.title = toggleTitle;
     if (toggle.getAttribute("aria-label") !== toggleTitle) {
       toggle.setAttribute("aria-label", toggleTitle);
@@ -5248,7 +5258,7 @@
     if (toggle.getAttribute("aria-pressed") !== expandedValue) {
       toggle.setAttribute("aria-pressed", expandedValue);
     }
-    if (statusElement.textContent !== status) statusElement.textContent = status;
+    setElementText(statusElement, status);
     if (statusElement.title !== statusTitle) statusElement.title = statusTitle;
   }
   function setDepthProfileGeometry(root, geometry) {
@@ -7520,7 +7530,7 @@
       const renderedTitle = ui(ladderStatusTitle);
       const statusEl = document.getElementById(LADDER_STATUS_ID);
       if (statusEl) {
-        if (statusEl.textContent !== renderedText) statusEl.textContent = renderedText;
+        setElementText(statusEl, renderedText);
         if (statusEl.title !== renderedTitle) statusEl.title = renderedTitle;
       }
     }
@@ -7528,7 +7538,7 @@
       if (!element) return;
       const text = ui(automaticUsdtRebalanceStatusText);
       const title = ui(automaticUsdtRebalanceStatusTitle);
-      if (element.textContent !== text) element.textContent = text;
+      setElementText(element, text);
       if (element.title !== title) element.title = title;
       if (element.hidden !== (text === "")) element.hidden = text === "";
     }
@@ -7539,7 +7549,7 @@
       if (hidden) return;
       const text = ui(DEPENDENCY_ALERT);
       const title = ui(formatDependencyAlertTooltip(dependencyBreaks));
-      if (element.textContent !== text) element.textContent = text;
+      setElementText(element, text);
       if (element.title !== title) element.title = title;
     }
     renderDependencyAlert = () => renderDependencyAlertRow(document.getElementById(DEPENDENCY_ALERT_ID));
@@ -13191,9 +13201,7 @@
         const cancelButton = body.querySelector('[data-ladder-cancel-symbol="true"]');
         if (cancelButton) {
           const cancelLabel = ui(cancelPresentation.label);
-          if (cancelButton.textContent !== cancelLabel) {
-            cancelButton.textContent = cancelLabel;
-          }
+          setElementText(cancelButton, cancelLabel);
           if (cancelButton.disabled !== cancelPresentation.disabled) {
             cancelButton.disabled = cancelPresentation.disabled;
           }
@@ -13212,7 +13220,7 @@
       if (status) {
         const renderedText = ui(ladderStatusText);
         const renderedTitle = ui(ladderStatusTitle);
-        if (status.textContent !== renderedText) status.textContent = renderedText;
+        setElementText(status, renderedText);
         if (status.title !== renderedTitle) status.title = renderedTitle;
       }
       renderAutomaticUsdtRebalanceStatus(panel.querySelector(`#${AUTOMATIC_USDT_REBALANCE_STATUS_ID}`));
@@ -13273,20 +13281,18 @@
         finalText = ui(PANEL_COPY.state.positiveIntegerMultiplier);
       }
       if (formulaPrefixEl) {
-        if (formulaPrefixEl.textContent !== formulaPrefixText) {
-          formulaPrefixEl.textContent = formulaPrefixText;
-        }
+        setElementText(formulaPrefixEl, formulaPrefixText);
         formulaPrefixEl.style.display = formulaPrefixText ? "inline" : "none";
       }
       if (finalEl) {
-        if (finalEl.textContent !== finalText) finalEl.textContent = finalText;
+        setElementText(finalEl, finalText);
         finalEl.style.color = formulaPrefixText ? PRIMARY_EMPHASIS_COLOR : MUTED_TEXT_COLOR;
       }
       if (constraintDividerEl) {
         constraintDividerEl.style.display = constraintText ? "block" : "none";
       }
       if (minEl) {
-        if (minEl.textContent !== constraintText) minEl.textContent = constraintText;
+        setElementText(minEl, constraintText);
         minEl.style.display = constraintText ? "block" : "none";
       }
       if (calculationEl) {
@@ -13301,9 +13307,7 @@
           multiplierHintText = PANEL_COPY.field.minimumCloseQuantity;
         }
         const renderedMultiplierHint = ui(multiplierHintText);
-        if (multiplierHintEl.textContent !== renderedMultiplierHint) {
-          multiplierHintEl.textContent = renderedMultiplierHint;
-        }
+        setElementText(multiplierHintEl, renderedMultiplierHint);
       }
       let hintText = ui(PANEL_COPY.field.clickOrderbook);
       let hintTitle = "";
@@ -13343,7 +13347,7 @@
             "Close mode: no position to close for this symbol"
           ));
         }
-        if (hintEl.textContent !== hintText) hintEl.textContent = hintText;
+        setElementText(hintEl, hintText);
         if (hintEl.title !== hintTitle) hintEl.title = hintTitle;
       }
       if (decBtn) {
@@ -13369,7 +13373,7 @@
         const isActive = isOpenMode ? openSide === "LONG" : closeMode === "single_long" || closeMode !== "single_short" && closeSide === "LONG";
         const sideLongText = ui(localizedText(isOpenMode ? "开多" : "平多", "Long"));
         const sideLongTitle = ui(isOpenMode ? PANEL_COPY.side.openLong : PANEL_COPY.side.closeLong);
-        if (sideLongBtn.textContent !== sideLongText) sideLongBtn.textContent = sideLongText;
+        setElementText(sideLongBtn, sideLongText);
         if (sideLongBtn.title !== sideLongTitle) sideLongBtn.title = sideLongTitle;
         sideLongBtn.style.order = "0";
         if (sideLongBtn.disabled !== isDisabled) sideLongBtn.disabled = isDisabled;
@@ -13391,7 +13395,7 @@
         const isActive = isOpenMode ? openSide === "SHORT" : closeMode === "single_short" || closeMode !== "single_long" && closeSide === "SHORT";
         const sideShortText = ui(localizedText(isOpenMode ? "开空" : "平空", "Short"));
         const sideShortTitle = ui(isOpenMode ? PANEL_COPY.side.openShort : PANEL_COPY.side.closeShort);
-        if (sideShortBtn.textContent !== sideShortText) sideShortBtn.textContent = sideShortText;
+        setElementText(sideShortBtn, sideShortText);
         if (sideShortBtn.title !== sideShortTitle) sideShortBtn.title = sideShortTitle;
         sideShortBtn.style.order = "1";
         if (sideShortBtn.disabled !== isDisabled) sideShortBtn.disabled = isDisabled;

@@ -91,6 +91,22 @@ read the Node version from `.nvmrc`.
   fresh directional vote.
 - Errors keep the observed HTTP, parse, mapping, or contract reason. Do not
   turn an unknown or ambiguous upstream result into a guessed default.
+- Periodic panel text on Binance pages is written with `setElementText` from
+  `src/shared/dom-text.js`, which updates the existing Text node, and repeated
+  lists are rebuilt only when their rendered content changes. Assigning
+  `textContent`, `innerHTML` or `replaceChildren` on an element that already has
+  children removes them all; Chrome then re-evaluates `:has()` on the ancestors,
+  and Binance's price-alert rule
+  `.price-alert-modal :has(>div.bn-skeleton)>:not(.bn-skeleton)` turns each such
+  write into a whole-body style recalculation (about 45–60 ms over ~14k elements
+  on a logged-in futures page, traced on 2026-11-10; removing only that rule in a
+  live A/B removed every whole-body recalc). The orderbook status and quantity
+  labels, the trading-data footer clock and funding cells (both on the
+  one-second timer) and the Strategy 29 summary follow this. An emptied label keeps
+  a zero-length Text node, which Chrome still matches as `:empty`.
+  The CoinMarketCap panel's 30-second refresh still rebuilds its rows in one task
+  because its fetch time changes on every refresh. Tests observe the affected
+  elements with `MutationObserver` and require `characterData` changes only.
 
 ### Data panel positions
 

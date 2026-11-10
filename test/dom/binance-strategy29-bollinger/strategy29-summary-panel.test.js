@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { installPanelResizeObserverHost } from '../../helpers/panel-resize-observer-host.js';
+import { localizedText } from '../../../src/shared/ui-locale.js';
 
 import { createStrategy29SummaryPanel as createPanel } from '../../../src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js';
 
@@ -284,6 +285,55 @@ test('user retains newest signal close times regardless of insertion or detectio
   panel.addEvents([fourth]);
   // Then user retains newest signal close times regardless of insertion or detection order
   assert.deepEqual([...dom.window.document.querySelectorAll('[data-role=remote-event]')].map(row => row.dataset.eventId), [second.event_id, first.event_id, third.event_id]);
+  panel.destroy();
+  dom.window.close();
+});
+
+test('user sees repeated polls with unchanged units and signals update only the changed text', () => {
+  // Given the panel rendered a status snapshot and its recent signals
+  const dom = new JSDOM('<body></body>');
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
+  panel.setConnection('connected', localizedText('已连接', 'Connected'));
+  panel.renderStatus(status);
+  panel.addEvents(events.events, events.observed_at_ms);
+  const records = [];
+  const observer = new dom.window.MutationObserver(mutations => records.push(...mutations));
+  observer.observe(dom.window.document.body, { childList: true, subtree: true, characterData: true });
+
+  // When the next polls return the same units and signals at later observation times
+  for (const offset of [5_000, 10_000]) {
+    panel.setConnection('connected', localizedText('已连接', 'Connected'));
+    panel.renderStatus({ ...status, observed_at_ms: status.observed_at_ms + offset });
+    panel.addEvents(events.events, events.observed_at_ms + offset);
+  }
+  records.push(...observer.takeRecords());
+  observer.disconnect();
+
+  // Then no node was replaced; only the two freshness labels changed their text data, once per poll
+  assert.deepEqual([...new Set(records.map(record => record.type))], ['characterData']);
+  assert.deepEqual(records.map(record => record.target.parentElement.dataset.role),
+    ['status-freshness', 'events-freshness', 'status-freshness', 'events-freshness']);
+  panel.destroy();
+  dom.window.close();
+});
+
+test('user sees a changed unit status replace the processing rows', () => {
+  // Given the panel shows a ready unit
+  const dom = new JSDOM('<body></body>');
+  const panel = createStrategy29SummaryPanel(dom.window.document, 'BTC/USDT:USDT');
+  const unit = { ...status.units[0], status: 'ready', reason: 'current' };
+  panel.renderStatus({ ...status, units: [unit] });
+  const before = dom.window.document.querySelector('[data-role=unit]');
+
+  // When the next poll reports a data gap for the same unit
+  panel.renderStatus({ ...status, units: [{ ...unit, status: 'data_gap', reason: 'closed_bar_gap' }] });
+
+  // Then the row is rebuilt with the data-gap label in the failure color
+  const after = dom.window.document.querySelector('[data-role=unit]');
+  assert.notEqual(after, before);
+  assert.equal(before.children[1].textContent, 'Processed');
+  assert.equal(after.children[1].textContent, 'Data gap');
+  assert.equal(after.children[1].style.color, 'rgb(246, 70, 93)');
   panel.destroy();
   dom.window.close();
 });

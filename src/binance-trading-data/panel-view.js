@@ -1,6 +1,7 @@
 import { formatFundingPercent } from './market-data.js';
 import { createHistoryChart } from './sparkline.js';
 import { DATA_PANEL_WIDTHS } from '../shared/data-panel-layout.js';
+import { setElementText } from '../shared/dom-text.js';
 import {
   formatFundingPeriod, formatHistoryCount, formatHistoryTime, formatVotes,
   tradingMetricText, tradingText,
@@ -145,9 +146,7 @@ export function createTradingDataView({ document, panel, locale, collapsed, onCo
     element.textContent = text;
     return element;
   };
-  const setText = (element, value) => {
-    if (element.textContent !== value) element.textContent = value;
-  };
+  const setText = setElementText;
   const identify = (element, suffix) => {
     element.id = `${PANEL_ID}-${suffix}`;
     return element;

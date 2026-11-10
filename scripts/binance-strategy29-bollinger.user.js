@@ -3,7 +3,7 @@
 // @namespace    binance.strategy29.bollinger
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      0.5.17
+// @version      0.5.18
 // @author       jackhai9
 // @description  Bollinger/SMA60 overlay markers and the default read-only cross-timeframe summary
 // @match        https://www.binance.com/*/futures/*
@@ -2037,6 +2037,16 @@
     });
   }
 
+  // src/shared/dom-text.js
+  function setElementText(element2, text) {
+    const node = element2.firstChild;
+    if (node !== null && node === element2.lastChild && node.nodeType === node.TEXT_NODE) {
+      if (node.data !== text) node.data = text;
+      return;
+    }
+    if (element2.textContent !== text) element2.textContent = text;
+  }
+
   // src/binance-strategy29-bollinger/dom/strategy29-summary-panel.js
   var PANEL_ID = "jh-strategy29-summary-panel";
   function newestSignalFirst(left, right) {
@@ -2175,7 +2185,7 @@
     body.append(overview, eventsTitle, eventsHint, events, missingSignals, diagnostics);
     function renderCollapsed() {
       body.style.display = collapsed ? "none" : "block";
-      collapse.textContent = text(collapsed ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse);
+      setElementText(collapse, text(collapsed ? SUMMARY_COPY.expand : SUMMARY_COPY.collapse));
       collapse.setAttribute("aria-expanded", String(!collapsed));
     }
     renderCollapsed();
@@ -2191,17 +2201,17 @@
       lastStatus = null;
       spec.dataset.state = "unavailable";
       spec.style.color = "#848E9C";
-      spec.textContent = text(SUMMARY_COPY.observerSpec(STRATEGY29_API_SPEC_VERSION));
-      statusFreshness.textContent = text(SUMMARY_COPY.noStatus);
+      setElementText(spec, text(SUMMARY_COPY.observerSpec(STRATEGY29_API_SPEC_VERSION)));
+      setElementText(statusFreshness, text(SUMMARY_COPY.noStatus));
       selection.dataset.state = "unavailable";
       selection.style.color = "#848E9C";
-      selection.textContent = text(SUMMARY_COPY.noLiveStatus);
-      selectionDetails.textContent = "";
-      selectionRefresh.textContent = "";
+      setElementText(selection, text(SUMMARY_COPY.noLiveStatus));
+      setElementText(selectionDetails, "");
+      setElementText(selectionRefresh, "");
       statusMessages = [];
       statusUnreliable = true;
-      units.replaceChildren();
-      delivery.textContent = text(SUMMARY_COPY.waitingDelivery);
+      replaceList(units, NO_UNITS, () => []);
+      setElementText(delivery, text(SUMMARY_COPY.waitingDelivery));
       renderNotices();
     }
     let lastEventsAt = null;
@@ -2210,39 +2220,57 @@
     function assertLive() {
       if (destroyed) throw new Error("Strategy 29 summary panel is destroyed");
     }
+    const renderedLists = /* @__PURE__ */ new WeakMap();
+    function replaceList(container, content, build) {
+      const key = JSON.stringify(content);
+      if (renderedLists.get(container) === key) return;
+      container.replaceChildren(...build());
+      renderedLists.set(container, key);
+    }
+    const NO_UNITS = Object.freeze({ rows: [], placeholder: null });
     function renderNotices() {
       const messages = [...statusMessages];
       if (eventRecords.size > 0 && (statusUnreliable || ["disabled", "module_disabled", "gateway_unavailable", "unavailable", "disconnected", "stopped", "incompatible"].includes(connectionState))) {
         messages.unshift(text(SUMMARY_COPY.historicalOnly));
       }
       const message = messages.join("\n");
-      if (notices.textContent !== message) notices.textContent = message;
+      setElementText(notices, message);
       notices.hidden = messages.length === 0;
     }
     function renderMissingSignals() {
       const present = new Set([...eventRecords.values()].map((event) => event.timeframe));
       const missing = lastEventsAt === null || configuredTimeframes === null ? [] : configuredTimeframes.filter((timeframe) => !present.has(timeframe));
       const message = missing.length === 0 ? "" : text(SUMMARY_COPY.missingSignals(missing.join(", ")));
-      if (missingSignals.textContent !== message) missingSignals.textContent = message;
+      setElementText(missingSignals, message);
       missingSignals.hidden = missing.length === 0;
     }
     function renderEvents(ordered) {
-      events.replaceChildren();
-      for (const event of ordered) {
-        const row = element(document, "div", {
-          role: "remote-event",
-          styles: { display: "grid", gridTemplateColumns: "36px minmax(0,1fr) 116px", gap: "6px", alignItems: "center", padding: "5px 6px", borderRadius: "5px", background: "rgba(132,142,156,.08)" }
+      const rows = ordered.map((event) => ({
+        id: event.event_id,
+        timeframe: event.timeframe,
+        label: text(SIGNAL_LABELS[`${event.setup_direction}:${event.signal_type}`]),
+        color: event.signal_side === "long" ? "#0ECB81" : "#F6465D",
+        close: text(SUMMARY_COPY.close(formatClock(event.bar_close_ms)))
+      }));
+      const placeholder = rows.length === 0 ? text(lastEventsAt === null ? SUMMARY_COPY.waitingSignals : SUMMARY_COPY.noEvents) : null;
+      replaceList(events, { rows, placeholder }, () => {
+        const nodes = rows.map((item) => {
+          const row = element(document, "div", {
+            role: "remote-event",
+            styles: { display: "grid", gridTemplateColumns: "36px minmax(0,1fr) 116px", gap: "6px", alignItems: "center", padding: "5px 6px", borderRadius: "5px", background: "rgba(132,142,156,.08)" }
+          });
+          row.dataset.eventId = item.id;
+          row.appendChild(element(document, "strong", { text: item.timeframe, styles: { color: "#F0B90B" } }));
+          row.appendChild(element(document, "span", {
+            text: item.label,
+            styles: { color: item.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+          }));
+          row.appendChild(element(document, "span", { text: item.close, styles: { color: "#848E9C", fontSize: "10px", textAlign: "right" } }));
+          return row;
         });
-        row.dataset.eventId = event.event_id;
-        row.appendChild(element(document, "strong", { text: event.timeframe, styles: { color: "#F0B90B" } }));
-        row.appendChild(element(document, "span", {
-          text: text(SIGNAL_LABELS[`${event.setup_direction}:${event.signal_type}`]),
-          styles: { color: event.signal_side === "long" ? "#0ECB81" : "#F6465D", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
-        }));
-        row.appendChild(element(document, "span", { text: text(SUMMARY_COPY.close(formatClock(event.bar_close_ms))), styles: { color: "#848E9C", fontSize: "10px", textAlign: "right" } }));
-        events.appendChild(row);
-      }
-      if (ordered.length === 0) events.appendChild(element(document, "span", { text: text(lastEventsAt === null ? SUMMARY_COPY.waitingSignals : SUMMARY_COPY.noEvents), styles: { color: "#848E9C", padding: "4px" } }));
+        if (placeholder !== null) nodes.push(element(document, "span", { text: placeholder, styles: { color: "#848E9C", padding: "4px" } }));
+        return nodes;
+      });
       renderMissingSignals();
       renderNotices();
     }
@@ -2265,18 +2293,18 @@
         formatLocalizedText(SUMMARY_COPY.waiting, nextLocale);
         if (locale === nextLocale) return;
         locale = nextLocale;
-        heading.textContent = text(SUMMARY_COPY.title);
+        setElementText(heading, text(SUMMARY_COPY.title));
         header.title = text(SUMMARY_COPY.drag);
         renderCollapsed();
-        connection.textContent = text(connectionCopy);
-        reference.textContent = text(SUMMARY_COPY.reference(STRATEGY29_REFERENCE_SHA256));
-        diagnosticsTitle.textContent = text(SUMMARY_COPY.diagnostics);
+        setElementText(connection, text(connectionCopy));
+        setElementText(reference, text(SUMMARY_COPY.reference(STRATEGY29_REFERENCE_SHA256)));
+        setElementText(diagnosticsTitle, text(SUMMARY_COPY.diagnostics));
         unitsTitle.firstChild.textContent = text(SUMMARY_COPY.processing);
-        processingHint.textContent = text(SUMMARY_COPY.processingHint);
-        eventsTitle.textContent = text(SUMMARY_COPY.recent);
-        eventsHint.textContent = text(SUMMARY_COPY.perTimeframe(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME));
-        timeframeSummary.textContent = configuredTimeframes === null ? "" : text(SUMMARY_COPY.intervals(configuredTimeframes.join(", ")));
-        eventsFreshness.textContent = text(lastEventsAt === null ? SUMMARY_COPY.noEventsCheck : SUMMARY_COPY.eventsAt(formatClock(lastEventsAt)));
+        setElementText(processingHint, text(SUMMARY_COPY.processingHint));
+        setElementText(eventsTitle, text(SUMMARY_COPY.recent));
+        setElementText(eventsHint, text(SUMMARY_COPY.perTimeframe(STRATEGY29_RECENT_EVENTS_PER_TIMEFRAME)));
+        setElementText(timeframeSummary, configuredTimeframes === null ? "" : text(SUMMARY_COPY.intervals(configuredTimeframes.join(", "))));
+        setElementText(eventsFreshness, text(lastEventsAt === null ? SUMMARY_COPY.noEventsCheck : SUMMARY_COPY.eventsAt(formatClock(lastEventsAt))));
         if (lastStatus !== null) api.renderStatus(lastStatus);
         else clearCurrentStatus();
         renderEvents([...eventRecords.values()].sort(newestSignalFirst));
@@ -2288,7 +2316,7 @@
         connection.dataset.state = state;
         connection.style.color = STATE_COLORS[state];
         connectionCopy = message;
-        connection.textContent = text(message);
+        setElementText(connection, text(message));
         if (["disabled", "module_disabled", "gateway_unavailable", "unavailable"].includes(state)) clearCurrentStatus();
         renderNotices();
       },
@@ -2298,18 +2326,18 @@
         const matched = snapshot.spec_version === STRATEGY29_API_SPEC_VERSION;
         spec.dataset.state = matched ? "matched" : "error";
         spec.style.color = matched ? "#0ECB81" : "#F6465D";
-        spec.textContent = matched ? text(SUMMARY_COPY.matched(STRATEGY29_API_SPEC_VERSION)) : text(SUMMARY_COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version));
-        statusFreshness.textContent = text(SUMMARY_COPY.statusAt(formatClock(snapshot.observed_at_ms)));
+        setElementText(spec, matched ? text(SUMMARY_COPY.matched(STRATEGY29_API_SPEC_VERSION)) : text(SUMMARY_COPY.mismatch(STRATEGY29_API_SPEC_VERSION, snapshot.spec_version)));
+        setElementText(statusFreshness, text(SUMMARY_COPY.statusAt(formatClock(snapshot.observed_at_ms))));
         if (!matched) {
           statusUnreliable = true;
           statusMessages = [text(SUMMARY_COPY.updateRequired)];
           selection.dataset.state = "incompatible";
           selection.style.color = "#F6465D";
-          selection.textContent = text(SUMMARY_COPY.incompatibleSelection);
-          selectionDetails.textContent = "";
-          selectionRefresh.textContent = "";
-          units.replaceChildren();
-          delivery.textContent = text(SUMMARY_COPY.incompatibleDelivery);
+          setElementText(selection, text(SUMMARY_COPY.incompatibleSelection));
+          setElementText(selectionDetails, "");
+          setElementText(selectionRefresh, "");
+          replaceList(units, NO_UNITS, () => []);
+          setElementText(delivery, text(SUMMARY_COPY.incompatibleDelivery));
           renderNotices();
           return;
         }
@@ -2332,34 +2360,42 @@
             if (removed) renderEvents([...eventRecords.values()].sort(newestSignalFirst));
           }
         }
-        timeframeSummary.textContent = configuredTimeframes === null ? "" : text(SUMMARY_COPY.intervals(configuredTimeframes.join(", ")));
+        setElementText(timeframeSummary, configuredTimeframes === null ? "" : text(SUMMARY_COPY.intervals(configuredTimeframes.join(", "))));
         selection.dataset.state = universe.refresh_status;
         selection.style.color = unavailable ? "#F6465D" : universe.refresh_status === "fresh" ? "#0ECB81" : "#F0B90B";
-        selection.textContent = text(unavailable ? SELECTION_REASONS[universe.reason] : selected ? SUMMARY_COPY.selected : SUMMARY_COPY.notSelected);
-        selectionDetails.textContent = [text(SELECTION_REASONS[universe.reason]), text(SUMMARY_COPY.generation(universe.generation ?? text(SUMMARY_COPY.pending))), text(SUMMARY_COPY.markets(universe.selected_markets.length)), text(SUMMARY_COPY.ready(universe.ready_unit_count, universe.selected_unit_count))].join(" · ");
-        selectionRefresh.textContent = universe.last_successful_refreshed_at_ms === null ? text(SUMMARY_COPY.noSuccess) : text(SUMMARY_COPY.lastSuccess(formatClock(universe.last_successful_refreshed_at_ms), universe.last_success_age_seconds.toFixed(1)));
-        units.replaceChildren();
+        setElementText(selection, text(unavailable ? SELECTION_REASONS[universe.reason] : selected ? SUMMARY_COPY.selected : SUMMARY_COPY.notSelected));
+        setElementText(selectionDetails, [text(SELECTION_REASONS[universe.reason]), text(SUMMARY_COPY.generation(universe.generation ?? text(SUMMARY_COPY.pending))), text(SUMMARY_COPY.markets(universe.selected_markets.length)), text(SUMMARY_COPY.ready(universe.ready_unit_count, universe.selected_unit_count))].join(" · "));
+        setElementText(selectionRefresh, universe.last_successful_refreshed_at_ms === null ? text(SUMMARY_COPY.noSuccess) : text(SUMMARY_COPY.lastSuccess(formatClock(universe.last_successful_refreshed_at_ms), universe.last_success_age_seconds.toFixed(1))));
         const matching = unavailable || !selected ? [] : snapshot.units.filter((unit) => unit.symbol === canonicalSymbol && universe.configured_timeframes.includes(unit.timeframe)).sort((left, right) => compareStrategy29Timeframes(left.timeframe, right.timeframe));
         if (!unavailable && universe.refresh_status !== "fresh") statusMessages.push(text(SELECTION_REASONS[universe.reason]));
         if (!unavailable && universe.pending_unit_count > 0) statusMessages.push(text(SUMMARY_COPY.globalPending(universe.pending_unit_count)));
         for (const unit of matching) {
           if (unit.status !== "ready") statusMessages.push(`${unit.timeframe} · ${text(STATUS_LABELS[unit.status])}`);
-          const row = element(document, "div", {
-            role: "unit",
-            styles: { display: "grid", gridTemplateColumns: "36px 78px minmax(0,1fr)", gap: "6px", padding: "4px 6px", borderRadius: "5px", background: "rgba(132,142,156,.08)" }
-          });
-          row.appendChild(element(document, "strong", { text: unit.timeframe, styles: { color: "#EAECEF" } }));
-          row.appendChild(element(document, "span", { text: text(STATUS_LABELS[unit.status]), styles: { color: STATUS_COLORS[unit.status] } }));
-          row.appendChild(element(document, "span", { text: processingReason(unit.reason, locale), styles: { color: "#848E9C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }));
-          units.appendChild(row);
         }
-        if (matching.length === 0) units.appendChild(element(document, "span", {
-          text: text(unavailable ? SUMMARY_COPY.unavailableSelection : selected ? SUMMARY_COPY.awaitingUnits : SUMMARY_COPY.notSelected),
-          styles: { color: "#F0B90B", padding: "4px" }
+        const unitRows = matching.map((unit) => ({
+          timeframe: unit.timeframe,
+          label: text(STATUS_LABELS[unit.status]),
+          color: STATUS_COLORS[unit.status],
+          reason: processingReason(unit.reason, locale)
         }));
+        const unitPlaceholder = unitRows.length === 0 ? text(unavailable ? SUMMARY_COPY.unavailableSelection : selected ? SUMMARY_COPY.awaitingUnits : SUMMARY_COPY.notSelected) : null;
+        replaceList(units, { rows: unitRows, placeholder: unitPlaceholder }, () => {
+          const nodes = unitRows.map((item) => {
+            const row = element(document, "div", {
+              role: "unit",
+              styles: { display: "grid", gridTemplateColumns: "36px 78px minmax(0,1fr)", gap: "6px", padding: "4px 6px", borderRadius: "5px", background: "rgba(132,142,156,.08)" }
+            });
+            row.appendChild(element(document, "strong", { text: item.timeframe, styles: { color: "#EAECEF" } }));
+            row.appendChild(element(document, "span", { text: item.label, styles: { color: item.color } }));
+            row.appendChild(element(document, "span", { text: item.reason, styles: { color: "#848E9C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }));
+            return row;
+          });
+          if (unitPlaceholder !== null) nodes.push(element(document, "span", { text: unitPlaceholder, styles: { color: "#F0B90B", padding: "4px" } }));
+          return nodes;
+        });
         if (!unavailable && selected && matching.length === 0) statusMessages.push(text(SUMMARY_COPY.awaitingUnits));
         const counts = snapshot.delivery_counts;
-        delivery.textContent = text(SUMMARY_COPY.delivery(counts));
+        setElementText(delivery, text(SUMMARY_COPY.delivery(counts)));
         renderMissingSignals();
         renderNotices();
       },
@@ -2385,7 +2421,7 @@
           renderEvents([]);
         }
         if (observedAtMs !== null) {
-          eventsFreshness.textContent = text(SUMMARY_COPY.eventsAt(formatClock(observedAtMs)));
+          setElementText(eventsFreshness, text(SUMMARY_COPY.eventsAt(formatClock(observedAtMs))));
         }
         renderMissingSignals();
       },
@@ -2393,7 +2429,7 @@
         assertLive();
         eventRecords.clear();
         lastEventsAt = null;
-        eventsFreshness.textContent = text(SUMMARY_COPY.noEventsCheck);
+        setElementText(eventsFreshness, text(SUMMARY_COPY.noEventsCheck));
         renderEvents([]);
       },
       destroy() {
