@@ -38,7 +38,9 @@ export async function openChartWriteFilterLab(page, { unreadableKey = null } = {
       return transaction;
     };
     const { installUnchangedChartWriteFilter } = await import('/unchanged-write-filter.js');
-    const filter = installUnchangedChartWriteFilter(window);
+    const filter = installUnchangedChartWriteFilter(window, {
+      onContractBreak(entry) { throw new Error(`Unexpected chart write contract break: ${entry.reason}`); },
+    });
     let base = filter.snapshot();
     const pending = Object.create(null);
     window.__WRITE_FILTER__ = {

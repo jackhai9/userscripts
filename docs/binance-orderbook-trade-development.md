@@ -90,7 +90,11 @@ slot. Order toasts are not scoped.
 The scope depends on the documented account event, the order fields `s`, `X`,
 `x`, `o`, `ot` and `c`, and the trade-sound asset path, never on Binance's bundle.
 If Binance renamed the asset or changed the stream, the native sound would return
-in every tab. `self.__BINANCE_ORDER_SOUND__.snapshot()` returns counts only:
+in every tab, so both are reported through the panel's dependency alert:
+`sound-stream` when the trade sound plays three times while no page WebSocket has
+carried `ORDER_TRADE_UPDATE`, and `sound-asset` when another audio file plays
+within three seconds after three fills while the known path never played.
+`self.__BINANCE_ORDER_SOUND__.breaks()` lists the reports. `self.__BINANCE_ORDER_SOUND__.snapshot()` returns counts only:
 `ownFills`, `foreignFills`, `allowed`, `suppressed` and `unattributed`.
 
 Earlier versions scoped sounds and toasts by replacing three Binance modules; that

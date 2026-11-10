@@ -164,37 +164,75 @@ export function formatPrecisionRefreshTooltip(tradeCount) {
   );
 }
 
-const CHART_CONTRACT_REASONS = Object.freeze({
-  bootstrap: localizedText('图表启动钩子', 'chart bootstrap hook'),
-  'api-shape': localizedText('图表接口结构', 'chart API shape'),
-  'subscription-batch': localizedText('保存监听注册顺序', 'save listener registration order'),
-  'listener-shape': localizedText('保存监听函数结构', 'save listener body'),
-  'removal-hook': localizedText('挂单线移除钩子', 'order-line removal hook'),
-  'removal-capture': localizedText('挂单线移除路径', 'order-line removal path'),
-  'chart-model': localizedText('图表模型接口', 'chart model API'),
-  'order-tool-name': localizedText('挂单线类型名', 'order-line tool name'),
-  'event-type': localizedText('画线事件类型', 'drawing event type'),
+/** Each area is one hook into Binance or TradingView internals, with what breaks for the user. */
+const DEPENDENCY_AREAS = Object.freeze({
+  'chart-save': Object.freeze({
+    label: localizedText('挂单线保存过滤', 'Order-line save filter'),
+    consequence: localizedText(
+      '已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压',
+      "Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again",
+    ),
+    reasons: Object.freeze({
+      bootstrap: localizedText('图表启动钩子', 'chart bootstrap hook'),
+      'api-shape': localizedText('图表接口结构', 'chart API shape'),
+      'subscription-batch': localizedText('保存监听注册顺序', 'save listener registration order'),
+      'listener-shape': localizedText('保存监听函数结构', 'save listener body'),
+      'removal-hook': localizedText('挂单线移除钩子', 'order-line removal hook'),
+      'removal-capture': localizedText('挂单线移除路径', 'order-line removal path'),
+      'chart-model': localizedText('图表模型接口', 'chart model API'),
+      'lookup-error': localizedText('图表查询接口', 'chart lookup API'),
+      'order-tool-name': localizedText('挂单线类型名', 'order-line tool name'),
+      'event-type': localizedText('画线事件类型', 'drawing event type'),
+    }),
+  }),
+  'chart-write': Object.freeze({
+    label: localizedText('图表重复写入过滤', 'Unchanged chart write filter'),
+    consequence: localizedText(
+      '每次图表保存都会重写全部币种的画线记录，磁盘写入和 IndexedDB 压力回升',
+      'every chart save rewrites the drawings of every symbol again, raising disk writes and IndexedDB load',
+    ),
+    reasons: Object.freeze({
+      'write-layout': localizedText('图表存储布局', 'chart storage layout'),
+    }),
+  }),
+  'trade-sound': Object.freeze({
+    label: localizedText('成交提示音分币种', 'Per-symbol trade sound'),
+    consequence: localizedText(
+      '其他币种成交时，所有标签页都会响提示音',
+      'every tab plays the trade sound when any symbol fills',
+    ),
+    reasons: Object.freeze({
+      'sound-stream': localizedText('账户订单推送', 'account order stream'),
+      'sound-asset': localizedText('提示音文件', 'trade sound file'),
+    }),
+  }),
 });
 
-export const CHART_CONTRACT_ALERT = localizedText(
-  '⚠ 图表保存保护失效，需更新脚本',
-  '⚠ Chart save protection broken; update the script',
+export const DEPENDENCY_ALERT = localizedText(
+  '⚠ 币安依赖已变化，需更新脚本',
+  '⚠ Binance dependency changed; update the script',
 );
 
 /**
- * Explains which Binance/TradingView dependency of the order-line save filter no
- * longer matches. Unknown reasons are a programming error, not a display fallback.
+ * Explains which Binance/TradingView dependencies no longer match, what that
+ * means for the user, and the raw details. Unknown areas or reasons are a
+ * programming error, not a display fallback.
  */
-export function formatChartContractAlertTooltip(entries) {
-  if (!Array.isArray(entries) || !entries.length) throw new Error('Chart contract alert requires at least one break');
-  const reasons = entries.map(({ reason }) => {
-    const label = CHART_CONTRACT_REASONS[reason];
-    if (!label) throw new Error(`Unknown chart contract break: ${reason}`);
-    return label;
-  });
-  const details = entries.map(({ detail }) => detail).join('; ');
-  return localizedText(
-    `币安图表依赖已变化：${reasons.map(label => label.zhCN).join('、')}。已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压。细节：${details}`,
-    `Binance chart dependency changed: ${reasons.map(label => label.en).join(', ')}. Binance's native save is back in effect; every order-line change saves the whole chart, so continuous orders may stall IndexedDB again. Details: ${details}`,
-  );
+export function formatDependencyAlertTooltip(entries) {
+  if (!Array.isArray(entries) || !entries.length) throw new Error('Dependency alert requires at least one break');
+  const groups = new Map();
+  for (const { area, reason, detail } of entries) {
+    const definition = DEPENDENCY_AREAS[area];
+    if (!definition) throw new Error(`Unknown dependency area: ${area}`);
+    const label = definition.reasons[reason];
+    if (!label) throw new Error(`Unknown ${area} dependency break: ${reason}`);
+    if (!groups.has(area)) groups.set(area, { definition, labels: [], details: [] });
+    const group = groups.get(area);
+    group.labels.push(label);
+    group.details.push(detail);
+  }
+  const lines = locale => [...groups.values()].map(({ definition, labels, details }) => (locale === 'zhCN'
+    ? `${definition.label.zhCN}失效（${labels.map(label => label.zhCN).join('、')}）：${definition.consequence.zhCN}。细节：${details.join('; ')}`
+    : `${definition.label.en} broken (${labels.map(label => label.en).join(', ')}): ${definition.consequence.en}. Details: ${details.join('; ')}`));
+  return localizedText(lines('zhCN').join('\n'), lines('en').join('\n'));
 }
