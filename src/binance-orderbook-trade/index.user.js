@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.246
+// @version      2.7.247
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -273,6 +273,16 @@ import { installOrderSoundScope } from './order-sound/install.js';
 import { installBinanceI18nUsageBlock } from './i18n-usage/install.js';
 
 let activeCancelReceipts = null;
+/** Whole-order fills are terminal, so a fill seen before a cancellation batch still proves its outcome. */
+const recentOrderFills = [];
+const RECENT_ORDER_FILL_LIMIT = 200;
+function observeAccountOrderUpdate(order) {
+  if (order?.x === 'TRADE' && order.X === 'FILLED') {
+    recentOrderFills.push(order);
+    if (recentOrderFills.length > RECENT_ORDER_FILL_LIMIT) recentOrderFills.shift();
+  }
+  activeCancelReceipts?.observeOrderUpdate(order);
+}
 /** Mismatches of hooks into Binance/TradingView internals; shown until the page reloads. */
 const dependencyBreaks = [];
 let renderDependencyAlert = null;
@@ -291,7 +301,7 @@ installChartWriteFilter({
   onWriteFilterContractBreak: reportDependencyBreak('chart-write'),
 });
 const hasCancellationAccountStream = installOrderSoundScope(
-  order => activeCancelReceipts?.observeOrderUpdate(order),
+  observeAccountOrderUpdate,
   { onContractBreak: reportDependencyBreak('trade-sound') },
 );
 
@@ -411,6 +421,12 @@ const hasCancellationAccountStream = installOrderSoundScope(
   // Once the exact fetch is observed, keep waiting for that response instead of
   // treating the original UI-start deadline as the response deadline too.
   const LADDER_SUBMIT_RESPONSE_TIMEOUT_MS = 12000;
+  /**
+   * A cancellation that loses the race to a fill is rejected about when the FILLED account frame
+   * arrives, in either order. Waiting this long for that frame is bounded so an unexplained
+   * rejection still stops the task promptly.
+   */
+  const CANCEL_FILL_EVIDENCE_TIMEOUT_MS = 3000;
   const LADDER_ACTION_FEEDBACK_MIN_MS = 240;
   const CONTINUOUS_CLOSE_POSITION_CHECK_MS = 1000;
   const MULTIPLIER_PRESS_FEEDBACK_MS = 140;
@@ -4887,10 +4903,14 @@ const hasCancellationAccountStream = installOrderSoundScope(
    * During reduce-only conflict recovery a selected order that left the list (usually a fill near the
    * tail of a close) ends the batch without being counted as released: absence alone cannot prove the
    * quantity was freed, so the recovery runner rereads the authoritative position before trying again.
+   * A clicked order whose cancellation is unconfirmed takes the same path only when the account stream
+   * reports that exact order FILLED for its whole preflight quantity; anything else stays a stop.
+   * With that evidence the batch may end while a timed-out request is still in flight: a filled order
+   * has nothing left to cancel, and the late response no longer matches a registered ticket.
    */
   async function cancelOpenOrderRowsForPlan(targets, plan, progress, setExecutionStatus, abortSignal, options) {
     if (activeCancelReceipts) throw new Error('已有撤单任务正在执行');
-    const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS);
+    const receipts = createNativeCancelReceipts(LADDER_SUBMIT_RESPONSE_TIMEOUT_MS, recentOrderFills);
     const cancelledIds = new Set();
     const reduceOnlyRecovery = options?.strategy === 'confirmed_reduce_only_conflict';
     let targetLeftList = false;
@@ -4944,8 +4964,20 @@ const hasCancellationAccountStream = installOrderSoundScope(
             const detail = localizedText('单行撤单确认弹窗已打开', 'Single-order cancellation dialog opened');
             setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], '：'), detail);
           }, abortSignal);
-          if (!ticket.hasStarted) ticket.finish(false);
-          if (!await confirmed) throw new Error('未收到匹配的成功撤单回执，已停止重新挂单');
+          if (!ticket.hasStarted) {
+            ticket.noteFailure('request not dispatched');
+            ticket.finish(false);
+          }
+          if (!await confirmed) {
+            const filled = reduceOnlyRecovery && await waitForCancelledTargetFill(receipts, target, current, abortSignal);
+            console.error('[订单簿下单] Cancellation not confirmed', {
+              orderId: target.orderId, reason: ticket.failure, filled,
+            });
+            if (!filled) throw new Error('未收到匹配的成功撤单回执，已停止重新挂单');
+            // The runner reports this like a vanished target as soon as the batch returns.
+            targetLeftList = true;
+            break;
+          }
           checkScope();
           const releasedQty = await waitForPromiseOrAbort(ticket.released, abortSignal);
           checkScope();
@@ -5002,6 +5034,18 @@ const hasCancellationAccountStream = installOrderSoundScope(
    * Only one click can be awaiting native dispatch (or manual confirmation).
    * Responses may overlap after Binance starts the exact expected request.
    */
+  async function waitForCancelledTargetFill(receipts, target, quantity, abortSignal) {
+    let timer;
+    try {
+      return await waitForPromiseOrAbort(Promise.race([
+        receipts.filled(target, quantity),
+        new Promise(resolve => { timer = setTimeout(() => resolve(false), CANCEL_FILL_EVIDENCE_TIMEOUT_MS); }),
+      ]), abortSignal);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function waitForNativeCancelDispatch(ticket, showDialogStatus, abortSignal) {
     if (ticket.hasStarted) return;
     const watcher = new AbortController();

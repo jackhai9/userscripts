@@ -132,3 +132,96 @@ for (const [reason, change] of [
     assert.equal(await ticket.released, null);
   });
 }
+
+const fill = { s: first.symbol, i: first.orderId, c: first.clientOrderId,
+  x: 'TRADE', X: 'FILLED', q: '1.00000001', z: '1.00000001' };
+
+test('user proves a lost cancellation race only with the exact whole-order fill, in any arrival order', async () => {
+  // Given one batch starts from a fill seen before it, one saw the fill before the lookup, and one sees it after.
+  const prior = createNativeCancelReceipts(12000, [fill]);
+  const early = createNativeCancelReceipts(12000);
+  early.observeOrderUpdate(fill);
+  const late = createNativeCancelReceipts(12000);
+  const pending = late.filled(first, quantity);
+
+  // When the fill reaches the second batch.
+  late.observeOrderUpdate(fill);
+
+  // Then every batch attributes the fill to that order.
+  assert.equal(await prior.filled(first, quantity), true);
+  assert.equal(await early.filled(first, quantity), true);
+  assert.equal(await pending, true);
+});
+
+for (const [reason, change] of [
+  ['a partial fill', { X: 'PARTIALLY_FILLED', z: '0.5' }], ['a fill below the original amount', { z: '0.9' }],
+  ['an amended original quantity', { q: '2', z: '2' }], ['a different order', { i: 12 }],
+  ['a different client ID', { c: 'foreign' }], ['a different symbol', { s: 'BTCUSDT' }],
+  ['a cancellation frame', { x: 'CANCELED', X: 'CANCELED' }], ['a malformed amount', { z: '1e0' }],
+  ['a liquidation frame', { x: 'CALCULATED' }],
+]) {
+  test(`user does not treat ${reason} as proof that the order filled`, async () => {
+    // Given a batch awaits fill evidence for one order.
+    const receipts = createNativeCancelReceipts(12000);
+    const pending = receipts.filled(first, quantity);
+
+    // When only a non-qualifying account frame arrives.
+    receipts.observeOrderUpdate({ ...fill, ...change });
+    await setImmediate();
+
+    // Then the evidence remains absent.
+    assert.equal(await Promise.race([pending, Promise.resolve('absent')]), 'absent');
+  });
+}
+
+for (const [name, response, expected] of [
+  ['a rejected cancellation', () => Response.json({ success: false, code: '-2011', data: null }), 'response code -2011 status undefined'],
+  ['an HTTP failure', () => new Response(null, { status: 503 }), 'HTTP 503'],
+  ['an unreadable body', () => new Response('not json', { status: 200 }), 'unreadable response SyntaxError'],
+  ['a transport failure', () => Promise.reject(new TypeError('Failed to fetch')), 'no response TypeError'],
+  ['a success for another order', () => receipt(second), 'response for another order'],
+]) {
+  test(`user can see why a cancellation stayed unconfirmed after ${name}`, async () => {
+    // Given one native cancellation request is in flight.
+    const receipts = createNativeCancelReceipts(12000);
+    const ticket = receipts.expect(first);
+
+    // When its response is not a matching success.
+    receipts.observe(JSON.stringify(first), Promise.resolve(response()));
+
+    // Then the result is unconfirmed and names the reason.
+    assert.equal(await ticket.result, false);
+    assert.equal(ticket.failure, expected);
+  });
+}
+
+test('user can see that a cancellation stayed unconfirmed because its response timed out', async t => {
+  // Given a native cancellation request never returns.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const receipts = createNativeCancelReceipts(12000);
+  const ticket = receipts.expect(first);
+  receipts.observe(JSON.stringify(first), new Promise(() => {}));
+
+  // When the receipt deadline passes.
+  t.mock.timers.tick(12000);
+
+  // Then the timeout is recorded as the reason.
+  assert.equal(await ticket.result, false);
+  assert.equal(ticket.failure, 'response timeout');
+});
+
+test('user can see that a confirmed cancellation stayed unreleased because its account event timed out', async t => {
+  // Given the HTTP response confirmed a quantity-tracked cancellation.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const receipts = createNativeCancelReceipts(12000);
+  const ticket = receipts.expect(first, quantity);
+  receipts.observe(JSON.stringify(first), Promise.resolve(receipt(first)));
+  assert.equal(await ticket.result, true);
+
+  // When no terminal account event arrives before the deadline.
+  t.mock.timers.tick(12000);
+
+  // Then no quantity is released and the reason names the missing account event.
+  assert.equal(await ticket.released, null);
+  assert.equal(ticket.failure, 'account event timeout');
+});
