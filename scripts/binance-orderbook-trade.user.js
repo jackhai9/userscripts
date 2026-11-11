@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.250
+// @version      2.7.251
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -33,6 +33,8 @@
     availableBalance: freezeLabels(["可用", "Avbl"]),
     postOnly: freezeLabels(["只做Maker", "Post Only"]),
     marketOrder: freezeLabels(["市价", "Market"]),
+    // Ticker labels observed on zh-CN and en futures pages on 2026-11-11.
+    markPrice: freezeLabels(["标记价格", "Mark"]),
     submitBusy: freezeLabels(["提交中", "Placing", "Loading"]),
     openableQuantity: freezeLabels(["可开"]),
     closeableQuantity: freezeLabels(["可平"]),
@@ -359,6 +361,16 @@
       reasons: Object.freeze({
         "usage-db-name": localizedText("统计数据库名称", "usage database name"),
         "usage-db-missing": localizedText("统计数据库未出现", "usage database not opened")
+      })
+    }),
+    "taker-mark-price": Object.freeze({
+      label: localizedText("吃单标记价格", "Taker mark price"),
+      consequence: localizedText(
+        "开仓吃单无法按标记价格核对最小下单金额，这些吃单会改为只做 Maker 挂单",
+        "opening taker orders cannot be checked against the minimum notional at the mark price, so they are placed Post Only"
+      ),
+      reasons: Object.freeze({
+        "ticker-label": localizedText("行情栏标记价格", "ticker mark price")
       })
     }),
     "trade-sound": Object.freeze({
@@ -1381,6 +1393,7 @@
   function isConfirmedReduceOnlyConflict(error) {
     return error?.ladderFailureKind === "reduce_only_conflict" && error.binanceCode === 90802022 && error.safeNoSubmit === true;
   }
+  var PANEL_SETTING_CHANGE_KINDS = /* @__PURE__ */ new Set(["precision_changed", "options_changed"]);
   function recoveryFailure(reason, rejection) {
     const text = combineLocalizedText([reason, rejection.message], " · ");
     const error = new Error(formatLocalizedText(text, "zh-CN"), { cause: rejection });
@@ -1454,8 +1467,11 @@
           plan = await buildPlan(qty);
           check();
           const result = await replaceOrders(plan);
+          if (result.ok !== true) {
+            if (PANEL_SETTING_CHANGE_KINDS.has(result.settingsChange?.continuousRecoveryKind)) throw result.settingsChange;
+            throw recoveryFailure(result.message, lastRejection);
+          }
           check();
-          if (result.ok !== true) throw recoveryFailure(result.message, lastRejection);
           replacementQty = qty;
           await wait();
           const afterReplacementQty = await read();
@@ -1469,7 +1485,7 @@
         check();
       }
     } catch (error) {
-      if (!lastRejection || ["LadderStoppedError", "ClosePositionCompletedError", "CloseLadderRecoveryError"].includes(error.name)) {
+      if (!lastRejection || ["LadderStoppedError", "ClosePositionCompletedError", "CloseLadderRecoveryError"].includes(error.name) || PANEL_SETTING_CHANGE_KINDS.has(error.continuousRecoveryKind)) {
         throw error;
       }
       throw recoveryFailure(error.localizedText || error.message, lastRejection);
@@ -2129,9 +2145,14 @@
     if (!normalizeDecimalString(minNotional) || compareDecimalStrings(price, "0") !== 1 || !normalizeDecimalString(stepSize)) {
       return null;
     }
-    const target = multiplyDecimalByRatio(minNotional, 101, 100);
+    const target = multiplyDecimalByRatio(minNotional, 102, 100);
     const required = ceilQtyByNotional(target, price, stepSize);
     return required ? maxDecimalString(qty, required) : null;
+  }
+  function isMarkPriceNearBook(mark, bid, ask, percent) {
+    const low = multiplyDecimalByRatio(bid, 100 - percent, 100);
+    const high = multiplyDecimalByRatio(ask, 100 + percent, 100);
+    return !!low && !!high && compareDecimalStrings(mark, low) >= 0 && compareDecimalStrings(mark, high) <= 0;
   }
   function requestQuantityText(value) {
     if (typeof value === "number") {
@@ -9050,7 +9071,7 @@
       }
       const optionContext = readLadderOptionContext(spec, startSymbol, startPrecision);
       if (expectedContext?.optionContext && !areLadderOptionContextsEqual(optionContext, expectedContext.optionContext)) {
-        throw new Error("Ladder settings changed during reduce-only recovery");
+        throw createContinuousRecoverableLadderError("options_changed", "执行中比例、笔数或间距已变化");
       }
       const levels = optionContext.levels;
       const ladderStep = optionContext.ladderStep;
@@ -9809,13 +9830,58 @@
       off_step: ["数量不符合市价单步长", "quantity does not match the market step"],
       above_max: ["数量超过市价单最大数量", "quantity exceeds the market maximum"],
       account_stream: ["未连接到账户订单更新", "account order updates are not connected"],
-      notional_unavailable: ["无法按市价核对最小下单金额", "the market minimum notional could not be checked"]
+      notional_unavailable: ["无法按市价核对最小下单金额", "the market minimum notional could not be checked"],
+      mark_price_unavailable: ["页面标记价格读取失败", "the page mark price could not be read"],
+      min_notional_rejected: ["交易所拒绝：名义价值不足", "the exchange rejected it below the minimum notional"]
     });
+    const BINANCE_MIN_NOTIONAL_ERROR_CODE = 90804164;
+    const reportTakerMarkPriceBreak = reportDependencyBreak("taker-mark-price");
+    let takerMarkPriceBreakReported = false;
+    const MARK_PRICE_CONTAINER_MAX_DEPTH = 5;
+    const MARK_PRICE_BOOK_BAND_PERCENT = 5;
+    function readPageMarkPrice() {
+      const names = BINANCE_PAGE_TEXT.markPrice;
+      const values = [];
+      let labels = 0;
+      for (const element of document.body.querySelectorAll("*")) {
+        if (element.children.length !== 0) continue;
+        const name = element.textContent.trim();
+        if (!names.includes(name) || element.closest(`#${PANEL_ID}`) || !isVisibleElement(element)) continue;
+        labels += 1;
+        for (let node = element, depth = 0; node && depth <= MARK_PRICE_CONTAINER_MAX_DEPTH; node = node.parentElement, depth += 1) {
+          const match = /^(.+?)\s*(\S+)$/.exec((node.innerText || "").trim());
+          if (match && match[1].trim() === name) {
+            values.push(match[2]);
+            break;
+          }
+        }
+      }
+      if (values.length !== 1) return { missing: "structure", labels, candidates: values.length };
+      const price = normalizeDecimalString(values[0]);
+      return price && compareDecimalStrings(price, "0") === 1 ? { price } : { missing: "value" };
+    }
+    function reportTakerMarkPriceOnce(detail) {
+      if (takerMarkPriceBreakReported) return;
+      takerMarkPriceBreakReported = true;
+      reportTakerMarkPriceBreak({ reason: "ticker-label", detail });
+    }
     function resolveTakerQuantity(plan, order) {
       if (plan.spec.mode !== "OPEN") return { qty: order.qty };
+      const mark = readPageMarkPrice();
+      if (mark.missing) {
+        if (mark.missing === "structure") {
+          reportTakerMarkPriceOnce(`${mark.labels} visible ${BINANCE_PAGE_TEXT.markPrice.join("/")} labels with ${mark.candidates} value containers; expected exactly 1`);
+        }
+        return { skipReason: "mark_price_unavailable" };
+      }
+      const markPrice = mark.price;
       const bid = normalizeDecimalString(getBestOrderbookPrice("BID"));
       const ask = normalizeDecimalString(getBestOrderbookPrice("ASK"));
-      const price = bid && ask ? compareDecimalStrings(bid, ask) <= 0 ? bid : ask : null;
+      if (bid && ask && !isMarkPriceNearBook(markPrice, bid, ask, MARK_PRICE_BOOK_BAND_PERCENT)) {
+        reportTakerMarkPriceOnce(`mark ${markPrice} is outside ${bid} −${MARK_PRICE_BOOK_BAND_PERCENT}% … ${ask} +${MARK_PRICE_BOOK_BAND_PERCENT}%`);
+        return { skipReason: "mark_price_unavailable" };
+      }
+      const price = bid && ask ? [bid, ask, markPrice].reduce((lowest, value) => compareDecimalStrings(value, lowest) < 0 ? value : lowest) : null;
       const rules = rulesCache[plan.symbol];
       const qty = price && raiseQtyToMarketNotional({
         qty: order.qty,
@@ -9830,6 +9896,7 @@
           plannedQty: order.qty,
           qty,
           price,
+          markPrice,
           minNotional: rules.minNotional
         });
       }
@@ -9960,6 +10027,10 @@
           }
           if (isConfirmedTakerRejection(submitCapture)) {
             takerBudget.remaining += 1;
+            if (submitCapture.apiErrors[0].code === BINANCE_MIN_NOTIONAL_ERROR_CODE) {
+              logTaker("rejected below the minimum notional", { symbol: plan.symbol, qty: takerQty });
+              return { status: "skipped", reason: "min_notional_rejected" };
+            }
             throw acknowledgementError;
           }
           const placed = await waitForTakerOrderEvidence(
@@ -10034,6 +10105,7 @@
             takerBudget
           );
           if (takerResult.status === "skipped") {
+            previousAcknowledgedInputs = null;
             takerBudget.skippedReason = takerResult.reason;
             takerBudget.remaining = 0;
             const [zhReason, enReason] = MARKET_QTY_REJECTION_COPY[takerResult.reason];
@@ -11325,6 +11397,13 @@
               ticket.noteFailure("request not dispatched");
               ticket.finish(false);
             }
+            if (await confirmed && options?.strategy === "confirmed_reduce_only_conflict") {
+              options.confirmedCancelledOrders.set(String(target.orderId), {
+                symbol: target.symbol,
+                orderId: target.orderId,
+                clientOrderId: target.clientOrderId
+              });
+            }
             if (!await confirmed) {
               const filled = reduceOnlyRecovery && await waitForCancelledTargetFill(receipts, target, current, abortSignal);
               console.error("[订单簿下单] Cancellation not confirmed", {
@@ -11342,13 +11421,6 @@
             if (!isPositiveDecimalString(releasedQty)) throw new Error("无法确认已撤挂单数量，已停止重新挂单");
             cancelQty = addDecimalStrings(cancelQty, releasedQty);
             cancelledIds.add(String(target.orderId));
-            if (options?.strategy === "confirmed_reduce_only_conflict") {
-              options.confirmedCancelledOrders.set(String(target.orderId), {
-                symbol: target.symbol,
-                orderId: target.orderId,
-                clientOrderId: target.clientOrderId
-              });
-            }
             if (compareDecimalStrings(cancelQty, plan.totalQty) >= 0) break;
           } finally {
             if (!ticket.hasStarted) ticket.finish(false);
@@ -12391,6 +12463,9 @@
         setPlanStepStatus(message);
         let status = capacityDispatchEntered || capacityRecovery && checkingConfirmedCancellationIdentities ? "capacity_terminal" : "row_cancel_failed";
         if (e?.name === "DialogNotClosedError") status = "dialog_not_closed";
+        if (["precision_changed", "options_changed"].includes(e?.continuousRecoveryKind)) {
+          return { ok: false, status: "settings_changed", message, settingsChange: e };
+        }
         return { ok: false, status, message };
       } finally {
         if ((capacityDispatchEntered || replacementDispatchEntered) && (getActiveTradeMode() !== plan.spec.mode || !hasNativeCancelScope(symbol) || getVisibleDialogs().length)) {

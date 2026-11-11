@@ -72,12 +72,13 @@ for (const direction of PLAN_DIRECTIONS) {
   });
 }
 
-for (const [label, action, context, message] of [
-  ['unknown action', 'UNKNOWN', null, '未知阶梯动作'],
-  ['captured symbol', 'OPEN_LONG', { symbol: 'BTCUSDT' }, '重挂前交易对已变化，已停止'],
-  ['captured mode', 'OPEN_LONG', { mode: 'CLOSE' }, '重挂前开仓/平仓模式已变化，已停止'],
-  ['captured precision', 'OPEN_LONG', { precision: '1' }, '重挂前价格精度已变化，已停止'],
-  ['captured options', 'OPEN_LONG', { optionContext: { percent: 10, levels: 5, ladderStep: 5 } }, 'Ladder settings changed during reduce-only recovery'],
+for (const [label, action, context, message, recoveryKind] of [
+  ['unknown action', 'UNKNOWN', null, '未知阶梯动作', null],
+  ['captured symbol', 'OPEN_LONG', { symbol: 'BTCUSDT' }, '重挂前交易对已变化，已停止', null],
+  ['captured mode', 'OPEN_LONG', { mode: 'CLOSE' }, '重挂前开仓/平仓模式已变化，已停止', null],
+  // Settings changes continue a continuous session on its next round, even during reduce-only recovery.
+  ['captured precision', 'OPEN_LONG', { precision: '1' }, '重挂前价格精度已变化，已停止', 'precision_changed'],
+  ['captured options', 'OPEN_LONG', { optionContext: { percent: 10, levels: 5, ladderStep: 5 } }, '执行中比例、笔数或间距已变化', 'options_changed'],
 ]) {
   test(`user gets a precise refusal for a changed ${label} before a replacement plan can submit`, async ({ page }) => {
     // Given the production planner is attached to the current HYPE open form.
@@ -89,6 +90,7 @@ for (const [label, action, context, message] of [
     // Then the matching contract fails and no order or cancellation is issued.
     expect(result.status).toBe('refused');
     expect(result.message).toBe(message);
+    expect(result.recoveryKind ?? null).toBe(recoveryKind);
     expect((await readFixtureState(page)).events.filter(({ type }) => /order-submitted|cancel-requested/.test(type)))
       .toEqual([]);
     expect(errors).toEqual([]);

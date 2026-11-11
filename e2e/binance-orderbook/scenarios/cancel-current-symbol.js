@@ -79,6 +79,11 @@ export function createCancelScenario(overrides = {}) {
       placeOrderBodyOverrides: null,
       marketLotSize: { minQty: '0.01', stepSize: '0.01', maxQty: '1000000' },
       minNotional: '5',
+      // The ticker's mark price as the page shows it; null removes the label.
+      markPrice: '81.0',
+      markLabel: '标记价格',
+      duplicateMarkTicker: false,
+      hiddenMarkTicker: false,
       ...overrides.host,
     },
   };

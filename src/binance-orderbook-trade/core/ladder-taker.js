@@ -78,18 +78,30 @@ export function validateMarketOrderQty(qty, { minQty, stepSize, maxQty }) {
 }
 
 /**
- * An opening market order must reach the exchange minimum notional at the price it actually trades,
- * which is below the ladder's maker price for a short. The planned quantity is raised, never lowered,
- * so that quantity × price covers 101% of the minimum: the page's own check may use a slightly
- * different reference price than the one read just before the click.
+ * An opening market order must reach the exchange minimum notional, which Binance computes for MARKET
+ * orders with the mark price. The ladder sized it at a maker price, so the planned quantity is raised,
+ * never lowered, until quantity × price covers 102% of the minimum. The caller passes the lowest of
+ * the best bid, best ask and the page's mark price; the page shows the mark price about one 1–3 s
+ * update late, which the margin absorbs.
  */
 export function raiseQtyToMarketNotional({ qty, minNotional, price, stepSize }) {
   if (!normalizeDecimalString(minNotional) || compareDecimalStrings(price, '0') !== 1 || !normalizeDecimalString(stepSize)) {
     return null;
   }
-  const target = multiplyDecimalByRatio(minNotional, 101, 100);
+  const target = multiplyDecimalByRatio(minNotional, 102, 100);
   const required = ceilQtyByNotional(target, price, stepSize);
   return required ? maxDecimalString(qty, required) : null;
+}
+
+/**
+ * A mark price far from the book is a misread, not a price: used as the notional reference it would
+ * multiply the market order. Bounds use the displayed best bid and ask, which may be aggregated by a
+ * coarse orderbook precision, so the true market always lies inside them.
+ */
+export function isMarkPriceNearBook(mark, bid, ask, percent) {
+  const low = multiplyDecimalByRatio(bid, 100 - percent, 100);
+  const high = multiplyDecimalByRatio(ask, 100 + percent, 100);
+  return !!low && !!high && compareDecimalStrings(mark, low) >= 0 && compareDecimalStrings(mark, high) <= 0;
 }
 
 function requestQuantityText(value) {

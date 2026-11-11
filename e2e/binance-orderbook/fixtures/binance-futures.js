@@ -52,6 +52,7 @@ export function renderBinanceFuturesFixture(scenario) {
   <script src="/__binance_orderbook_userscript__.js"></script>
 </head>
 <body>
+  ${scenario.host.markPrice === null ? '' : `<div class="ticker-mark"><div><div class="bn-tooltips-wrap"><div class="bn-tooltips-ele">${scenario.host.markLabel}</div></div></div><div>${scenario.host.markPrice}</div></div>`.repeat(scenario.host.duplicateMarkTicker ? 2 : 1)}${scenario.host.hiddenMarkTicker ? `<div class="ticker-mark" style="display:none"><div><div class="bn-tooltips-wrap"><div class="bn-tooltips-ele">${scenario.host.markLabel}</div></div></div><div>1</div></div>` : ''}
   <div id="fixture-layout">
     <main id="fixture-main">
       <section id="futuresOrderbook">

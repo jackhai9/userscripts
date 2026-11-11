@@ -14,6 +14,12 @@ function isConfirmedReduceOnlyConflict(error) {
     && error.safeNoSubmit === true;
 }
 
+/**
+ * The user changing precision or the ratio, order count or gap is not a recovery failure: the session
+ * continues on the next round with the new settings, exactly as it does outside recovery.
+ */
+const PANEL_SETTING_CHANGE_KINDS = new Set(['precision_changed', 'options_changed']);
+
 function recoveryFailure(reason, rejection) {
   const text = combineLocalizedText([reason, rejection.message], ' · ');
   const error = new Error(formatLocalizedText(text, 'zh-CN'), { cause: rejection });
@@ -99,8 +105,13 @@ export async function runCloseLadderWithPositionRecovery({
         plan = await buildPlan(qty);
         check();
         const result = await replaceOrders(plan);
+        // A failed replacement stays terminal even if the context also changed meanwhile; only an
+        // adapter that stopped because of a settings change, with no unknown cancellation, continues.
+        if (result.ok !== true) {
+          if (PANEL_SETTING_CHANGE_KINDS.has(result.settingsChange?.continuousRecoveryKind)) throw result.settingsChange;
+          throw recoveryFailure(result.message, lastRejection);
+        }
         check();
-        if (result.ok !== true) throw recoveryFailure(result.message, lastRejection);
         replacementQty = qty;
         await wait();
         const afterReplacementQty = await read();
@@ -116,7 +127,8 @@ export async function runCloseLadderWithPositionRecovery({
     }
   } catch (error) {
     if (!lastRejection
-      || ['LadderStoppedError', 'ClosePositionCompletedError', 'CloseLadderRecoveryError'].includes(error.name)) {
+      || ['LadderStoppedError', 'ClosePositionCompletedError', 'CloseLadderRecoveryError'].includes(error.name)
+      || PANEL_SETTING_CHANGE_KINDS.has(error.continuousRecoveryKind)) {
       throw error;
     }
     throw recoveryFailure(error.localizedText || error.message, lastRejection);

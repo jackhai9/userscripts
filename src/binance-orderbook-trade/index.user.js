@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.250
+// @version      2.7.251
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -144,6 +144,7 @@ import {
   validateMarketOrderQty,
   isConfirmedTakerRejection,
   raiseQtyToMarketNotional,
+  isMarkPriceNearBook,
   matchPlaceOrderRequest,
   createTakerStats,
   recordTakerSubmitted,
@@ -2881,7 +2882,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
 
     const optionContext = readLadderOptionContext(spec, startSymbol, startPrecision);
     if (expectedContext?.optionContext && !areLadderOptionContextsEqual(optionContext, expectedContext.optionContext)) {
-      throw new Error('Ladder settings changed during reduce-only recovery');
+      // Like any running round, a settings change continues the session with the new settings next round.
+      throw createContinuousRecoverableLadderError('options_changed', '执行中比例、笔数或间距已变化');
     }
     const levels = optionContext.levels;
     const ladderStep = optionContext.ladderStep;
@@ -3798,18 +3800,76 @@ const hasCancellationAccountStream = installOrderSoundScope(
     above_max: ['数量超过市价单最大数量', 'quantity exceeds the market maximum'],
     account_stream: ['未连接到账户订单更新', 'account order updates are not connected'],
     notional_unavailable: ['无法按市价核对最小下单金额', 'the market minimum notional could not be checked'],
+    mark_price_unavailable: ['页面标记价格读取失败', 'the page mark price could not be read'],
+    min_notional_rejected: ['交易所拒绝：名义价值不足', 'the exchange rejected it below the minimum notional'],
   });
+  const BINANCE_MIN_NOTIONAL_ERROR_CODE = 90804164;
+  const reportTakerMarkPriceBreak = reportDependencyBreak('taker-mark-price');
+  let takerMarkPriceBreakReported = false;
+
+  /** Observed: label and value share a container three levels up (zh-CN and en, 2026-11-11). */
+  const MARK_PRICE_CONTAINER_MAX_DEPTH = 5;
+  /** Observed mark-to-last gaps were −0.6%…+0.4%; beyond bid −5% … ask +5% the value is a misread. */
+  const MARK_PRICE_BOOK_BAND_PERCENT = 5;
 
   /**
-   * Opening market orders are checked against the minimum notional at the lower of the best bid and ask:
-   * the ladder sized them at a maker price, which is above the market for a short.
-   * Reduce-only closing orders have no minimum notional and keep their planned size.
+   * Reads the ticker's mark price by its visible label (标记价格 / Mark). A candidate is a visible label
+   * whose nearest ancestor holds only the label and one value; table headers and other bare labels are
+   * not candidates. Exactly one candidate is required. Returns { price }, or { missing: 'value' } for a
+   * placeholder such as "--" while the symbol switches, or { missing: 'structure', labels, candidates }.
+   */
+  function readPageMarkPrice() {
+    const names = BINANCE_PAGE_TEXT.markPrice;
+    const values = [];
+    let labels = 0;
+    for (const element of document.body.querySelectorAll('*')) {
+      if (element.children.length !== 0) continue;
+      const name = element.textContent.trim();
+      if (!names.includes(name) || element.closest(`#${PANEL_ID}`) || !isVisibleElement(element)) continue;
+      labels += 1;
+      for (let node = element, depth = 0; node && depth <= MARK_PRICE_CONTAINER_MAX_DEPTH; node = node.parentElement, depth += 1) {
+        const match = /^(.+?)\s*(\S+)$/.exec((node.innerText || '').trim());
+        if (match && match[1].trim() === name) {
+          values.push(match[2]);
+          break;
+        }
+      }
+    }
+    if (values.length !== 1) return { missing: 'structure', labels, candidates: values.length };
+    const price = normalizeDecimalString(values[0]);
+    return price && compareDecimalStrings(price, '0') === 1 ? { price } : { missing: 'value' };
+  }
+
+  function reportTakerMarkPriceOnce(detail) {
+    if (takerMarkPriceBreakReported) return;
+    takerMarkPriceBreakReported = true;
+    reportTakerMarkPriceBreak({ reason: 'ticker-label', detail });
+  }
+
+  /**
+   * Opening market orders are checked against the minimum notional at the lowest of the best bid, the
+   * best ask and the page mark price: Binance values MARKET orders at the mark price, and the ladder
+   * sized them at a maker price. Reduce-only closing orders have no minimum notional and keep their size.
    */
   function resolveTakerQuantity(plan, order) {
     if (plan.spec.mode !== 'OPEN') return { qty: order.qty };
+    const mark = readPageMarkPrice();
+    if (mark.missing) {
+      if (mark.missing === 'structure') {
+        reportTakerMarkPriceOnce(`${mark.labels} visible ${BINANCE_PAGE_TEXT.markPrice.join('/')} labels with ${mark.candidates} value containers; expected exactly 1`);
+      }
+      return { skipReason: 'mark_price_unavailable' };
+    }
+    const markPrice = mark.price;
     const bid = normalizeDecimalString(getBestOrderbookPrice('BID'));
     const ask = normalizeDecimalString(getBestOrderbookPrice('ASK'));
-    const price = bid && ask ? (compareDecimalStrings(bid, ask) <= 0 ? bid : ask) : null;
+    if (bid && ask && !isMarkPriceNearBook(markPrice, bid, ask, MARK_PRICE_BOOK_BAND_PERCENT)) {
+      reportTakerMarkPriceOnce(`mark ${markPrice} is outside ${bid} −${MARK_PRICE_BOOK_BAND_PERCENT}% … ${ask} +${MARK_PRICE_BOOK_BAND_PERCENT}%`);
+      return { skipReason: 'mark_price_unavailable' };
+    }
+    const price = bid && ask
+      ? [bid, ask, markPrice].reduce((lowest, value) => (compareDecimalStrings(value, lowest) < 0 ? value : lowest))
+      : null;
     const rules = rulesCache[plan.symbol];
     const qty = price && raiseQtyToMarketNotional({
       qty: order.qty,
@@ -3820,7 +3880,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
     if (!qty) return { skipReason: 'notional_unavailable' };
     if (compareDecimalStrings(qty, order.qty) !== 0) {
       logTaker('raised to the minimum notional', {
-        symbol: plan.symbol, plannedQty: order.qty, qty, price, minNotional: rules.minNotional,
+        symbol: plan.symbol, plannedQty: order.qty, qty, price, markPrice, minNotional: rules.minNotional,
       });
     }
     return { qty };
@@ -3965,6 +4025,12 @@ const hasCancellationAccountStream = installOrderSoundScope(
         }
         if (isConfirmedTakerRejection(submitCapture)) {
           takerBudget.remaining += 1;
+          if (submitCapture.apiErrors[0].code === BINANCE_MIN_NOTIONAL_ERROR_CODE) {
+            // Nothing was placed; this round's slots go to Post Only instead of failing the round,
+            // and the forfeited share is not carried to the next round.
+            logTaker('rejected below the minimum notional', { symbol: plan.symbol, qty: takerQty });
+            return { status: 'skipped', reason: 'min_notional_rejected' };
+          }
           throw acknowledgementError;
         }
         const placed = await waitForTakerOrderEvidence(
@@ -4049,6 +4115,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
           takerBudget,
         );
         if (takerResult.status === 'skipped') {
+          // A skip after the market form was used must not treat its inputs as the last submitted maker.
+          previousAcknowledgedInputs = null;
           // This round's remaining taker slots are placed as Post Only and the reason stays visible.
           takerBudget.skippedReason = takerResult.reason;
           takerBudget.remaining = 0;
@@ -5526,6 +5594,12 @@ const hasCancellationAccountStream = installOrderSoundScope(
             ticket.noteFailure('request not dispatched');
             ticket.finish(false);
           }
+          if (await confirmed && options?.strategy === 'confirmed_reduce_only_conflict') {
+            // Record the confirmed identity before any later scope check can end the batch.
+            options.confirmedCancelledOrders.set(String(target.orderId), {
+              symbol: target.symbol, orderId: target.orderId, clientOrderId: target.clientOrderId,
+            });
+          }
           if (!await confirmed) {
             const filled = reduceOnlyRecovery && await waitForCancelledTargetFill(receipts, target, current, abortSignal);
             console.error('[订单簿下单] Cancellation not confirmed', {
@@ -5542,11 +5616,6 @@ const hasCancellationAccountStream = installOrderSoundScope(
           if (!isPositiveDecimalString(releasedQty)) throw new Error('无法确认已撤挂单数量，已停止重新挂单');
           cancelQty = addDecimalStrings(cancelQty, releasedQty);
           cancelledIds.add(String(target.orderId));
-          if (options?.strategy === 'confirmed_reduce_only_conflict') {
-            options.confirmedCancelledOrders.set(String(target.orderId), {
-              symbol: target.symbol, orderId: target.orderId, clientOrderId: target.clientOrderId,
-            });
-          }
           if (compareDecimalStrings(cancelQty, plan.totalQty) >= 0) break;
         } finally {
           // Stop closes the quantity wait but every already observed HTTP request must drain.
@@ -6709,6 +6778,11 @@ const hasCancellationAccountStream = installOrderSoundScope(
       let status = capacityDispatchEntered || (capacityRecovery && checkingConfirmedCancellationIdentities)
         ? 'capacity_terminal' : 'row_cancel_failed';
       if (e?.name === 'DialogNotClosedError') status = 'dialog_not_closed';
+      // Scope checks raise these only before a click or after the previous click was confirmed,
+      // so no cancellation outcome is unknown; the session can continue with the new settings.
+      if (['precision_changed', 'options_changed'].includes(e?.continuousRecoveryKind)) {
+        return { ok: false, status: 'settings_changed', message, settingsChange: e };
+      }
       return { ok: false, status, message };
     } finally {
       if ((capacityDispatchEntered || replacementDispatchEntered) && (getActiveTradeMode() !== plan.spec.mode
