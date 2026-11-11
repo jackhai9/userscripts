@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.249
+// @version      2.7.250
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -143,6 +143,7 @@ import {
   returnUnspentTakerOrders,
   validateMarketOrderQty,
   isConfirmedTakerRejection,
+  raiseQtyToMarketNotional,
   matchPlaceOrderRequest,
   createTakerStats,
   recordTakerSubmitted,
@@ -3796,7 +3797,34 @@ const hasCancellationAccountStream = installOrderSoundScope(
     off_step: ['数量不符合市价单步长', 'quantity does not match the market step'],
     above_max: ['数量超过市价单最大数量', 'quantity exceeds the market maximum'],
     account_stream: ['未连接到账户订单更新', 'account order updates are not connected'],
+    notional_unavailable: ['无法按市价核对最小下单金额', 'the market minimum notional could not be checked'],
   });
+
+  /**
+   * Opening market orders are checked against the minimum notional at the lower of the best bid and ask:
+   * the ladder sized them at a maker price, which is above the market for a short.
+   * Reduce-only closing orders have no minimum notional and keep their planned size.
+   */
+  function resolveTakerQuantity(plan, order) {
+    if (plan.spec.mode !== 'OPEN') return { qty: order.qty };
+    const bid = normalizeDecimalString(getBestOrderbookPrice('BID'));
+    const ask = normalizeDecimalString(getBestOrderbookPrice('ASK'));
+    const price = bid && ask ? (compareDecimalStrings(bid, ask) <= 0 ? bid : ask) : null;
+    const rules = rulesCache[plan.symbol];
+    const qty = price && raiseQtyToMarketNotional({
+      qty: order.qty,
+      minNotional: rules?.minNotional,
+      price,
+      stepSize: rules?.marketStepSize,
+    });
+    if (!qty) return { skipReason: 'notional_unavailable' };
+    if (compareDecimalStrings(qty, order.qty) !== 0) {
+      logTaker('raised to the minimum notional', {
+        symbol: plan.symbol, plannedQty: order.qty, qty, price, minNotional: rules.minNotional,
+      });
+    }
+    return { qty };
+  }
 
   /** Kept on the round's final status so a skipped taker share stays visible after the makers run. */
   function formatTakerSkipNote(reason) {
@@ -3813,7 +3841,11 @@ const hasCancellationAccountStream = installOrderSoundScope(
    */
   async function executeLadderTakerOrder(plan, order, orderIndex, setExecutionStatus, abortSignal, takerBudget) {
     const rules = rulesCache[plan.symbol];
-    const qtyCheck = validateMarketOrderQty(order.qty, {
+    if (!rules?.marketMinQty || !rules.marketStepSize || !rules.marketMaxQty) return { status: 'skipped', reason: 'rules_missing' };
+    const takerQuantity = resolveTakerQuantity(plan, order);
+    if (takerQuantity.skipReason) return { status: 'skipped', reason: takerQuantity.skipReason };
+    const takerQty = takerQuantity.qty;
+    const qtyCheck = validateMarketOrderQty(takerQty, {
       minQty: rules?.marketMinQty,
       stepSize: rules?.marketStepSize,
       maxQty: rules?.marketMaxQty,
@@ -3832,7 +3864,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
       throwIfAborted(abortSignal);
       assertLadderBaseExecutionContext(plan);
       await waitForReadyLadderSubmitButton(plan, abortSignal);
-      await syncTradeInputs(null, order.qty, {
+      await syncTradeInputs(null, takerQty, {
         includePrice: false,
         qtyLabel: '吃单量',
         settleControlledForm: true,
@@ -3845,7 +3877,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
       if (!isMarketOrderTypeActive()) {
         throw createTerminalLadderError('吃单前市价单已失效，已停止', 'The market order form changed before the taker order; stopped');
       }
-      assertSubmittedQtyMatchesExpectedQty(order.qty, findTradeInputs({ requirePrice: false })?.qtyInput.value || '', '吃单量');
+      assertSubmittedQtyMatchesExpectedQty(takerQty, findTradeInputs({ requirePrice: false })?.qtyInput.value || '', '吃单量');
       if (CFG.SAFE_MODE) return { status: 'placed' };
 
       const previousFeedback = takeOrderFeedbackSnapshot();
@@ -3856,7 +3888,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
         symbol: plan.symbol,
         side: plan.spec.orderSide,
         positionSide: plan.spec.side,
-        quantity: order.qty,
+        quantity: takerQty,
       });
       const submitCapture = activeLadderSubmitCapture;
       let acknowledgementError = null;

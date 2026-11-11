@@ -78,6 +78,7 @@ export function createCancelScenario(overrides = {}) {
       orderTypeTabsInteractive: true,
       placeOrderBodyOverrides: null,
       marketLotSize: { minQty: '0.01', stepSize: '0.01', maxQty: '1000000' },
+      minNotional: '5',
       ...overrides.host,
     },
   };

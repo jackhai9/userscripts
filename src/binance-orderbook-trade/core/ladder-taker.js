@@ -1,4 +1,6 @@
-import { compareDecimalStrings, floorDecimalToStep, normalizeDecimalString } from './decimal.js';
+import {
+  ceilQtyByNotional, compareDecimalStrings, floorDecimalToStep, maxDecimalString, multiplyDecimalByRatio, normalizeDecimalString,
+} from './decimal.js';
 import { formatLocalizedText } from '../../shared/ui-locale.js';
 
 export const LADDER_TAKER_PERCENTS = Object.freeze([0, 20, 50, 80]);
@@ -73,6 +75,21 @@ export function validateMarketOrderQty(qty, { minQty, stepSize, maxQty }) {
   if (compareDecimalStrings(floorDecimalToStep(qty, stepSize), qty) !== 0) return { ok: false, reason: 'off_step' };
   if (compareDecimalStrings(qty, maxQty) > 0) return { ok: false, reason: 'above_max' };
   return { ok: true };
+}
+
+/**
+ * An opening market order must reach the exchange minimum notional at the price it actually trades,
+ * which is below the ladder's maker price for a short. The planned quantity is raised, never lowered,
+ * so that quantity × price covers 101% of the minimum: the page's own check may use a slightly
+ * different reference price than the one read just before the click.
+ */
+export function raiseQtyToMarketNotional({ qty, minNotional, price, stepSize }) {
+  if (!normalizeDecimalString(minNotional) || compareDecimalStrings(price, '0') !== 1 || !normalizeDecimalString(stepSize)) {
+    return null;
+  }
+  const target = multiplyDecimalByRatio(minNotional, 101, 100);
+  const required = ceilQtyByNotional(target, price, stepSize);
+  return required ? maxDecimalString(qty, required) : null;
 }
 
 function requestQuantityText(value) {
