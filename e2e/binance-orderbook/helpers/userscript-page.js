@@ -146,7 +146,7 @@ export async function openUserscriptScenario(page, scenario, {
           filters: [
             { filterType: 'LOT_SIZE', minQty: '0.01', stepSize: '0.01' },
             { filterType: 'MARKET_LOT_SIZE', ...scenario.host.marketLotSize },
-            { filterType: 'MIN_NOTIONAL', notional: '5' },
+            { filterType: 'MIN_NOTIONAL', notional: scenario.host.minNotional },
           ],
         })),
       }),

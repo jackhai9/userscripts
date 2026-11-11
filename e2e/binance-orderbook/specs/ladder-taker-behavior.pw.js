@@ -78,6 +78,81 @@ for (const [percent, takers] of [[0, 0], [20, 1], [50, 1], [80, 2]]) {
   });
 }
 
+test('user gets an opening short market order raised when its maker-sized notional falls below the minimum at the bid', async ({ page }) => {
+  // Given an open-short ladder sized at the ask-side maker price: 0.07 × 81.03 clears 5.67, but 0.07 × 80.9 does not.
+  const host = await openUserscriptScenario(page, openScenario({ minNotional: '5.67' }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs it once.
+  await page.locator('[data-ladder-action="OPEN_SHORT"]').click();
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(3);
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+
+  // Then the market order covers 101% of the minimum at the 80.9 bid while the makers keep the planned size.
+  const sent = await submissions(page);
+  expect(sent.map(({ orderType, quantity }) => [orderType, quantity])).toEqual([
+    ['MARKET', '0.08'], ['POST_ONLY', '0.07'], ['POST_ONLY', '0.07'],
+  ]);
+  await expect(page.locator(STATUS)).not.toContainText('失败');
+  expect(host.errors).toEqual([]);
+});
+
+test('user keeps an opening long market order at its planned size when it already clears the minimum at the bid', async ({ page }) => {
+  // Given an open-long ladder sized at bid-side maker prices.
+  const host = await openUserscriptScenario(page, openScenario({ minNotional: '5.67' }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs it once.
+  await page.locator('[data-ladder-action="OPEN_LONG"]').click();
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(3);
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+
+  // Then the market order is the first planned order, unchanged.
+  const sent = await submissions(page);
+  expect(sent.map(({ orderType, quantity }) => [orderType, quantity])).toEqual([
+    ['MARKET', '0.08'], ['POST_ONLY', '0.08'], ['POST_ONLY', '0.08'],
+  ]);
+  expect(host.errors).toEqual([]);
+});
+
+for (const [name, host, reason] of [
+  ['the minimum notional is unknown', { minNotional: null }, '无法按市价核对最小下单金额'],
+  ['the raised quantity exceeds the market maximum', { minNotional: '5.67', marketLotSize: { minQty: '0.01', stepSize: '0.01', maxQty: '0.07' } }, '数量超过市价单最大数量'],
+]) {
+  test(`user sees an opening taker slot placed as Post Only when ${name}`, async ({ page }) => {
+    // Given an open-short ladder whose market quantity cannot be confirmed.
+    const scenarioHost = await openUserscriptScenario(page, openScenario(host), { replacementStream: true });
+    await chooseLadder(page, { taker: 50 });
+
+    // When the user runs it once.
+    await page.locator('[data-ladder-action="OPEN_SHORT"]').click();
+    await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(3);
+    await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+
+    // Then every order is Post Only and the final status keeps the reason.
+    expect(await orderTypes(page, 3)).toEqual(['POST_ONLY', 'POST_ONLY', 'POST_ONLY']);
+    await expect(page.locator(STATUS)).toContainText(`本轮吃单改为挂单：${reason}`);
+    expect(scenarioHost.errors).toEqual([]);
+  });
+}
+
+test('user keeps a closing market order at its planned size because reduce-only orders have no minimum notional', async ({ page }) => {
+  // Given a close-long ladder whose orders are far below the minimum notional.
+  const host = await openUserscriptScenario(page, closeScenario({ minNotional: '1000' }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs it once.
+  await page.locator('[data-ladder-action="CLOSE_LONG"]').click();
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(3);
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+
+  // Then every order, including the market one, keeps the same planned quantity.
+  const sent = await submissions(page);
+  expect(sent[0].orderType).toBe('MARKET');
+  expect(new Set(sent.map(({ quantity }) => quantity)).size).toBe(1);
+  expect(host.errors).toEqual([]);
+});
+
 test('user sees a continuous close carry fractional taker orders from round to round', async ({ page }) => {
   // Given a continuous close of three orders per round at taker 50%.
   test.setTimeout(40_000);

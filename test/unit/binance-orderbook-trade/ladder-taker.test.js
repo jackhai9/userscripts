@@ -6,6 +6,7 @@ import {
   returnUnspentTakerOrders,
   validateMarketOrderQty,
   isConfirmedTakerRejection,
+  raiseQtyToMarketNotional,
   matchPlaceOrderRequest,
   createTakerStats,
   recordTakerSubmitted,
@@ -242,4 +243,22 @@ test('user sees a market order that expired after a partial fill counted at its 
   // Then the filled part counts as a fill with that price
   assert.equal(filled.fillPrice, '0.0052');
   assert.equal(formatTakerStatsLines(stats, 'zh-CN')[1], '共 1 笔，成交价逐笔走高 0 次');
+});
+
+test('user gets an opening market order raised just enough to clear the minimum notional at the market price', () => {
+  // Given a JCT short sized at the maker price and the lower market price it would trade at
+  const base = { minNotional: '5', price: '0.005651', stepSize: '1' };
+
+  // When the planned quantities are checked against 101% of the minimum notional
+  const raised = raiseQtyToMarketNotional({ ...base, qty: '884' });
+  const enough = raiseQtyToMarketNotional({ ...base, qty: '1200' });
+  const decimals = raiseQtyToMarketNotional({ qty: '0.07', minNotional: '5.66', price: '80.9', stepSize: '0.01' });
+
+  // Then only a short quantity is raised, to the smallest step that covers the target
+  assert.equal(raised, '894');
+  assert.equal(enough, '1200');
+  assert.equal(decimals, '0.08');
+  assert.equal(raiseQtyToMarketNotional({ ...base, qty: '884', price: null }), null);
+  assert.equal(raiseQtyToMarketNotional({ ...base, qty: '884', minNotional: null }), null);
+  assert.equal(raiseQtyToMarketNotional({ ...base, qty: '884', stepSize: null }), null);
 });

@@ -542,11 +542,27 @@ Ladder makers now also depend on the native place-order body being a JSON string
 an unreadable body or a maker body with `type=MARKET` is blocked. A blocked body is
 refused again for 60 seconds so a native retry cannot reach the exchange.
 
+In OPEN mode a taker slot is first raised, never lowered, to cover 101% of the
+symbol's `MIN_NOTIONAL` at the lower of the current best bid and ask, in
+`MARKET_LOT_SIZE` steps, and the console logs the planned and sent quantities.
+The ladder sizes orders at maker prices, which for a short sit above the market:
+on 2026-11-11 a 2x JCTUSDT open-short ladder sized each order at about 5 USDT, and
+the market order at the bid fell below 5 USDT; Binance's page refused it without
+a request (`下单请求仍未返回`). Reduce-only closing orders have no minimum notional
+and keep their planned size. Without a readable book or minimum notional the slot
+is placed as Post Only. Which reference price the page's own minimum-notional check
+uses (best price, last price or mark price) has not been observed; the only live mark
+price available to the script is the page-load `#__APP_DATA` value, which is stale, so
+it is not used. If a raised order is still refused, the page sends no request (or the
+exchange returns one definite rejection), the budget unit returns, and the task stops
+with the visible reason; nothing is retried.
+
 A taker slot is placed as Post Only instead, with
 `本轮吃单改为挂单：<reason>` kept on the round's final status (or the wait between
 continuous rounds), when the quantity violates
-`MARKET_LOT_SIZE` (min, step or max; the max is required) or the private account
-stream is not connected. These rule-based skips forfeit the round's remaining
+`MARKET_LOT_SIZE` (min, step or max; the max is required; checked after the OPEN
+raise), the private account stream is not connected, or an OPEN slot's notional
+cannot be checked (`无法按市价核对最小下单金额`). These rule-based skips forfeit the round's remaining
 taker slots.
 
 Statistics cover the latest ladder task (a continuous session or one round) and
