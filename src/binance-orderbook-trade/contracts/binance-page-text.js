@@ -13,6 +13,7 @@ export const BINANCE_PAGE_TEXT = Object.freeze({
   }),
   availableBalance: freezeLabels(['可用', 'Avbl']),
   postOnly: freezeLabels(['只做Maker', 'Post Only']),
+  marketOrder: freezeLabels(['市价', 'Market']),
   submitBusy: freezeLabels(['提交中', 'Placing', 'Loading']),
   openableQuantity: freezeLabels(['可开']),
   closeableQuantity: freezeLabels(['可平']),

@@ -96,7 +96,7 @@ export function renderBinanceFuturesFixture(scenario) {
               <div role="tab" data-trade-mode="OPEN" aria-selected="true">开仓</div>
               <div role="tab" data-trade-mode="CLOSE" aria-selected="false">平仓</div>
             </div>
-            <div class="order-type-tabs"><div role="tab" data-tab-key="POST_ONLY" aria-selected="true">只做Maker</div></div>
+            <div class="order-type-tabs"></div>
           </div>
         </div>
         <div class="available-balance"><span>可用</span><span>100.00 USDT</span></div>
@@ -123,6 +123,7 @@ export function renderBinanceFuturesFixture(scenario) {
         orderbookPrecision: scenario.ui.orderbookPrecision,
         leverage: scenario.ui.leverage,
         openableQuantity: scenario.ui.openableQuantity,
+        orderType: 'POST_ONLY',
         dialogOpen: false,
         events: [],
       };
@@ -160,21 +161,42 @@ export function renderBinanceFuturesFixture(scenario) {
           .reduce((total, item) => total + Number(item.quantity), 0);
       }
 
+      const ORDER_TYPE_LABELS = { LIMIT: '限价', MARKET: '市价', POST_ONLY: '只做Maker' };
+
+      function renderOrderTypeTabs() {
+        const tabs = document.querySelector('.order-type-tabs');
+        tabs.innerHTML = scenario.host.orderTypeTabs.map((key) => (
+          '<div role="tab" data-tab-key="' + key + '" aria-selected="' + selected(state.orderType, key) + '">'
+          + ORDER_TYPE_LABELS[key] + '</div>'
+        )).join('');
+        if (!scenario.host.orderTypeTabsInteractive) return;
+        tabs.querySelectorAll('[data-tab-key]').forEach((tab) => {
+          tab.addEventListener('click', () => scheduleCommit(() => {
+            state.orderType = tab.dataset.tabKey;
+            record('order-type', { value: state.orderType });
+            renderOrderTypeTabs();
+            renderTradeMode();
+          }));
+        });
+      }
+
       function renderTradeMode() {
         const direction = document.querySelector('#position-direction');
         direction.innerHTML =
           '<div role="tab" data-trade-mode="OPEN" aria-selected="' + selected(state.tradeMode, 'OPEN') + '">开仓</div>' +
           '<div role="tab" data-trade-mode="CLOSE" aria-selected="' + selected(state.tradeMode, 'CLOSE') + '">平仓</div>';
         const orderEntry = document.querySelector('.order-entry');
+        // A market form has no price input, as observed on the live MARKET tab.
+        const priceInput = (mode) => (state.orderType === 'MARKET' ? '' : '<input id="limitPrice-' + mode + '" value="81.0">');
         if (state.tradeMode === 'OPEN') {
           orderEntry.innerHTML =
-            '<input id="limitPrice-open" value="81.0"><input id="unitAmount-open" value="">' +
+            priceInput('open') + '<input id="unitAmount-open" value="">' +
             '<button type="button">开多</button><button type="button">开空</button>' +
             '<div data-testid="max-buy-amount">可开 ' + state.openableQuantity + ' HYPE</div>' +
             '<div data-testid="max-sell-amount">可开 ' + state.openableQuantity + ' HYPE</div>';
         } else {
           orderEntry.innerHTML =
-            '<input id="limitPrice-close" value="81.0"><input id="unitAmount-close" value="">' +
+            priceInput('close') + '<input id="unitAmount-close" value="">' +
             '<button type="button">平多</button><button type="button">平空</button>' +
             '<div data-testid="max-sell-amount">可平 ' + currentPositionQuantity('LONG') + ' HYPE</div>' +
             '<div data-testid="max-buy-amount">可平 ' + currentPositionQuantity('SHORT') + ' HYPE</div>';
@@ -211,12 +233,24 @@ export function renderBinanceFuturesFixture(scenario) {
             orderSubmitSequence += 1;
             const submitSequence = orderSubmitSequence;
             const submitSymbol = scenario.currentSymbol;
-            record('order-submitted', {
+            const action = button.textContent.trim();
+            const price = orderEntry.querySelector('input[id^="limitPrice-"]')?.value || '';
+            const quantity = orderEntry.querySelector('input[id^="unitAmount-"]')?.value || '';
+            const clientOrderId = 'web_fixture_' + submitSequence;
+            record('order-submitted', { submitSequence, action, price, quantity, orderType: state.orderType, clientOrderId });
+            // Mirrors the observed native body; hedge mode closes a long with SELL + positionSide LONG.
+            const requestBody = {
+              symbol: scenario.currentSymbol,
+              type: state.orderType === 'MARKET' ? 'MARKET' : 'LIMIT',
+              side: ['开多', '平空'].includes(action) ? 'BUY' : 'SELL',
+              positionSide: ['开多', '平多'].includes(action) ? 'LONG' : 'SHORT',
+              quantity: Number(quantity),
+              ...(state.orderType === 'MARKET' ? {} : { price, timeInForce: 'GTX' }),
+              newClientOrderId: clientOrderId,
+              placeType: 'order-form',
               submitSequence,
-              action: button.textContent.trim(),
-              price: orderEntry.querySelector('input[id^="limitPrice-"]')?.value || '',
-              quantity: orderEntry.querySelector('input[id^="unitAmount-"]')?.value || '',
-            });
+              ...scenario.host.placeOrderBodyOverrides,
+            };
             const showFeedback = (outcome) => {
               const feedback = document.createElement('div');
               feedback.setAttribute('role', 'alert');
@@ -227,8 +261,12 @@ export function renderBinanceFuturesFixture(scenario) {
             window.fetch('/bapi/futures/v1/private/future/order/place-order', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ submitSequence }),
+              body: JSON.stringify(requestBody),
+            }).catch((error) => {
+              record('order-submit-request-failed', { submitSequence, message: error.message });
+              return null;
             }).then(async (response) => {
+              if (!response) return;
               const payload = await response.json();
               const outcome = response.ok && payload.success === true ? 'success'
                 : payload.success === false ? 'rejected' : 'unknown';
@@ -860,6 +898,7 @@ export function renderBinanceFuturesFixture(scenario) {
           orderbookPrecision: state.orderbookPrecision,
           leverage: state.leverage,
           openableQuantity: state.openableQuantity,
+          orderType: state.orderType,
           dialogOpen: state.dialogOpen,
           events: state.events,
         })),
@@ -867,6 +906,7 @@ export function renderBinanceFuturesFixture(scenario) {
       document.querySelector('.tick-content').textContent = state.orderbookPrecision;
       document.querySelector('.quick-controls button:nth-child(2)').textContent = state.leverage + 'x';
       precisionControl = bindPrecisionControl(document.querySelector('#futuresOrderbook .orderbook-tickSize'));
+      renderOrderTypeTabs();
       renderTradeMode();
       renderAccountWidget();
       window.fetch('/bapi/fixture-bootstrap', {

@@ -47,7 +47,7 @@ for (const direction of PLAN_DIRECTIONS) {
     });
     const { errors } = await openUserscriptScenario(page, scenario);
     const optionButtons = page.locator('[data-ladder-group]');
-    await expect(optionButtons).toHaveCount(14);
+    await expect(optionButtons).toHaveCount(18);
     const originalOptions = await optionButtons.evaluateAll(elements => elements.map(element => element.outerHTML));
 
     // When the actual entrypoint builds the selected directional plan.

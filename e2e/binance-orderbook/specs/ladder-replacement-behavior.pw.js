@@ -354,6 +354,13 @@ test('user continues reduce-only close recovery when a selected order fills befo
       success: true, data: [{ symbol: CURRENT_SYMBOL, positionSide: direction.side, positionAmount: quantity }],
     }) });
   });
+  // The recovery explanation is replaced by the next order's status at once, so every status is kept.
+  await page.evaluate(() => {
+    const status = document.querySelector('#jh-binance-ladder-status');
+    window.__statusHistory = [status.textContent];
+    new MutationObserver(() => window.__statusHistory.push(status.textContent))
+      .observe(status, { childList: true, subtree: true, characterData: true });
+  });
   await page.locator('[data-ladder-action="' + direction.action + '"]').click({ modifiers: ['Alt'] });
   const [first, second] = scenario.orders;
   await expect.poll(host.pendingCancelOrderIds, { timeout: 15_000 }).toEqual([first.orderId]);
@@ -365,7 +372,8 @@ test('user continues reduce-only close recovery when a selected order fills befo
 
   // Then the runner rereads the decreased position and submits the rebuilt plan instead of failing the task.
   const status = page.locator('#jh-binance-ladder-status');
-  await expect(status).toContainText('待替换挂单已成交或消失', { timeout: 10_000 });
+  await expect.poll(() => page.evaluate(() => window.__statusHistory.some(text => text.includes('待替换挂单已成交或消失'))),
+    { timeout: 10_000 }).toBe(true);
   await expect.poll(async () => (await readFixtureState(page)).events
     .filter(({ type }) => type === 'order-submit-api-success').length, { timeout: 15_000 }).toBeGreaterThanOrEqual(5);
   expect(reads).toContain('99.8');
@@ -532,7 +540,8 @@ for (const [name, update] of [
     // Then the unconfirmed cancellation stops the task without clicking another order or resubmitting.
     const status = page.locator('#jh-binance-ladder-status');
     await expect(status).toContainText('未收到匹配的成功撤单回执', { timeout: 15_000 });
-    expect(diagnostics).toEqual([{ orderId: first.orderId, reason: 'response code -2011 status undefined', filled: false }]);
+    // Console arguments are serialized asynchronously, after the status may already show the stop.
+    await expect.poll(() => diagnostics).toEqual([{ orderId: first.orderId, reason: 'response code -2011 status undefined', filled: false }]);
     const state = await readFixtureState(page);
     expect(state.events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId))
       .toEqual([first.id]);

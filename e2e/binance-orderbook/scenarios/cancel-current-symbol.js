@@ -73,6 +73,11 @@ export function createCancelScenario(overrides = {}) {
         outcome: 'success', delivery: 'immediate',
       })),
       precisionOptions: ['0.001', '0.01', '0.1', '1'],
+      orderTypeTabs: ['LIMIT', 'MARKET', 'POST_ONLY'],
+      // false renders the tabs without host commits, like a native selection that never settles.
+      orderTypeTabsInteractive: true,
+      placeOrderBodyOverrides: null,
+      marketLotSize: { minQty: '0.01', stepSize: '0.01', maxQty: '1000000' },
       ...overrides.host,
     },
   };
@@ -145,6 +150,13 @@ export function createCancelScenario(overrides = {}) {
     if (!Number.isInteger(scenario.host[key]) || scenario.host[key] < 0) {
       throw new Error(`${key} must be a non-negative integer`);
     }
+  }
+  if (!scenario.host.orderTypeTabs.includes('POST_ONLY')
+    || scenario.host.orderTypeTabs.some(key => !['LIMIT', 'MARKET', 'POST_ONLY'].includes(key))) {
+    throw new Error(`Unsupported order type tabs: ${scenario.host.orderTypeTabs}`);
+  }
+  if (typeof scenario.host.orderTypeTabsInteractive !== 'boolean') {
+    throw new Error('Order type tab interactivity must be a boolean');
   }
   if (!['data-loading', 'aria-busy'].includes(scenario.host.submitButtonBusyAttribute)) {
     throw new Error(`Unsupported submit button busy attribute: ${scenario.host.submitButtonBusyAttribute}`);

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.248
+// @version      2.7.249
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -134,6 +134,22 @@ import {
 } from '../shared/abort.js';
 import { formatStatusBaseAsset } from './core/status-symbol.js';
 import { createNativeCancelReceipts, sameNativeOrder } from './core/capacity-cancel-receipts.js';
+import {
+  LADDER_TAKER_PERCENTS,
+  DEFAULT_LADDER_TAKER_PERCENT,
+  TAKER_SAMPLE_HORIZONS_SECONDS,
+  allocateLadderTakerOrders,
+  createTakerCarry,
+  returnUnspentTakerOrders,
+  validateMarketOrderQty,
+  isConfirmedTakerRejection,
+  matchPlaceOrderRequest,
+  createTakerStats,
+  recordTakerSubmitted,
+  applyTakerOrderUpdate,
+  recordTakerSample,
+  formatTakerStatsLines,
+} from './core/ladder-taker.js';
 import { selectFarthestOpenOrders } from './core/open-order-capacity.js';
 import {
   evaluateOrderSubmitAcknowledgement,
@@ -274,6 +290,8 @@ import { installOrderSoundScope } from './order-sound/install.js';
 import { installBinanceI18nUsageBlock } from './i18n-usage/install.js';
 
 let activeCancelReceipts = null;
+/** Set by the trading runtime: market-order evidence and taker statistics read the same trusted frames. */
+let observeTakerOrderUpdate = null;
 /** Whole-order fills are terminal, so a fill seen before a cancellation batch still proves its outcome. */
 const recentOrderFills = [];
 const RECENT_ORDER_FILL_LIMIT = 200;
@@ -283,6 +301,7 @@ function observeAccountOrderUpdate(order) {
     if (recentOrderFills.length > RECENT_ORDER_FILL_LIMIT) recentOrderFills.shift();
   }
   activeCancelReceipts?.observeOrderUpdate(order);
+  observeTakerOrderUpdate?.(order);
 }
 /** Mismatches of hooks into Binance/TradingView internals; shown until the page reloads. */
 const dependencyBreaks = [];
@@ -352,6 +371,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
   const LOCAL_LADDER_CLOSE_LEVELS_KEY = 'jh_binance_ladder_close_levels';
   const LOCAL_LADDER_OPEN_STEP_KEY = 'jh_binance_ladder_open_step';
   const LOCAL_LADDER_CLOSE_STEP_KEY = 'jh_binance_ladder_close_step';
+  const LOCAL_LADDER_OPEN_TAKER_KEY = 'jh_binance_ladder_open_taker';
+  const LOCAL_LADDER_CLOSE_TAKER_KEY = 'jh_binance_ladder_close_taker';
   const LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = 'jh_binance_orderbook_precision_samples_v3';
   const BINANCE_PERSIST_KEY = 'persist:futures-trade-ui';
   const BINANCE_POST_ONLY_ORDER_TYPE = 'POST_ONLY';
@@ -372,6 +393,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
   const SIDE_LONG_ID = 'jh-binance-close-side-long';
   const SIDE_SHORT_ID = 'jh-binance-close-side-short';
   const LADDER_BODY_ID = 'jh-binance-ladder-body';
+  const LADDER_TITLE_ID = 'jh-binance-ladder-title';
+  const LADDER_TAKER_OPTIONS_ID = 'jh-binance-ladder-taker-options';
   const LADDER_STATUS_ID = 'jh-binance-ladder-status';
   const LADDER_STATUS_ROW_ID = 'jh-binance-ladder-status-row';
   const AUTOMATIC_USDT_REBALANCE_STATUS_ID = 'jh-binance-auto-rebalance-status';
@@ -409,7 +432,13 @@ const hasCancellationAccountStream = installOrderSoundScope(
     OPEN: LOCAL_LADDER_OPEN_STEP_KEY,
     CLOSE: LOCAL_LADDER_CLOSE_STEP_KEY,
   };
+  const LADDER_TAKER_STORAGE_KEYS = {
+    OPEN: LOCAL_LADDER_OPEN_TAKER_KEY,
+    CLOSE: LOCAL_LADDER_CLOSE_TAKER_KEY,
+  };
   const LADDER_OPTION_STORAGE_KEYS = [
+    LOCAL_LADDER_OPEN_TAKER_KEY,
+    LOCAL_LADDER_CLOSE_TAKER_KEY,
     LOCAL_LADDER_OPEN_PERCENT_KEY,
     LOCAL_LADDER_CLOSE_PERCENT_KEY,
     LOCAL_LADDER_OPEN_LEVELS_KEY,
@@ -588,6 +617,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
   let automaticUsdtRebalanceLockController = null;
   let automaticUsdtRebalanceStatusPending = false;
   let ladderPanelBodySignature = '';
+  /** Taker fills of the latest ladder task; kept after it ends until the next task starts. */
+  let latestTakerStats = null;
   let panelPositionInvalidated = true;
   let panelObservedSize = '';
   let panelResizeObserver = null;
@@ -950,6 +981,42 @@ const hasCancellationAccountStream = installOrderSoundScope(
       precision,
       value,
       LADDER_LEVEL_OPTIONS
+    );
+    if (!saved) return false;
+    scheduleRenderPanel();
+    return true;
+  }
+
+  function getLadderTakerPercent(
+    mode = getActiveTradeMode(),
+    symbol = getCurrentSymbol(),
+    precision = readCurrentOrderbookPrecisionValue(),
+  ) {
+    return loadModeSymbolPrecisionNumberOption(
+      localStorage,
+      LADDER_TAKER_STORAGE_KEYS,
+      mode,
+      symbol,
+      precision,
+      LADDER_TAKER_PERCENTS,
+      DEFAULT_LADDER_TAKER_PERCENT,
+    );
+  }
+
+  function setLadderTakerPercent(
+    value,
+    mode = getActiveTradeMode(),
+    symbol = getCurrentSymbol(),
+    precision = readCurrentOrderbookPrecisionValue(),
+  ) {
+    const saved = saveModeSymbolPrecisionNumberOption(
+      localStorage,
+      LADDER_TAKER_STORAGE_KEYS,
+      mode,
+      symbol,
+      precision,
+      value,
+      LADDER_TAKER_PERCENTS,
     );
     if (!saved) return false;
     scheduleRenderPanel();
@@ -1567,7 +1634,11 @@ const hasCancellationAccountStream = installOrderSoundScope(
     return String(method).toUpperCase();
   }
 
-  function beginLadderSubmitResponseCapture() {
+  /**
+   * @param {{kind: 'maker'} | {kind: 'taker', symbol: string, side: string, positionSide: string, quantity: string} | null} expectation
+   *   Checked against the native request body before it leaves the page; a mismatch is blocked.
+   */
+  function beginLadderSubmitResponseCapture(expectation = null) {
     ladderSubmitCaptureSequence += 1;
     let resolveRequestStarted;
     const requestStarted = new Promise((resolve) => {
@@ -1581,6 +1652,9 @@ const hasCancellationAccountStream = installOrderSoundScope(
       responseObservations: [],
       requestStarted,
       resolveRequestStarted,
+      expectation,
+      blockedReason: null,
+      clientOrderId: null,
     };
     return activeLadderSubmitCapture.captureId;
   }
@@ -1744,6 +1818,10 @@ const hasCancellationAccountStream = installOrderSoundScope(
   }
 
 
+  const BLOCKED_PLACE_ORDER_RETENTION_MS = 60_000;
+  /** Exact bodies refused by the order check; each stays refused briefly in case the page retries it. */
+  const blockedPlaceOrderBodies = new Map();
+
   (function installFetchInterceptor() {
     const originalFetch = window.fetch;
     window.fetch = function (...args) {
@@ -1758,6 +1836,31 @@ const hasCancellationAccountStream = installOrderSoundScope(
         && getFetchRequestMethod(args) === 'POST'
         && isBinancePlaceOrderRequestUrl(requestUrl)
       );
+      const requestBody = args[1]?.body;
+      if (
+        typeof requestBody === 'string'
+        && getFetchRequestMethod(args) === 'POST'
+        && isBinancePlaceOrderRequestUrl(requestUrl)
+        && (blockedPlaceOrderBodies.get(requestBody) ?? 0) > Date.now()
+      ) {
+        // A native retry of a blocked body must not reach the exchange after the capture has ended.
+        return Promise.reject(new TypeError('Order request blocked'));
+      }
+      if (shouldObserveResponse && capture.expectation) {
+        const check = matchPlaceOrderRequest(requestBody, capture.expectation);
+        if (!check.ok) {
+          // The planned order type and identity are proven before the exchange sees the request.
+          capture.blockedReason = check.reason;
+          if (typeof requestBody === 'string') {
+            blockedPlaceOrderBodies.set(requestBody, Date.now() + BLOCKED_PLACE_ORDER_RETENTION_MS);
+          }
+          return Promise.reject(new TypeError('Order request blocked'));
+        }
+        if (capture.expectation.kind === 'taker') {
+          capture.clientOrderId = check.clientOrderId;
+          registerTakerOrderEvidence(check.clientOrderId);
+        }
+      }
       const request = originalFetch.apply(this, args);
       if (activeCancelReceipts && getFetchRequestMethod(args) === 'POST') {
         const url = new URL(requestUrl, window.location.href);
@@ -2613,6 +2716,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
       () => (isPostOnlyOrderTypeActive() ? true : null),
       TRADE_UI_STATE_TIMEOUT_MS,
     );
+    invalidateTradeButtonCache();
     return active === true;
   }
 
@@ -3112,7 +3216,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
     return remainingCount;
   }
 
-  function assertLadderExecutionContext(plan) {
+  /** Symbol, mode, precision, and options; the order type is asserted by the maker or taker step. */
+  function assertLadderBaseExecutionContext(plan) {
     if (!isCurrentObservedSymbol(plan.symbol)) throw new Error('执行中交易对已变化，已停止');
     if (getActiveTradeMode() !== plan.spec.mode) throw new Error('执行中下单模式已变化，已停止');
     if (readCurrentOrderbookPrecisionValue() !== plan.precision) {
@@ -3127,6 +3232,10 @@ const hasCancellationAccountStream = installOrderSoundScope(
         '执行中比例、笔数或间距已变化',
       );
     }
+  }
+
+  function assertLadderExecutionContext(plan) {
+    assertLadderBaseExecutionContext(plan);
     if (!isPostOnlyOrderTypeActive()) throw new Error('执行中只做 Maker 已失效，请刷新页面后重试');
   }
 
@@ -3155,6 +3264,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
   }
 
   async function syncTradeInputs(expectedPrice, expectedQty, options = null) {
+    // A market form has no price input; it is synchronized only when no price input is visible.
+    const includePrice = options?.includePrice !== false;
     const priceLabel = options?.priceLabel || '点击价';
     const qtyLabel = options?.qtyLabel || '目标量';
     const settleControlledForm = options?.settleControlledForm === true;
@@ -3197,8 +3308,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
         maxWriteAttempts,
       })
       : setInputValueReact;
-    const inputs = findTradeInputs();
-    if (!inputs) {
+    const inputs = findTradeInputs({ requirePrice: includePrice });
+    if (!inputs || (!includePrice && inputs.priceInput)) {
       throw createContinuousRecoverableLadderError(
         'controls_not_ready',
         '未能确定唯一的当前交易表单输入框',
@@ -3206,16 +3317,22 @@ const hasCancellationAccountStream = installOrderSoundScope(
     }
 
     const observationRoot = inputs.root;
-    const resolveSynchronizedTradeInputs = createTradeInputResolver(document, {
+    const resolveTradeInputs = createTradeInputResolver(document, {
       initialRoot: observationRoot,
       panelId: PANEL_ID,
       isVisibleElement,
     });
+    const resolveSynchronizedTradeInputs = includePrice
+      ? resolveTradeInputs
+      : () => {
+        const marketInputs = resolveTradeInputs({ requirePrice: false });
+        return marketInputs && !marketInputs.priceInput ? marketInputs : null;
+      };
     const readTradeState = createTradeInputStateReader({
       resolveInputs: resolveSynchronizedTradeInputs,
       expectedPrice,
       expectedQty,
-      includePrice: true,
+      includePrice,
       normalizeValue: normalizeDecimalString,
       compareValues: compareDecimalStrings,
       writeValue: writeTradeInputValue,
@@ -3244,12 +3361,14 @@ const hasCancellationAccountStream = installOrderSoundScope(
     );
     if (synchronized) return synchronized;
 
-    const currentInputs = findTradeInputs();
-    assertSubmittedPriceMatchesExpectedPrice(
-      expectedPrice,
-      currentInputs?.priceInput.value || '',
-      priceLabel,
-    );
+    const currentInputs = findTradeInputs({ requirePrice: includePrice });
+    if (includePrice) {
+      assertSubmittedPriceMatchesExpectedPrice(
+        expectedPrice,
+        currentInputs?.priceInput.value || '',
+        priceLabel,
+      );
+    }
     assertSubmittedQtyMatchesExpectedQty(expectedQty, currentInputs?.qtyInput.value || '', qtyLabel);
     throw createContinuousRecoverableLadderError(
       'input_unstable',
@@ -3532,6 +3651,331 @@ const hasCancellationAccountStream = installOrderSoundScope(
     ));
   }
 
+  /** A market order may already exist when its acknowledgement is unknown; never retry it, prove it. */
+  const TAKER_OUTCOME_EVIDENCE_TIMEOUT_MS = 5000;
+  const TAKER_ORDER_EVIDENCE_LIMIT = 200;
+  const MARKET_ORDER_TYPE = 'MARKET';
+  const takerOrderEvidence = new Map();
+
+  function registerTakerOrderEvidence(clientOrderId) {
+    takerOrderEvidence.set(clientOrderId, { seen: false, waiters: new Set(), frames: [] });
+    while (takerOrderEvidence.size > TAKER_ORDER_EVIDENCE_LIMIT) {
+      takerOrderEvidence.delete(takerOrderEvidence.keys().next().value);
+    }
+  }
+
+  function waitForTakerOrderEvidence(clientOrderId, timeoutMs, abortSignal) {
+    const evidence = takerOrderEvidence.get(clientOrderId);
+    if (!evidence) return Promise.resolve(false);
+    if (evidence.seen) return Promise.resolve(true);
+    let timer;
+    let waiter;
+    return waitForPromiseOrAbort(new Promise((resolve) => {
+      waiter = () => resolve(true);
+      evidence.waiters.add(waiter);
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    }), abortSignal).finally(() => {
+      clearTimeout(timer);
+      evidence.waiters.delete(waiter);
+    });
+  }
+
+  function logTaker(event, detail) {
+    // Binance mutes console.log/warn/info; per-order taker detail stays visible in DevTools.
+    console.error(PREFIX, `[TAKER] ${event}`, detail);
+  }
+
+  function readTakerSamplePrice(entry) {
+    if (document.hidden || !isCurrentObservedSymbol(entry.symbol)) return null;
+    return normalizeDecimalString(getBestOrderbookPrice(entry.side === 'SELL' ? 'BID' : 'ASK'));
+  }
+
+  function scheduleTakerSamples(stats, entry) {
+    for (const horizon of TAKER_SAMPLE_HORIZONS_SECONDS) {
+      setTimeout(() => {
+        const price = readTakerSamplePrice(entry);
+        recordTakerSample(stats, entry.clientOrderId, horizon, price);
+        logTaker(`after ${horizon}s`, {
+          symbol: entry.symbol, side: entry.side, fillPrice: entry.fillPrice, price,
+          result: entry.samples[horizon].state,
+        });
+        scheduleRenderPanel();
+      }, horizon * 1000);
+    }
+  }
+
+  /** A taker's own frames are kept so a fill that precedes its acknowledgement still reaches the statistics. */
+  const TAKER_EVIDENCE_FRAME_LIMIT = 10;
+
+  observeTakerOrderUpdate = (order) => {
+    const evidence = takerOrderEvidence.get(order?.c);
+    if (evidence) {
+      if (evidence.frames.length < TAKER_EVIDENCE_FRAME_LIMIT) evidence.frames.push(order);
+      if (!evidence.seen) {
+        evidence.seen = true;
+        for (const waiter of evidence.waiters) waiter();
+      }
+    }
+    observeTakerStatsFrame(order);
+  };
+
+  function observeTakerStatsFrame(order) {
+    if (!latestTakerStats) return;
+    const stats = latestTakerStats;
+    const filled = applyTakerOrderUpdate(stats, order);
+    if (!filled) return;
+    logTaker('filled', { symbol: filled.symbol, side: filled.side, positionSide: filled.positionSide, fillPrice: filled.fillPrice });
+    scheduleTakerSamples(stats, filled);
+    scheduleRenderPanel();
+  }
+
+  function findMarketOrderTab() {
+    return findVisibleTradeScopeElement('[role="tab"]', (tab) => (
+      String(tab.getAttribute('data-tab-key') || '').toUpperCase() === MARKET_ORDER_TYPE
+      && includesBinancePageText((tab.textContent || '').trim(), BINANCE_PAGE_TEXT.marketOrder)
+    ));
+  }
+
+  /** Positive evidence only: the selected order-type tab is MARKET and the form has no price input. */
+  function isMarketOrderTypeActive() {
+    const tab = findVisibleTradeScopeElement(
+      '[role="tab"][aria-selected="true"][data-tab-key]',
+      (candidate) => !isTradeModeTab(candidate)
+        && String(candidate.getAttribute('data-tab-key') || '').toUpperCase() === MARKET_ORDER_TYPE,
+    );
+    if (!tab) return false;
+    const inputs = findTradeInputs({ requirePrice: false });
+    return !!inputs && !inputs.priceInput;
+  }
+
+  async function activateMarketOrderType() {
+    if (isMarketOrderTypeActive()) return true;
+    const tab = findMarketOrderTab();
+    if (!tab) return false;
+    const mutationRoot = getTradeMutationRoot();
+    tab.click();
+    const active = await waitForTradeFormMutationState(
+      mutationRoot,
+      () => (isMarketOrderTypeActive() ? true : null),
+      TRADE_UI_STATE_TIMEOUT_MS,
+    );
+    invalidateTradeButtonCache();
+    return active === true;
+  }
+
+  function createTerminalLadderError(zhCN, en, cause = null) {
+    const error = new Error(zhCN);
+    error.localizedText = localizedText(zhCN, en);
+    if (cause) error.cause = cause;
+    return error;
+  }
+
+  const ORDER_REQUEST_FIELD_COPY = Object.freeze({
+    body: ['请求内容无法读取', 'unreadable request body'],
+    type: ['订单类型', 'order type'],
+    symbol: ['交易对', 'symbol'],
+    side: ['买卖方向', 'side'],
+    positionSide: ['持仓方向', 'position side'],
+    quantity: ['数量', 'quantity'],
+    clientOrderId: ['客户端订单号', 'client order ID'],
+  });
+
+  function throwIfOrderRequestBlocked(capture, cause) {
+    if (!capture?.blockedReason) return;
+    const [zhField, enField] = ORDER_REQUEST_FIELD_COPY[capture.blockedReason];
+    throw createTerminalLadderError(
+      `下单请求与计划不一致（${zhField}），已拦截并停止`,
+      `The order request did not match the plan (${enField}); blocked and stopped`,
+      cause,
+    );
+  }
+
+  const MARKET_QTY_REJECTION_COPY = Object.freeze({
+    rules_missing: ['市价单数量规则未就绪', 'market quantity rules are not ready'],
+    below_min: ['数量低于市价单最小数量', 'quantity is below the market minimum'],
+    off_step: ['数量不符合市价单步长', 'quantity does not match the market step'],
+    above_max: ['数量超过市价单最大数量', 'quantity exceeds the market maximum'],
+    account_stream: ['未连接到账户订单更新', 'account order updates are not connected'],
+  });
+
+  /** Kept on the round's final status so a skipped taker share stays visible after the makers run. */
+  function formatTakerSkipNote(reason) {
+    if (!reason) return '';
+    const [zhReason, enReason] = MARKET_QTY_REJECTION_COPY[reason];
+    return localizedText(` · 本轮吃单改为挂单：${zhReason}`, ` · Taker orders placed as Post Only: ${enReason}`);
+  }
+
+  /**
+   * Sends one ladder slot as a native market order. The budget unit is spent before the click and
+   * returned only when the slot never reached a click or the exchange returned one settled rejection;
+   * an unknown outcome is resolved from the account stream or stops the task, and is never retried.
+   * The form is always returned to Post Only before any error propagates.
+   */
+  async function executeLadderTakerOrder(plan, order, orderIndex, setExecutionStatus, abortSignal, takerBudget) {
+    const rules = rulesCache[plan.symbol];
+    const qtyCheck = validateMarketOrderQty(order.qty, {
+      minQty: rules?.marketMinQty,
+      stepSize: rules?.marketStepSize,
+      maxQty: rules?.marketMaxQty,
+    });
+    if (!qtyCheck.ok) return { status: 'skipped', reason: qtyCheck.reason };
+    if (!hasCancellationAccountStream?.()) return { status: 'skipped', reason: 'account_stream' };
+
+    takerBudget.remaining -= 1;
+    let clicked = false;
+    let failure = null;
+    try {
+      assertLadderBaseExecutionContext(plan);
+      if (!(await activateMarketOrderType())) {
+        throw createTerminalLadderError('未能切换到市价单，已停止吃单', 'Could not switch to a market order; taker stopped');
+      }
+      throwIfAborted(abortSignal);
+      assertLadderBaseExecutionContext(plan);
+      await waitForReadyLadderSubmitButton(plan, abortSignal);
+      await syncTradeInputs(null, order.qty, {
+        includePrice: false,
+        qtyLabel: '吃单量',
+        settleControlledForm: true,
+        abortSignal,
+      });
+      throwIfAborted(abortSignal);
+      const button = await waitForReadyLadderSubmitButton(plan, abortSignal);
+      throwIfAborted(abortSignal);
+      assertLadderBaseExecutionContext(plan);
+      if (!isMarketOrderTypeActive()) {
+        throw createTerminalLadderError('吃单前市价单已失效，已停止', 'The market order form changed before the taker order; stopped');
+      }
+      assertSubmittedQtyMatchesExpectedQty(order.qty, findTradeInputs({ requirePrice: false })?.qtyInput.value || '', '吃单量');
+      if (CFG.SAFE_MODE) return { status: 'placed' };
+
+      const previousFeedback = takeOrderFeedbackSnapshot();
+      // Only a dialog that appears after the click can be the order's confirmation.
+      const dialogsBeforeClick = new Set(getVisibleDialogs());
+      const submitCaptureId = beginLadderSubmitResponseCapture({
+        kind: 'taker',
+        symbol: plan.symbol,
+        side: plan.spec.orderSide,
+        positionSide: plan.spec.side,
+        quantity: order.qty,
+      });
+      const submitCapture = activeLadderSubmitCapture;
+      let acknowledgementError = null;
+      try {
+        throwIfAborted(abortSignal);
+        clicked = true;
+        button.click();
+        setExecutionStatus(
+          localizedActionStatus(
+            plan.spec.statusLabel,
+            `吃单 ${orderIndex + 1}/${plan.orders.length} 确认中`,
+            ` taker ${orderIndex + 1}/${plan.orders.length} confirming`,
+          ),
+          localizedText(`第 ${orderIndex + 1} 笔吃单确认中`, `Taker ${orderIndex + 1} confirming`),
+        );
+        waitForTradeUiMutation({ timeoutMs: 500 });
+        try {
+          await waitForOrderSubmitAcknowledgement(
+            button,
+            plan.spec.label,
+            previousFeedback,
+            submitCaptureId,
+            plan.spec.mode,
+            abortSignal,
+          );
+        } catch (error) {
+          acknowledgementError = error;
+        }
+      } finally {
+        endLadderSubmitResponseCapture(submitCaptureId);
+      }
+      throwIfOrderRequestBlocked(submitCapture, acknowledgementError);
+      const recordPlacedTaker = () => {
+        if (!latestTakerStats) return;
+        recordTakerSubmitted(latestTakerStats, {
+          clientOrderId: submitCapture.clientOrderId,
+          symbol: plan.symbol,
+          side: plan.spec.orderSide,
+          positionSide: plan.spec.side,
+        });
+        for (const frame of takerOrderEvidence.get(submitCapture.clientOrderId)?.frames ?? []) observeTakerStatsFrame(frame);
+        scheduleRenderPanel();
+      };
+      if (getVisibleDialogs().some(dialog => !dialogsBeforeClick.has(dialog))) {
+        if (!acknowledgementError) {
+          recordPlacedTaker();
+          // The order exists, so it is counted before the task halts.
+          return {
+            status: 'placed',
+            haltError: createTerminalLadderError(
+              '吃单已提交，但随后出现新的弹窗，未处理该弹窗，已停止',
+              'The taker order was placed, but a new dialog appeared afterwards; it was left untouched and the task stopped',
+            ),
+          };
+        }
+        throw createTerminalLadderError(
+          '吃单后出现确认弹窗，未自动确认，已停止',
+          'A confirmation dialog appeared after the taker order; it was not confirmed and the task stopped',
+          acknowledgementError,
+        );
+      }
+      if (acknowledgementError) {
+        const stopped = isLadderStoppedError(acknowledgementError) || abortSignal?.aborted === true;
+        if (submitCapture.clientOrderId === null) {
+          // No place-order request left the page, so nothing was placed; Binance's own reason is reported.
+          takerBudget.remaining += 1;
+          throw acknowledgementError;
+        }
+        if (stopped) {
+          // The request reached the exchange; it counts as sent and the loop then honors Stop.
+          logTaker('stopped after the request was sent', { symbol: plan.symbol, clientOrderId: submitCapture.clientOrderId });
+          recordPlacedTaker();
+          return { status: 'placed' };
+        }
+        if (isConfirmedTakerRejection(submitCapture)) {
+          takerBudget.remaining += 1;
+          throw acknowledgementError;
+        }
+        const placed = await waitForTakerOrderEvidence(
+          submitCapture.clientOrderId,
+          TAKER_OUTCOME_EVIDENCE_TIMEOUT_MS,
+          abortSignal,
+        );
+        if (!placed) {
+          throw createTerminalLadderError(
+            '吃单结果未确认，已停止；请在当前委托和历史成交中核对',
+            'The taker order outcome was not confirmed; the task stopped. Check Open Orders and Trade History',
+            acknowledgementError,
+          );
+        }
+        logTaker('acknowledgement resolved by account stream', { symbol: plan.symbol, clientOrderId: submitCapture.clientOrderId });
+      }
+      recordPlacedTaker();
+      return { status: 'placed' };
+    } catch (error) {
+      if (!clicked) takerBudget.remaining += 1;
+      failure = error;
+      throw error;
+    } finally {
+      if (!isPostOnlyOrderTypeActive()) {
+        let restored = false;
+        let restoreError = null;
+        try {
+          restored = await ensurePostOnlyOrderType();
+        } catch (error) {
+          restoreError = error;
+        }
+        if (!restored) {
+          // A market form must never carry into the next order, so this replaces any pending error.
+          throw createTerminalLadderError(
+            '吃单后未能切回只做 Maker，已停止',
+            'Could not return to Post Only after the taker order; stopped',
+            failure ?? restoreError,
+          );
+        }
+      }
+    }
+  }
+
   async function executeLadderPlan(
     plan,
     progress,
@@ -3549,9 +3993,57 @@ const hasCancellationAccountStream = installOrderSoundScope(
     let lastRepriceApiErrorCode = null;
     let previousAcknowledgedInputs = null;
     let maxOpenOrdersRecoveryAttempts = 0;
+    // The round's taker count is allocated once, on its first plan; rebuilt plans spend what remains.
+    const takerBudget = options?.takerBudget || null;
+    if (takerBudget && !takerBudget.allocated) {
+      takerBudget.remaining = allocateLadderTakerOrders({
+        levels: plan.orders.length,
+        percent: takerBudget.percent,
+        carry: takerBudget.carry,
+      });
+      takerBudget.allocated = true;
+    }
+    let repriceAfterTaker = false;
     while (done < plan.orders.length) {
       throwIfAborted(abortSignal);
       if (ladderStopRequested) break;
+      if (takerBudget?.remaining > 0) {
+        const takerResult = await executeLadderTakerOrder(
+          plan,
+          plan.orders[done],
+          done,
+          setExecutionStatus,
+          abortSignal,
+          takerBudget,
+        );
+        if (takerResult.status === 'skipped') {
+          // This round's remaining taker slots are placed as Post Only and the reason stays visible.
+          takerBudget.skippedReason = takerResult.reason;
+          takerBudget.remaining = 0;
+          const [zhReason, enReason] = MARKET_QTY_REJECTION_COPY[takerResult.reason];
+          const detail = localizedText(`本轮吃单改为挂单：${zhReason}`, `Taker orders placed as Post Only this round: ${enReason}`);
+          setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], '：'), detail);
+          continue;
+        }
+        done++;
+        recordLadderSubmittedOrder(progress);
+        // The market form replaced the inputs; the next maker write starts from a fresh form.
+        previousAcknowledgedInputs = null;
+        repriceAfterTaker = true;
+        setExecutionStatus(localizedActionStatus(
+          plan.spec.statusLabel,
+          `已吃单 ${done}/${plan.orders.length} 笔`,
+          ` taker orders sent ${done}/${plan.orders.length}`,
+        ), null);
+        if (takerResult.haltError) throw takerResult.haltError;
+        throwIfAborted(abortSignal);
+        continue;
+      }
+      if (repriceAfterTaker) {
+        // Remaining makers are priced from the book as it stands after the market orders.
+        repriceAfterTaker = false;
+        refreshRemainingLadderOrders(plan, done);
+      }
       const order = plan.orders[done];
       try {
         assertLadderExecutionContext(plan);
@@ -3602,7 +4094,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
 
         if (!CFG.SAFE_MODE) {
           const previousFeedback = takeOrderFeedbackSnapshot();
-          const submitCaptureId = beginLadderSubmitResponseCapture();
+          const submitCaptureId = beginLadderSubmitResponseCapture({ kind: 'maker' });
+          const submitCapture = activeLadderSubmitCapture;
           let chartSubmitCapture = null;
           try {
             throwIfAborted(abortSignal);
@@ -3622,14 +4115,20 @@ const hasCancellationAccountStream = installOrderSoundScope(
               ),
             );
             waitForTradeUiMutation({ timeoutMs: 500 });
-            await waitForOrderSubmitAcknowledgement(
-              button,
-              plan.spec.label,
-              previousFeedback,
-              submitCaptureId,
-              plan.spec.mode,
-              abortSignal,
-            );
+            try {
+              await waitForOrderSubmitAcknowledgement(
+                button,
+                plan.spec.label,
+                previousFeedback,
+                submitCaptureId,
+                plan.spec.mode,
+                abortSignal,
+              );
+            } catch (error) {
+              throwIfOrderRequestBlocked(submitCapture, error);
+              throw error;
+            }
+            throwIfOrderRequestBlocked(submitCapture, null);
           } finally {
             endLadderSubmitResponseCapture(submitCaptureId);
             if (chartSubmitCapture) {
@@ -3750,6 +4249,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
     chartSaveController = null,
     unresolvedCapacityOrders = null,
     confirmedCancelledOrders = null,
+    takerCarry = null,
   ) {
     const spec = getLadderActionSpec(actionType);
     if (!spec) {
@@ -3805,6 +4305,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
       return { status: 'not_started' };
     }
     ladderStopRequested = false;
+    if (!continuousSession) latestTakerStats = createTakerStats({ label: spec.statusLabel, positionSide: spec.side });
     const abortController = new AbortController();
     const progress = createLadderProgress();
     const setExecutionStatus = (singleStatus, continuousDetail) => {
@@ -3837,31 +4338,51 @@ const hasCancellationAccountStream = installOrderSoundScope(
     const executeRound = async () => {
       throwIfAborted(abortController.signal);
       chartSaveRound = chartSaveController?.beginRound() || null;
+      // Read once per round: a change while the round runs applies from the next round.
+      const takerBudget = {
+        percent: getLadderTakerPercent(spec.mode, actionSymbol, activeLadderPanelContext.precision),
+        carry: takerCarry,
+        allocated: false,
+        remaining: 0,
+        skippedReason: null,
+      };
+      let execution;
+      try {
+        execution = await runLadderPlanWithOpenOrderReplacement(
+          actionType,
+          progress,
+          setExecutionStatus,
+          abortController.signal,
+          {
+            allowMaxOpenOrdersRecovery: continuousSession && spec.mode === 'CLOSE',
+            unresolvedCapacityOrders,
+            confirmedCancelledOrders,
+            allowReduceOnlyRecovery: continuousSession && spec.mode === 'CLOSE',
+            chartSaveController,
+            chartSaveRound,
+            takerBudget,
+          },
+        );
+      } finally {
+        // Slots that never reached a click stay owed to the session; a rule-based skip forfeits them.
+        if (takerCarry && takerBudget.remaining > 0 && !takerBudget.skippedReason) {
+          returnUnspentTakerOrders(takerCarry, takerBudget.remaining);
+        }
+      }
       const {
         plan,
         done,
         repriceAttempts,
         lastRepriceApiErrorCode,
-      } = await runLadderPlanWithOpenOrderReplacement(
-        actionType,
-        progress,
-        setExecutionStatus,
-        abortController.signal,
-        {
-          allowMaxOpenOrdersRecovery: continuousSession && spec.mode === 'CLOSE',
-          unresolvedCapacityOrders,
-          confirmedCancelledOrders,
-          allowReduceOnlyRecovery: continuousSession && spec.mode === 'CLOSE',
-          chartSaveController,
-          chartSaveRound,
-        },
-      );
+      } = execution;
+      const takerNote = formatTakerSkipNote(takerBudget.skippedReason);
       return {
         plan,
         done,
         repriceAttempts,
         lastRepriceApiErrorCode,
         wasStopped: ladderStopRequested,
+        takerNote,
       };
     };
     const executionTask = (async () => {
@@ -3896,7 +4417,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
           throwIfAborted(abortController.signal);
           return outcome;
         }
-        const { plan, done, repriceAttempts, lastRepriceApiErrorCode, wasStopped } = outcome;
+        const { plan, done, repriceAttempts, lastRepriceApiErrorCode, wasStopped, takerNote } = outcome;
         if (!isCurrentObservedSymbol(actionSymbol)) {
           if (!continuousSession) {
             setLadderStatus(formatInterruptedLadderProgress(
@@ -3915,18 +4436,19 @@ const hasCancellationAccountStream = installOrderSoundScope(
         if (!continuousSession) {
           setLadderStatus(
             wasStopped
-              ? combineLocalizedText([formatStoppedLadderProgress(spec.statusLabel, progress), diagnostics])
+              ? combineLocalizedText([formatStoppedLadderProgress(spec.statusLabel, progress), diagnostics, takerNote])
               : combineLocalizedText([formatCompletedLadderProgress(
                   spec.statusLabel,
                   done,
                   plan.orders.length,
                   progress,
-                ), diagnostics]),
+                ), diagnostics, takerNote]),
           );
         }
         return {
           status: wasStopped ? 'stopped' : 'completed',
           progress: snapshotLadderProgress(progress),
+          takerNote,
         };
       })
       .catch(async (e) => {
@@ -4157,6 +4679,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
     const unresolvedCapacityOrders = new Set();
     // Native lists can retain terminal orders across rounds. Keep identities, never reusable quantity.
     const confirmedCancelledOrders = new Map();
+    const takerCarry = createTakerCarry();
     const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
     let chartSaveCoalescer = null;
     continuousLadderAbortController = abortController;
@@ -4167,6 +4690,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
     const executionTask = withAccountOperationLock('shared', async () => {
       // Stop can arrive while the lock callback is pending, before any page mutation.
       throwIfAborted(abortController.signal);
+      latestTakerStats = createTakerStats({ label: localizedContinuousAction(spec.statusLabel), positionSide: spec.side });
       chartSaveCoalescer = await startContinuousChartSaveCoalescing(abortController.signal, actionSymbol);
       continuousChartSaveController = chartSaveCoalescer;
       throwIfAborted(abortController.signal);
@@ -4178,6 +4702,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
           chartSaveCoalescer,
           unresolvedCapacityOrders,
           confirmedCancelledOrders,
+          takerCarry,
         );
         let recovery = null;
         if (!outcome?.progress) {
@@ -4239,7 +4764,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
               cooldownMs,
               recovery?.reason ?? null,
             );
-            setLadderStatus(waitStatus);
+            setLadderStatus(outcome?.takerNote ? combineLocalizedText([waitStatus, outcome.takerNote]) : waitStatus);
           },
         });
         if (readiness.status === 'stopped') {
@@ -7470,7 +7995,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
   }
 
   let appDataCache = { text: '', parsed: null }; // #__APP_DATA 解析缓存（仅用于 markPrice）
-  let rulesCache = {}; // symbol -> { limitMinQty, limitStepSize, marketMinQty, marketStepSize, minNotional }
+  let rulesCache = {}; // symbol -> { limitMinQty, limitStepSize, marketMinQty, marketStepSize, marketMaxQty, minNotional }
   let rulesInflight = {}; // symbol -> Promise（inflight 去重）
   let rulesFailedUntil = {}; // symbol -> timestamp（失败冷却，防止高频重试）
   const RULES_RETRY_COOLDOWN_MS = 5000;
@@ -7501,6 +8026,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
           limitStepSize: lot.stepSize ? String(lot.stepSize) : null,
           marketMinQty: marketLot.minQty ? String(marketLot.minQty) : null,
           marketStepSize: marketLot.stepSize ? String(marketLot.stepSize) : null,
+          marketMaxQty: marketLot.maxQty ? String(marketLot.maxQty) : null,
           minNotional: minN.notional ? String(minN.notional) : null,
         };
         rulesCache[symbol] = entry;
@@ -7729,6 +8255,35 @@ const hasCancellationAccountStream = installOrderSoundScope(
     return `<button type="button" data-ladder-group="${group}" data-ladder-value="${value}" style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:13px;line-height:26px;cursor:pointer;${activeStyle}">${label}</button>`;
   }
 
+  function ladderTakerOptionButton(value, selected) {
+    const activeStyle = selected
+      ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};`
+      : NEUTRAL_CONTROL_STYLE;
+    const label = value === 0 ? ui(PANEL_COPY.field.takerOff) : `${value}%`;
+    return `<button type="button" data-ladder-group="taker" data-ladder-value="${value}" aria-pressed="${selected}" style="box-sizing:border-box;min-width:34px;height:20px;padding:0 5px;border-radius:4px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap;${activeStyle}">${label}</button>`;
+  }
+
+  /** The selected taker share is read once per round, so changing it never interrupts the running round. */
+  function renderLadderTakerHeader(mode, symbol, precision) {
+    const options = document.getElementById(LADDER_TAKER_OPTIONS_ID);
+    const title = document.getElementById(LADDER_TITLE_ID);
+    if (!options || !title) return;
+    const selected = ['OPEN', 'CLOSE'].includes(mode) && precision
+      ? getLadderTakerPercent(mode, symbol, precision)
+      : null;
+    const signature = `${selected}|${activeUiLocale}`;
+    if (options.dataset.renderedSelection !== signature) {
+      options.innerHTML = selected === null
+        ? ''
+        : LADDER_TAKER_PERCENTS.map(value => ladderTakerOptionButton(value, value === selected)).join('');
+      options.dataset.renderedSelection = signature;
+    }
+    const tooltip = latestTakerStats && latestTakerStats.entries.length > 0
+      ? formatTakerStatsLines(latestTakerStats, activeUiLocale).join('\n')
+      : ui(PANEL_COPY.tooltip.ladder);
+    if (title.title !== tooltip) title.title = tooltip;
+  }
+
   function ladderOptionRow(title, tooltip, options, selected, group, suffix = '') {
     return [
       `<div style="display:grid;grid-template-columns:${activeUiLocale === 'en' ? '52px' : '36px'} repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">`,
@@ -7846,6 +8401,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
         cancelRunning,
         noOrdersFeedback: cancelNoOrdersFeedbackActive,
       });
+      renderLadderTakerHeader(mode, symbol, precision);
       const controlSections = getLadderControlSections(mode, closeContext, symbol, precision);
       const bodyHtml = [
         ...controlSections.optionRows,
@@ -8257,7 +8813,10 @@ const hasCancellationAccountStream = installOrderSoundScope(
       '</div>',
       '</div>',
       `<div data-panel-group="ladder" style="margin:12px -10px 0;padding:11px 10px 0;border-top:2px solid ${PANEL_DIVIDER_COLOR};">`,
-      `<div title="${ui(PANEL_COPY.tooltip.ladderMaker)}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${ui(PANEL_COPY.section.ladderMaker)}</div>`,
+      '<div style="display:flex;align-items:center;gap:6px;height:20px;">',
+      `<span id="${LADDER_TITLE_ID}" title="${ui(PANEL_COPY.tooltip.ladder)}" style="flex:0 0 auto;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;white-space:nowrap;cursor:help;">${ui(PANEL_COPY.section.ladder)}</span>`,
+      `<span id="${LADDER_TAKER_OPTIONS_ID}" role="group" aria-label="${ui(PANEL_COPY.section.ladder)}" style="display:flex;gap:4px;flex:1 1 auto;min-width:0;justify-content:flex-end;"></span>`,
+      '</div>',
       `<div id="${LADDER_BODY_ID}"></div>`,
       '</div>',
       `<div id="${LADDER_STATUS_ROW_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
@@ -8397,6 +8956,9 @@ const hasCancellationAccountStream = installOrderSoundScope(
         }
         if (group === 'levels') {
           setLadderLevels(value, optionContext.mode, optionContext.symbol, optionContext.precision);
+        }
+        if (group === 'taker') {
+          setLadderTakerPercent(value, optionContext.mode, optionContext.symbol, optionContext.precision);
         }
         if (group === 'step') {
           setLadderStep(value, optionContext.mode, optionContext.symbol, optionContext.precision);

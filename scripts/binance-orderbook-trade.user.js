@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.248
+// @version      2.7.249
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -32,6 +32,7 @@
     }),
     availableBalance: freezeLabels(["可用", "Avbl"]),
     postOnly: freezeLabels(["只做Maker", "Post Only"]),
+    marketOrder: freezeLabels(["市价", "Market"]),
     submitBusy: freezeLabels(["提交中", "Placing", "Loading"]),
     openableQuantity: freezeLabels(["可开"]),
     closeableQuantity: freezeLabels(["可平"]),
@@ -168,7 +169,7 @@
   var PANEL_COPY = Object.freeze({
     section: freezeCopy({
       singleOrder: localizedText("单击下单", "Single Order"),
-      ladderMaker: localizedText("阶梯下单 · Maker", "Ladder Orders · Maker")
+      ladder: localizedText("阶梯下单 · 吃单", "Ladder Orders · Taker")
     }),
     field: freezeCopy({
       clickOrderbook: localizedText("单击订单簿时", "On click"),
@@ -178,6 +179,7 @@
       ratio: localizedText("比例", "Ratio"),
       orderCount: localizedText("笔数", "Orders"),
       interval: localizedText("间距", "Gap"),
+      takerOff: localizedText("关", "Off"),
       pricePrecision: localizedText("精度", "Precision"),
       multiplierUnit: localizedText("倍", "×")
     }),
@@ -267,9 +269,9 @@
         "单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。",
         "Click a price in the order book to submit one order using the current side and quantity settings."
       ),
-      ladderMaker: localizedText(
-        "根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。",
-        "Submit Post Only ladder orders sequentially using the current ratio, order count, gap, and precision."
+      ladder: localizedText(
+        "根据当前比例、笔数、间距和价格精度设置，依次提交阶梯订单。右侧选择每轮以市价吃单的比例：关 = 全部只做 Maker；选中比例时，每轮先按比例提交市价单，再把其余笔数挂只做 Maker 单。连续平仓按比例累计到后续轮次，单轮下单至少吃单 1 笔。",
+        "Submit ladder orders sequentially using the current ratio, order count, gap, and precision. The options on the right set the share of each round sent as market orders: Off keeps every order Post Only; otherwise each round first sends that share as market orders, then places the rest as Post Only. Continuous close carries fractions to later rounds; a one-round ladder takes at least one."
       ),
       ratio: localizedText(
         "本次阶梯下单使用可开/可平数量的百分比。",
@@ -692,6 +694,16 @@
     }
     const digits = scaledNumerator / scaledDenominator;
     return formatDecimalParts(digits, resultScale);
+  }
+  function floorDecimalToStep(decimalValue, stepSize) {
+    const value = parseDecimalString(decimalValue);
+    const step = parseDecimalString(stepSize);
+    if (!value || !step || step.digits <= 0n) return null;
+    const scale = Math.max(value.scale, step.scale);
+    const valueDigits = value.digits * pow10(scale - value.scale);
+    const stepDigits = step.digits * pow10(scale - step.scale);
+    const steps = valueDigits / stepDigits;
+    return formatDecimalParts(steps * step.digits, step.scale);
   }
   function isPositiveDecimalString(value) {
     const parsed = parseDecimalString(value);
@@ -2064,6 +2076,174 @@
     return { expect, observe, observeOrderUpdate, filled, get admissionClosed() {
       return admissionClosed;
     } };
+  }
+
+  // src/binance-orderbook-trade/core/ladder-taker.js
+  var LADDER_TAKER_PERCENTS = Object.freeze([0, 20, 50, 80]);
+  var DEFAULT_LADDER_TAKER_PERCENT = 0;
+  var TAKER_SAMPLE_HORIZONS_SECONDS = Object.freeze([5, 30]);
+  function assertTakerPercent(percent) {
+    if (!LADDER_TAKER_PERCENTS.includes(percent)) throw new Error(`Invalid taker percent: ${percent}`);
+  }
+  function createTakerCarry() {
+    return { percent: null, units: 0 };
+  }
+  function allocateLadderTakerOrders({ levels, percent, carry = null }) {
+    if (!Number.isSafeInteger(levels) || levels < 1) throw new Error(`Invalid ladder level count: ${levels}`);
+    assertTakerPercent(percent);
+    if (!carry) {
+      if (percent === 0) return 0;
+      return Math.min(levels, Math.max(1, Math.floor(levels * percent / 100)));
+    }
+    if (carry.percent !== percent) {
+      carry.percent = percent;
+      carry.units = 0;
+    }
+    if (percent === 0) return 0;
+    carry.units += levels * percent;
+    const count = Math.min(levels, Math.ceil(levels * percent / 100), Math.floor(carry.units / 100));
+    carry.units -= count * 100;
+    return count;
+  }
+  function returnUnspentTakerOrders(carry, count) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new Error(`Invalid unspent taker count: ${count}`);
+    carry.units = Math.min(carry.units + count * 100, 100);
+  }
+  var UNKNOWN_EXECUTION_CODES = /* @__PURE__ */ new Set([-1e3, -1006, -1007, -1008]);
+  function isConfirmedTakerRejection({ responseDiagnostics, apiErrors, apiSuccesses }) {
+    if (responseDiagnostics.length !== 1 || apiErrors.length !== 1 || apiSuccesses.length !== 0) return false;
+    const [diagnostic] = responseDiagnostics;
+    const [apiError] = apiErrors;
+    return Number.isInteger(diagnostic.httpStatus) && diagnostic.httpStatus >= 200 && diagnostic.httpStatus < 300 && diagnostic.bodyKind === "json" && diagnostic.payloadSummary?.success === false && apiError.success === false && Number.isInteger(apiError.code) && !UNKNOWN_EXECUTION_CODES.has(apiError.code);
+  }
+  function validateMarketOrderQty(qty, { minQty, stepSize, maxQty }) {
+    if (!normalizeDecimalString(minQty) || !normalizeDecimalString(stepSize) || !normalizeDecimalString(maxQty)) {
+      return { ok: false, reason: "rules_missing" };
+    }
+    if (compareDecimalStrings(qty, minQty) < 0) return { ok: false, reason: "below_min" };
+    if (compareDecimalStrings(floorDecimalToStep(qty, stepSize), qty) !== 0) return { ok: false, reason: "off_step" };
+    if (compareDecimalStrings(qty, maxQty) > 0) return { ok: false, reason: "above_max" };
+    return { ok: true };
+  }
+  function requestQuantityText(value) {
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || value < 0) return null;
+      return normalizeDecimalString(value.toLocaleString("en-US", { useGrouping: false, maximumSignificantDigits: 21 }));
+    }
+    return typeof value === "string" ? normalizeDecimalString(value) : null;
+  }
+  function matchPlaceOrderRequest(bodyText, expected) {
+    let body;
+    try {
+      body = typeof bodyText === "string" ? JSON.parse(bodyText) : null;
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      body = null;
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, reason: "body" };
+    if (expected.kind === "maker") {
+      if (body.type === "MARKET") return { ok: false, reason: "type" };
+      return { ok: true, clientOrderId: typeof body.newClientOrderId === "string" ? body.newClientOrderId : null };
+    }
+    if (expected.kind !== "taker") throw new Error(`Unknown place-order expectation: ${expected.kind}`);
+    if (body.type !== "MARKET") return { ok: false, reason: "type" };
+    if (body.symbol !== expected.symbol) return { ok: false, reason: "symbol" };
+    if (body.side !== expected.side) return { ok: false, reason: "side" };
+    if (body.positionSide !== expected.positionSide) return { ok: false, reason: "positionSide" };
+    if (compareDecimalStrings(requestQuantityText(body.quantity), expected.quantity) !== 0) return { ok: false, reason: "quantity" };
+    if (typeof body.newClientOrderId !== "string" || body.newClientOrderId.length === 0) return { ok: false, reason: "clientOrderId" };
+    return { ok: true, clientOrderId: body.newClientOrderId };
+  }
+  function createTakerStats({ label, positionSide }) {
+    if (!["LONG", "SHORT"].includes(positionSide)) throw new Error(`Invalid taker stats position side: ${positionSide}`);
+    return { label, positionSide, entries: [] };
+  }
+  function recordTakerSubmitted(stats, { clientOrderId, symbol, side, positionSide }) {
+    const entry = {
+      clientOrderId,
+      symbol,
+      side,
+      positionSide,
+      status: "pending",
+      fillPrice: null,
+      samples: Object.fromEntries(TAKER_SAMPLE_HORIZONS_SECONDS.map((horizon) => [horizon, { state: "pending", price: null }]))
+    };
+    stats.entries.push(entry);
+    return entry;
+  }
+  function applyTakerOrderUpdate(stats, order) {
+    const entry = stats.entries.find((item) => item.clientOrderId === order?.c && item.symbol === order.s && item.side === order.S && item.positionSide === order.ps);
+    if (!entry || entry.status !== "pending") return null;
+    if (order.X === "FILLED") {
+      const price = normalizeDecimalString(order.ap);
+      if (!price) return null;
+      entry.status = "filled";
+      entry.fillPrice = price;
+      return entry;
+    }
+    if (order.X === "EXPIRED" || order.X === "CANCELED") {
+      const partialPrice = compareDecimalStrings(order.z, "0") === 1 ? normalizeDecimalString(order.ap) : null;
+      if (partialPrice && compareDecimalStrings(partialPrice, "0") === 1) {
+        entry.status = "filled";
+        entry.fillPrice = partialPrice;
+        return entry;
+      }
+      entry.status = "unfilled";
+      for (const sample of Object.values(entry.samples)) sample.state = "unavailable";
+    }
+    return null;
+  }
+  function recordTakerSample(stats, clientOrderId, horizon, price) {
+    const entry = stats.entries.find((item) => item.clientOrderId === clientOrderId);
+    if (!entry || entry.status !== "filled") return;
+    const sample = entry.samples[horizon];
+    if (!sample || sample.state !== "pending") return;
+    const normalized = normalizeDecimalString(price);
+    if (!normalized) {
+      sample.state = "unavailable";
+      return;
+    }
+    const comparison = compareDecimalStrings(normalized, entry.fillPrice);
+    const favorableSign = stats.positionSide === "LONG" ? 1 : -1;
+    sample.price = normalized;
+    sample.state = comparison === 0 ? "flat" : comparison === favorableSign ? "favorable" : "unfavorable";
+  }
+  function countSamples(entries, horizon) {
+    const counts = { favorable: 0, unfavorable: 0, flat: 0, unavailable: 0, pending: 0 };
+    for (const entry of entries) {
+      if (entry.status === "unfilled") continue;
+      counts[entry.samples[horizon].state] += 1;
+    }
+    return counts;
+  }
+  var SAMPLE_LABELS = Object.freeze({
+    favorable: ["有利", "favorable"],
+    unfavorable: ["不利", "unfavorable"],
+    flat: ["持平", "flat"],
+    unavailable: ["无数据", "no data"],
+    pending: ["统计中", "pending"]
+  });
+  function formatTakerStatsLines(stats, locale) {
+    const zh = locale === "zh-CN";
+    const filled = stats.entries.filter((entry) => entry.status === "filled");
+    const favorableSign = stats.positionSide === "LONG" ? 1 : -1;
+    let advancing = 0;
+    for (let index = 1; index < filled.length; index += 1) {
+      if (compareDecimalStrings(filled[index].fillPrice, filled[index - 1].fillPrice) === favorableSign) advancing += 1;
+    }
+    const unfilled = stats.entries.filter((entry) => entry.status === "unfilled").length;
+    const higher = stats.positionSide === "LONG";
+    const totalLine = zh ? `共 ${stats.entries.length} 笔，成交价逐笔走${higher ? "高" : "低"} ${advancing} 次${unfilled ? ` · 未成交 ${unfilled}` : ""}` : `${stats.entries.length} orders · ${advancing} fill ${higher ? "above" : "below"} the previous${unfilled ? ` · ${unfilled} unfilled` : ""}`;
+    const sampleLine = (horizon) => {
+      const counts = countSamples(stats.entries, horizon);
+      const parts = Object.entries(counts).filter(([, count]) => count > 0).map(([state, count]) => `${SAMPLE_LABELS[state][zh ? 0 : 1]} ${count}`);
+      return zh ? `${horizon} 秒后：${parts.join(" · ") || "无"}` : `After ${horizon}s: ${parts.join(" · ") || "none"}`;
+    };
+    return [
+      zh ? `吃单统计 · ${formatLocalizedText(stats.label, locale)}` : `Taker stats · ${formatLocalizedText(stats.label, locale)}`,
+      totalLine,
+      ...TAKER_SAMPLE_HORIZONS_SECONDS.map(sampleLine)
+    ];
   }
 
   // src/binance-orderbook-trade/core/open-order-capacity.js
@@ -6709,6 +6889,7 @@
 
   // src/binance-orderbook-trade/index.user.js
   var activeCancelReceipts = null;
+  var observeTakerOrderUpdate = null;
   var recentOrderFills = [];
   var RECENT_ORDER_FILL_LIMIT = 200;
   function observeAccountOrderUpdate(order) {
@@ -6717,6 +6898,7 @@
       if (recentOrderFills.length > RECENT_ORDER_FILL_LIMIT) recentOrderFills.shift();
     }
     activeCancelReceipts?.observeOrderUpdate(order);
+    observeTakerOrderUpdate?.(order);
   }
   var dependencyBreaks = [];
   var renderDependencyAlert = null;
@@ -6776,6 +6958,8 @@
     const LOCAL_LADDER_CLOSE_LEVELS_KEY = "jh_binance_ladder_close_levels";
     const LOCAL_LADDER_OPEN_STEP_KEY = "jh_binance_ladder_open_step";
     const LOCAL_LADDER_CLOSE_STEP_KEY = "jh_binance_ladder_close_step";
+    const LOCAL_LADDER_OPEN_TAKER_KEY = "jh_binance_ladder_open_taker";
+    const LOCAL_LADDER_CLOSE_TAKER_KEY = "jh_binance_ladder_close_taker";
     const LOCAL_ORDERBOOK_PRECISION_SAMPLES_PREFIX = "jh_binance_orderbook_precision_samples_v3";
     const BINANCE_PERSIST_KEY = "persist:futures-trade-ui";
     const BINANCE_POST_ONLY_ORDER_TYPE = "POST_ONLY";
@@ -6795,6 +6979,8 @@
     const SIDE_LONG_ID = "jh-binance-close-side-long";
     const SIDE_SHORT_ID = "jh-binance-close-side-short";
     const LADDER_BODY_ID = "jh-binance-ladder-body";
+    const LADDER_TITLE_ID = "jh-binance-ladder-title";
+    const LADDER_TAKER_OPTIONS_ID = "jh-binance-ladder-taker-options";
     const LADDER_STATUS_ID = "jh-binance-ladder-status";
     const LADDER_STATUS_ROW_ID = "jh-binance-ladder-status-row";
     const AUTOMATIC_USDT_REBALANCE_STATUS_ID = "jh-binance-auto-rebalance-status";
@@ -6832,7 +7018,13 @@
       OPEN: LOCAL_LADDER_OPEN_STEP_KEY,
       CLOSE: LOCAL_LADDER_CLOSE_STEP_KEY
     };
+    const LADDER_TAKER_STORAGE_KEYS = {
+      OPEN: LOCAL_LADDER_OPEN_TAKER_KEY,
+      CLOSE: LOCAL_LADDER_CLOSE_TAKER_KEY
+    };
     const LADDER_OPTION_STORAGE_KEYS = [
+      LOCAL_LADDER_OPEN_TAKER_KEY,
+      LOCAL_LADDER_CLOSE_TAKER_KEY,
       LOCAL_LADDER_OPEN_PERCENT_KEY,
       LOCAL_LADDER_CLOSE_PERCENT_KEY,
       LOCAL_LADDER_OPEN_LEVELS_KEY,
@@ -6997,6 +7189,7 @@
     let automaticUsdtRebalanceLockController = null;
     let automaticUsdtRebalanceStatusPending = false;
     let ladderPanelBodySignature = "";
+    let latestTakerStats = null;
     let panelPositionInvalidated = true;
     let panelObservedSize = "";
     let panelResizeObserver = null;
@@ -7290,6 +7483,31 @@
         precision,
         value,
         LADDER_LEVEL_OPTIONS
+      );
+      if (!saved) return false;
+      scheduleRenderPanel();
+      return true;
+    }
+    function getLadderTakerPercent(mode = getActiveTradeMode(), symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      return loadModeSymbolPrecisionNumberOption(
+        localStorage,
+        LADDER_TAKER_STORAGE_KEYS,
+        mode,
+        symbol,
+        precision,
+        LADDER_TAKER_PERCENTS,
+        DEFAULT_LADDER_TAKER_PERCENT
+      );
+    }
+    function setLadderTakerPercent(value, mode = getActiveTradeMode(), symbol = getCurrentSymbol(), precision = readCurrentOrderbookPrecisionValue()) {
+      const saved = saveModeSymbolPrecisionNumberOption(
+        localStorage,
+        LADDER_TAKER_STORAGE_KEYS,
+        mode,
+        symbol,
+        precision,
+        value,
+        LADDER_TAKER_PERCENTS
       );
       if (!saved) return false;
       scheduleRenderPanel();
@@ -7791,7 +8009,7 @@
       const method = args[1]?.method || (args[0] instanceof Request ? args[0].method : null) || "GET";
       return String(method).toUpperCase();
     }
-    function beginLadderSubmitResponseCapture() {
+    function beginLadderSubmitResponseCapture(expectation = null) {
       ladderSubmitCaptureSequence += 1;
       let resolveRequestStarted;
       const requestStarted = new Promise((resolve) => {
@@ -7804,7 +8022,10 @@
         responseDiagnostics: [],
         responseObservations: [],
         requestStarted,
-        resolveRequestStarted
+        resolveRequestStarted,
+        expectation,
+        blockedReason: null,
+        clientOrderId: null
       };
       return activeLadderSubmitCapture.captureId;
     }
@@ -7946,6 +8167,8 @@
       if (!capture) throw new Error("下单结果跟踪状态异常，已停止");
       return capture.apiSuccesses.slice();
     }
+    const BLOCKED_PLACE_ORDER_RETENTION_MS = 6e4;
+    const blockedPlaceOrderBodies = /* @__PURE__ */ new Map();
     (function installFetchInterceptor() {
       const originalFetch = window.fetch;
       window.fetch = function(...args) {
@@ -7957,6 +8180,24 @@
         const capture = activeLadderSubmitCapture;
         const requestUrl = getFetchRequestUrl(args);
         const shouldObserveResponse = capture && getFetchRequestMethod(args) === "POST" && isBinancePlaceOrderRequestUrl(requestUrl);
+        const requestBody = args[1]?.body;
+        if (typeof requestBody === "string" && getFetchRequestMethod(args) === "POST" && isBinancePlaceOrderRequestUrl(requestUrl) && (blockedPlaceOrderBodies.get(requestBody) ?? 0) > Date.now()) {
+          return Promise.reject(new TypeError("Order request blocked"));
+        }
+        if (shouldObserveResponse && capture.expectation) {
+          const check = matchPlaceOrderRequest(requestBody, capture.expectation);
+          if (!check.ok) {
+            capture.blockedReason = check.reason;
+            if (typeof requestBody === "string") {
+              blockedPlaceOrderBodies.set(requestBody, Date.now() + BLOCKED_PLACE_ORDER_RETENTION_MS);
+            }
+            return Promise.reject(new TypeError("Order request blocked"));
+          }
+          if (capture.expectation.kind === "taker") {
+            capture.clientOrderId = check.clientOrderId;
+            registerTakerOrderEvidence(check.clientOrderId);
+          }
+        }
         const request = originalFetch.apply(this, args);
         if (activeCancelReceipts && getFetchRequestMethod(args) === "POST") {
           const url = new URL(requestUrl, window.location.href);
@@ -8656,6 +8897,7 @@
         () => isPostOnlyOrderTypeActive() ? true : null,
         TRADE_UI_STATE_TIMEOUT_MS
       );
+      invalidateTradeButtonCache();
       return active === true;
     }
     async function readOpenBaseQtyForLadder(spec, referencePrice) {
@@ -9093,7 +9335,7 @@
       plan.orders = repricedOrders;
       return remainingCount;
     }
-    function assertLadderExecutionContext(plan) {
+    function assertLadderBaseExecutionContext(plan) {
       if (!isCurrentObservedSymbol(plan.symbol)) throw new Error("执行中交易对已变化，已停止");
       if (getActiveTradeMode() !== plan.spec.mode) throw new Error("执行中下单模式已变化，已停止");
       if (readCurrentOrderbookPrecisionValue() !== plan.precision) {
@@ -9108,6 +9350,9 @@
           "执行中比例、笔数或间距已变化"
         );
       }
+    }
+    function assertLadderExecutionContext(plan) {
+      assertLadderBaseExecutionContext(plan);
       if (!isPostOnlyOrderTypeActive()) throw new Error("执行中只做 Maker 已失效，请刷新页面后重试");
     }
     function assertSubmittedPriceMatchesExpectedPrice(expectedPrice, submittedPrice, expectedLabel = "点击价") {
@@ -9133,6 +9378,7 @@
       }
     }
     async function syncTradeInputs(expectedPrice, expectedQty, options = null) {
+      const includePrice = options?.includePrice !== false;
       const priceLabel = options?.priceLabel || "点击价";
       const qtyLabel = options?.qtyLabel || "目标量";
       const settleControlledForm = options?.settleControlledForm === true;
@@ -9161,24 +9407,28 @@
         writeValue: setInputValueReact,
         maxWriteAttempts
       }) : setInputValueReact;
-      const inputs = findTradeInputs();
-      if (!inputs) {
+      const inputs = findTradeInputs({ requirePrice: includePrice });
+      if (!inputs || !includePrice && inputs.priceInput) {
         throw createContinuousRecoverableLadderError(
           "controls_not_ready",
           "未能确定唯一的当前交易表单输入框"
         );
       }
       const observationRoot = inputs.root;
-      const resolveSynchronizedTradeInputs = createTradeInputResolver(document, {
+      const resolveTradeInputs = createTradeInputResolver(document, {
         initialRoot: observationRoot,
         panelId: PANEL_ID,
         isVisibleElement
       });
+      const resolveSynchronizedTradeInputs = includePrice ? resolveTradeInputs : () => {
+        const marketInputs = resolveTradeInputs({ requirePrice: false });
+        return marketInputs && !marketInputs.priceInput ? marketInputs : null;
+      };
       const readTradeState = createTradeInputStateReader({
         resolveInputs: resolveSynchronizedTradeInputs,
         expectedPrice,
         expectedQty,
-        includePrice: true,
+        includePrice,
         normalizeValue: normalizeDecimalString,
         compareValues: compareDecimalStrings,
         writeValue: writeTradeInputValue,
@@ -9204,12 +9454,14 @@
         } : null
       );
       if (synchronized) return synchronized;
-      const currentInputs = findTradeInputs();
-      assertSubmittedPriceMatchesExpectedPrice(
-        expectedPrice,
-        currentInputs?.priceInput.value || "",
-        priceLabel
-      );
+      const currentInputs = findTradeInputs({ requirePrice: includePrice });
+      if (includePrice) {
+        assertSubmittedPriceMatchesExpectedPrice(
+          expectedPrice,
+          currentInputs?.priceInput.value || "",
+          priceLabel
+        );
+      }
       assertSubmittedQtyMatchesExpectedQty(expectedQty, currentInputs?.qtyInput.value || "", qtyLabel);
       throw createContinuousRecoverableLadderError(
         "input_unstable",
@@ -9424,6 +9676,294 @@
         `Order submission was not confirmed (${englishSettleHint}); check Open Orders and Trade History`
       ));
     }
+    const TAKER_OUTCOME_EVIDENCE_TIMEOUT_MS = 5e3;
+    const TAKER_ORDER_EVIDENCE_LIMIT = 200;
+    const MARKET_ORDER_TYPE = "MARKET";
+    const takerOrderEvidence = /* @__PURE__ */ new Map();
+    function registerTakerOrderEvidence(clientOrderId) {
+      takerOrderEvidence.set(clientOrderId, { seen: false, waiters: /* @__PURE__ */ new Set(), frames: [] });
+      while (takerOrderEvidence.size > TAKER_ORDER_EVIDENCE_LIMIT) {
+        takerOrderEvidence.delete(takerOrderEvidence.keys().next().value);
+      }
+    }
+    function waitForTakerOrderEvidence(clientOrderId, timeoutMs, abortSignal) {
+      const evidence = takerOrderEvidence.get(clientOrderId);
+      if (!evidence) return Promise.resolve(false);
+      if (evidence.seen) return Promise.resolve(true);
+      let timer;
+      let waiter;
+      return waitForPromiseOrAbort(new Promise((resolve) => {
+        waiter = () => resolve(true);
+        evidence.waiters.add(waiter);
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }), abortSignal).finally(() => {
+        clearTimeout(timer);
+        evidence.waiters.delete(waiter);
+      });
+    }
+    function logTaker(event, detail) {
+      console.error(PREFIX, `[TAKER] ${event}`, detail);
+    }
+    function readTakerSamplePrice(entry) {
+      if (document.hidden || !isCurrentObservedSymbol(entry.symbol)) return null;
+      return normalizeDecimalString(getBestOrderbookPrice(entry.side === "SELL" ? "BID" : "ASK"));
+    }
+    function scheduleTakerSamples(stats, entry) {
+      for (const horizon of TAKER_SAMPLE_HORIZONS_SECONDS) {
+        setTimeout(() => {
+          const price = readTakerSamplePrice(entry);
+          recordTakerSample(stats, entry.clientOrderId, horizon, price);
+          logTaker(`after ${horizon}s`, {
+            symbol: entry.symbol,
+            side: entry.side,
+            fillPrice: entry.fillPrice,
+            price,
+            result: entry.samples[horizon].state
+          });
+          scheduleRenderPanel();
+        }, horizon * 1e3);
+      }
+    }
+    const TAKER_EVIDENCE_FRAME_LIMIT = 10;
+    observeTakerOrderUpdate = (order) => {
+      const evidence = takerOrderEvidence.get(order?.c);
+      if (evidence) {
+        if (evidence.frames.length < TAKER_EVIDENCE_FRAME_LIMIT) evidence.frames.push(order);
+        if (!evidence.seen) {
+          evidence.seen = true;
+          for (const waiter of evidence.waiters) waiter();
+        }
+      }
+      observeTakerStatsFrame(order);
+    };
+    function observeTakerStatsFrame(order) {
+      if (!latestTakerStats) return;
+      const stats = latestTakerStats;
+      const filled = applyTakerOrderUpdate(stats, order);
+      if (!filled) return;
+      logTaker("filled", { symbol: filled.symbol, side: filled.side, positionSide: filled.positionSide, fillPrice: filled.fillPrice });
+      scheduleTakerSamples(stats, filled);
+      scheduleRenderPanel();
+    }
+    function findMarketOrderTab() {
+      return findVisibleTradeScopeElement('[role="tab"]', (tab) => String(tab.getAttribute("data-tab-key") || "").toUpperCase() === MARKET_ORDER_TYPE && includesBinancePageText((tab.textContent || "").trim(), BINANCE_PAGE_TEXT.marketOrder));
+    }
+    function isMarketOrderTypeActive() {
+      const tab = findVisibleTradeScopeElement(
+        '[role="tab"][aria-selected="true"][data-tab-key]',
+        (candidate) => !isTradeModeTab2(candidate) && String(candidate.getAttribute("data-tab-key") || "").toUpperCase() === MARKET_ORDER_TYPE
+      );
+      if (!tab) return false;
+      const inputs = findTradeInputs({ requirePrice: false });
+      return !!inputs && !inputs.priceInput;
+    }
+    async function activateMarketOrderType() {
+      if (isMarketOrderTypeActive()) return true;
+      const tab = findMarketOrderTab();
+      if (!tab) return false;
+      const mutationRoot = getTradeMutationRoot();
+      tab.click();
+      const active = await waitForTradeFormMutationState(
+        mutationRoot,
+        () => isMarketOrderTypeActive() ? true : null,
+        TRADE_UI_STATE_TIMEOUT_MS
+      );
+      invalidateTradeButtonCache();
+      return active === true;
+    }
+    function createTerminalLadderError(zhCN, en, cause = null) {
+      const error = new Error(zhCN);
+      error.localizedText = localizedText(zhCN, en);
+      if (cause) error.cause = cause;
+      return error;
+    }
+    const ORDER_REQUEST_FIELD_COPY = Object.freeze({
+      body: ["请求内容无法读取", "unreadable request body"],
+      type: ["订单类型", "order type"],
+      symbol: ["交易对", "symbol"],
+      side: ["买卖方向", "side"],
+      positionSide: ["持仓方向", "position side"],
+      quantity: ["数量", "quantity"],
+      clientOrderId: ["客户端订单号", "client order ID"]
+    });
+    function throwIfOrderRequestBlocked(capture, cause) {
+      if (!capture?.blockedReason) return;
+      const [zhField, enField] = ORDER_REQUEST_FIELD_COPY[capture.blockedReason];
+      throw createTerminalLadderError(
+        `下单请求与计划不一致（${zhField}），已拦截并停止`,
+        `The order request did not match the plan (${enField}); blocked and stopped`,
+        cause
+      );
+    }
+    const MARKET_QTY_REJECTION_COPY = Object.freeze({
+      rules_missing: ["市价单数量规则未就绪", "market quantity rules are not ready"],
+      below_min: ["数量低于市价单最小数量", "quantity is below the market minimum"],
+      off_step: ["数量不符合市价单步长", "quantity does not match the market step"],
+      above_max: ["数量超过市价单最大数量", "quantity exceeds the market maximum"],
+      account_stream: ["未连接到账户订单更新", "account order updates are not connected"]
+    });
+    function formatTakerSkipNote(reason) {
+      if (!reason) return "";
+      const [zhReason, enReason] = MARKET_QTY_REJECTION_COPY[reason];
+      return localizedText(` · 本轮吃单改为挂单：${zhReason}`, ` · Taker orders placed as Post Only: ${enReason}`);
+    }
+    async function executeLadderTakerOrder(plan, order, orderIndex, setExecutionStatus, abortSignal, takerBudget) {
+      const rules = rulesCache[plan.symbol];
+      const qtyCheck = validateMarketOrderQty(order.qty, {
+        minQty: rules?.marketMinQty,
+        stepSize: rules?.marketStepSize,
+        maxQty: rules?.marketMaxQty
+      });
+      if (!qtyCheck.ok) return { status: "skipped", reason: qtyCheck.reason };
+      if (!hasCancellationAccountStream?.()) return { status: "skipped", reason: "account_stream" };
+      takerBudget.remaining -= 1;
+      let clicked = false;
+      let failure = null;
+      try {
+        assertLadderBaseExecutionContext(plan);
+        if (!await activateMarketOrderType()) {
+          throw createTerminalLadderError("未能切换到市价单，已停止吃单", "Could not switch to a market order; taker stopped");
+        }
+        throwIfAborted(abortSignal);
+        assertLadderBaseExecutionContext(plan);
+        await waitForReadyLadderSubmitButton(plan, abortSignal);
+        await syncTradeInputs(null, order.qty, {
+          includePrice: false,
+          qtyLabel: "吃单量",
+          settleControlledForm: true,
+          abortSignal
+        });
+        throwIfAborted(abortSignal);
+        const button = await waitForReadyLadderSubmitButton(plan, abortSignal);
+        throwIfAborted(abortSignal);
+        assertLadderBaseExecutionContext(plan);
+        if (!isMarketOrderTypeActive()) {
+          throw createTerminalLadderError("吃单前市价单已失效，已停止", "The market order form changed before the taker order; stopped");
+        }
+        assertSubmittedQtyMatchesExpectedQty(order.qty, findTradeInputs({ requirePrice: false })?.qtyInput.value || "", "吃单量");
+        if (CFG.SAFE_MODE) return { status: "placed" };
+        const previousFeedback = takeOrderFeedbackSnapshot();
+        const dialogsBeforeClick = new Set(getVisibleDialogs());
+        const submitCaptureId = beginLadderSubmitResponseCapture({
+          kind: "taker",
+          symbol: plan.symbol,
+          side: plan.spec.orderSide,
+          positionSide: plan.spec.side,
+          quantity: order.qty
+        });
+        const submitCapture = activeLadderSubmitCapture;
+        let acknowledgementError = null;
+        try {
+          throwIfAborted(abortSignal);
+          clicked = true;
+          button.click();
+          setExecutionStatus(
+            localizedActionStatus(
+              plan.spec.statusLabel,
+              `吃单 ${orderIndex + 1}/${plan.orders.length} 确认中`,
+              ` taker ${orderIndex + 1}/${plan.orders.length} confirming`
+            ),
+            localizedText(`第 ${orderIndex + 1} 笔吃单确认中`, `Taker ${orderIndex + 1} confirming`)
+          );
+          waitForTradeUiMutation({ timeoutMs: 500 });
+          try {
+            await waitForOrderSubmitAcknowledgement(
+              button,
+              plan.spec.label,
+              previousFeedback,
+              submitCaptureId,
+              plan.spec.mode,
+              abortSignal
+            );
+          } catch (error) {
+            acknowledgementError = error;
+          }
+        } finally {
+          endLadderSubmitResponseCapture(submitCaptureId);
+        }
+        throwIfOrderRequestBlocked(submitCapture, acknowledgementError);
+        const recordPlacedTaker = () => {
+          if (!latestTakerStats) return;
+          recordTakerSubmitted(latestTakerStats, {
+            clientOrderId: submitCapture.clientOrderId,
+            symbol: plan.symbol,
+            side: plan.spec.orderSide,
+            positionSide: plan.spec.side
+          });
+          for (const frame of takerOrderEvidence.get(submitCapture.clientOrderId)?.frames ?? []) observeTakerStatsFrame(frame);
+          scheduleRenderPanel();
+        };
+        if (getVisibleDialogs().some((dialog) => !dialogsBeforeClick.has(dialog))) {
+          if (!acknowledgementError) {
+            recordPlacedTaker();
+            return {
+              status: "placed",
+              haltError: createTerminalLadderError(
+                "吃单已提交，但随后出现新的弹窗，未处理该弹窗，已停止",
+                "The taker order was placed, but a new dialog appeared afterwards; it was left untouched and the task stopped"
+              )
+            };
+          }
+          throw createTerminalLadderError(
+            "吃单后出现确认弹窗，未自动确认，已停止",
+            "A confirmation dialog appeared after the taker order; it was not confirmed and the task stopped",
+            acknowledgementError
+          );
+        }
+        if (acknowledgementError) {
+          const stopped = isLadderStoppedError(acknowledgementError) || abortSignal?.aborted === true;
+          if (submitCapture.clientOrderId === null) {
+            takerBudget.remaining += 1;
+            throw acknowledgementError;
+          }
+          if (stopped) {
+            logTaker("stopped after the request was sent", { symbol: plan.symbol, clientOrderId: submitCapture.clientOrderId });
+            recordPlacedTaker();
+            return { status: "placed" };
+          }
+          if (isConfirmedTakerRejection(submitCapture)) {
+            takerBudget.remaining += 1;
+            throw acknowledgementError;
+          }
+          const placed = await waitForTakerOrderEvidence(
+            submitCapture.clientOrderId,
+            TAKER_OUTCOME_EVIDENCE_TIMEOUT_MS,
+            abortSignal
+          );
+          if (!placed) {
+            throw createTerminalLadderError(
+              "吃单结果未确认，已停止；请在当前委托和历史成交中核对",
+              "The taker order outcome was not confirmed; the task stopped. Check Open Orders and Trade History",
+              acknowledgementError
+            );
+          }
+          logTaker("acknowledgement resolved by account stream", { symbol: plan.symbol, clientOrderId: submitCapture.clientOrderId });
+        }
+        recordPlacedTaker();
+        return { status: "placed" };
+      } catch (error) {
+        if (!clicked) takerBudget.remaining += 1;
+        failure = error;
+        throw error;
+      } finally {
+        if (!isPostOnlyOrderTypeActive()) {
+          let restored = false;
+          let restoreError = null;
+          try {
+            restored = await ensurePostOnlyOrderType();
+          } catch (error) {
+            restoreError = error;
+          }
+          if (!restored) {
+            throw createTerminalLadderError(
+              "吃单后未能切回只做 Maker，已停止",
+              "Could not return to Post Only after the taker order; stopped",
+              failure ?? restoreError
+            );
+          }
+        }
+      }
+    }
     async function executeLadderPlan(plan, progress, setExecutionStatus, abortSignal = null, options = null) {
       if (!findTradeInputs()) {
         throw createContinuousRecoverableLadderError("controls_not_ready", "未能确定唯一的当前交易表单输入框");
@@ -9434,9 +9974,53 @@
       let lastRepriceApiErrorCode = null;
       let previousAcknowledgedInputs = null;
       let maxOpenOrdersRecoveryAttempts = 0;
+      const takerBudget = options?.takerBudget || null;
+      if (takerBudget && !takerBudget.allocated) {
+        takerBudget.remaining = allocateLadderTakerOrders({
+          levels: plan.orders.length,
+          percent: takerBudget.percent,
+          carry: takerBudget.carry
+        });
+        takerBudget.allocated = true;
+      }
+      let repriceAfterTaker = false;
       while (done < plan.orders.length) {
         throwIfAborted(abortSignal);
         if (ladderStopRequested) break;
+        if (takerBudget?.remaining > 0) {
+          const takerResult = await executeLadderTakerOrder(
+            plan,
+            plan.orders[done],
+            done,
+            setExecutionStatus,
+            abortSignal,
+            takerBudget
+          );
+          if (takerResult.status === "skipped") {
+            takerBudget.skippedReason = takerResult.reason;
+            takerBudget.remaining = 0;
+            const [zhReason, enReason] = MARKET_QTY_REJECTION_COPY[takerResult.reason];
+            const detail = localizedText(`本轮吃单改为挂单：${zhReason}`, `Taker orders placed as Post Only this round: ${enReason}`);
+            setExecutionStatus(combineLocalizedText([plan.spec.statusLabel, detail], "："), detail);
+            continue;
+          }
+          done++;
+          recordLadderSubmittedOrder(progress);
+          previousAcknowledgedInputs = null;
+          repriceAfterTaker = true;
+          setExecutionStatus(localizedActionStatus(
+            plan.spec.statusLabel,
+            `已吃单 ${done}/${plan.orders.length} 笔`,
+            ` taker orders sent ${done}/${plan.orders.length}`
+          ), null);
+          if (takerResult.haltError) throw takerResult.haltError;
+          throwIfAborted(abortSignal);
+          continue;
+        }
+        if (repriceAfterTaker) {
+          repriceAfterTaker = false;
+          refreshRemainingLadderOrders(plan, done);
+        }
         const order = plan.orders[done];
         try {
           assertLadderExecutionContext(plan);
@@ -9481,7 +10065,8 @@
           );
           if (!CFG.SAFE_MODE) {
             const previousFeedback = takeOrderFeedbackSnapshot();
-            const submitCaptureId = beginLadderSubmitResponseCapture();
+            const submitCaptureId = beginLadderSubmitResponseCapture({ kind: "maker" });
+            const submitCapture = activeLadderSubmitCapture;
             let chartSubmitCapture = null;
             try {
               throwIfAborted(abortSignal);
@@ -9501,14 +10086,20 @@
                 )
               );
               waitForTradeUiMutation({ timeoutMs: 500 });
-              await waitForOrderSubmitAcknowledgement(
-                button,
-                plan.spec.label,
-                previousFeedback,
-                submitCaptureId,
-                plan.spec.mode,
-                abortSignal
-              );
+              try {
+                await waitForOrderSubmitAcknowledgement(
+                  button,
+                  plan.spec.label,
+                  previousFeedback,
+                  submitCaptureId,
+                  plan.spec.mode,
+                  abortSignal
+                );
+              } catch (error) {
+                throwIfOrderRequestBlocked(submitCapture, error);
+                throw error;
+              }
+              throwIfOrderRequestBlocked(submitCapture, null);
             } finally {
               endLadderSubmitResponseCapture(submitCaptureId);
               if (chartSubmitCapture) {
@@ -9620,7 +10211,7 @@
         return operation();
       });
     }
-    async function startLadder(actionType, continuousProgress = null, chartSaveController = null, unresolvedCapacityOrders = null, confirmedCancelledOrders = null) {
+    async function startLadder(actionType, continuousProgress = null, chartSaveController = null, unresolvedCapacityOrders = null, confirmedCancelledOrders = null, takerCarry = null) {
       const spec = getLadderActionSpec2(actionType);
       if (!spec) {
         setLadderStatus(localizedText("未知阶梯动作", "Unknown ladder action"));
@@ -9673,6 +10264,7 @@
         return { status: "not_started" };
       }
       ladderStopRequested = false;
+      if (!continuousSession) latestTakerStats = createTakerStats({ label: spec.statusLabel, positionSide: spec.side });
       const abortController = new AbortController();
       const progress = createLadderProgress();
       const setExecutionStatus = (singleStatus, continuousDetail) => {
@@ -9705,31 +10297,49 @@
       const executeRound = async () => {
         throwIfAborted(abortController.signal);
         chartSaveRound = chartSaveController?.beginRound() || null;
+        const takerBudget = {
+          percent: getLadderTakerPercent(spec.mode, actionSymbol, activeLadderPanelContext.precision),
+          carry: takerCarry,
+          allocated: false,
+          remaining: 0,
+          skippedReason: null
+        };
+        let execution;
+        try {
+          execution = await runLadderPlanWithOpenOrderReplacement(
+            actionType,
+            progress,
+            setExecutionStatus,
+            abortController.signal,
+            {
+              allowMaxOpenOrdersRecovery: continuousSession && spec.mode === "CLOSE",
+              unresolvedCapacityOrders,
+              confirmedCancelledOrders,
+              allowReduceOnlyRecovery: continuousSession && spec.mode === "CLOSE",
+              chartSaveController,
+              chartSaveRound,
+              takerBudget
+            }
+          );
+        } finally {
+          if (takerCarry && takerBudget.remaining > 0 && !takerBudget.skippedReason) {
+            returnUnspentTakerOrders(takerCarry, takerBudget.remaining);
+          }
+        }
         const {
           plan,
           done,
           repriceAttempts,
           lastRepriceApiErrorCode
-        } = await runLadderPlanWithOpenOrderReplacement(
-          actionType,
-          progress,
-          setExecutionStatus,
-          abortController.signal,
-          {
-            allowMaxOpenOrdersRecovery: continuousSession && spec.mode === "CLOSE",
-            unresolvedCapacityOrders,
-            confirmedCancelledOrders,
-            allowReduceOnlyRecovery: continuousSession && spec.mode === "CLOSE",
-            chartSaveController,
-            chartSaveRound
-          }
-        );
+        } = execution;
+        const takerNote = formatTakerSkipNote(takerBudget.skippedReason);
         return {
           plan,
           done,
           repriceAttempts,
           lastRepriceApiErrorCode,
-          wasStopped: ladderStopRequested
+          wasStopped: ladderStopRequested,
+          takerNote
         };
       };
       const executionTask = (async () => {
@@ -9761,7 +10371,7 @@
           throwIfAborted(abortController.signal);
           return outcome;
         }
-        const { plan, done, repriceAttempts, lastRepriceApiErrorCode, wasStopped } = outcome;
+        const { plan, done, repriceAttempts, lastRepriceApiErrorCode, wasStopped, takerNote } = outcome;
         if (!isCurrentObservedSymbol(actionSymbol)) {
           if (!continuousSession) {
             setLadderStatus(formatInterruptedLadderProgress(
@@ -9779,17 +10389,18 @@
         const diagnostics = formatLadderRepriceDiagnostics(repriceAttempts, lastRepriceApiErrorCode);
         if (!continuousSession) {
           setLadderStatus(
-            wasStopped ? combineLocalizedText([formatStoppedLadderProgress(spec.statusLabel, progress), diagnostics]) : combineLocalizedText([formatCompletedLadderProgress(
+            wasStopped ? combineLocalizedText([formatStoppedLadderProgress(spec.statusLabel, progress), diagnostics, takerNote]) : combineLocalizedText([formatCompletedLadderProgress(
               spec.statusLabel,
               done,
               plan.orders.length,
               progress
-            ), diagnostics])
+            ), diagnostics, takerNote])
           );
         }
         return {
           status: wasStopped ? "stopped" : "completed",
-          progress: snapshotLadderProgress(progress)
+          progress: snapshotLadderProgress(progress),
+          takerNote
         };
       }).catch(async (e) => {
         if (isLadderStoppedError(e)) {
@@ -9978,6 +10589,7 @@
       const continuousProgress = createContinuousLadderProgress();
       const unresolvedCapacityOrders = /* @__PURE__ */ new Set();
       const confirmedCancelledOrders = /* @__PURE__ */ new Map();
+      const takerCarry = createTakerCarry();
       const positionCheckState = { checkedAt: Date.now(), retryAt: 0 };
       let chartSaveCoalescer = null;
       continuousLadderAbortController = abortController;
@@ -9986,6 +10598,7 @@
       activeContinuousLadderProgress = continuousProgress;
       const executionTask = withAccountOperationLock("shared", async () => {
         throwIfAborted(abortController.signal);
+        latestTakerStats = createTakerStats({ label: localizedContinuousAction(spec.statusLabel), positionSide: spec.side });
         chartSaveCoalescer = await startContinuousChartSaveCoalescing(abortController.signal, actionSymbol);
         continuousChartSaveController = chartSaveCoalescer;
         throwIfAborted(abortController.signal);
@@ -9996,7 +10609,8 @@
             continuousProgress,
             chartSaveCoalescer,
             unresolvedCapacityOrders,
-            confirmedCancelledOrders
+            confirmedCancelledOrders,
+            takerCarry
           );
           let recovery = null;
           if (!outcome?.progress) {
@@ -10055,7 +10669,7 @@
                 cooldownMs,
                 recovery?.reason ?? null
               );
-              setLadderStatus(waitStatus);
+              setLadderStatus(outcome?.takerNote ? combineLocalizedText([waitStatus, outcome.takerNote]) : waitStatus);
             }
           });
           if (readiness.status === "stopped") {
@@ -12894,6 +13508,7 @@
             limitStepSize: lot.stepSize ? String(lot.stepSize) : null,
             marketMinQty: marketLot.minQty ? String(marketLot.minQty) : null,
             marketStepSize: marketLot.stepSize ? String(marketLot.stepSize) : null,
+            marketMaxQty: marketLot.maxQty ? String(marketLot.maxQty) : null,
             minNotional: minN.notional ? String(minN.notional) : null
           };
           rulesCache[symbol] = entry;
@@ -13081,6 +13696,24 @@
       const activeStyle = selected ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};` : NEUTRAL_CONTROL_STYLE;
       return `<button type="button" data-ladder-group="${group}" data-ladder-value="${value}" style="box-sizing:border-box;width:100%;min-width:0;height:28px;padding:0;border-radius:6px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:13px;line-height:26px;cursor:pointer;${activeStyle}">${label}</button>`;
     }
+    function ladderTakerOptionButton(value, selected) {
+      const activeStyle = selected ? `border-color:var(--color-PrimaryYellow);background:var(--color-BadgeBg);color:${PRIMARY_EMPHASIS_COLOR};font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};` : NEUTRAL_CONTROL_STYLE;
+      const label = value === 0 ? ui(PANEL_COPY.field.takerOff) : `${value}%`;
+      return `<button type="button" data-ladder-group="taker" data-ladder-value="${value}" aria-pressed="${selected}" style="box-sizing:border-box;min-width:34px;height:20px;padding:0 5px;border-radius:4px;border:1px solid ${CONTROL_BORDER_COLOR};font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap;${activeStyle}">${label}</button>`;
+    }
+    function renderLadderTakerHeader(mode, symbol, precision) {
+      const options = document.getElementById(LADDER_TAKER_OPTIONS_ID);
+      const title = document.getElementById(LADDER_TITLE_ID);
+      if (!options || !title) return;
+      const selected = ["OPEN", "CLOSE"].includes(mode) && precision ? getLadderTakerPercent(mode, symbol, precision) : null;
+      const signature = `${selected}|${activeUiLocale}`;
+      if (options.dataset.renderedSelection !== signature) {
+        options.innerHTML = selected === null ? "" : LADDER_TAKER_PERCENTS.map((value) => ladderTakerOptionButton(value, value === selected)).join("");
+        options.dataset.renderedSelection = signature;
+      }
+      const tooltip = latestTakerStats && latestTakerStats.entries.length > 0 ? formatTakerStatsLines(latestTakerStats, activeUiLocale).join("\n") : ui(PANEL_COPY.tooltip.ladder);
+      if (title.title !== tooltip) title.title = tooltip;
+    }
     function ladderOptionRow(title, tooltip, options, selected, group, suffix = "") {
       return [
         `<div style="display:grid;grid-template-columns:${activeUiLocale === "en" ? "52px" : "36px"} repeat(5,minmax(0,1fr));align-items:center;gap:4px;height:34px;margin-top:6px;overflow:hidden;">`,
@@ -13185,6 +13818,7 @@
           cancelRunning,
           noOrdersFeedback: cancelNoOrdersFeedbackActive
         });
+        renderLadderTakerHeader(mode, symbol, precision);
         const controlSections = getLadderControlSections(mode, closeContext, symbol, precision);
         const bodyHtml = [
           ...controlSections.optionRows,
@@ -13548,7 +14182,10 @@
         "</div>",
         "</div>",
         `<div data-panel-group="ladder" style="margin:12px -10px 0;padding:11px 10px 0;border-top:2px solid ${PANEL_DIVIDER_COLOR};">`,
-        `<div title="${ui(PANEL_COPY.tooltip.ladderMaker)}" style="height:20px;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;cursor:help;">${ui(PANEL_COPY.section.ladderMaker)}</div>`,
+        '<div style="display:flex;align-items:center;gap:6px;height:20px;">',
+        `<span id="${LADDER_TITLE_ID}" title="${ui(PANEL_COPY.tooltip.ladder)}" style="flex:0 0 auto;color:${PRIMARY_EMPHASIS_COLOR};font-size:14px;font-weight:${PRIMARY_EMPHASIS_FONT_WEIGHT};line-height:20px;white-space:nowrap;cursor:help;">${ui(PANEL_COPY.section.ladder)}</span>`,
+        `<span id="${LADDER_TAKER_OPTIONS_ID}" role="group" aria-label="${ui(PANEL_COPY.section.ladder)}" style="display:flex;gap:4px;flex:1 1 auto;min-width:0;justify-content:flex-end;"></span>`,
+        "</div>",
         `<div id="${LADDER_BODY_ID}"></div>`,
         "</div>",
         `<div id="${LADDER_STATUS_ROW_ID}" style="display:flex;align-items:center;height:18px;margin-top:6px;visibility:visible;color:${MUTED_TEXT_COLOR};font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;">`,
@@ -13681,6 +14318,9 @@
           }
           if (group === "levels") {
             setLadderLevels(value, optionContext.mode, optionContext.symbol, optionContext.precision);
+          }
+          if (group === "taker") {
+            setLadderTakerPercent(value, optionContext.mode, optionContext.symbol, optionContext.precision);
           }
           if (group === "step") {
             setLadderStep(value, optionContext.mode, optionContext.symbol, optionContext.precision);
