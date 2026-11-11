@@ -413,3 +413,98 @@ test('user stops recovery if the position increases after replacement', async ()
   assert.equal(events.filter(([type]) => type === 'replace').length, 1);
   assert.deepEqual(events.filter(([type]) => type === 'build'), [['build', '100'], ['build', '100']]);
 });
+
+function contextChange(kind) {
+  return Object.assign(new Error(`${kind} during recovery`), { continuousRecoveryKind: kind });
+}
+
+for (const kind of ['precision_changed', 'options_changed']) {
+  test(`user continues the session on the next round when ${kind} happens during reduce-only recovery`, async () => {
+    // Given a rejected close round whose panel settings change while it waits to recheck the position.
+    let changed = false;
+    const { options, events } = scenario({ quantities: ['100'], onWait: () => { changed = true; } });
+    const change = contextChange(kind);
+    options.assertContext = () => { if (changed) throw change; };
+
+    // When recovery revalidates the captured context after the wait.
+    const completion = runCloseLadderWithPositionRecovery(options);
+
+    // Then the settings change keeps its next-round recovery instead of ending the session, without a replacement.
+    await assert.rejects(completion, error => error === change);
+    assert.equal(events.filter(([type]) => type === 'replace').length, 0);
+  });
+}
+
+test('user still ends the session when a recovery step fails with a recoverable kind of its own', async () => {
+  // Given a position read during recovery that fails with a kind the outer session could otherwise retry.
+  const { options } = scenario({ quantities: [] });
+  options.readPositionQty = async () => { throw contextChange('position_quantity_not_ready'); };
+
+  // When reduce-only recovery reads the authoritative position.
+  const completion = runCloseLadderWithPositionRecovery(options);
+
+  // Then only panel-setting changes pass through; this failure stays a terminal recovery error.
+  await assert.rejects(completion, error => error.name === 'CloseLadderRecoveryError' && error.continuousRecoveryKind === undefined);
+});
+
+test('user continues the session on the next round when the recovery rebuild sees changed panel settings', async () => {
+  // Given a rejected close round whose rebuild finds the ratio, order count or gap changed.
+  const { options, events } = scenario({ quantities: ['100', '99', '99'] });
+  const change = contextChange('options_changed');
+  options.buildPlan = async (positionQty) => {
+    if (positionQty !== null) throw change;
+    return { spec: { mode: 'CLOSE' }, baseQty: '100' };
+  };
+
+  // When recovery rebuilds the plan from the decreased position.
+  const completion = runCloseLadderWithPositionRecovery(options);
+
+  // Then the change keeps its next-round recovery and nothing is replaced.
+  await assert.rejects(completion, error => error === change);
+  assert.equal(events.filter(([type]) => type === 'replace').length, 0);
+});
+
+test('user still ends the session when a replacement fails while the panel settings also change', async () => {
+  // Given a replacement at an unchanged position that fails, e.g. with a native dialog still open, while precision changes.
+  let changed = false;
+  const { options } = scenario({ quantities: ['100', '100'] });
+  options.replaceOrders = async () => {
+    changed = true;
+    return { ok: false, status: 'dialog_not_closed', message: 'Native dialog still open' };
+  };
+  options.assertContext = () => { if (changed) throw contextChange('precision_changed'); };
+
+  // When recovery evaluates the replacement.
+  const completion = runCloseLadderWithPositionRecovery(options);
+
+  // Then the failed replacement decides the outcome and stays terminal.
+  await assert.rejects(completion, error => error.name === 'CloseLadderRecoveryError' && /Native dialog still open/.test(error.message));
+});
+
+test('user continues the session when the replacement stopped only because the panel settings changed', async () => {
+  // Given a replacement that stopped before any unknown cancellation because the ratio, order count or gap changed.
+  const change = contextChange('options_changed');
+  const { options } = scenario({
+    quantities: ['100', '100'],
+    replaceResult: { ok: false, status: 'settings_changed', message: change.message, settingsChange: change },
+  });
+
+  // When recovery evaluates the replacement.
+  const completion = runCloseLadderWithPositionRecovery(options);
+
+  // Then the settings change keeps its next-round recovery.
+  await assert.rejects(completion, error => error === change);
+});
+
+test('user continues the session when precision changes while the recovered plan is placing orders', async () => {
+  // Given a recovered plan whose execution sees a precision change after the position decreased.
+  const change = contextChange('precision_changed');
+  const { options, events } = scenario({ quantities: ['100', '99'], failures: [rejection(), change] });
+
+  // When recovery executes the rebuilt plan.
+  const completion = runCloseLadderWithPositionRecovery(options);
+
+  // Then the change passes through unwrapped and no replacement was spent.
+  await assert.rejects(completion, error => error === change);
+  assert.equal(events.filter(([type]) => type === 'replace').length, 0);
+});

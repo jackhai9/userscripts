@@ -483,6 +483,25 @@ latest valid DOM closeable quantity. Missing DOM quantity never falls back to th
 API amount. Symbol, direction, precision, and option context stay pinned to the
 active round. Cancel, position-read, context, and unconfirmed-submit errors during
 this recovery are terminal and cannot inherit unrelated continuous retry policies.
+Changing the orderbook precision or the ratio, order count or gap is never a
+recovery failure. Outside recovery these changes already end the round with
+`precision_changed` / `options_changed` and the session continues with the new
+settings after its cooldown. Inside recovery (after a `90802022`, while it rereads the
+position, waits, rebuilds or places the plan) the runner wraps other errors as terminal
+`CloseLadderRecoveryError`s so a failed recovery step cannot be retried by the
+session; the two panel-setting kinds pass through unwrapped, and the rebuild reports
+an option change as `options_changed` too. A replacement result is evaluated before
+the context: a failed replacement (for example an open native dialog or an
+unconfirmed receipt) stays terminal even if the settings also changed. The
+cancellation adapter returns `settings_changed` with the original error only when its
+scope check raised the change, which happens before a click or after the previous
+click was confirmed, so no cancellation outcome is unknown; confirmed identities are
+recorded before that check. On 2026-11-11 a JCTUSDT continuous
+close stopped at round 176/184 with `执行中价格精度已变化，已停止` because the change fell
+inside that window; outside it the same change continued the session, which is why
+the stop looked intermittent. Symbol or mode changes and failed recovery steps still
+end the session. The taker share is read once per round and is not checked at all.
+
 Once reduce-only recovery begins, the executor disables max-open-orders capacity
 recovery too, so a later `90802025` cannot trigger a separate batch of cancellations.
 Ordinary single-round clicks and OPEN ladders retain their existing replacement
@@ -542,20 +561,34 @@ Ladder makers now also depend on the native place-order body being a JSON string
 an unreadable body or a maker body with `type=MARKET` is blocked. A blocked body is
 refused again for 60 seconds so a native retry cannot reach the exchange.
 
-In OPEN mode a taker slot is first raised, never lowered, to cover 101% of the
-symbol's `MIN_NOTIONAL` at the lower of the current best bid and ask, in
-`MARKET_LOT_SIZE` steps, and the console logs the planned and sent quantities.
+In OPEN mode a taker slot is first raised, never lowered, to cover 102% of the
+symbol's `MIN_NOTIONAL` at the lowest of the current best bid, best ask and the
+page mark price, in `MARKET_LOT_SIZE` steps, and the console logs the planned and
+sent quantities with the prices. Binance values MARKET orders at the mark price
+([USDⓈ-M filters](https://developers.binance.com/docs/derivatives/usds-margined-futures/common-definition):
+"Since MARKET orders have no price, the mark price is used"). The mark price is read
+from the ticker by its label (`标记价格` on zh-CN, `Mark` on en, both observed on
+2026-11-11); exactly one label whose container holds only that label and a number
+counts. On JCTUSDT the page value matched `/fapi/v1/premiumIndex` one update late
+(about 1–3 s) and differed from the last price by −0.6% to +0.4%; the 2% margin
+absorbs that delay. A candidate is a visible label whose nearest ancestor (up to five levels; three were
+observed) holds only the label and one value; bare labels such as table headers are
+not candidates, and exactly one candidate is required. The value must lie between the
+displayed best bid −5% and best ask +5% (the displayed book may be aggregated by a
+coarse precision). No candidate or several, or a value outside that band, places the
+slot Post Only and raises the `taker-mark-price` dependency alert once with the
+counts or the values; a single candidate whose value is a placeholder (for example
+`--` while the symbol switches) places the slot Post Only without an alert. If the exchange still rejects the market
+order with `90804164` (notional below minimum), nothing was placed: the round's
+remaining slots, including this one, are placed Post Only with the reason instead of
+failing the round, and that share is forfeited rather than carried to the next round.
 The ladder sizes orders at maker prices, which for a short sit above the market:
 on 2026-11-11 a 2x JCTUSDT open-short ladder sized each order at about 5 USDT, and
 the market order at the bid fell below 5 USDT; Binance's page refused it without
 a request (`下单请求仍未返回`). Reduce-only closing orders have no minimum notional
 and keep their planned size. Without a readable book or minimum notional the slot
-is placed as Post Only. Which reference price the page's own minimum-notional check
-uses (best price, last price or mark price) has not been observed; the only live mark
-price available to the script is the page-load `#__APP_DATA` value, which is stale, so
-it is not used. If a raised order is still refused, the page sends no request (or the
-exchange returns one definite rejection), the budget unit returns, and the task stops
-with the visible reason; nothing is retried.
+is placed as Post Only. A 2x JCTUSDT open short at 2.7.250 (bid and ask only) was
+rejected by the exchange with `90804164`, because the mark price was below the book.
 
 A taker slot is placed as Post Only instead, with
 `本轮吃单改为挂单：<reason>` kept on the round's final status (or the wait between

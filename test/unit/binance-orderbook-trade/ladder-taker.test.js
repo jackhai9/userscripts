@@ -7,6 +7,7 @@ import {
   validateMarketOrderQty,
   isConfirmedTakerRejection,
   raiseQtyToMarketNotional,
+  isMarkPriceNearBook,
   matchPlaceOrderRequest,
   createTakerStats,
   recordTakerSubmitted,
@@ -245,20 +246,38 @@ test('user sees a market order that expired after a partial fill counted at its 
   assert.equal(formatTakerStatsLines(stats, 'zh-CN')[1], '共 1 笔，成交价逐笔走高 0 次');
 });
 
-test('user gets an opening market order raised just enough to clear the minimum notional at the market price', () => {
+test('user gets an opening market order raised just enough to cover 102% of the minimum notional at the reference price', () => {
   // Given a JCT short sized at the maker price and the lower market price it would trade at
   const base = { minNotional: '5', price: '0.005651', stepSize: '1' };
 
-  // When the planned quantities are checked against 101% of the minimum notional
+  // When the planned quantities are checked against 102% of the minimum notional
   const raised = raiseQtyToMarketNotional({ ...base, qty: '884' });
   const enough = raiseQtyToMarketNotional({ ...base, qty: '1200' });
   const decimals = raiseQtyToMarketNotional({ qty: '0.07', minNotional: '5.66', price: '80.9', stepSize: '0.01' });
 
   // Then only a short quantity is raised, to the smallest step that covers the target
-  assert.equal(raised, '894');
+  assert.equal(raised, '903');
   assert.equal(enough, '1200');
   assert.equal(decimals, '0.08');
   assert.equal(raiseQtyToMarketNotional({ ...base, qty: '884', price: null }), null);
   assert.equal(raiseQtyToMarketNotional({ ...base, qty: '884', minNotional: null }), null);
   assert.equal(raiseQtyToMarketNotional({ ...base, qty: '884', stepSize: null }), null);
+});
+
+test('user trusts a mark price only between the bid minus 5% and the ask plus 5%, also on a coarse book', () => {
+  // Given fine and coarse displayed books
+  const cases = [
+    ['0.005651', '0.005650', '0.005652', true],
+    ['0.0057', '0.005', '0.006', true],
+    ['3.6', '3', '4', true],
+    ['0.0047', '0.005', '0.006', false],
+    ['0.0064', '0.005', '0.006', false],
+    ['60', '80.9', '81.03', false],
+  ];
+
+  // When each mark price is checked against its book
+  const results = cases.map(([mark, bid, ask]) => isMarkPriceNearBook(mark, bid, ask, 5));
+
+  // Then only values inside the widened book are trusted
+  assert.deepEqual(results, cases.map(([, , , expected]) => expected));
 });

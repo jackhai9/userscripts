@@ -14,6 +14,8 @@ export const BINANCE_PAGE_TEXT = Object.freeze({
   availableBalance: freezeLabels(['可用', 'Avbl']),
   postOnly: freezeLabels(['只做Maker', 'Post Only']),
   marketOrder: freezeLabels(['市价', 'Market']),
+  // Ticker labels observed on zh-CN and en futures pages on 2026-11-11.
+  markPrice: freezeLabels(['标记价格', 'Mark']),
   submitBusy: freezeLabels(['提交中', 'Placing', 'Loading']),
   openableQuantity: freezeLabels(['可开']),
   closeableQuantity: freezeLabels(['可平']),

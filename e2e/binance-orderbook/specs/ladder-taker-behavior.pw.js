@@ -97,6 +97,139 @@ test('user gets an opening short market order raised when its maker-sized notion
   expect(host.errors).toEqual([]);
 });
 
+test('user gets an opening market order raised against the page mark price when it is below the book', async ({ page }) => {
+  // Given an open-short ladder whose 0.07 orders cover 102% of 5.5 at the 80.9 bid but not at the page mark price 77.
+  const host = await openUserscriptScenario(page, openScenario({ markPrice: '77', minNotional: '5.5' }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs it once.
+  await page.locator('[data-ladder-action="OPEN_SHORT"]').click();
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(3);
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+
+  // Then the market order covers 102% of the minimum at the mark price and the makers keep their size.
+  const sent = await submissions(page);
+  expect(sent.map(({ orderType, quantity }) => [orderType, quantity])).toEqual([
+    ['MARKET', '0.08'], ['POST_ONLY', '0.07'], ['POST_ONLY', '0.07'],
+  ]);
+  expect(host.errors).toEqual([]);
+});
+
+async function runOpenShortOnce(page) {
+  await page.locator('[data-ladder-action="OPEN_SHORT"]').click();
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(3);
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+}
+
+test('user gets the opening market order checked against the English "Mark" ticker label', async ({ page }) => {
+  // Given an English ticker label with a mark price below the book.
+  const host = await openUserscriptScenario(page, openScenario({ markLabel: 'Mark', markPrice: '77', minNotional: '5.5' }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs an opening ladder.
+  await runOpenShortOnce(page);
+
+  // Then the market order is raised against that mark price.
+  expect((await submissions(page)).map(({ orderType, quantity }) => [orderType, quantity])).toEqual([
+    ['MARKET', '0.08'], ['POST_ONLY', '0.07'], ['POST_ONLY', '0.07'],
+  ]);
+  expect(host.errors).toEqual([]);
+});
+
+for (const [name, host, alert] of [
+  ['the page shows no mark price label', { markPrice: null }, /0 visible 标记价格\/Mark labels with 0 value containers/],
+  ['the page shows two mark price labels', { duplicateMarkTicker: true }, /2 visible 标记价格\/Mark labels with 2 value containers/],
+  ['the mark price is far outside the book', { markPrice: '60' }, /mark 60 is outside [\d.]+ −5% … [\d.]+ \+5%/],
+]) {
+  test(`user sees the dependency alert and Post Only orders when ${name}`, async ({ page }) => {
+    // Given a page whose mark price cannot be trusted for this order.
+    const scenarioHost = await openUserscriptScenario(page, openScenario(host), { replacementStream: true });
+    await chooseLadder(page, { taker: 50 });
+
+    // When the user runs an opening ladder.
+    await runOpenShortOnce(page);
+
+    // Then no market order is sent, the status names the reason, and the dependency alert shows the detail.
+    expect(await orderTypes(page, 3)).toEqual(['POST_ONLY', 'POST_ONLY', 'POST_ONLY']);
+    await expect(page.locator(STATUS)).toContainText('本轮吃单改为挂单：页面标记价格读取失败');
+    await expect(page.locator('#jh-binance-dependency-alert')).toBeVisible();
+    await expect(page.locator('#jh-binance-dependency-alert')).toHaveAttribute('title', /吃单标记价格/);
+    await expect(page.locator('#jh-binance-dependency-alert')).toHaveAttribute('title', alert);
+    expect(scenarioHost.errors).toEqual([]);
+  });
+}
+
+test('user ignores a hidden duplicate mark price label', async ({ page }) => {
+  // Given the visible ticker at 77 plus a hidden copy with an absurd value.
+  const host = await openUserscriptScenario(page, openScenario({ markPrice: '77', minNotional: '5.5', hiddenMarkTicker: true }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs an opening ladder.
+  await runOpenShortOnce(page);
+
+  // Then only the visible mark price is used and no alert appears.
+  expect((await submissions(page)).map(({ orderType, quantity }) => [orderType, quantity])).toEqual([
+    ['MARKET', '0.08'], ['POST_ONLY', '0.07'], ['POST_ONLY', '0.07'],
+  ]);
+  await expect(page.locator('#jh-binance-dependency-alert')).toBeHidden();
+  expect(host.errors).toEqual([]);
+});
+
+test('user sees Post Only orders without a dependency alert while the mark price shows no number', async ({ page }) => {
+  // Given the ticker label is present but its value is a placeholder, as during a symbol switch.
+  const host = await openUserscriptScenario(page, openScenario({ markPrice: '--' }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs an opening ladder.
+  await runOpenShortOnce(page);
+
+  // Then the slot is placed Post Only with the reason, and no lasting alert is raised.
+  expect(await orderTypes(page, 3)).toEqual(['POST_ONLY', 'POST_ONLY', 'POST_ONLY']);
+  await expect(page.locator(STATUS)).toContainText('本轮吃单改为挂单：页面标记价格读取失败');
+  await expect(page.locator('#jh-binance-dependency-alert')).toBeHidden();
+  expect(host.errors).toEqual([]);
+});
+
+test('user keeps closing market orders without reading the mark price', async ({ page }) => {
+  // Given a close ladder on a page without a mark price label.
+  const host = await openUserscriptScenario(page, closeScenario({ markPrice: null }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs it once.
+  await page.locator('[data-ladder-action="CLOSE_LONG"]').click();
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(3);
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+
+  // Then the market order still goes first at its planned size and no alert appears.
+  const sent = await submissions(page);
+  expect(sent[0].orderType).toBe('MARKET');
+  expect(sent[0].quantity).toBe(sent[1].quantity);
+  await expect(page.locator('#jh-binance-dependency-alert')).toBeHidden();
+  expect(host.errors).toEqual([]);
+});
+
+test('user continues the round with Post Only orders when the exchange rejects the market order below the minimum notional', async ({ page }) => {
+  // Given an opening ladder whose market order the exchange rejects with 90804164.
+  const host = await openUserscriptScenario(page, openScenario({ submitApiResponses: [
+    { outcome: 'rejected', delivery: 'immediate', code: '90804164', message: '订单名义价值不得小于5。' },
+    ...success(3),
+  ] }), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the user runs it once.
+  await page.locator('[data-ladder-action="OPEN_SHORT"]').click();
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(4);
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+
+  // Then the rejected slot and the rest are placed Post Only, and the round completes with the reason.
+  expect(await orderTypes(page, 4)).toEqual(['MARKET', 'POST_ONLY', 'POST_ONLY', 'POST_ONLY']);
+  await expect(page.locator(STATUS)).toContainText('本轮吃单改为挂单：交易所拒绝：名义价值不足');
+  await expect(page.locator(STATUS)).not.toContainText('失败');
+  await expect(page.locator('#jh-binance-ladder-title')).not.toHaveAttribute('title', /吃单统计/);
+  expect((await readFixtureState(page)).orderType).toBe('POST_ONLY');
+  expect(host.errors).toEqual([]);
+});
+
 test('user keeps an opening long market order at its planned size when it already clears the minimum at the bid', async ({ page }) => {
   // Given an open-long ladder sized at bid-side maker prices.
   const host = await openUserscriptScenario(page, openScenario({ minNotional: '5.67' }), { replacementStream: true });

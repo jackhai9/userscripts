@@ -207,6 +207,16 @@ const DEPENDENCY_AREAS = Object.freeze({
       'usage-db-missing': localizedText('统计数据库未出现', 'usage database not opened'),
     }),
   }),
+  'taker-mark-price': Object.freeze({
+    label: localizedText('吃单标记价格', 'Taker mark price'),
+    consequence: localizedText(
+      '开仓吃单无法按标记价格核对最小下单金额，这些吃单会改为只做 Maker 挂单',
+      'opening taker orders cannot be checked against the minimum notional at the mark price, so they are placed Post Only',
+    ),
+    reasons: Object.freeze({
+      'ticker-label': localizedText('行情栏标记价格', 'ticker mark price'),
+    }),
+  }),
   'trade-sound': Object.freeze({
     label: localizedText('成交提示音分币种', 'Per-symbol trade sound'),
     consequence: localizedText(
