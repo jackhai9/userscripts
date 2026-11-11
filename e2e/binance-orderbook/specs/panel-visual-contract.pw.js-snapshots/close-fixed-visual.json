@@ -150,6 +150,90 @@
       }
     },
     {
+      "key": "taker:0",
+      "text": "关",
+      "disabled": false,
+      "checked": null,
+      "pressed": "true",
+      "rect": {
+        "top": 148,
+        "width": 34,
+        "height": 20
+      },
+      "style": {
+        "color": "rgb(0, 0, 0)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(0, 0, 0)",
+        "borderRadius": "4px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "taker:20",
+      "text": "20%",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 148,
+        "width": 36,
+        "height": 20
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "4px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "taker:50",
+      "text": "50%",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 148,
+        "width": 36,
+        "height": 20
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "4px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
+      "key": "taker:80",
+      "text": "80%",
+      "disabled": false,
+      "checked": null,
+      "pressed": "false",
+      "rect": {
+        "top": 148,
+        "width": 36,
+        "height": 20
+      },
+      "style": {
+        "color": "rgb(94, 102, 115)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(213, 217, 226)",
+        "borderRadius": "4px",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "opacity": "1"
+      }
+    },
+    {
       "key": "percent:0.3",
       "text": "0.3%",
       "disabled": false,

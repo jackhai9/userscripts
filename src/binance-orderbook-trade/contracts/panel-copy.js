@@ -5,7 +5,7 @@ const freezeCopy = (copy) => Object.freeze(copy);
 export const PANEL_COPY = Object.freeze({
   section: freezeCopy({
     singleOrder: localizedText('单击下单', 'Single Order'),
-    ladderMaker: localizedText('阶梯下单 · Maker', 'Ladder Orders · Maker'),
+    ladder: localizedText('阶梯下单 · 吃单', 'Ladder Orders · Taker'),
   }),
   field: freezeCopy({
     clickOrderbook: localizedText('单击订单簿时', 'On click'),
@@ -15,6 +15,7 @@ export const PANEL_COPY = Object.freeze({
     ratio: localizedText('比例', 'Ratio'),
     orderCount: localizedText('笔数', 'Orders'),
     interval: localizedText('间距', 'Gap'),
+    takerOff: localizedText('关', 'Off'),
     pricePrecision: localizedText('精度', 'Precision'),
     multiplierUnit: localizedText('倍', '×'),
   }),
@@ -104,9 +105,9 @@ export const PANEL_COPY = Object.freeze({
       '单击订单簿中的某个价格，按当前方向和数量设置提交一笔订单。',
       'Click a price in the order book to submit one order using the current side and quantity settings.',
     ),
-    ladderMaker: localizedText(
-      '根据当前比例、笔数、间距和价格精度设置，依次提交只做 Maker 的阶梯订单。',
-      'Submit Post Only ladder orders sequentially using the current ratio, order count, gap, and precision.',
+    ladder: localizedText(
+      '根据当前比例、笔数、间距和价格精度设置，依次提交阶梯订单。右侧选择每轮以市价吃单的比例：关 = 全部只做 Maker；选中比例时，每轮先按比例提交市价单，再把其余笔数挂只做 Maker 单。连续平仓按比例累计到后续轮次，单轮下单至少吃单 1 笔。',
+      'Submit ladder orders sequentially using the current ratio, order count, gap, and precision. The options on the right set the share of each round sent as market orders: Off keeps every order Post Only; otherwise each round first sends that share as market orders, then places the rest as Post Only. Continuous close carries fractions to later rounds; a one-round ladder takes at least one.',
     ),
     ratio: localizedText(
       '本次阶梯下单使用可开/可平数量的百分比。',

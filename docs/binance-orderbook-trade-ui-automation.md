@@ -161,6 +161,12 @@ installation page does not prove that the new source is active. Confirm the
 installed version and exact source through Tampermonkey read-back, the panel's
 behavior, or loaded-source evidence after a hard reload.
 
+The MARKET order form was inspected on JCTUSDT on 2026-11-11 by switching the
+native `[role=tab][data-tab-key="MARKET"]` tab, reading the form, and switching
+back to Post Only; one user-authorized 1-JCT market close-long then captured the
+place-order body, response and account-stream frames recorded in the development
+manual's *Ladder Taker Orders* section.
+
 Live checks must first pin the target symbol, mode, precision, and test scope.
 Use the smallest reversible path that proves the contract, keep user-owned and
 test-owned orders distinct, and restore temporary page state. Any financial or

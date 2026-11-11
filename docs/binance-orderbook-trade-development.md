@@ -488,6 +488,91 @@ recovery too, so a later `90802025` cannot trigger a separate batch of cancellat
 Ordinary single-round clicks and OPEN ladders retain their existing replacement
 contract. No additional API or DOM cancellation path is introduced.
 
+## Ladder Taker Orders
+
+The ladder title row reads `阶梯下单 · 吃单` and is followed by `关 / 20% / 50% / 80%`.
+The selection is stored per mode, symbol and precision like the other ladder options
+(`jh_binance_ladder_{open,close}_taker:<SYMBOL>:<precision>`) and defaults to `关`,
+which keeps every ladder order Post Only. It is read once when a round starts and
+is not part of the option context, so changing it never interrupts the running round
+and applies from the next one.
+
+Taker count (`core/ladder-taker.js`, computed once on a round's first plan after
+auto-fit):
+- one-round ladder (open or close): `max(1, floor(orders × ratio))` for any nonzero
+  ratio, capped at the order count; three orders give 0/1/1/2 for 关/20/50/80%;
+- continuous close: the remainder carries to later rounds in the session
+  (`carry += orders × percent`, `count = floor(carry / 100)`), so three orders at 20%
+  take one market order about every other round. A ratio change restarts the carry.
+  Slots that never reached a click return to the carry when the round ends, but at
+  most one owed order is kept, and no round takes more than
+  `ceil(orders × ratio)`, so failed rounds never build a backlog of market orders.
+
+Each round sends its taker slots first, using the nearest levels' quantities, then
+reprices the remaining levels from the current book and places them Post Only. A
+taker slot is the native MARKET order: click the `MARKET` order-type tab, require
+positive evidence (selected `data-tab-key="MARKET"` and no visible price input), write
+only the quantity, wait for the native action button, click, and confirm through the
+shared place-order acknowledgement. The form always returns to Post Only in `finally`
+before any error propagates; failing to return stops the task.
+
+Before the request leaves the page, the fetch hook checks the native body. A taker
+must be `type=MARKET` with the planned symbol, `side`, `positionSide` and quantity
+and carry `newClientOrderId`; a ladder maker must not be `type=MARKET`. A mismatch
+or unreadable body is rejected locally and stops the task with
+`下单请求与计划不一致（<field>），已拦截并停止`.
+
+A taker budget unit is spent before the click. It returns only when no place-order
+request left the page (Binance's own reason is reported), or when exactly one
+settled HTTP 2xx JSON response has `success: false` and a definite error code (for
+example `90802022`, which then enters the existing reduce-only recovery, so the slot
+is retried once after replacement). The codes -1000, -1006, -1007 and -1008 leave
+the execution status unknown and do not qualify. Any other outcome (timeout, 5xx,
+several responses, unrecognized result) may have created the order and is never
+retried: the script waits up to 5 seconds for a trusted account-stream frame with
+the request's client order ID, continues if one arrives, and otherwise stops the
+whole session with `吃单结果未确认，已停止`. A dialog that was not visible before
+the click stops the task without confirming it; if the order was already accepted,
+it is counted first. Stop after the request left the page counts the order as
+placed and then stops; the form always returns to Post Only. A taker rejected with
+`90802025` (max open orders) stops the session instead of using the maker capacity
+recovery; whether Binance returns that code for market orders is not known.
+
+Ladder makers now also depend on the native place-order body being a JSON string:
+an unreadable body or a maker body with `type=MARKET` is blocked. A blocked body is
+refused again for 60 seconds so a native retry cannot reach the exchange.
+
+A taker slot is placed as Post Only instead, with
+`本轮吃单改为挂单：<reason>` kept on the round's final status (or the wait between
+continuous rounds), when the quantity violates
+`MARKET_LOT_SIZE` (min, step or max; the max is required) or the private account
+stream is not connected. These rule-based skips forfeit the round's remaining
+taker slots.
+
+Statistics cover the latest ladder task (a continuous session or one round) and
+stay until the next task starts. The `吃单` title tooltip shows four lines: total
+taker orders and how many fills were above (long) or below (short) the previous
+fill; favorable, unfavorable, flat, no-data and pending counts 5 and 30 seconds
+after each fill. The fill price is the FILLED frame's average price; an order that
+ends EXPIRED or CANCELED counts as unfilled unless part of it traded, in which case
+its average price is used. Favorable is judged for the position, not the single
+trade: higher later prices are favorable for longs (also after a close-long sell)
+and lower prices for shorts. A continuous session resets the statistics only once
+it holds the account lock. Samples read the best price on the
+side the order traded against (bid for a sell, ask for a buy) and record no data
+when the page is hidden or on another symbol. Per-order detail is logged to the
+console with `[TAKER]`.
+
+Live evidence (JCTUSDT, 2026-11-11, one user-authorized 1-JCT market close-long):
+the MARKET form has only a quantity input, a slider and an unchecked slippage
+tolerance checkbox; no confirmation dialog appeared; the body was
+`{symbol, type: "MARKET", side: "SELL", positionSide: "LONG", quantity: 1,
+newClientOrderId, placeType: "order-form"}` (hedge mode, no `reduceOnly` field);
+the HTTP response was `success: true` with `status: "NEW"`, `avgPrice: "0"` and
+`reduceOnly: true`; the account stream sent NEW, then `TRADE`/`FILLED` with `ap`
+and `m: false`. The fee was about 0.05% of the notional. One-way position mode was
+not observed and is refused by the `positionSide` check.
+
 ## Versioning
 
 Bump `@version` in `src/binance-orderbook-trade/index.user.js` when behavior changes, then run:
@@ -739,6 +824,7 @@ Run manual checks when behavior touches trading flow, DOM selectors, account ord
 - verify the precision apply button changes Binance orderbook precision only after an explicit user click
 - verify precision decrease/increase selects the exact native divide-by-10/multiply-by-10 option, restores the corresponding symbol-mode-precision panel profile, and stops at a missing native decade option
 - start ladder order, confirm start buttons are disabled while running
+- with a small position, run a one-round close ladder at taker 20%: the first order is a market order, the rest are Post Only, the order-type tab returns to Post Only, and the `吃单` tooltip shows the fill; run a continuous close at 50% and confirm market orders appear on alternating counts (1, 2, 1, …)
 - after clicking ordinary open and close ladders, hide or minimize Chrome while the first order is pending; verify the task completes the remaining orders with the captured direction, and that Stop prevents a pending hidden control check from submitting
 - hide the page immediately after a trusted single-order price click; verify exactly one current-symbol order is submitted after the input settles
 - hold a hidden single-order draft for longer than 15 seconds, then resume the page; verify the stale clicked price is refused without a native order request

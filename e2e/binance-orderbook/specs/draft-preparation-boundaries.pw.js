@@ -57,7 +57,9 @@ for (const unavailable of ['missing precision', 'missing Post Only tab', 'uncomm
   test(`user cannot prepare a ladder with ${unavailable}`, async ({ page }) => {
     // Given native form readiness loses one explicitly required prerequisite.
     await installScenarioClock(page);
-    const host = await openUserscriptScenario(page, createCancelScenario());
+    const host = await openUserscriptScenario(page, createCancelScenario({
+      host: { orderTypeTabs: ['POST_ONLY'], orderTypeTabsInteractive: false },
+    }));
     await pauseScenarioClock(page);
     await page.evaluate(unavailable => {
       if (unavailable === 'missing precision') document.querySelector('#futuresOrderbook .tick-content').remove();

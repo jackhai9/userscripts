@@ -22,7 +22,11 @@ test('user waits for the native Post Only selection before the ladder can submit
   await installScenarioClock(page);
   const host = await openUserscriptScenario(page, createCancelScenario({
     ui: { openableQuantity: '100' },
-    host: { submitApiResponses: Array.from({ length: 3 }, () => ({ outcome: 'success', delivery: 'immediate' })) },
+    host: {
+      submitApiResponses: Array.from({ length: 3 }, () => ({ outcome: 'success', delivery: 'immediate' })),
+      orderTypeTabs: ['POST_ONLY'],
+      orderTypeTabsInteractive: false,
+    },
   }));
   await page.locator('[data-ladder-group="levels"][data-ladder-value="3"]').click();
   const native = await page.evaluateHandle(installNativePostOnlyTransition);

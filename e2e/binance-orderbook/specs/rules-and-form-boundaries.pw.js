@@ -146,10 +146,9 @@ for (const rules of [
     await expect.poll(() => requests).toBe(1);
 
     // When the native page selects its Market order tab.
-    await page.locator('.order-type-tabs [role="tab"]').evaluate(tab => {
-      tab.dataset.tabKey = 'MARKET';
-      tab.textContent = '市价';
-      tab.setAttribute('aria-selected', 'true');
+    await page.evaluate(() => {
+      document.querySelector('.order-type-tabs [data-tab-key="POST_ONLY"]').setAttribute('aria-selected', 'false');
+      document.querySelector('.order-type-tabs [data-tab-key="MARKET"]').setAttribute('aria-selected', 'true');
     });
     await page.clock.runFor(100);
     await page.clock.resume();

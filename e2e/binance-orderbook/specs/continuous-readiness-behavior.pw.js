@@ -604,7 +604,7 @@ test('user restores a new precision promptly and uses its profile after a comple
   await page.clock.runFor(100);
 
   // Then controls and the new profile recover within 100 milliseconds, without waiting for the five-second watchdog.
-  await expect(host.panel.locator('[data-ladder-group]')).toHaveCount(14);
+  await expect(host.panel.locator('[data-ladder-group]')).toHaveCount(18);
   await expect(host.panel.getByRole('button', { name: '停止平空', exact: true })).toBeEnabled();
   await expect(host.panel.locator('[data-orderbook-precision-value="0.01"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(host.panel.getByText('等待价格精度', { exact: true })).toHaveCount(0);
