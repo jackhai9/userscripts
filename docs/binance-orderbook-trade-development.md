@@ -553,9 +553,13 @@ the request's client order ID, continues if one arrives, and otherwise stops the
 whole session with `吃单结果未确认，已停止`. A dialog that was not visible before
 the click stops the task without confirming it; if the order was already accepted,
 it is counted first. Stop after the request left the page counts the order as
-placed and then stops; the form always returns to Post Only. A taker rejected with
-`90802025` (max open orders) stops the session instead of using the maker capacity
-recovery; whether Binance returns that code for market orders is not known.
+placed and then stops; the form always returns to Post Only. Binance does return
+`90802025` (max open orders) for market orders: on 2026-11-13 a QUSDT continuous
+close stopped at round 126/134 when the round's first taker hit the limit. A
+confirmed `90802025` on a taker now uses the same once-per-round capacity recovery
+as a maker (release the 50 farthest close orders, then resend the same market order
+from its returned budget unit); where makers have no capacity recovery (OPEN
+ladders, single rounds, reduce-only recovery) it still ends the task.
 
 Ladder makers now also depend on the native place-order body being a JSON string:
 an unreadable body or a maker body with `type=MARKET` is blocked. A blocked body is
