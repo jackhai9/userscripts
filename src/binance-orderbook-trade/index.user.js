@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.252
+// @version      2.7.253
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -3654,7 +3654,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
     ));
   }
 
-  /** A market order may already exist when its acknowledgement is unknown; never retry it, prove it. */
+  /** A market order may already exist when its acknowledgement is unknown; the account stream can prove it. */
   const TAKER_OUTCOME_EVIDENCE_TIMEOUT_MS = 5000;
   const TAKER_ORDER_EVIDENCE_LIMIT = 200;
   const MARKET_ORDER_TYPE = 'MARKET';
@@ -3895,9 +3895,10 @@ const hasCancellationAccountStream = installOrderSoundScope(
 
   /**
    * Sends one ladder slot as a native market order. The budget unit is spent before the click and
-   * returned only when the slot never reached a click or the exchange returned one settled rejection;
-   * an unknown outcome is resolved from the account stream or stops the task, and is never retried.
-   * The form is always returned to Post Only before any error propagates.
+   * returned only when the slot never reached a click, the exchange returned one settled rejection, or
+   * the request was rate limited. An unknown outcome is first resolved from the account stream; without
+   * that proof it fails the slot exactly as a maker's unknown outcome does, and the same slot is never
+   * resent within the round. The form is always returned to Post Only before any error propagates.
    */
   async function executeLadderTakerOrder(plan, order, orderIndex, setExecutionStatus, abortSignal, takerBudget) {
     const rules = rulesCache[plan.symbol];
@@ -3992,18 +3993,9 @@ const hasCancellationAccountStream = installOrderSoundScope(
         for (const frame of takerOrderEvidence.get(submitCapture.clientOrderId)?.frames ?? []) observeTakerStatsFrame(frame);
         scheduleRenderPanel();
       };
-      if (getVisibleDialogs().some(dialog => !dialogsBeforeClick.has(dialog))) {
-        if (!acknowledgementError) {
-          recordPlacedTaker();
-          // The order exists, so it is counted before the task halts.
-          return {
-            status: 'placed',
-            haltError: createTerminalLadderError(
-              '吃单已提交，但随后出现新的弹窗，未处理该弹窗，已停止',
-              'The taker order was placed, but a new dialog appeared afterwards; it was left untouched and the task stopped',
-            ),
-          };
-        }
+      // A dialog that appeared while no request left the page is holding the order and is never confirmed.
+      // Once the request was sent, a dialog is ignored as it is for makers.
+      if (submitCapture.clientOrderId === null && getVisibleDialogs().some(dialog => !dialogsBeforeClick.has(dialog))) {
         throw createTerminalLadderError(
           '吃单后出现确认弹窗，未自动确认，已停止',
           'A confirmation dialog appeared after the taker order; it was not confirmed and the task stopped',
@@ -4039,11 +4031,15 @@ const hasCancellationAccountStream = installOrderSoundScope(
           abortSignal,
         );
         if (!placed) {
-          throw createTerminalLadderError(
-            '吃单结果未确认，已停止；请在当前委托和历史成交中核对',
-            'The taker order outcome was not confirmed; the task stopped. Check Open Orders and Trade History',
-            acknowledgementError,
-          );
+          // Without account-stream proof the maker classification applies unchanged: a rate limit or
+          // an unconfirmed submission ends the round and continuous close resumes, anything else ends the
+          // task. A single rate-limited response means the request was not accepted, so its slot returns to
+          // the session carry (still capped at one order).
+          if (acknowledgementError.continuousRecoveryKind === 'rate_limited'
+            && submitCapture.responseDiagnostics.length === 1 && submitCapture.apiSuccesses.length === 0) {
+            takerBudget.remaining += 1;
+          }
+          throw acknowledgementError;
         }
         logTaker('acknowledgement resolved by account stream', { symbol: plan.symbol, clientOrderId: submitCapture.clientOrderId });
       }
@@ -4179,7 +4175,6 @@ const hasCancellationAccountStream = installOrderSoundScope(
           `已吃单 ${done}/${plan.orders.length} 笔`,
           ` taker orders sent ${done}/${plan.orders.length}`,
         ), null);
-        if (takerResult.haltError) throw takerResult.haltError;
         throwIfAborted(abortSignal);
         continue;
       }

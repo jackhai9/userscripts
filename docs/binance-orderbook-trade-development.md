@@ -542,24 +542,39 @@ or unreadable body is rejected locally and stops the task with
 `下单请求与计划不一致（<field>），已拦截并停止`.
 
 A taker budget unit is spent before the click. It returns only when no place-order
-request left the page (Binance's own reason is reported), or when exactly one
-settled HTTP 2xx JSON response has `success: false` and a definite error code (for
-example `90802022`, which then enters the existing reduce-only recovery, so the slot
-is retried once after replacement). The codes -1000, -1006, -1007 and -1008 leave
-the execution status unknown and do not qualify. Any other outcome (timeout, 5xx,
-several responses, unrecognized result) may have created the order and is never
-retried: the script waits up to 5 seconds for a trusted account-stream frame with
-the request's client order ID, continues if one arrives, and otherwise stops the
-whole session with `吃单结果未确认，已停止`. A dialog that was not visible before
-the click stops the task without confirming it; if the order was already accepted,
-it is counted first. Stop after the request left the page counts the order as
-placed and then stops; the form always returns to Post Only. Binance does return
-`90802025` (max open orders) for market orders: on 2026-11-13 a QUSDT continuous
-close stopped at round 126/134 when the round's first taker hit the limit. A
-confirmed `90802025` on a taker now uses the same once-per-round capacity recovery
-as a maker (release the 50 farthest close orders, then resend the same market order
-from its returned budget unit); where makers have no capacity recovery (OPEN
-ladders, single rounds, reduce-only recovery) it still ends the task.
+request left the page (Binance's own reason is reported), when exactly one settled
+HTTP 2xx JSON response has `success: false` and a definite error code, or when the
+request got a single rate-limited response and no success (the unit then returns to
+the session carry, which stays capped at one order). The codes -1000, -1006, -1007 and -1008 leave the
+execution status unknown and do not qualify as a confirmed rejection.
+
+Every exchange response to a taker is classified exactly as the same response would
+be for a maker. The taker's own stops are limited to the order form: failing to
+select the market tab, the market form changing before the click, failing to return
+to Post Only, and a dialog holding the order (below). A confirmed rejection rethrows the
+maker error (for example `90802022` enters the reduce-only recovery and the slot is
+retried once after replacement; `90802025` uses the once-per-round capacity
+recovery, releasing the 50 farthest close orders and resending the same market
+order, and where makers have no capacity recovery, in OPEN ladders, single rounds
+and reduce-only recovery, it ends the task). Any other outcome (timeout, 5xx,
+several responses, unrecognized result) may have created the order, so the script
+first waits up to 5 seconds for a trusted account-stream frame with the request's
+client order ID and continues the round if one arrives. Without it, the maker
+error is rethrown: HTTP 418/429 waits and resumes continuous close, an unconfirmed
+submission (5xx, no response, an unrecognized 2xx) ends the round and continuous
+close resumes, and any other failure ends the task. During reduce-only recovery
+these errors end the task, as they do for makers. The same slot is never resent
+within the round. Because a resumed round's market orders fill at once, accepting a
+possible duplicate after an unconfirmed submission costs more for takers than for
+makers; the next round still plans from the current position, and reduce-only
+orders cannot exceed it.
+Binance does return `90802025` for market orders (QUSDT, 2026-11-13).
+
+A dialog that appears after the click while no place-order request has left the
+page is holding the order: the task stops without confirming it. Once the request
+was sent, a new dialog is ignored as it is for makers. Stop after the request left
+the page counts the order as placed and then stops; the form always returns to
+Post Only.
 
 Ladder makers now also depend on the native place-order body being a JSON string:
 an unreadable body or a maker body with `type=MARKET` is blocked. A blocked body is

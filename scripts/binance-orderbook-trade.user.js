@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.252
+// @version      2.7.253
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -9997,17 +9997,7 @@
           for (const frame of takerOrderEvidence.get(submitCapture.clientOrderId)?.frames ?? []) observeTakerStatsFrame(frame);
           scheduleRenderPanel();
         };
-        if (getVisibleDialogs().some((dialog) => !dialogsBeforeClick.has(dialog))) {
-          if (!acknowledgementError) {
-            recordPlacedTaker();
-            return {
-              status: "placed",
-              haltError: createTerminalLadderError(
-                "吃单已提交，但随后出现新的弹窗，未处理该弹窗，已停止",
-                "The taker order was placed, but a new dialog appeared afterwards; it was left untouched and the task stopped"
-              )
-            };
-          }
+        if (submitCapture.clientOrderId === null && getVisibleDialogs().some((dialog) => !dialogsBeforeClick.has(dialog))) {
           throw createTerminalLadderError(
             "吃单后出现确认弹窗，未自动确认，已停止",
             "A confirmation dialog appeared after the taker order; it was not confirmed and the task stopped",
@@ -10039,11 +10029,10 @@
             abortSignal
           );
           if (!placed) {
-            throw createTerminalLadderError(
-              "吃单结果未确认，已停止；请在当前委托和历史成交中核对",
-              "The taker order outcome was not confirmed; the task stopped. Check Open Orders and Trade History",
-              acknowledgementError
-            );
+            if (acknowledgementError.continuousRecoveryKind === "rate_limited" && submitCapture.responseDiagnostics.length === 1 && submitCapture.apiSuccesses.length === 0) {
+              takerBudget.remaining += 1;
+            }
+            throw acknowledgementError;
           }
           logTaker("acknowledgement resolved by account stream", { symbol: plan.symbol, clientOrderId: submitCapture.clientOrderId });
         }
@@ -10161,7 +10150,6 @@
             `已吃单 ${done}/${plan.orders.length} 笔`,
             ` taker orders sent ${done}/${plan.orders.length}`
           ), null);
-          if (takerResult.haltError) throw takerResult.haltError;
           throwIfAborted(abortSignal);
           continue;
         }
