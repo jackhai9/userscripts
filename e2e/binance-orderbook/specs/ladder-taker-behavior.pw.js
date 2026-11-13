@@ -414,12 +414,48 @@ test('user frees order capacity and resends the same market order when it is rej
   expect(host.errors).toEqual([]);
 });
 
-for (const [name, response] of [
-  ['an HTTP 503 that carries an error code', { status: 503, body: { success: false, code: '90802022', message: 'Service unavailable' } }],
-  ['a timeout code whose execution status is unknown', { status: 200, body: { success: false, code: '-1007', message: 'Timeout waiting for response from backend server' } }],
+async function failFirstPlaceOrderWith503(page) {
+  let requests = 0;
+  await page.route('**/bapi/futures/v1/private/future/order/place-order', async route => {
+    requests += 1;
+    if (requests === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false }) });
+      return;
+    }
+    await route.fallback();
+  });
+}
+
+test('user keeps a continuous close running after a market order gets an HTTP 503 that the account stream never confirms', async ({ page }) => {
+  // Given a continuous close whose first market order gets a bare service error.
+  test.setTimeout(40_000);
+  const host = await openUserscriptScenario(page, closeScenario(), { replacementStream: true });
+  const history = await recordStatusHistory(page);
+  await failFirstPlaceOrderWith503(page);
+  await chooseLadder(page, { taker: 50 });
+
+  // When no account frame confirms that order.
+  await startContinuousClose(page);
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 25_000 }).toBeGreaterThanOrEqual(4);
+  await stopTask(page);
+
+  // Then, as for a maker, that round ends unconfirmed and the next round starts with its own market order.
+  const statuses = await history();
+  expect(statuses.some(text => text.includes('订单结果未确认')), JSON.stringify(statuses)).toBe(true);
+  expect(statuses.some(text => text.includes('失败'))).toBe(false);
+  expect(await orderTypes(page, 2)).toEqual(['MARKET', 'MARKET']);
+  expect((await readFixtureState(page)).orderType).toBe('POST_ONLY');
+  expect(host.errors).toEqual([]);
+});
+
+for (const [name, response, reason] of [
+  ['an HTTP 503 that carries a reduce-only code', { status: 503, body: { success: false, code: '90802022', message: 'Service unavailable' } },
+    '只减仓拒单响应不完整或存在冲突'],
+  ['a timeout code with a native failure notice', { status: 200, body: { success: false, code: '-1007', message: 'Timeout waiting for response from backend server' } },
+    '订单提交失败（错误码 -1007）'],
 ]) {
-  test(`user ends a continuous close after ${name} instead of sending another market order`, async ({ page }) => {
-    // Given a continuous close whose first market order gets a response that does not prove a rejection.
+  test(`user ends a continuous close after ${name}, as a maker would, without another market order`, async ({ page }) => {
+    // Given a continuous close whose first market order gets a response the maker path also treats as terminal.
     test.setTimeout(40_000);
     const host = await openUserscriptScenario(page, closeScenario(), { replacementStream: true });
     let requests = 0;
@@ -433,8 +469,8 @@ for (const [name, response] of [
     // When no account frame confirms that order.
     await startContinuousClose(page);
 
-    // Then the session stops with the unconfirmed taker and never sends a second market order.
-    await expect(page.locator(STATUS)).toContainText('吃单结果未确认，已停止', { timeout: 25_000 });
+    // Then the session ends with the maker's reason and never sends a second market order.
+    await expect(page.locator(STATUS)).toContainText(reason, { timeout: 25_000 });
     await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
     expect(await orderTypes(page, 10)).toEqual(['MARKET']);
     expect((await readFixtureState(page)).orderType).toBe('POST_ONLY');
@@ -442,17 +478,36 @@ for (const [name, response] of [
   });
 }
 
-async function failFirstPlaceOrderWith503(page) {
+test('user waits out a rate-limited market order and resends it in the next continuous round', async ({ page }) => {
+  // Given a continuous close at taker 50% whose first market order is answered with HTTP 429.
+  test.setTimeout(40_000);
+  await installScenarioClock(page);
+  const host = await openUserscriptScenario(page, closeScenario(), { replacementStream: true });
   let requests = 0;
   await page.route('**/bapi/futures/v1/private/future/order/place-order', async route => {
     requests += 1;
-    if (requests === 1) {
-      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false }) });
-      return;
-    }
-    await route.fallback();
+    if (requests > 1) return route.fallback();
+    await route.fulfill({ status: 429, headers: { 'retry-after': '2' }, contentType: 'application/json', body: JSON.stringify({ success: false }) });
   });
-}
+  await chooseLadder(page, { taker: 50 });
+  const history = await recordStatusHistory(page);
+
+  // When the rate limit passes.
+  await startContinuousClose(page);
+  await expect.poll(async () => {
+    await page.clock.runFor(500);
+    return (await submissions(page)).length;
+  }, { timeout: 30_000 }).toBeGreaterThanOrEqual(7);
+  await stopTask(page);
+
+  // Then the round waits like a maker would and the owed market order stays in the carry: the next two
+  // rounds take two market orders each (without the returned slot the third round would take only one).
+  const statuses = await history();
+  expect(statuses.some(text => text.includes('频率受限')), JSON.stringify(statuses)).toBe(true);
+  expect(statuses.some(text => text.includes('失败'))).toBe(false);
+  expect(await orderTypes(page, 7)).toEqual(['MARKET', 'MARKET', 'MARKET', 'POST_ONLY', 'MARKET', 'MARKET', 'POST_ONLY']);
+  expect(host.errors).toEqual([]);
+});
 
 test('user continues after an unknown market-order response once the account stream proves the order exists', async ({ page }) => {
   // Given a one-round ladder whose market order receives a service error.
@@ -474,7 +529,7 @@ test('user continues after an unknown market-order response once the account str
   expect(host.errors).toEqual([]);
 });
 
-test('user stops after an unknown market-order response that the account stream never confirms', async ({ page }) => {
+test('user ends a one-round ladder unconfirmed, as for a maker, when the account stream never confirms an unknown market order', async ({ page }) => {
   // Given a one-round ladder whose market order receives a service error.
   test.setTimeout(30_000);
   const host = await openUserscriptScenario(page, openScenario({ submitApiResponses: success(2) }), { replacementStream: true });
@@ -484,8 +539,9 @@ test('user stops after an unknown market-order response that the account stream 
   // When no account frame for that order arrives.
   await page.locator('[data-ladder-action="OPEN_LONG"]').click();
 
-  // Then the task stops without retrying the market order or placing makers, back on Post Only.
-  await expect(page.locator(STATUS)).toContainText('吃单结果未确认，已停止', { timeout: 20_000 });
+  // Then the task ends with the maker's unconfirmed-outcome message, without retrying the market order or placing makers.
+  await expect(page.locator(STATUS)).toContainText('订单结果未确认', { timeout: 20_000 });
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
   expect(await orderTypes(page, 5)).toEqual(['MARKET']);
   expect((await readFixtureState(page)).orderType).toBe('POST_ONLY');
   expect(host.errors).toEqual([]);
@@ -581,7 +637,7 @@ test('user stops when a confirmation dialog holds the market order and leaves it
   expect(host.errors).toEqual([]);
 });
 
-test('user counts a placed market order and stops when an unrelated dialog appears after it', async ({ page }) => {
+test('user continues with the makers when an unrelated dialog appears after a placed market order', async ({ page }) => {
   // Given a dialog that appears while the market order is still sent and accepted.
   const host = await openUserscriptScenario(page, openScenario(), { replacementStream: true });
   await chooseLadder(page, { taker: 50 });
@@ -590,11 +646,12 @@ test('user counts a placed market order and stops when an unrelated dialog appea
   // When the user runs the ladder.
   await page.locator('[data-ladder-action="OPEN_LONG"]').click();
 
-  // Then the accepted order is counted, no maker follows, and the dialog is left alone.
-  await expect(page.locator(STATUS)).toContainText('已挂 1/3 笔', { timeout: 15_000 });
-  await expect(page.locator(STATUS)).toContainText('吃单已提交，但随后出现新的弹窗，未处理该弹窗，已停止');
+  // Then, as for a maker, the dialog is left alone and the round's makers follow the counted market order.
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 15_000 }).toBe(3);
+  await expect(page.locator('[data-ladder-stop]')).toHaveCount(0, { timeout: 10_000 });
+  expect(await orderTypes(page, 3)).toEqual(['MARKET', 'POST_ONLY', 'POST_ONLY']);
   await expect(page.locator('#market-confirm')).toBeVisible();
-  expect(await orderTypes(page, 5)).toEqual(['MARKET']);
+  await expect(page.locator(STATUS)).not.toContainText('失败');
   expect(host.errors).toEqual([]);
 });
 
