@@ -218,6 +218,109 @@ for (const diagnostic of [
   });
 }
 
+/** Leaves the next `count` position requests unanswered so the userscript's own timeout aborts them. */
+async function holdPositionRequests(page, count) {
+  const held = [];
+  let remaining = count;
+  await page.route('https://www.binance.com' + ACCOUNT_PATHS.positions, async route => {
+    if (remaining === 0) return route.fallback();
+    remaining -= 1;
+    held.push(route);
+  });
+  return {
+    held: () => held.length,
+    release: () => Promise.all(held.map(route => route.abort().catch(() => {}))),
+  };
+}
+
+test('user sees the qualification retried once in the page language after a position request times out', async ({ page }) => {
+  // Given an empty account whose first qualification position request never answers.
+  const api = createAccountRebalanceApi(EXCESS);
+  const { errors } = await openAutomatic(page, api);
+  const positions = await holdPositionRequests(page, 1);
+
+  try {
+    // When the account qualifies and the position request reaches its 5-second timeout.
+    await becomeFlat(page);
+    await expect.poll(positions.held).toBe(1);
+    await page.clock.runFor(5000);
+
+    // Then the retry is announced in Chinese, then in English after a locale change, with no transfer yet.
+    await expectAutomaticStatus(page, '自动再平衡：Binance 请求超时，3 秒后重试');
+    await switchLocale(page, 'en');
+    await expectAutomaticStatus(page, 'Automatic USDT transfer: Binance request timed out; retrying in 3s');
+    await switchLocale(page, 'zh-CN');
+    expect(transfers(api)).toEqual([]);
+
+    // When the retry runs and the position request answers.
+    await page.clock.runFor(3000);
+
+    // Then the automatic allocation completes once.
+    await expect.poll(() => api.snapshot().balances).toEqual(TARGET);
+    await expectAutomaticStatus(page, '已自动进行账户再平衡');
+    expect(transfers(api).map(r => r.body)).toEqual(EXCESS_TRANSFERS);
+    expect(errors).toEqual([]);
+  } finally {
+    await positions.release();
+  }
+});
+
+test('user sees a localized failed qualification after the retried position request also times out', async ({ page }) => {
+  // Given an empty account whose qualification position requests never answer.
+  const api = createAccountRebalanceApi(EXCESS);
+  const { errors } = await openAutomatic(page, api);
+  const positions = await holdPositionRequests(page, 2);
+
+  try {
+    // When both the first check and its single retry time out.
+    await becomeFlat(page);
+    await expect.poll(positions.held).toBe(1);
+    await page.clock.runFor(5000);
+    await expectAutomaticStatus(page, '自动再平衡：Binance 请求超时，3 秒后重试');
+    await page.clock.runFor(3000);
+    await expect.poll(positions.held).toBe(2);
+    await expectAutomaticStatus(page, '自动再平衡：等待账户持续无持仓、无挂单');
+    await page.clock.runFor(5000);
+
+    // Then the failure reads as a timeout in the page language and nothing is transferred or retried again.
+    await expectAutomaticStatus(page, '自动再平衡资格检查失败：Binance 请求超时', 'Binance 请求超时');
+    await switchLocale(page, 'en');
+    await expectAutomaticStatus(page, 'Automatic USDT eligibility check failed: Binance request timed out', 'Binance request timed out');
+    await page.clock.runFor(10000);
+    expect(positions.held()).toBe(2);
+    expect(transfers(api)).toEqual([]);
+    expect(api.snapshot().balances).toEqual(EXCESS);
+    expect(errors).toEqual([]);
+  } finally {
+    await positions.release();
+  }
+});
+
+test('user sees a localized timeout instead of the browser abort text when an automatic transfer request times out', async ({ page }) => {
+  // Given a qualified empty account whose first transfer request never answers.
+  const api = createAccountRebalanceApi(EXCESS);
+  const { errors } = await openAutomatic(page, api);
+  const held = [];
+  await page.route('https://www.binance.com' + ACCOUNT_PATHS.transfer, route => { held.push(route); });
+
+  try {
+    // When the transfer request reaches its timeout.
+    await becomeFlat(page);
+    await expect.poll(() => held.length).toBe(1);
+    await page.clock.runFor(5000);
+
+    // Then the stop reason is the localized timeout in both page languages, and the episode stays unresolved.
+    await expectAutomaticStatus(page, '自动再平衡已停止：Binance 请求超时', 'Binance 请求超时');
+    await switchLocale(page, 'en');
+    await expectAutomaticStatus(page, 'Automatic USDT transfer stopped: Binance request timed out', 'Binance request timed out');
+    expect(await episodes(page)).toEqual(['in_flight']);
+    expect(held).toHaveLength(1);
+    expect(errors).toEqual([]);
+  } finally {
+    await Promise.all(held.map(route => route.abort().catch(() => {})));
+  }
+});
+
 test('user automatically withdraws excess once after a stable empty account without a confirmation dialog', async ({ page }) => {
   // Given all funds are in Futures while a native order blocks qualification.
   const api = createAccountRebalanceApi(EXCESS);

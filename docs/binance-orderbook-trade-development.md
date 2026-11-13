@@ -684,9 +684,20 @@ Automatic qualification, waiting, progress, completion, and failure messages use
 the separate `jh-binance-auto-rebalance-status` row. It starts hidden, uses safe
 text/title updates, and retains paired Chinese/English status and progress across
 locale-driven panel rebuilds. Known script-owned account rejection reasons are
-localized at presentation; raw provider and browser diagnostics remain unchanged.
+localized at presentation; raw provider and browser diagnostics remain unchanged,
+except that a request timeout (the browser's abort) reads as the localized
+`Binance 请求超时` in both the automatic and the manual path.
 Automatic work never replaces a retained manual trading or cancellation result;
 the general flat-account message is shown only when the trading row is idle.
+The qualification check's all-symbol position request has a 5-second timeout. A
+timeout retries the check once after 3 seconds with a localized
+`自动再平衡：Binance 请求超时，3 秒后重试` status; any account change in between
+cancels the retry like the first check, and a check from an older window never
+overwrites the status of a newer one. A second timeout reports
+`自动再平衡资格检查失败：Binance 请求超时` (English on English pages) instead of the
+browser's raw abort text and waits for the next account change. On 2026-11-13 a
+QUSDT tab showed the raw `signal is aborted without reason` after one slow
+response, while other tabs had already rebalanced the account.
 
 All transfers hold the origin-wide exclusive Web Lock
 `userscripts:usdt-account-operation:v1`. Script single orders, cancellations,

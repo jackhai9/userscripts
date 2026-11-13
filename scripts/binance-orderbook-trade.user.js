@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.253
+// @version      2.7.254
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -251,6 +251,10 @@
       paused: localizedText("自动再平衡已暂停：执行条件已变化", "Automatic USDT transfer paused: eligibility changed"),
       stopped: localizedText("自动再平衡已停止：", "Automatic USDT transfer stopped: "),
       eligibilityFailed: localizedText("自动再平衡资格检查失败：", "Automatic USDT eligibility check failed: "),
+      retryingAfterTimeout: localizedText(
+        "自动再平衡：Binance 请求超时，3 秒后重试",
+        "Automatic USDT transfer: Binance request timed out; retrying in 3s"
+      ),
       accountBusy: localizedText("账户操作已阻止：其他标签页正在划转资金", "Account operation blocked: another tab is transferring funds")
     }),
     rebalanceErrors: freezeCopy({
@@ -7090,6 +7094,7 @@
     const BINANCE_FUTURES_MAX_WITHDRAW_BAPI_PATH = "/bapi/futures/v1/private/future/user-data/getMaxWithdrawAmount";
     const BINANCE_WALLET_TRANSFER_BAPI_PATH = "/bapi/asset/v1/private/asset-service/wallet/transfer";
     const USDT_REBALANCE_FLAT_STABLE_MS = 2e3;
+    const USDT_REBALANCE_TIMEOUT_RETRY_MS = 3e3;
     const USDT_REBALANCE_REQUEST_TIMEOUT_MS = 5e3;
     const USDT_REBALANCE_BALANCE_POLL_MS = 1e3;
     const AUTOMATIC_USDT_REBALANCE_EPISODE_PREFIX = "userscripts:automatic-usdt-rebalance:v1:";
@@ -13178,10 +13183,11 @@
       setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.waitingForAccess, void 0, true);
       const task = runAutomaticUsdtRebalance(epoch, controller.signal).catch((error) => {
         if (controller.signal.aborted && error.name === "AbortError") return { status: "invalidated" };
+        const message = error?.name === "AbortError" ? "Binance 请求超时" : error.message;
         setAutomaticUsdtRebalanceStatus(combineLocalizedText([
           PANEL_COPY.automaticRebalance.stopped,
-          localizeKnownUiStatus(error.message)
-        ]), error.message);
+          localizeKnownUiStatus(message)
+        ]), message);
         return { status: "failed" };
       }).finally(() => {
         if (usdtRebalanceTask === task) usdtRebalanceTask = null;
@@ -13463,20 +13469,36 @@
       invalidateUsdtRebalanceEligibility();
       setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.waitingForFlat, void 0, true);
       const epoch = usdtRebalanceEligibilityEpoch;
-      usdtRebalanceEligibilityTimer = window.setTimeout(() => {
-        usdtRebalanceEligibilityTimer = 0;
-        let task = null;
-        task = confirmUsdtRebalanceEligibility(epoch).catch((error) => {
-          setAutomaticUsdtRebalanceStatus(combineLocalizedText([
-            PANEL_COPY.automaticRebalance.eligibilityFailed,
-            localizeKnownUiStatus(error.message)
-          ]), error.message);
+      usdtRebalanceEligibilityTimer = window.setTimeout(
+        () => runUsdtRebalanceEligibilityCheck(epoch, { retried: false }),
+        USDT_REBALANCE_FLAT_STABLE_MS
+      );
+    }
+    function runUsdtRebalanceEligibilityCheck(epoch, { retried }) {
+      usdtRebalanceEligibilityTimer = 0;
+      if (retried) setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.waitingForFlat, void 0, true);
+      let task = null;
+      task = confirmUsdtRebalanceEligibility(epoch).catch((error) => {
+        if (epoch !== usdtRebalanceEligibilityEpoch) return false;
+        const timedOut = error?.name === "AbortError";
+        if (timedOut && !retried) {
+          setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.retryingAfterTimeout, void 0, true);
+          usdtRebalanceEligibilityTimer = window.setTimeout(
+            () => runUsdtRebalanceEligibilityCheck(epoch, { retried: true }),
+            USDT_REBALANCE_TIMEOUT_RETRY_MS
+          );
           return false;
-        }).finally(() => {
-          if (usdtRebalanceEligibilityTask === task) usdtRebalanceEligibilityTask = null;
-        });
-        usdtRebalanceEligibilityTask = task;
-      }, USDT_REBALANCE_FLAT_STABLE_MS);
+        }
+        const message = timedOut ? "Binance 请求超时" : error.message;
+        setAutomaticUsdtRebalanceStatus(combineLocalizedText([
+          PANEL_COPY.automaticRebalance.eligibilityFailed,
+          localizeKnownUiStatus(message)
+        ]), message);
+        return false;
+      }).finally(() => {
+        if (usdtRebalanceEligibilityTask === task) usdtRebalanceEligibilityTask = null;
+      });
+      usdtRebalanceEligibilityTask = task;
     }
     function updateUsdtRebalanceEligibilityFromAccountCounts(positionCount, openOrdersCount) {
       if (positionCount === 0 && openOrdersCount === 0) {
