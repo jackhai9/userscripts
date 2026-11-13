@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.253
+// @version      2.7.254
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -485,6 +485,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
   const BINANCE_FUTURES_MAX_WITHDRAW_BAPI_PATH = '/bapi/futures/v1/private/future/user-data/getMaxWithdrawAmount';
   const BINANCE_WALLET_TRANSFER_BAPI_PATH = '/bapi/asset/v1/private/asset-service/wallet/transfer';
   const USDT_REBALANCE_FLAT_STABLE_MS = 2000;
+  /** Retry delay after the qualification check's position request times out; matches the retry copy. */
+  const USDT_REBALANCE_TIMEOUT_RETRY_MS = 3000;
   const USDT_REBALANCE_REQUEST_TIMEOUT_MS = 5000;
   const USDT_REBALANCE_BALANCE_POLL_MS = 1000;
   const AUTOMATIC_USDT_REBALANCE_EPISODE_PREFIX = 'userscripts:automatic-usdt-rebalance:v1:';
@@ -7634,9 +7636,11 @@ const hasCancellationAccountStream = installOrderSoundScope(
     const task = runAutomaticUsdtRebalance(epoch, controller.signal)
       .catch((error) => {
         if (controller.signal.aborted && error.name === 'AbortError') return { status: 'invalidated' };
+        // A request timeout is not retried here (a transfer may be in flight); it reads as the manual path does.
+        const message = error?.name === 'AbortError' ? 'Binance 请求超时' : error.message;
         setAutomaticUsdtRebalanceStatus(combineLocalizedText([
-          PANEL_COPY.automaticRebalance.stopped, localizeKnownUiStatus(error.message),
-        ]), error.message);
+          PANEL_COPY.automaticRebalance.stopped, localizeKnownUiStatus(message),
+        ]), message);
         return { status: 'failed' };
       })
       .finally(() => {
@@ -7965,21 +7969,45 @@ const hasCancellationAccountStream = installOrderSoundScope(
     invalidateUsdtRebalanceEligibility();
     setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.waitingForFlat, undefined, true);
     const epoch = usdtRebalanceEligibilityEpoch;
-    usdtRebalanceEligibilityTimer = window.setTimeout(() => {
-      usdtRebalanceEligibilityTimer = 0;
-      let task = null;
-      task = confirmUsdtRebalanceEligibility(epoch)
-        .catch((error) => {
-          setAutomaticUsdtRebalanceStatus(combineLocalizedText([
-            PANEL_COPY.automaticRebalance.eligibilityFailed, localizeKnownUiStatus(error.message),
-          ]), error.message);
+    usdtRebalanceEligibilityTimer = window.setTimeout(
+      () => runUsdtRebalanceEligibilityCheck(epoch, { retried: false }),
+      USDT_REBALANCE_FLAT_STABLE_MS,
+    );
+  }
+
+  /**
+   * The only abort inside the qualification check is the position request's own 5-second timeout. A
+   * single slow response retries once after USDT_REBALANCE_TIMEOUT_RETRY_MS on the same timer, so any
+   * account change in between cancels it; a second timeout is reported as a failed check.
+   */
+  function runUsdtRebalanceEligibilityCheck(epoch, { retried }) {
+    usdtRebalanceEligibilityTimer = 0;
+    // The retry runs the same check, so it shows the same waiting status as the first attempt.
+    if (retried) setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.waitingForFlat, undefined, true);
+    let task = null;
+    task = confirmUsdtRebalanceEligibility(epoch)
+      .catch((error) => {
+        // A newer qualification window owns the status; a late failure of this one is not shown.
+        if (epoch !== usdtRebalanceEligibilityEpoch) return false;
+        const timedOut = error?.name === 'AbortError';
+        if (timedOut && !retried) {
+          setAutomaticUsdtRebalanceStatus(PANEL_COPY.automaticRebalance.retryingAfterTimeout, undefined, true);
+          usdtRebalanceEligibilityTimer = window.setTimeout(
+            () => runUsdtRebalanceEligibilityCheck(epoch, { retried: true }),
+            USDT_REBALANCE_TIMEOUT_RETRY_MS,
+          );
           return false;
-        })
-        .finally(() => {
-          if (usdtRebalanceEligibilityTask === task) usdtRebalanceEligibilityTask = null;
-        });
-      usdtRebalanceEligibilityTask = task;
-    }, USDT_REBALANCE_FLAT_STABLE_MS);
+        }
+        const message = timedOut ? 'Binance 请求超时' : error.message;
+        setAutomaticUsdtRebalanceStatus(combineLocalizedText([
+          PANEL_COPY.automaticRebalance.eligibilityFailed, localizeKnownUiStatus(message),
+        ]), message);
+        return false;
+      })
+      .finally(() => {
+        if (usdtRebalanceEligibilityTask === task) usdtRebalanceEligibilityTask = null;
+      });
+    usdtRebalanceEligibilityTask = task;
   }
 
   function updateUsdtRebalanceEligibilityFromAccountCounts(positionCount, openOrdersCount) {

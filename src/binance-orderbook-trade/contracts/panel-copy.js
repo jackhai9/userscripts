@@ -85,6 +85,10 @@ export const PANEL_COPY = Object.freeze({
     paused: localizedText('自动再平衡已暂停：执行条件已变化', 'Automatic USDT transfer paused: eligibility changed'),
     stopped: localizedText('自动再平衡已停止：', 'Automatic USDT transfer stopped: '),
     eligibilityFailed: localizedText('自动再平衡资格检查失败：', 'Automatic USDT eligibility check failed: '),
+    retryingAfterTimeout: localizedText(
+      '自动再平衡：Binance 请求超时，3 秒后重试',
+      'Automatic USDT transfer: Binance request timed out; retrying in 3s',
+    ),
     accountBusy: localizedText('账户操作已阻止：其他标签页正在划转资金', 'Account operation blocked: another tab is transferring funds'),
   }),
   rebalanceErrors: freezeCopy({
