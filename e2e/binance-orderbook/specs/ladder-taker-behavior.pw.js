@@ -6,6 +6,7 @@ import { installScenarioClock, pauseScenarioClock } from '../helpers/scenario-cl
 const STATUS = '#jh-binance-ladder-status';
 const success = count => Array.from({ length: count }, () => ({ outcome: 'success', delivery: 'immediate' }));
 const REDUCE_ONLY = { outcome: 'rejected', delivery: 'immediate', code: '90802022', message: 'Reduce only order rejected' };
+const MAX_OPEN_ORDERS = { outcome: 'rejected', delivery: 'immediate', code: '90802025', message: 'Maximum open orders' };
 
 async function submissions(page) {
   return (await readFixtureState(page)).events.filter(({ type }) => type === 'order-submitted');
@@ -377,6 +378,38 @@ test('user retries a reduce-only rejected market order once after the conflictin
   expect(events[0].orderType).toBe('MARKET');
   expect(events.slice(firstCancel).find(({ type }) => type === 'order-submitted').orderType).toBe('MARKET');
   expect(sent.slice(0, 4).map(({ orderType }) => orderType)).toEqual(['MARKET', 'MARKET', 'POST_ONLY', 'POST_ONLY']);
+  expect(state.orderType).toBe('POST_ONLY');
+  expect(host.errors).toEqual([]);
+});
+
+test('user frees order capacity and resends the same market order when it is rejected at the open-order limit', async ({ page }) => {
+  // Given a continuous close at taker 50% whose first market order hits the open-order limit while sixty close orders rest.
+  test.setTimeout(40_000);
+  const resting = Array.from({ length: 60 }, (_, index) => ({
+    id: `resting-${index}`, symbol: CURRENT_SYMBOL, kind: 'basic', side: '平多', price: String(81 + index), quantity: '0.2',
+    orderId: 3000 + index, clientOrderId: `resting-${index}-client`,
+  }));
+  const host = await openUserscriptScenario(page, closeScenario(
+    { submitApiResponses: [MAX_OPEN_ORDERS, ...success(30)] },
+    { orders: resting, ui: { accountTab: 'openOrders', hideOtherSymbols: true } },
+  ), { replacementStream: true });
+  await chooseLadder(page, { taker: 50 });
+
+  // When the round runs.
+  await startContinuousClose(page);
+  await expect.poll(async () => (await submissions(page)).length, { timeout: 25_000 }).toBeGreaterThanOrEqual(4);
+  await stopTask(page);
+
+  // Then the fifty farthest close orders are cancelled and the rejected slot is sent at market again before the makers.
+  const state = await readFixtureState(page);
+  const events = state.events.filter(({ type }) => ['order-submitted', 'row-cancel-requested'].includes(type));
+  const cancelled = events.filter(({ type }) => type === 'row-cancel-requested').map(({ orderId }) => orderId);
+  expect(cancelled).toEqual(Array.from({ length: 50 }, (_, index) => `resting-${59 - index}`));
+  expect(events[0]).toMatchObject({ type: 'order-submitted', orderType: 'MARKET' });
+  const afterRecovery = events.slice(events.findLastIndex(({ type }) => type === 'row-cancel-requested') + 1);
+  expect(afterRecovery.slice(0, 3).map(({ orderType }) => orderType)).toEqual(['MARKET', 'POST_ONLY', 'POST_ONLY']);
+  await expect(page.locator(STATUS)).toContainText('撤 50 笔');
+  await expect(page.locator(STATUS)).not.toContainText('失败');
   expect(state.orderType).toBe('POST_ONLY');
   expect(host.errors).toEqual([]);
 });

@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.251
+// @version      2.7.252
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -4102,18 +4102,62 @@ const hasCancellationAccountStream = installOrderSoundScope(
       takerBudget.allocated = true;
     }
     let repriceAfterTaker = false;
+    /**
+     * A confirmed max-open-orders rejection, of a maker or a market order, releases capacity once per
+     * round; true means the same slot is retried. Any other error returns false for the caller to handle.
+     */
+    const recoverMaxOpenOrdersCapacity = async error => {
+      if (!isRecoverableMaxOpenOrdersFailure(plan, error, options?.allowMaxOpenOrdersRecovery)) return false;
+      if (maxOpenOrdersRecoveryAttempts > 0) {
+        throw createContinuousRoundRecoveryError(
+          'order_capacity_not_ready',
+          '已释放挂单名额，但本轮仍达到最大下单限制',
+        );
+      }
+      maxOpenOrdersRecoveryAttempts += 1;
+      const recovery = await cancelCurrentSymbolOpenOrdersForPlan(
+        plan,
+        progress,
+        setExecutionStatus,
+        abortSignal,
+        {
+          strategy: 'farthest_for_capacity',
+          unresolvedCapacityOrders: options.unresolvedCapacityOrders,
+          confirmedCancelledOrders: options.confirmedCancelledOrders,
+        },
+      );
+      throwIfAborted(abortSignal);
+      if (!recovery?.ok) {
+        const message = recovery?.message || '未能释放挂单名额';
+        if (['symbol_changed', 'dialog_not_closed', 'capacity_terminal'].includes(recovery?.status)) {
+          throw new Error(message);
+        }
+        throw createContinuousRoundRecoveryError(
+          'order_capacity_not_ready',
+          message,
+        );
+      }
+      return true;
+    };
     while (done < plan.orders.length) {
       throwIfAborted(abortSignal);
       if (ladderStopRequested) break;
       if (takerBudget?.remaining > 0) {
-        const takerResult = await executeLadderTakerOrder(
-          plan,
-          plan.orders[done],
-          done,
-          setExecutionStatus,
-          abortSignal,
-          takerBudget,
-        );
+        let takerResult;
+        try {
+          takerResult = await executeLadderTakerOrder(
+            plan,
+            plan.orders[done],
+            done,
+            setExecutionStatus,
+            abortSignal,
+            takerBudget,
+          );
+        } catch (e) {
+          // A confirmed rejection already returned its budget unit, so the retry sends the same market order.
+          if (await recoverMaxOpenOrdersCapacity(e)) continue;
+          throw e;
+        }
         if (takerResult.status === 'skipped') {
           // A skip after the market form was used must not treat its inputs as the last submitted maker.
           previousAcknowledgedInputs = null;
@@ -4250,42 +4294,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
           };
         }
       } catch (e) {
-        if (isRecoverableMaxOpenOrdersFailure(
-          plan,
-          e,
-          options?.allowMaxOpenOrdersRecovery,
-        )) {
-          if (maxOpenOrdersRecoveryAttempts > 0) {
-            throw createContinuousRoundRecoveryError(
-              'order_capacity_not_ready',
-              '已释放挂单名额，但本轮仍达到最大下单限制',
-            );
-          }
-          maxOpenOrdersRecoveryAttempts += 1;
-          const recovery = await cancelCurrentSymbolOpenOrdersForPlan(
-            plan,
-            progress,
-            setExecutionStatus,
-            abortSignal,
-            {
-              strategy: 'farthest_for_capacity',
-              unresolvedCapacityOrders: options.unresolvedCapacityOrders,
-              confirmedCancelledOrders: options.confirmedCancelledOrders,
-            },
-          );
-          throwIfAborted(abortSignal);
-          if (!recovery?.ok) {
-            const message = recovery?.message || '未能释放挂单名额';
-            if (['symbol_changed', 'dialog_not_closed', 'capacity_terminal'].includes(recovery?.status)) {
-              throw new Error(message);
-            }
-            throw createContinuousRoundRecoveryError(
-              'order_capacity_not_ready',
-              message,
-            );
-          }
-          continue;
-        }
+        if (await recoverMaxOpenOrdersCapacity(e)) continue;
         if (!isRetryableLadderMakerPriceFailure(plan, e)) throw e;
         if (isBinancePostOnlyMakerRejectCode(e?.binanceCode)) {
           lastRepriceApiErrorCode = e.binanceCode;
