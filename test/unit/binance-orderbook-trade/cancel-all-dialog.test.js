@@ -8,6 +8,7 @@ import {
   classifyBinanceCancelAllDialogKeyboardAction,
   createDialogMutationSignal,
   findBinanceCancelAllDialog,
+  readCancelDialogDiagnostics,
   mutationTouchesDialogCandidate,
   waitForDialogMutationState,
 } from '../../../src/binance-orderbook-trade/dom/cancel-all-dialog.js';
@@ -23,6 +24,49 @@ function createDialogMarkup({ text = '确定取消全部订单？', extraButton 
       </div>
     </div>
   `;
+}
+
+for (const text of [
+  '确定取消所有基础委托？',
+  'Are you sure you want to cancel all basic orders?',
+  'Are you sure you want to cancel all?',
+]) {
+  test(`user can identify the current native cancellation prompt: ${text}`, () => {
+    // Given a current public Binance translation and the verified button structure.
+    const dom = loadFixtureDom(createDialogMarkup({ text }));
+    // When the dialog is inspected.
+    const contract = findBinanceCancelAllDialog(dom.window.document, isVisibleElement);
+    // Then the native confirmation is tracked without clicking it.
+    assert.equal(contract?.confirmButton.textContent.trim(), '确认');
+    assert.equal(contract?.cancelButton.textContent.trim(), '取消');
+  });
+}
+
+test('user gets bounded structural diagnostics without unrelated dialog content', () => {
+  // Given visible and hidden candidates, including an unrelated private-text placeholder.
+  const dom = loadFixtureDom(createDialogMarkup({ text: 'Unrelated private-text placeholder' })
+    + createDialogMarkup({ extraButton: '<button>Later</button>' })
+    + '<div role="dialog" data-hidden>Hidden</div>');
+  // When the failure snapshot is collected.
+  const snapshot = readCancelDialogDiagnostics(dom.window.document, isVisibleElement);
+  // Then counts expose a copy mismatch and malformed actions without retaining content.
+  assert.deepEqual(snapshot, {
+    visibleCandidates: 6,
+    matchedCandidates: 3,
+    actionCounts: [{ buttons: 2, primary: 1 }, { buttons: 2, primary: 1 }, { buttons: 0, primary: 0 }, { buttons: 3, primary: 1 }],
+  });
+  assert.equal(JSON.stringify(snapshot).includes('private-text'), false);
+});
+
+for (const text of ['确定取消所有条件委托？', 'Are you sure you want to cancel all conditional orders?']) {
+  test(`user never treats a conditional-order prompt as a Basic cancellation: ${text}`, () => {
+    // Given a conditional-order prompt with otherwise valid native buttons.
+    const dom = loadFixtureDom(createDialogMarkup({ text }));
+    // When the Basic cancellation workflow inspects it.
+    const contract = findBinanceCancelAllDialog(dom.window.document, isVisibleElement);
+    // Then no action pair is accepted for this different scope.
+    assert.equal(contract, null);
+  });
 }
 
 test("user finds one semantic Binance cancel-all action pair through nested modal wrappers", () => {

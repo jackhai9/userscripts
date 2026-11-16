@@ -110,6 +110,7 @@ test('user dismisses cancellation from Binance native button and keeps every ord
   await page.getByRole('button', { name: '取消' }).click();
   // Then all orders and original tabs, filters, chart visibility, and control geometry are restored.
   await expect(page.getByText('撤单已取消')).toBeVisible();
+  await expect(page.locator('#jh-binance-dependency-alert')).toBeHidden();
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(ORDER_SETS.both);
@@ -395,9 +396,10 @@ test('user sees a clear failure when the native cancellation dialog never appear
   // When the user requests current-symbol cancellation.
   await page.getByRole('button', { name: '撤单' }).click();
   // Then the panel reports the missing confirmation and restores the original order view.
-  await expect(page.getByText('未识别到撤单确认弹窗，未继续撤单流程')).toBeVisible({
+  await expect(page.getByText('未识别到撤单确认弹窗，无法确认撤单结果，请核对当前委托')).toBeVisible({
     timeout: 3_000,
   });
+  await expect(page.locator('#jh-binance-dependency-alert')).toHaveAttribute('title', /未观察到符合约定的弹窗.*"visibleCandidates":0/);
 
   const state = await readFixtureState(page);
   expect(state.orders).toEqual(ORDER_SETS.current);
@@ -422,6 +424,7 @@ for (const dialogMode of ['extraAction', 'missingPrimary']) {
     await expect(page.getByText(
       '撤单确认弹窗结构异常，未执行弹窗操作',
     )).toBeVisible();
+    await expect(page.locator('#jh-binance-dependency-alert')).toHaveAttribute('title', /弹窗操作结构不符.*"matchedCandidates":3/);
 
     const state = await readFixtureState(page);
     expect(state.orders).toEqual(ORDER_SETS.current);

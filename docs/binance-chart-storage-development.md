@@ -70,7 +70,7 @@ the save storm, so every dependency mismatch is reported instead of only being
 tolerated. `observeOrderLineSaves()` reports each reason once per page through
 `onContractBreak`, deferred to a microtask so a failing handler cannot drop the
 TradingView event being delivered. The orderbook script logs each report with
-`console.error` and shows a persistent red panel row ("币安依赖已变化，需更新脚本")
+`console.error` and shows a persistent red panel row ("币安依赖检查异常，可能需更新脚本")
 whose tooltip groups the changed dependencies by hook, with their consequence and
 details. `__BINANCE_CHART_STORAGE__.orderLineSaves().breaks` lists the same entries.
 

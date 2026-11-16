@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.254
+// @version      2.7.255
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -38,7 +38,14 @@
     submitBusy: freezeLabels(["提交中", "Placing", "Loading"]),
     openableQuantity: freezeLabels(["可开"]),
     closeableQuantity: freezeLabels(["可平"]),
-    cancelAllDialog: freezeLabels(["确定取消全部订单", "Cancel all orders"]),
+    /** Current actionAllMsg/actionAllBasicMsg branches; do not accept conditional-order prompts. */
+    cancelAllDialog: freezeLabels([
+      "确定取消全部订单",
+      "Cancel all orders",
+      "Are you sure you want to cancel all?",
+      "确定取消所有基础委托",
+      "Are you sure you want to cancel all basic orders?"
+    ]),
     accountOrders: Object.freeze({
       positionTab: freezeLabels(["仓位", "Positions"]),
       openOrdersTab: freezeLabels(["当前委托", "Open Orders"]),
@@ -327,6 +334,17 @@
     );
   }
   var DEPENDENCY_AREAS = Object.freeze({
+    "cancel-dialog": Object.freeze({
+      label: localizedText("撤单弹窗跟踪", "Cancellation dialog tracking"),
+      consequence: localizedText(
+        "无法确认本次撤单结果，请核对币安当前委托；可能是币安文案或结构调整，也可能是弹窗未及时出现，请保留此提示供排查",
+        "the cancellation result cannot be confirmed; check Binance open orders. The copy or structure may have changed, or the dialog may not have appeared in time; retain this warning for diagnosis"
+      ),
+      reasons: Object.freeze({
+        "dialog-not-observed": localizedText("未观察到符合约定的弹窗", "expected dialog not observed"),
+        "dialog-structure": localizedText("弹窗操作结构不符", "dialog action structure mismatch")
+      })
+    }),
     "chart-save": Object.freeze({
       label: localizedText("挂单线保存过滤", "Order-line save filter"),
       consequence: localizedText(
@@ -390,8 +408,8 @@
     })
   });
   var DEPENDENCY_ALERT = localizedText(
-    "⚠ 币安依赖已变化，需更新脚本",
-    "⚠ Binance dependency changed; update the script"
+    "⚠ 币安依赖检查异常，可能需更新脚本",
+    "⚠ Binance dependency check failed; script update may be needed"
   );
   function formatDependencyAlertTooltip(entries) {
     if (!Array.isArray(entries) || !entries.length) throw new Error("Dependency alert requires at least one break");
@@ -5668,6 +5686,21 @@
     '[class*="Drawer"]'
   ].join(", ");
   var PRIMARY_BUTTON_SELECTOR = "button.bn-button.bn-button__primary";
+  function readCancelDialogDiagnostics(document2, isVisibleElement) {
+    const candidates = Array.from(document2.querySelectorAll(CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR)).filter(isVisibleElement);
+    const matched = candidates.filter((dialog) => includesBinancePageText(
+      normalizeText2(dialog.textContent),
+      BINANCE_PAGE_TEXT.cancelAllDialog
+    ));
+    return {
+      visibleCandidates: candidates.length,
+      matchedCandidates: matched.length,
+      actionCounts: candidates.slice(0, 4).map((dialog) => {
+        const buttons = Array.from(dialog.querySelectorAll("button")).filter(isVisibleElement);
+        return { buttons: buttons.length, primary: buttons.filter((button) => button.matches(PRIMARY_BUTTON_SELECTOR)).length };
+      })
+    };
+  }
   function normalizeText2(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
@@ -6939,7 +6972,7 @@
     return ({ reason, detail }) => {
       const entry = Object.freeze({ area, reason, detail });
       dependencyBreaks.push(entry);
-      console.error("[订单簿下单] Binance dependency changed; native behavior is in effect", entry);
+      console.error("[订单簿下单] Binance dependency check failed", entry);
       renderDependencyAlert?.();
     };
   }
@@ -7613,7 +7646,7 @@
       ["撤单确认弹窗结构异常，未执行弹窗操作", "Cancellation dialog changed; no dialog action was taken"],
       ["未能准备撤单图表保存，未执行撤单", "Could not prepare chart saving; cancellation was not executed"],
       ["确认撤单前交易对已变化", "Symbol changed before cancellation was confirmed"],
-      ["未识别到撤单确认弹窗，未继续撤单流程", "Cancellation dialog was not detected; cancellation stopped"],
+      ["未识别到撤单确认弹窗，无法确认撤单结果，请核对当前委托", "Cancellation dialog was not recognized; the result is unknown. Check open orders"],
       ["撤单已取消", "Cancellation cancelled"],
       ["撤单已确认，等待挂单清空", "Cancellation confirmed; waiting for open orders to clear"],
       ["等待撤单完成时交易对已变化", "Symbol changed while waiting for cancellation"],
@@ -11679,6 +11712,16 @@
         abortSignal
       ));
     }
+    const reportedCancelDialogBreaks = /* @__PURE__ */ new Set();
+    const reportCancelDialogDependency = reportDependencyBreak("cancel-dialog");
+    function reportCancelDialogBreak(reason) {
+      if (reportedCancelDialogBreaks.has(reason)) return;
+      reportedCancelDialogBreaks.add(reason);
+      reportCancelDialogDependency({
+        reason,
+        detail: JSON.stringify(readCancelDialogDiagnostics(document, isVisibleElement))
+      });
+    }
     function createBinanceCancelAllDialogDecisionWatcher(options = null) {
       const { onConfirmed } = options || {};
       if (onConfirmed !== void 0 && typeof onConfirmed !== "function") {
@@ -12119,6 +12162,7 @@
         } catch (error) {
           restoreTemporaryUiState = false;
           const chartSaveSetupFailed = error?.name === "ChartSaveCoalescingError";
+          if (!chartSaveSetupFailed) reportCancelDialogBreak("dialog-structure");
           emit("ERR", chartSaveSetupFailed ? "撤单图表保存合并启动失败" : "币安撤单确认弹窗结构异常", error);
           const message = chartSaveSetupFailed ? "未能准备撤单图表保存，未执行撤单" : "撤单确认弹窗结构异常，未执行弹窗操作";
           setLadderStatus(message);
@@ -12143,7 +12187,8 @@
           return { ok: false, status: "symbol_changed", message };
         }
         if (dialogDecision.status === "not_found") {
-          const message = "未识别到撤单确认弹窗，未继续撤单流程";
+          reportCancelDialogBreak("dialog-not-observed");
+          const message = "未识别到撤单确认弹窗，无法确认撤单结果，请核对当前委托";
           setLadderStatus(message);
           return { ok: false, status: "dialog_not_found", message };
         }

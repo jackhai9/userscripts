@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.254
+// @version      2.7.255
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -267,6 +267,7 @@ import {
   classifyBinanceCancelAllDialogKeyboardAction,
   createDialogMutationSignal,
   findBinanceCancelAllDialog,
+  readCancelDialogDiagnostics,
   waitForDialogMutationState,
 } from './dom/cancel-all-dialog.js';
 import {
@@ -313,7 +314,7 @@ function reportDependencyBreak(area) {
     const entry = Object.freeze({ area, reason, detail });
     dependencyBreaks.push(entry);
     // Binance mutes console.log/warn/info; errors stay visible in DevTools.
-    console.error('[订单簿下单] Binance dependency changed; native behavior is in effect', entry);
+    console.error('[订单簿下单] Binance dependency check failed', entry);
     renderDependencyAlert?.();
   };
 }
@@ -1114,7 +1115,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
     ['撤单确认弹窗结构异常，未执行弹窗操作', 'Cancellation dialog changed; no dialog action was taken'],
     ['未能准备撤单图表保存，未执行撤单', 'Could not prepare chart saving; cancellation was not executed'],
     ['确认撤单前交易对已变化', 'Symbol changed before cancellation was confirmed'],
-    ['未识别到撤单确认弹窗，未继续撤单流程', 'Cancellation dialog was not detected; cancellation stopped'],
+    ['未识别到撤单确认弹窗，无法确认撤单结果，请核对当前委托', 'Cancellation dialog was not recognized; the result is unknown. Check open orders'],
     ['撤单已取消', 'Cancellation cancelled'],
     ['撤单已确认，等待挂单清空', 'Cancellation confirmed; waiting for open orders to clear'],
     ['等待撤单完成时交易对已变化', 'Symbol changed while waiting for cancellation'],
@@ -5902,6 +5903,18 @@ const hasCancellationAccountStream = installOrderSoundScope(
     ));
   }
 
+  const reportedCancelDialogBreaks = new Set();
+  const reportCancelDialogDependency = reportDependencyBreak('cancel-dialog');
+  /** Keep the first observation per reason for this page, independent of transient task status. */
+  function reportCancelDialogBreak(reason) {
+    if (reportedCancelDialogBreaks.has(reason)) return;
+    reportedCancelDialogBreaks.add(reason);
+    reportCancelDialogDependency({
+      reason,
+      detail: JSON.stringify(readCancelDialogDiagnostics(document, isVisibleElement)),
+    });
+  }
+
   function createBinanceCancelAllDialogDecisionWatcher(options = null) {
     const { onConfirmed } = options || {};
     if (onConfirmed !== undefined && typeof onConfirmed !== 'function') {
@@ -6393,6 +6406,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
       } catch (error) {
         restoreTemporaryUiState = false;
         const chartSaveSetupFailed = error?.name === 'ChartSaveCoalescingError';
+        if (!chartSaveSetupFailed) reportCancelDialogBreak('dialog-structure');
         emit('ERR', chartSaveSetupFailed
           ? '撤单图表保存合并启动失败'
           : '币安撤单确认弹窗结构异常', error);
@@ -6421,7 +6435,8 @@ const hasCancellationAccountStream = installOrderSoundScope(
         return { ok: false, status: 'symbol_changed', message };
       }
       if (dialogDecision.status === 'not_found') {
-        const message = '未识别到撤单确认弹窗，未继续撤单流程';
+        reportCancelDialogBreak('dialog-not-observed');
+        const message = '未识别到撤单确认弹窗，无法确认撤单结果，请核对当前委托';
         setLadderStatus(message);
         return { ok: false, status: 'dialog_not_found', message };
       }

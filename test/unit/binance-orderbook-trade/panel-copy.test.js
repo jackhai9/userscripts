@@ -158,7 +158,7 @@ test('user reads which Binance dependencies changed and what each fallback means
   const tooltip = formatDependencyAlertTooltip(entries);
 
   // Then each area is one line naming its changed dependencies, consequence and details.
-  assert.deepEqual(DEPENDENCY_ALERT, { zhCN: '⚠ 币安依赖已变化，需更新脚本', en: '⚠ Binance dependency changed; update the script' });
+  assert.deepEqual(DEPENDENCY_ALERT, { zhCN: '⚠ 币安依赖检查异常，可能需更新脚本', en: '⚠ Binance dependency check failed; script update may be needed' });
   assert.equal(tooltip.zhCN, [
     '挂单线保存过滤失效（保存监听函数结构、挂单线移除路径）：已回退币安原生保存，挂单线每次变化都会保存整张图，连续挂单可能再次造成 IndexedDB 积压。细节：study: a | drawing: b; 3 bursts',
     '成交提示音分币种失效（提示音文件）：其他币种成交时，所有标签页都会响提示音。细节：/x.mp3 played after 3 fills',

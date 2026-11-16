@@ -26,12 +26,12 @@ test('user sees a persistent panel alert when the TradingView bootstrap no longe
 
   // Then the panel shows the alert with the broken dependency, and the native save state is exposed for diagnosis.
   await expect(page.locator(ALERT)).toBeVisible();
-  await expect(page.locator(ALERT)).toHaveText('⚠ 币安依赖已变化，需更新脚本');
+  await expect(page.locator(ALERT)).toHaveText('⚠ 币安依赖检查异常，可能需更新脚本');
   await expect(page.locator(ALERT)).toHaveAttribute('title', /^挂单线保存过滤失效（图表启动钩子）：已回退币安原生保存.*widgetReady/);
   expect(await page.evaluate(() => self.__BINANCE_CHART_STORAGE__.orderLineSaves().breaks)).toEqual([
     { reason: 'bootstrap', detail: 'TradingView bootstrap no longer defines widgetReady at innerWindowLoad' },
   ]);
-  expect(consoleErrors.filter(text => text.includes('Binance dependency changed'))).toHaveLength(1);
+  expect(consoleErrors.filter(text => text.includes('Binance dependency check failed'))).toHaveLength(1);
 
   // When the panel re-renders after a user edit.
   await page.locator('#jh-binance-close-qty-multiplier-input').fill('2');
