@@ -3,7 +3,7 @@
 // @namespace    binance.orderbook.trade
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
 // @icon64       data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f0b90b%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2249%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22800%22%20fill%3D%22%23111827%22%3EJ%3C%2Ftext%3E%3C%2Fsvg%3E
-// @version      2.7.255
+// @version      2.7.256
 // @author       jackhai9
 // @description  单击订单簿价格，按当前开仓/平仓 tab 自动填数量并执行下单，内置数量倍率面板
 // @match        https://www.binance.com/*/futures/*
@@ -591,6 +591,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
   let ladderTask = null;
   let continuousLadderTask = null;
   let singleOrderTask = null;
+  let singleOrderPresentation = null;
   let ladderAbortController = null;
   let continuousLadderAbortController = null;
   let continuousChartSaveController = null;
@@ -703,6 +704,33 @@ const hasCancellationAccountStream = installOrderSoundScope(
       }
       button[${NATIVE_ACTION_DISABLED_ATTR}="true"] {
         pointer-events: none !important;
+      }
+      /* A compositor animation shows activity without layout changes or progress-driven DOM writes. */
+      #${PANEL_ID} button[data-jh-action-running="true"] {
+        position: relative;
+        overflow: hidden;
+      }
+      #${PANEL_ID} button[data-jh-action-running="true"]::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: 1px;
+        width: 35%;
+        height: 3px;
+        border-radius: 999px;
+        background: #c99400;
+        pointer-events: none;
+        animation: jh-action-running 1.25s ease-in-out infinite;
+      }
+      @keyframes jh-action-running {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(300%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #${PANEL_ID} button[data-jh-action-running="true"]::after {
+          animation: none;
+          transform: translateX(93%);
+        }
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -8464,7 +8492,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
       return ladderActionButton(actionType, label, tone, disabled);
     }
     const stopLabel = PANEL_COPY.action.stopLadderByAction[actionType];
-    return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" style="box-sizing:border-box;min-width:0;height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;white-space:nowrap;overflow:hidden;cursor:pointer;">${ui(stopLabel)}</button>`;
+    return `<button type="button" data-ladder-stop="true" data-ladder-action-origin="${actionType}" data-jh-action-running="true" aria-busy="true" style="box-sizing:border-box;min-width:0;height:${LADDER_CONTROL_BUTTON_HEIGHT}px;border:1px solid var(--color-PrimaryYellow);border-radius:6px;background:var(--color-BadgeBg);color:#9a6700;font-size:${LADDER_CONTROL_BUTTON_FONT_SIZE}px;font-weight:${CONTROL_FONT_WEIGHT};line-height:${LADDER_CONTROL_BUTTON_HEIGHT - 2}px;white-space:nowrap;overflow:hidden;cursor:pointer;">${ui(stopLabel)}</button>`;
   }
 
   function getLadderControlSections(tradeMode, closeContext, symbol, precision) {
@@ -8799,6 +8827,25 @@ const hasCancellationAccountStream = installOrderSoundScope(
       sideShortBtn.style.color = isActive
         ? isOpenMode ? 'var(--color-Sell)' : 'var(--color-Buy)'
         : CONTROL_TEXT_COLOR;
+    }
+
+    // Direction preferences can change during a request; only the captured action owns its indicator.
+    for (const [button, side] of [
+      [sideLongBtn, tradeMode === 'OPEN' ? '开多' : '平多'],
+      [sideShortBtn, tradeMode === 'OPEN' ? '开空' : '平空'],
+    ]) {
+      if (!button) continue;
+      const running = !!singleOrderTask
+        && singleOrderPresentation.symbol === getCurrentSymbol()
+        && singleOrderPresentation.mode === tradeMode
+        && singleOrderPresentation.side === side;
+      if (running) {
+        if (button.getAttribute('data-jh-action-running') !== 'true') button.setAttribute('data-jh-action-running', 'true');
+        if (button.getAttribute('aria-busy') !== 'true') button.setAttribute('aria-busy', 'true');
+      } else {
+        if (button.hasAttribute('data-jh-action-running')) button.removeAttribute('data-jh-action-running');
+        if (button.hasAttribute('aria-busy')) button.removeAttribute('aria-busy');
+      }
     }
 
     syncNativeCloseButtons(tradeMode, rawCloseContext);
@@ -9711,6 +9758,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
         `单击${action.side}准备中`,
         `${formatLocalizedText(actionLabel, 'en')} single order preparing`,
       ));
+      singleOrderPresentation = Object.freeze({ symbol: qtyPlan.symbol, mode: action.mode, side: action.side });
       singleOrderTask = withAccountOperationLock('shared', async () => {
         await syncTradeInputs(clickedPrice, qtyPlan.qty, {
           priceLabel: '点击价',
@@ -9817,6 +9865,7 @@ const hasCancellationAccountStream = installOrderSoundScope(
         warn(message);
       } finally {
         singleOrderTask = null;
+        singleOrderPresentation = null;
         restartUsdtRebalanceEligibilityFromCurrentAccountState();
         scheduleRenderPanel();
       }

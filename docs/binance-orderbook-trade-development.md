@@ -20,6 +20,20 @@ scripts/binance-orderbook-trade.user.js
 
 ## Runtime
 
+### Running action indicators
+
+Active ladder and continuous-task Stop buttons show a moving gold underline.
+The single-order direction selector marks the captured submitted direction until
+its task settles, independently of later preference changes; a different symbol
+or trade mode never inherits that marker. Presentation state does not participate
+in submission, cancellation, or disabling decisions.
+
+The indicator uses an absolutely positioned CSS pseudo-element and a transform
+animation, so button geometry and hit targets stay unchanged. It adds no timer,
+animation-frame loop, or progress-driven DOM mutation. `prefers-reduced-motion`
+replaces movement with a static underline; `aria-busy` exposes the same active
+state. Successful completion, failure, or completed stopping removes the marker.
+
 ### Initial panel placement
 
 The floating trade panel stays hidden until the native header satisfies its
