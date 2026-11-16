@@ -19,7 +19,14 @@ export const BINANCE_PAGE_TEXT = Object.freeze({
   submitBusy: freezeLabels(['提交中', 'Placing', 'Loading']),
   openableQuantity: freezeLabels(['可开']),
   closeableQuantity: freezeLabels(['可平']),
-  cancelAllDialog: freezeLabels(['确定取消全部订单', 'Cancel all orders']),
+  /** Current actionAllMsg/actionAllBasicMsg branches; do not accept conditional-order prompts. */
+  cancelAllDialog: freezeLabels([
+    '确定取消全部订单',
+    'Cancel all orders',
+    'Are you sure you want to cancel all?',
+    '确定取消所有基础委托',
+    'Are you sure you want to cancel all basic orders?',
+  ]),
   accountOrders: Object.freeze({
     positionTab: freezeLabels(['仓位', 'Positions']),
     openOrdersTab: freezeLabels(['当前委托', 'Open Orders']),

@@ -18,6 +18,23 @@ const DIALOG_MUTATION_CANDIDATE_SELECTOR = [
 ].join(', ');
 const PRIMARY_BUTTON_SELECTOR = 'button.bn-button.bn-button__primary';
 
+/** Capture only structure: an unrelated modal may contain private account or authentication text. */
+export function readCancelDialogDiagnostics(document, isVisibleElement) {
+  const candidates = Array.from(document.querySelectorAll(CANCEL_ALL_DIALOG_CANDIDATE_SELECTOR))
+    .filter(isVisibleElement);
+  const matched = candidates.filter(dialog => includesBinancePageText(
+    normalizeText(dialog.textContent), BINANCE_PAGE_TEXT.cancelAllDialog,
+  ));
+  return {
+    visibleCandidates: candidates.length,
+    matchedCandidates: matched.length,
+    actionCounts: candidates.slice(0, 4).map(dialog => {
+      const buttons = Array.from(dialog.querySelectorAll('button')).filter(isVisibleElement);
+      return { buttons: buttons.length, primary: buttons.filter(button => button.matches(PRIMARY_BUTTON_SELECTOR)).length };
+    }),
+  };
+}
+
 function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }

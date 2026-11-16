@@ -171,6 +171,17 @@ export function formatPrecisionRefreshTooltip(tradeCount) {
 
 /** Each area is one hook into Binance or TradingView internals, with what breaks for the user. */
 const DEPENDENCY_AREAS = Object.freeze({
+  'cancel-dialog': Object.freeze({
+    label: localizedText('撤单弹窗跟踪', 'Cancellation dialog tracking'),
+    consequence: localizedText(
+      '无法确认本次撤单结果，请核对币安当前委托；可能是币安文案或结构调整，也可能是弹窗未及时出现，请保留此提示供排查',
+      'the cancellation result cannot be confirmed; check Binance open orders. The copy or structure may have changed, or the dialog may not have appeared in time; retain this warning for diagnosis',
+    ),
+    reasons: Object.freeze({
+      'dialog-not-observed': localizedText('未观察到符合约定的弹窗', 'expected dialog not observed'),
+      'dialog-structure': localizedText('弹窗操作结构不符', 'dialog action structure mismatch'),
+    }),
+  }),
   'chart-save': Object.freeze({
     label: localizedText('挂单线保存过滤', 'Order-line save filter'),
     consequence: localizedText(
@@ -235,8 +246,8 @@ const DEPENDENCY_AREAS = Object.freeze({
 });
 
 export const DEPENDENCY_ALERT = localizedText(
-  '⚠ 币安依赖已变化，需更新脚本',
-  '⚠ Binance dependency changed; update the script',
+  '⚠ 币安依赖检查异常，可能需更新脚本',
+  '⚠ Binance dependency check failed; script update may be needed',
 );
 
 /**

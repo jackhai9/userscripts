@@ -346,6 +346,37 @@ contract, so `龙虾BTCUSDT` cannot match `BTCUSDT` or `龙虾USDT`.
 
 ## UI Localization
 
+### Cancellation dialog dependency alerts
+
+The native current-symbol cancellation flow requires a recognized question and
+exactly two visible actions with one primary button. Current Binance
+`trd-openOrder-actionAllMsg` and `trd-openOrder-actionAllBasicMsg` translations
+are tracked in `contracts/binance-page-text.js`; conditional-order prompts are
+not accepted. The generic branch still exists in Binance's current source.
+The public translation resources are
+[Chinese](https://bin.bnbstatic.com/api/i18n/-/web/cms/zh-CN/trade-ui) and
+[English](https://bin.bnbstatic.com/api/i18n/-/web/cms/en/trade-ui)
+(verified 2026-11-16).
+
+Unrecognized copy or a missing dialog reaches the existing 1.8-second discovery
+deadline. This means tracking failed, not that Binance failed to cancel orders:
+the user may already have confirmed the native dialog. Report an unknown result
+and ask the user to check open orders. Invalid action structure retains the
+existing refusal to handle the dialog. Neither condition retries cancellation,
+automatically confirms a dialog, or infers success from an empty order list.
+
+Both failures report to the persistent dependency alert under `cancel-dialog`,
+once per reason per page. The tooltip distinguishes `dialog-not-observed` from
+`dialog-structure`, explains possible provider changes or late appearance, and
+retains structural counts (including nested modal wrappers and titles; these
+are not a count of distinct dialogs). Only the first four candidate action
+counts are retained. No modal content, input values, or account payloads are
+captured. Later task status changes do not clear the warning; page reload does.
+Normal user dismissal, successful cancellation, lifecycle interruption, and
+chart preparation failure do not produce this dialog-specific alert.
+
+### Localized panel copy
+
 The userscript UI supports exactly `zh-CN` and English. Resolve the locale from the first Binance pathname segment: `/zh-CN/...` uses Chinese, while `/en/...`, other locales, and locale-less futures paths use English. A Binance SPA language switch must rebuild only the userscript panel; it must not abort a ladder, cancel, single-order, or account-rebalance task, and it must not reset the active symbol-mode-precision profile.
 
 Keep script-owned UI copy in `contracts/panel-copy.js` as paired `localizedText(zhCN, en)` values. Dynamic status formatters must retain both languages until render time so current order, round, and cancellation counters survive a locale switch. Raw technical exceptions, Binance response messages, error codes, and native `TypeError` text stay unchanged so they remain copyable for diagnosis.
